@@ -1,0 +1,35 @@
+--- a/googletest/include/gtest/gtest-matchers.h	(index)
++++ b/googletest/include/gtest/gtest-matchers.h	(working tree)
+@@ -694,6 +694,17 @@ inline PolymorphicMatcher<Impl> MakePolymorphicMatcher(const Impl& impl) {
+ }
+ 
+ namespace internal {
++
++template <typename T>
++const T& Unwrap(const T& v) {
++  return v;
++}
++
++template <typename T>
++const T& Unwrap(std::reference_wrapper<T> v) {
++  return v;
++}
++
+ // Implements a matcher that compares a given value with a
+ // pre-supplied value using one of the ==, <=, <, etc, operators.  The
+ // two values being compared don't have to have the same type.
+@@ -725,15 +736,6 @@ class ComparisonBase {
+   }
+ 
+  private:
+-  template <typename T>
+-  static const T& Unwrap(const T& v) {
+-    return v;
+-  }
+-  template <typename T>
+-  static const T& Unwrap(std::reference_wrapper<T> v) {
+-    return v;
+-  }
+-
+   Rhs rhs_;
+ };

@@ -1,0 +1,19 @@
+--- a/googletest/include/gtest/gtest-printers.h	(d33805fff1342fe87ce6cfa554a5747c7e5e8eef)
++++ b/googletest/include/gtest/gtest-printers.h	(working tree)
+@@ -212,7 +212,16 @@ struct StreamPrinter {
+   static void PrintValue(const T& value, ::std::ostream* os) {
+     // Call streaming operator found by ADL, possibly with implicit conversions
+     // of the arguments.
++    // lambda w/o captures treats as pointer to function in clang, but does not match trait is_function
++    // when try to print it via operator <<, clang generates warning about cast pointer to function to pointer to object
++#if defined(__clang__)
++#pragma clang diagnostic push
++#pragma clang diagnostic ignored "-Wmicrosoft-cast"
++#endif
+     *os << value;
++#if defined(__clang__)
++#pragma clang diagnostic pop
++#endif
+   }
+ };
+ 

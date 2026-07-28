@@ -1,0 +1,84 @@
+--- contrib/restricted/googletest/googlemock/include/gmock/gmock-actions.h	(55128b3a3534215262a0832bd16a2e14c6095f79)
++++ contrib/restricted/googletest/googlemock/include/gmock/gmock-actions.h	(working tree)
+@@ -2293,7 +2293,7 @@ template <typename F, typename Impl>
+ #define GMOCK_ACTION_INIT_PARAMS_(params) \
+   GMOCK_PP_TAIL(GMOCK_PP_FOR_EACH(GMOCK_INTERNAL_INIT_PARAM, , params))
+ 
+-#define GMOCK_INTERNAL_FIELD_PARAM(i, data, param) param##_type param;
++#define GMOCK_INTERNAL_FIELD_PARAM(i, data, param) param##_type param; // NOLINT(readability-identifier-naming)
+ #define GMOCK_ACTION_FIELD_PARAMS_(params) \
+   GMOCK_PP_FOR_EACH(GMOCK_INTERNAL_FIELD_PARAM, , params)
+ 
+@@ -2324,10 +2324,10 @@ template <typename F, typename Impl>
+     std::shared_ptr<const gmock_Impl> impl_;                                   \
+   };                                                                           \
+   template <GMOCK_ACTION_TYPENAME_PARAMS_(params)>                             \
+-  [[nodiscard]] inline full_name<GMOCK_ACTION_TYPE_PARAMS_(params)> name(      \
++  [[nodiscard]] inline full_name<GMOCK_ACTION_TYPE_PARAMS_(params)> name(      /* NOLINT */\
+       GMOCK_ACTION_TYPE_GVALUE_PARAMS_(params));                               \
+   template <GMOCK_ACTION_TYPENAME_PARAMS_(params)>                             \
+-  inline full_name<GMOCK_ACTION_TYPE_PARAMS_(params)> name(                    \
++  inline full_name<GMOCK_ACTION_TYPE_PARAMS_(params)> name(                    /* NOLINT */\
+       GMOCK_ACTION_TYPE_GVALUE_PARAMS_(params)) {                              \
+     return full_name<GMOCK_ACTION_TYPE_PARAMS_(params)>(                       \
+         GMOCK_ACTION_GVALUE_PARAMS_(params));                                  \
+--- contrib/restricted/googletest/googlemock/include/gmock/gmock-matchers.h	(55128b3a3534215262a0832bd16a2e14c6095f79)
++++ contrib/restricted/googletest/googlemock/include/gmock/gmock-matchers.h	(working tree)
+@@ -5747,7 +5747,7 @@ PolymorphicMatcher<internal::ExceptionMatcherImpl<Err>> ThrowsMessage(
+   inline name##Matcher GMOCK_INTERNAL_WARNING_PUSH()                          \
+       GMOCK_INTERNAL_WARNING_CLANG(ignored, "-Wunused-function")              \
+           GMOCK_INTERNAL_WARNING_CLANG(ignored, "-Wunused-member-function")   \
+-              name GMOCK_INTERNAL_WARNING_POP()() {                           \
++              name GMOCK_INTERNAL_WARNING_POP()() {                           /* NOLINT(readability-identifier-naming) */ \
+     return {};                                                                \
+   }                                                                           \
+   template <typename arg_type>                                                \
+@@ -5828,7 +5828,7 @@ PolymorphicMatcher<internal::ExceptionMatcherImpl<Err>> ThrowsMessage(
+     };                                                                         \
+   };                                                                           \
+   template <GMOCK_INTERNAL_MATCHER_TEMPLATE_PARAMS(args)>                      \
+-  inline full_name<GMOCK_INTERNAL_MATCHER_TYPE_PARAMS(args)> name(             \
++  inline full_name<GMOCK_INTERNAL_MATCHER_TYPE_PARAMS(args)> name(             /* NOLINT(readability-identifier-naming) */\
+       GMOCK_INTERNAL_MATCHER_FUNCTION_ARGS(args)) {                            \
+     return full_name<GMOCK_INTERNAL_MATCHER_TYPE_PARAMS(args)>(                \
+         GMOCK_INTERNAL_MATCHER_ARGS_USAGE(args));                              \
+@@ -5866,7 +5866,7 @@ PolymorphicMatcher<internal::ExceptionMatcherImpl<Err>> ThrowsMessage(
+ #define GMOCK_INTERNAL_MATCHER_MEMBERS(args) \
+   GMOCK_PP_FOR_EACH(GMOCK_INTERNAL_MATCHER_MEMBER, , args)
+ #define GMOCK_INTERNAL_MATCHER_MEMBER(i_unused, data_unused, arg) \
+-  const arg##_type arg;
++  const arg##_type arg; // NOLINT(readability-identifier-naming)
+ 
+ #define GMOCK_INTERNAL_MATCHER_MEMBERS_USAGE(args) \
+   GMOCK_PP_TAIL(GMOCK_PP_FOR_EACH(GMOCK_INTERNAL_MATCHER_MEMBER_USAGE, , args))
+--- contrib/restricted/googletest/googletest/include/gtest/internal/gtest-internal.h	(55128b3a3534215262a0832bd16a2e14c6095f79)
++++ contrib/restricted/googletest/googletest/include/gtest/internal/gtest-internal.h	(working tree)
+@@ -1361,8 +1361,8 @@ class NeverThrown {
+ 
+ #define GTEST_TEST_THROW_(statement, expected_exception, fail)              \
+   GTEST_AMBIGUOUS_ELSE_BLOCKER_                                             \
+-  if (::testing::internal::TrueWithString gtest_msg{}) {                    \
+-    bool gtest_caught_expected = false;                                     \
++  if (::testing::internal::TrueWithString gtest_msg{}) {                    /* NOLINT */\
++    bool gtest_caught_expected = false;                                     /* NOLINT */\
+     try {                                                                   \
+       GTEST_SUPPRESS_UNREACHABLE_CODE_WARNING_BELOW_(statement);            \
+     } catch (expected_exception const&) {                                   \
+@@ -1408,7 +1408,7 @@ class NeverThrown {
+ 
+ #define GTEST_TEST_NO_THROW_(statement, fail)                            \
+   GTEST_AMBIGUOUS_ELSE_BLOCKER_                                          \
+-  if (::testing::internal::TrueWithString gtest_msg{}) {                 \
++  if (::testing::internal::TrueWithString gtest_msg{}) {                 /*NOLINT*/\
+     try {                                                                \
+       GTEST_SUPPRESS_UNREACHABLE_CODE_WARNING_BELOW_(statement);         \
+     }                                                                    \
+@@ -1449,7 +1449,7 @@ class NeverThrown {
+ // representation of expression as it was passed into the EXPECT_TRUE.
+ #define GTEST_TEST_BOOLEAN_(expression, text, actual, expected, fail) \
+   GTEST_AMBIGUOUS_ELSE_BLOCKER_                                       \
+-  if (const ::testing::AssertionResult gtest_ar_ =                    \
++  if (const ::testing::AssertionResult gtest_ar_ =                    /* NOLINT */\
+           ::testing::AssertionResult(expression))                     \
+     ;                                                                 \
+   else                                                                \
