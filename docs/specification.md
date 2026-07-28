@@ -196,7 +196,7 @@ SHA-256, module ABI version и module SHA. `materialize` создаёт opaque
 - versioned представление требований выбранной редакции TPC-C;
 - типы идентификаторов;
 - точные числовые типы;
-- immutable input и output пяти транзакций;
+- immutable input и output transaction types, экспортированных spec module;
 - NURand и генерация строк;
 - derivation детерминированных RNG stream;
 - правила начального наполнения;
@@ -485,6 +485,8 @@ Connector/C, local index syntax, timeout variables и catalog queries остаю
 
 Оркестратор строит `load-plan.json`:
 
+- `load_id` — SHA-256 canonical tuple `(run_id, plan, spec-state, generator,
+  loader binary)`;
 - ровно один shard владеет DB-wide данными, определёнными spec module;
 - warehouse-scoped данные делятся непересекающимися диапазонами складов;
 - batch имеет `batch_id`, диапазон ключей, число строк и SHA-256 канонических
@@ -513,7 +515,8 @@ replay. Локальный checkpoint — оптимизация; authoritative 
 
 Повторный `load --resume`:
 
-- проверяет run, profile, load-plan, spec-state, generator и binary SHA;
+- проверяет run, profile, load-plan, spec-state (включая generator state) и
+  binary SHA;
 - reconciles все batch в состояниях `started` и `unknown`;
 - пропускает только полностью подтверждённые batch с тем же hash;
 - не принимает checkpoint от другого run;
@@ -551,7 +554,7 @@ MUST выполняться на quiescent database:
 8. host-local deploy manifest;
 9. process identity, stdout/stderr и readiness files в каталоге instance;
 10. SHA-256 после распространения конфигурации;
-11. local profile lock плюс DB-scoped fencing lease;
+11. local profile lock плюс DB-scoped fence и execution gate;
 12. fail-fast для параллельных стадий;
 13. сбор сырых артефактов даже при неуспехе;
 14. secrets только через environment и временные файлы mode 0600.
@@ -610,14 +613,22 @@ validate → deploy → schema → load → check(after-import)
 Примеры:
 
 - [profile.v1.yaml](examples/profile.v1.yaml);
+- [control-config.v1.json](examples/control-config.v1.json);
 - [run-config.v1.json](examples/run-config.v1.json);
 - [start-token.v1.json](examples/start-token.v1.json).
 
-Реализация MUST хранить JSON Schema для profile, run-config, spec-state,
-start-token, lease, readiness, process state и результатов. YAML profile
+Примеры иллюстративны: значения вида `*_SHA256` заменяются генератором.
+Production hash — 64 lowercase hex символа от canonical JSON по RFC 8785 либо
+от исходных binary bytes. Test fixtures MUST содержать реальные проверяемые
+hashes.
+
+Реализация MUST хранить JSON Schema для profile, control-config, run-config,
+spec-state, start-token, readiness, process state и результатов. YAML profile
 валидируется как JSON data model с `additionalProperties:false`. Defaults
-материализуются только в run-config; после его создания profile больше не
-является источником runtime-параметров.
+материализуются в локальный immutable `control-config.json` и runtime
+`run-config.json`; после этого исходный profile больше не читается.
+Control-config содержит SSH inventory, local/state/result paths и deploy
+policy. Run-config содержит только параметры runtime hosts.
 
 ### 9.4. Каталоги
 
@@ -632,7 +643,7 @@ Runtime host:
     ├── run-config.json
     ├── spec-state.json
     ├── start-token.json
-    ├── lease.json
+    ├── load-plan.json
     ├── loader/<name>/
     └── worker/<name>/
         ├── process.json
@@ -652,6 +663,7 @@ Control host:
 ├── profiles/<profile-id>/run.lock
 └── runs/<run_id>/
     ├── run-state.json
+    ├── control-config.json
     ├── profile.redacted.yaml
     ├── run-config.json
     ├── spec-state.json
@@ -673,15 +685,21 @@ Cleanup удаляет только пути из полного manifest и н�
 ### 9.6. DB-scoped fence
 
 До `schema`, `load`, `check` или `start` control получает через `IAdminAdapter`
-lease на canonical database identity `(dbms, endpoint, database, path)`.
-Адаптер реализует его advisory lock или служебной metadata record вне
-benchmark tables. Lease содержит `run_id`, случайный fencing token, generation
-и expiry; control обновляет его до завершения mutating phase.
+fence на adapter-discovered canonical database identity. Identity MUST
+содержать устойчивые cluster/tenant/database IDs и не может состоять только из
+пользовательского endpoint alias.
 
-Другой profile/control не может получить fence для той же logical database.
-Loader и worker сверяют token перед началом своей стадии. Потеря fence
-останавливает новые действия и делает run failed. Fencing metadata не входит
-в измеряемую схему и удаляется только владельцем token.
+Адаптер реализует fence атомарной служебной metadata record вне benchmark
+tables. Record содержит `run_id`, случайный fencing token, generation и
+`not_after`. Другой profile/control не может получить следующую generation до
+истечения текущей. Mutating admin operation и каждый load batch передают
+generation; БД отклоняет stale generation.
+
+До старта workload `not_after` MUST быть позже максимального drain deadline с
+запасом. Worker проверяет fence и execution gate перед ramp. После commit gate
+другой control не может получить fence до завершения старого run, даже если
+первый control упал. Потеря/преждевременное истечение fence делает run failed.
+Metadata не входит в измеряемую схему и удаляется только владельцем token.
 
 ### 9.7. Синхронизация часов и двухфазный старт
 
@@ -697,20 +715,21 @@ uncertainty и drift.
 2. Worker проверяет hashes, DB fence и adapter, создаёт runtime и пишет
    `ready.json`, но не запускает workload.
 3. После полного ready set control создаёт `start-token.json`, связанный с
-   config SHA, fence token и hash ready set. Token содержит будущие phase
-   epochs и короткий initial lease, истекающий до ramp.
+   config SHA, fence generation и hash ready set. Token содержит будущие phase
+   epochs и ожидаемую generation DB-side execution gate.
 4. Worker атомарно принимает token и пишет `armed.json`.
-5. Только после полного armed set control начинает атомарно обновлять
-   `lease.json`. Worker допускает workload лишь при свежей lease нужной
-   generation.
+5. Только после полного armed set с актуальными process heartbeats control
+   одной DB operation переводит общий execution gate из `prepared` в
+   `committed`. Gate содержит config/token/ready-set hashes, fence generation
+   и `not_before`.
+6. Worker допускает workload только после чтения `committed` gate с точным
+   совпадением generation и hashes.
 
-Если ready/armed set неполон или control теряет возможность обновлять lease,
-ни один корректный worker не достигает measurement. Это fail-closed
-дополнение к future timestamps из TPC-E orchestrator.
-
-`lease.json` публикуется через temporary file + rename и связан с run,
-start-token и DB fence hashes. Generation только растёт; worker отвергает
-rollback generation и lease с уже истёкшим `not_after`.
+Если ready/armed set неполон, control не может commit gate и ни один
+корректный worker не начинает workload. DB-side gate устраняет частичное
+обновление host-local файлов. После commit потеря worker не останавливает
+мгновенно остальные процессы, но фиксируется heartbeat/status и делает
+итоговый run failed.
 
 `ready.json` содержит:
 
@@ -725,8 +744,13 @@ rollback generation и lease с уже истёкшим `not_after`.
   "binary_sha256": "...",
   "adapter": "ydb",
   "warehouse_ranges": [[1, 101]],
-  "ready_at": "2026-07-28T12:00:00Z",
-  "clock_offset_ms": 3
+  "ready_at": "2026-07-28T11:59:20Z",
+  "clock_calibration": {
+    "measured_at": "2026-07-28T11:59:18Z",
+    "offset_ms": 3,
+    "uncertainty_ms": 8,
+    "rtt_ms": 11
+  }
 }
 ```
 
@@ -744,10 +768,14 @@ Worker хранит отдельные сырые populations по времен�
 ### 9.9. Process supervision
 
 Первая версия использует `nohup`, но PID не считается достаточной
-идентичностью. Перед launch через atomic create регистрируется
-`process.json`: PID, `/proc` start time, случайный instance nonce, run/config
-hashes и generation. Повторный start сначала reconciles remote record; сигнал
-можно послать только процессу с совпавшими PID, start time и nonce.
+идентичностью. `nohup` запускает маленький wrapper с заранее созданным
+instance nonce. Wrapper получает exclusive instance lock, записывает и
+`fsync`-ит `process.json` со своим PID, `/proc/self` start time, nonce,
+run/config hashes и generation, после чего делает `exec` workload binary с
+тем же PID. Ошибка регистрации запрещает `exec`.
+
+Повторный start сначала reconciles remote record; сигнал можно послать только
+процессу с совпавшими PID, start time и nonce.
 
 Если control упал между launch и записью local state, следующий запуск
 восстанавливает процессы по remote records и config hash. Stale record
@@ -841,6 +869,7 @@ results/<run_id>/
 ├── checks/
 │   ├── after-import.json
 │   └── after-run.json
+├── collection-manifest.json
 ├── aggregate.json
 └── summary.txt
 ```
@@ -849,11 +878,16 @@ results/<run_id>/
 его и не содержит уникальных данных.
 
 Перед collect каждый процесс атомарно публикует `artifact-manifest.json` с
-размером и SHA-256 каждого файла, exit status, instance nonce и
-`finalized:true`. Collector сначала копирует во временный каталог, затем
-проверяет manifest и только после этого публикует raw instance directory.
-Незапечатанные данные сохраняются как `partial`, но не участвуют в qualified
-aggregate.
+размером и SHA-256 каждого **payload**-файла, exit status, instance nonce и
+`finalized:true`; сам manifest не входит в собственный payload. Collector
+сначала копирует во временный каталог, затем проверяет manifest и только после
+этого публикует raw instance directory.
+
+После сбора control атомарно создаёт `collection-manifest.json`, покрывающий
+все process manifests, control-config, run/spec/start state, load plan и check
+results. Aggregate строится только из файлов этого manifest и сохраняет его
+SHA-256. Незапечатанные данные остаются как `partial`, но не участвуют в
+qualified aggregate.
 
 ### 10.4. Qualification flags
 
@@ -885,7 +919,7 @@ flags выбранного режима. Итоговый JSON хранит sour
 | `deploy` | повторяемый по manifest/hash |
 | `schema` | проверяет существующее состояние; destructive recreate только с явным флагом |
 | `load` | resume только по подтверждённым batch/hash |
-| `start` | разрешён только владельцу profile lock и DB fence; другой активный run запрещён |
+| `start` | разрешён только владельцу profile lock, DB fence и prepared execution gate; другой активный run запрещён |
 | `stop` | повторяемый, already stopped = success |
 | `collect` | повторяет download во временный каталог и атомарно публикует |
 | `consolidate` | чистая детерминированная функция артефактов |
@@ -923,6 +957,7 @@ flags выбранного режима. Итоговый JSON хранит sour
 - reuse remote `(host, run_dir, instance)`;
 - отсутствующие artifacts;
 - secret literal вместо `password_env`;
+- credentials в endpoint URL, connection string или DBMS options;
 - несовместимые adapter capabilities/isolation;
 - отключение требуемого spec module runtime subsystem в conformance;
 - слишком короткий lead time;
@@ -969,9 +1004,9 @@ isolation, schema state и физическую конфигурацию.
 - redaction;
 - config distribution/hash mismatch;
 - overlapping assignment rejection;
-- collision DB-scoped fence из другого profile;
+- collision DB-scoped fence и stale generation из другого profile;
 - missing worker/early exit;
-- incomplete ready/armed set и expiry control lease;
+- incomplete ready/armed set и uncommitted execution gate;
 - startup deadline;
 - normative stop/drain;
 - PID reuse и recovery после control crash;

@@ -24,13 +24,21 @@
   },
   "paths": {
     "remote_root": "/opt/portable-tpcc",
-    "run_dir": "/opt/portable-tpcc/runs/20260728-lab-ydb-200-01"
+    "run_dir": "/opt/portable-tpcc/runs/20260728-lab-ydb-200-01",
+    "spec_state": "/opt/portable-tpcc/runs/20260728-lab-ydb-200-01/spec-state.json",
+    "load_plan": "/opt/portable-tpcc/runs/20260728-lab-ydb-200-01/load-plan.json"
   },
   "database": {
     "dbms": "ydb",
     "endpoint": "grpcs://ydb.example.net:2135",
     "database": "/Root/tpcc",
     "path": "portable_tpcc",
+    "canonical_identity": {
+      "cluster_id": "ydb-cluster-uuid",
+      "tenant_id": "/Root",
+      "database_id": "/Root/tpcc",
+      "workload_path": "portable_tpcc"
+    },
     "password_env": "YDB_TOKEN",
     "options": {
       "compact_after_load": true,
@@ -40,15 +48,17 @@
   "scale": {
     "warehouses": 200
   },
-  "random": {
-    "seed": 731910246,
-    "generator_state_sha256": "GENERATOR_STATE_SHA256"
-  },
   "load": {
+    "load_id": "LOAD_ID_SHA256",
     "plan_sha256": "LOAD_PLAN_SHA256",
     "batch_rows": 10000,
     "resume": true,
     "recovery_mode": "idempotent_reconcile"
+  },
+  "expected_instances": {
+    "loaders": ["loader-a", "loader-b"],
+    "workers": ["worker-a", "worker-b"],
+    "workers_sha256": "EXPECTED_WORKERS_SHA256"
   },
   "load_assignment": [
     {
