@@ -60,6 +60,12 @@
     "workers": ["worker-a", "worker-b"],
     "workers_sha256": "EXPECTED_WORKERS_SHA256"
   },
+  "assignment": {
+    "algorithm": "balanced-contiguous-v1",
+    "source": "generated",
+    "sort_key": "instance_name",
+    "manual_override": false
+  },
   "load_assignment": [
     {
       "instance": "loader-a",

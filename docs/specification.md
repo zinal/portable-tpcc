@@ -175,7 +175,7 @@ Package собирается как:
 ```text
 tpcc-spec describe --edition <id>
 tpcc-spec materialize --edition <id> --scale <json> --seed-source <json>
-tpcc-spec derive-terminals --spec-state <json> --warehouse-ranges <json>
+tpcc-spec derive-terminals --spec-state <json> --assignment <json>
 tpcc-spec expected-data --spec-state <json> --load-plan <json>
 tpcc-spec qualify --spec-state <json> --aggregate-input <json>
 ```
@@ -333,16 +333,27 @@ C++-программы линкуют одни и те же общие библ�
 ### 6.1. Assignment
 
 Versioned spec module строит полный набор стандартных terminal identities для
-заданного scale. Оркестратор не знает формулу этого набора и работает с
-готовым assignment.
+заданного scale. Пользовательский profile перечисляет только loader/worker
+instances и hosts; ручных warehouse ranges и признака владельца DB-wide
+данных в profile нет.
 
 Assignment определяет владение **домашними терминалами** склада; он не
 ограничивает доступ транзакций к строкам других складов. Один набор домашних
-терминалов склада MUST NOT делиться между worker-процессами. Диапазоны:
+терминалов склада MUST NOT делиться между worker-процессами.
 
-- непустые и полуоткрытые `[begin, end)`;
-- не пересекаются;
-- без пропусков покрывают scale test run.
+`tpccctl` применяет `balanced-contiguous-v1` отдельно к loaders и workers:
+
+1. сортирует instances по ASCII-имени в bytewise ascending order;
+2. делит число складов на число instances;
+3. первые `warehouse_count % instance_count` instances получают на один склад
+   больше;
+4. формирует непрерывные полуоткрытые диапазоны без пересечений и пропусков;
+5. назначает DB-wide данные первому loader в том же порядке.
+
+Количество instances MUST быть положительным и не превышать число складов.
+Алгоритм, входной instance set и вычисленный assignment записываются в
+`run-config.json`/`load-plan.json` и показываются командой `plan` до любых
+side effects. Ручной override assignment в v1 отсутствует.
 
 Добавление worker изменяет только assignment. Оно MUST NOT менять logical
 scale, число терминалов, их идентичность или параметры генератора. Worker
@@ -610,6 +621,8 @@ validate → deploy → schema → load → check(after-import)
 - пути артефактов.
 
 Пароль в run-config отсутствует; сохраняется только имя environment variable.
+Profile содержит instance inventory, но не assignment; все ranges в
+run-config являются вычисленным output `balanced-contiguous-v1`.
 Функциональные параметры worker MUST NOT дублироваться в argv. Worker
 запускается как `tpcc-<dbms> worker --run-config <path> --instance <name>` и
 выбирает собственный assignment по `instance`.
@@ -953,11 +966,14 @@ flags выбранного режима. Итоговый JSON хранит sour
 `tpccctl validate` MUST отвергать:
 
 - неизвестный `apiVersion`, DBMS или поле;
-- пустой/повторный instance name;
+- instance name вне `[a-z][a-z0-9-]*` или повторное имя;
 - warehouse count вне поддерживаемого диапазона;
+- пустой список loaders/workers или число instances больше числа складов;
+- любые ручные `warehouse_ranges`, `assignment` или `owns_global_data` в
+  profile;
 - zero/negative threads, pool, duration, timeout или batch size;
-- неполное, пересекающееся или выходящее за scale assignment;
-- несколько владельцев DB-wide data shard;
+- нарушение полноты вычисленного assignment или неединственный владелец
+  DB-wide data shard;
 - reuse remote `(host, run_dir, instance)`;
 - отсутствующие artifacts;
 - secret literal вместо `password_env`;
@@ -1007,7 +1023,8 @@ isolation, schema state и физическую конфигурацию.
 - manifest-safe cleanup;
 - redaction;
 - config distribution/hash mismatch;
-- overlapping assignment rejection;
+- deterministic assignment при нечётном делении и разном порядке profile;
+- отказ при ручном или повреждённом assignment;
 - collision DB-scoped fence и stale generation из другого profile;
 - missing worker/early exit;
 - incomplete ready/armed set и uncommitted execution gate;

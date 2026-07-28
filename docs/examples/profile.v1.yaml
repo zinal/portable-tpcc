@@ -59,28 +59,14 @@ data:
 loaders:
   - name: loader-a
     host: load-a
-    warehouse_ranges:
-      - [1, 101]
-    owns_global_data: true
   - name: loader-b
     host: load-b
-    warehouse_ranges:
-      - [101, 201]
-    owns_global_data: false
 
 workers:
   - name: worker-a
     host: worker-a
-    warehouse_ranges:
-      - [1, 101]
-    threads: 4
-    max_inflight: 256
   - name: worker-b
     host: worker-b
-    warehouse_ranges:
-      - [101, 201]
-    threads: 4
-    max_inflight: 256
 
 phases:
   start_lead: 45s
@@ -94,6 +80,8 @@ phases:
 
 runtime:
   pacing: enabled
+  threads_per_worker: 4
+  max_inflight_per_worker: 256
   retry:
     max_attempts: 4
     initial_backoff: 10ms
