@@ -1,0 +1,147 @@
+{
+  "schema_version": 1,
+  "run_id": "20260728-lab-ydb-200-01",
+  "mode": "engineering",
+  "created_at": "2026-07-28T11:55:00Z",
+  "profile": {
+    "name": "lab-ydb-200",
+    "sha256": "PROFILE_SHA256"
+  },
+  "spec": {
+    "edition": "tpc-c-5.11.0",
+    "document_url": "https://www.tpc.org/tpc_documents_current_versions/pdf/tpc-c_v5.11.0.pdf",
+    "document_sha256": "TPC_C_DOCUMENT_SHA256",
+    "module_abi": 1,
+    "module_sha256": "SPEC_MODULE_SHA256",
+    "state_sha256": "SPEC_STATE_SHA256"
+  },
+  "artifacts": {
+    "worker_binary": "tpcc-ydb",
+    "worker_binary_sha256": "BINARY_SHA256",
+    "spec_binary": "tpcc-spec",
+    "spec_binary_sha256": "SPEC_BINARY_SHA256",
+    "source_revision": "GIT_COMMIT"
+  },
+  "paths": {
+    "remote_root": "/home/user/portable-tpcc",
+    "run_dir": "/home/user/portable-tpcc/runs/20260728-lab-ydb-200-01",
+    "spec_state": "/home/user/portable-tpcc/runs/20260728-lab-ydb-200-01/spec-state.json",
+    "load_plan": "/home/user/portable-tpcc/runs/20260728-lab-ydb-200-01/load-plan.json"
+  },
+  "database": {
+    "dbms": "ydb",
+    "endpoint": "grpcs://ydb.example.net:2135",
+    "database": "/Root/tpcc",
+    "path": "portable_tpcc",
+    "canonical_identity": {
+      "cluster_id": "ydb-cluster-uuid",
+      "tenant_id": "/Root",
+      "database_id": "/Root/tpcc",
+      "workload_path": "portable_tpcc"
+    },
+    "password_env": "YDB_PASSWORD",
+    "options": {
+      "compact_after_load": true,
+      "tx_mode": "serializable-rw"
+    }
+  },
+  "scale": {
+    "warehouses": 200
+  },
+  "load": {
+    "load_id": "LOAD_ID_SHA256",
+    "plan_sha256": "LOAD_PLAN_SHA256",
+    "batch_rows": 10000,
+    "write_contract": "idempotent-put-batch-v1"
+  },
+  "expected_instances": {
+    "loaders": ["loader-a", "loader-b"],
+    "workers": ["worker-a", "worker-b"],
+    "workers_sha256": "EXPECTED_WORKERS_SHA256"
+  },
+  "assignment": {
+    "algorithm": "balanced-contiguous-v1",
+    "source": "generated",
+    "sort_key": "instance_name",
+    "manual_override": false
+  },
+  "load_assignment": [
+    {
+      "instance": "loader-a",
+      "host": "load-a",
+      "warehouse_ranges": [[1, 101]],
+      "owns_global_data": true
+    },
+    {
+      "instance": "loader-b",
+      "host": "load-b",
+      "warehouse_ranges": [[101, 201]],
+      "owns_global_data": false
+    }
+  ],
+  "worker_assignment": [
+    {
+      "instance": "worker-a",
+      "host": "worker-a",
+      "warehouse_ranges": [[1, 101]],
+      "threads": 4,
+      "max_inflight": 256
+    },
+    {
+      "instance": "worker-b",
+      "host": "worker-b",
+      "warehouse_ranges": [[101, 201]],
+      "threads": 4,
+      "max_inflight": 256
+    }
+  ],
+  "phase_policy": {
+    "start_lead_ms": 45000,
+    "ramp_up_ms": 300000,
+    "measurement_ms": 1800000,
+    "transaction_drain_ms": 30000,
+    "async_work_drain": "from_spec_state",
+    "stop_grace_ms": 15000,
+    "max_clock_skew_ms": 100,
+    "max_clock_uncertainty_ms": 25,
+    "max_clock_drift_ms": 25
+  },
+  "runtime": {
+    "pacing": "enabled",
+    "retry": {
+      "max_attempts": 4,
+      "initial_backoff_ms": 10,
+      "max_backoff_ms": 500,
+      "jitter": "full",
+      "retry_ambiguous_commit": false
+    },
+    "histogram": {
+      "encoding": "hdr-v1",
+      "unit": "us",
+      "lowest": 1,
+      "highest": 120000000,
+      "significant_figures": 3
+    }
+  },
+  "checks": {
+    "after_import": true,
+    "after_run": true,
+    "fail_fast": true
+  },
+  "collect": {
+    "include_events": true,
+    "include_logs": true,
+    "require_sealed_artifacts": true
+  },
+  "failure_policy": {
+    "missing_worker": "fail",
+    "lost_database_fence": "fail",
+    "unsealed_artifact": "fail"
+  },
+  "deviations": [
+    {
+      "code": "fixed_generator_seed",
+      "reason": "repeatable cross-DB engineering comparison"
+    }
+  ]
+}

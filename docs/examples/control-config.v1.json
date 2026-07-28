@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "run_id": "20260728-lab-ydb-200-01",
+  "profile": {
+    "name": "lab-ydb-200",
+    "sha256": "PROFILE_SHA256"
+  },
+  "ssh": {
+    "user": "tpcc",
+    "use_agent": true,
+    "known_hosts": "/home/operator/.ssh/known_hosts",
+    "connect_timeout_ms": 10000
+  },
+  "hosts": {
+    "load-a": {"address": "10.10.0.21"},
+    "load-b": {"address": "10.10.0.22"},
+    "worker-a": {"address": "10.10.0.31"},
+    "worker-b": {"address": "10.10.0.32"}
+  },
+  "paths": {
+    "local_artifacts": "/home/user/portable-tpcc/srv/dist",
+    "remote_root": "/home/user/portable-tpcc",
+    "result_root": "/home/user/portable-tpcc/srv/results",
+    "state_dir": "/home/operator/.local/state/tpccctl"
+  },
+  "deploy": {
+    "transport": "tar-over-ssh",
+    "verify_sha256": true
+  },
+  "secrets": {
+    "database_password_env": "YDB_PASSWORD"
+  }
+}
