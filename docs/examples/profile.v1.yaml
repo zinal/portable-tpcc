@@ -1,0 +1,109 @@
+apiVersion: portable-tpcc/v1
+kind: TpccRunProfile
+
+metadata:
+  name: lab-ydb-200
+
+mode: engineering
+
+ssh:
+  user: tpcc
+  use_agent: true
+  known_hosts: ~/.ssh/known_hosts
+  connect_timeout: 10s
+
+hosts:
+  control:
+    address: 10.10.0.10
+  load-a:
+    address: 10.10.0.21
+  load-b:
+    address: 10.10.0.22
+  worker-a:
+    address: 10.10.0.31
+  worker-b:
+    address: 10.10.0.32
+
+paths:
+  local_artifacts: ./dist
+  remote_root: /opt/portable-tpcc
+  result_root: ./results
+  state_dir: ~/.local/state/tpccctl
+
+database:
+  dbms: ydb
+  endpoint: grpcs://ydb.example.net:2135
+  database: /Root/tpcc
+  path: portable_tpcc
+  password_env: YDB_TOKEN
+  options:
+    tx_mode: serializable-rw
+    compact_after_load: true
+
+scale:
+  warehouses: 200
+  spec_edition: tpc-c-current
+
+data:
+  # Явный seed разрешён только в engineering.
+  seed: 731910246
+  batch_rows: 10000
+  resume: true
+
+loaders:
+  - name: loader-a
+    host: load-a
+    warehouse_ranges:
+      - [1, 101]
+    owns_global_data: true
+  - name: loader-b
+    host: load-b
+    warehouse_ranges:
+      - [101, 201]
+    owns_global_data: false
+
+workers:
+  - name: worker-a
+    host: worker-a
+    warehouse_ranges:
+      - [1, 101]
+    threads: 4
+    max_inflight: 256
+  - name: worker-b
+    host: worker-b
+    warehouse_ranges:
+      - [101, 201]
+    threads: 4
+    max_inflight: 256
+
+phases:
+  start_lead: 45s
+  ramp_up: 5m
+  measurement: 30m
+  transaction_drain: 30s
+  async_work_drain: 80s
+  stop_grace: 15s
+  max_clock_skew_ms: 100
+
+runtime:
+  pacing: enabled
+  retry:
+    max_attempts: 4
+    initial_backoff: 10ms
+    max_backoff: 500ms
+    jitter: full
+  histogram:
+    unit: us
+    lowest: 1
+    highest: 120000000
+    significant_figures: 3
+
+checks:
+  after_import: true
+  after_run: true
+  fail_fast: true
+
+collect:
+  include_events: true
+  include_logs: true
+  post_command: ""
