@@ -18,9 +18,9 @@
     "worker-b": {"address": "10.10.0.32"}
   },
   "paths": {
-    "local_artifacts": "/srv/portable-tpcc/dist",
+    "local_artifacts": "/home/user/portable-tpcc/srv/dist",
     "remote_root": "/home/user/portable-tpcc",
-    "result_root": "/srv/portable-tpcc/results",
+    "result_root": "/home/user/portable-tpcc/srv/results",
     "state_dir": "/home/operator/.local/state/tpccctl"
   },
   "deploy": {
