@@ -447,15 +447,15 @@ Connector/C, local index syntax, timeout variables и catalog queries остаю
 Оркестратор строит `load-plan.json`:
 
 - сначала canonical `plan_payload` только из assignments и batches;
-- `payload_sha256` — hash этого payload;
+- `plan_payload_sha256` — hash всего plan payload;
 - `load_id` — SHA-256 canonical tuple
-  `(run_id, payload_sha256, spec-state SHA, loader binary SHA)`;
-- итоговый document содержит payload, `payload_sha256` и `load_id`, после чего
-  отдельно вычисляется hash всего `load-plan.json`;
+  `(run_id, plan_payload_sha256, spec-state SHA, loader binary SHA)`;
+- итоговый document содержит payload, `plan_payload_sha256` и `load_id`, после
+  чего отдельно вычисляется hash всего `load-plan.json`;
 - ровно один shard владеет DB-wide данными, определёнными spec module;
 - warehouse-scoped данные делятся непересекающимися диапазонами складов;
-- batch имеет `batch_id`, диапазон ключей, число строк и SHA-256 канонических
-  данных;
+- batch имеет `batch_id`, диапазон ключей, число строк и собственный
+  `batch_payload_sha256` канонических строк;
 - assignment не зависит от порядка запуска.
 
 ### 7.2. Возобновление
@@ -463,7 +463,7 @@ Connector/C, local index syntax, timeout variables и catalog queries остаю
 У loader есть один DBMS-neutral контракт:
 
 ```text
-PutBatch(load_id, batch_id, table, key_range, rows, payload_sha256)
+PutBatch(load_id, batch_id, table, key_range, rows, batch_payload_sha256)
     -> completed | outcome_unknown | failed
 ```
 
@@ -485,7 +485,7 @@ PutBatch(load_id, batch_id, table, key_range, rows, payload_sha256)
 - logical/technical keys стабильны;
 - server-generated timestamps, sequences и другие меняющиеся defaults при
   загрузке запрещены;
-- `batch_id` связан с `load_id`, key range и `payload_sha256`;
+- `batch_id` связан с `load_id`, key range и `batch_payload_sha256`;
 - другой payload для того же batch identity является `integrity`;
 - таблица без подходящего logical key получает детерминированный служебный
   ключ либо реализуется адаптером через staging + replace-range.
