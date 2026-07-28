@@ -485,8 +485,12 @@ Connector/C, local index syntax, timeout variables и catalog queries остаю
 
 Оркестратор строит `load-plan.json`:
 
-- `load_id` — SHA-256 canonical tuple `(run_id, plan, spec-state, generator,
-  loader binary)`;
+- сначала canonical `plan_payload` только из assignments и batches;
+- `payload_sha256` — hash этого payload;
+- `load_id` — SHA-256 canonical tuple
+  `(run_id, payload_sha256, spec-state SHA, loader binary SHA)`;
+- итоговый document содержит payload, `payload_sha256` и `load_id`, после чего
+  отдельно вычисляется hash всего `load-plan.json`;
 - ровно один shard владеет DB-wide данными, определёнными spec module;
 - warehouse-scoped данные делятся непересекающимися диапазонами складов;
 - batch имеет `batch_id`, диапазон ключей, число строк и SHA-256 канонических
