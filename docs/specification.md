@@ -634,7 +634,7 @@ parameters for runtime hosts.
 Runtime host:
 
 ```text
-/opt/portable-tpcc/
+/home/user/portable-tpcc/
 ├── .tpccctl/deploy-manifest.json
 ├── bin/
 ├── schema/

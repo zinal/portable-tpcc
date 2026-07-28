@@ -33,7 +33,7 @@ hosts:
 
 paths:
   local_artifacts: ./dist
-  remote_root: /opt/portable-tpcc
+  remote_root: /home/user/portable-tpcc
   result_root: ./results
   state_dir: ~/.local/state/tpccctl
 

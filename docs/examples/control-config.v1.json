@@ -19,7 +19,7 @@
   },
   "paths": {
     "local_artifacts": "/srv/portable-tpcc/dist",
-    "remote_root": "/opt/portable-tpcc",
+    "remote_root": "/home/user/portable-tpcc",
     "result_root": "/srv/portable-tpcc/results",
     "state_dir": "/home/operator/.local/state/tpccctl"
   },

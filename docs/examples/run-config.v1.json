@@ -23,10 +23,10 @@
     "source_revision": "GIT_COMMIT"
   },
   "paths": {
-    "remote_root": "/opt/portable-tpcc",
-    "run_dir": "/opt/portable-tpcc/runs/20260728-lab-ydb-200-01",
-    "spec_state": "/opt/portable-tpcc/runs/20260728-lab-ydb-200-01/spec-state.json",
-    "load_plan": "/opt/portable-tpcc/runs/20260728-lab-ydb-200-01/load-plan.json"
+    "remote_root": "/home/user/portable-tpcc",
+    "run_dir": "/home/user/portable-tpcc/runs/20260728-lab-ydb-200-01",
+    "spec_state": "/home/user/portable-tpcc/runs/20260728-lab-ydb-200-01/spec-state.json",
+    "load_plan": "/home/user/portable-tpcc/runs/20260728-lab-ydb-200-01/load-plan.json"
   },
   "database": {
     "dbms": "ydb",
