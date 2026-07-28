@@ -1,0 +1,205 @@
+#include "propagate_change_flags.h"
+
+#include <devtools/ymake/compact_graph/iter.h>
+#include <devtools/ymake/compact_graph/iter_direct_peerdir.h>
+#include <devtools/ymake/compact_graph/query.h>
+
+#include <devtools/ymake/diag/trace.h>
+
+namespace NPropagateChangeFlags {
+    constexpr TNodeId InvalidLoop = static_cast<TNodeId>(-1);
+
+    struct TVisitorData : public TVisitorStateItem<TEntryStatsData> {
+        using TItemDebug = TVisitorStateItemBaseDebug;
+
+        TNodeId LoopId = InvalidLoop;
+
+        using TVisitorStateItem::TVisitorStateItem;
+    };
+
+    struct TStateItem : public TGraphIteratorStateItemBase<false> {
+        using TGraphIteratorStateItemBase::TGraphIteratorStateItemBase;
+        bool WasEntered = false;
+        TNodeId ModuleNode = TNodeId::Invalid;
+    };
+
+    class TVisitor: public TDirectPeerdirsVisitor<TVisitorData, TStateItem> {
+    public:
+        using TBase = TDirectPeerdirsVisitor<TVisitorData, TStateItem>;
+
+    public:
+        TVisitor(TDepGraph& graph, const TGraphLoops& loops)
+            : Graph_(graph)
+            , Loops_(loops)
+        {
+        }
+
+        bool AcceptDep(TState& state) {
+            const auto& dep = state.NextDep();
+
+            if (IsPropertyFileDep(dep)) {
+                return true;
+            }
+            if (IsTooldirDep(dep)) {
+                return false;
+            }
+            if (!IsLoopGenDep(dep)) {
+                return false;
+            }
+
+            return TBase::AcceptDep(state);
+        }
+
+        bool Enter(TState& state) {
+            bool fresh = TBase::Enter(state);
+            TStateItem& stateItem = state.Top();
+            stateItem.WasEntered = fresh;
+            EnsureLoopId(stateItem);
+            SetModuleNode(stateItem, state);
+
+            if (fresh && state.TopNode()->NodeType == EMNT_NonParsedFile) {
+                auto moduleNode = Graph_[stateItem.ModuleNode];
+                state.TopNode()->State.PropagatePartialChangesFrom(moduleNode->State);
+            }
+
+            return fresh;
+        }
+
+        void EnsureLoopId(TStateItem& stateItem) {
+            if (!stateItem.WasEntered) {
+                Y_ASSERT(CurEnt->LoopId != InvalidLoop);
+                return;
+            }
+
+            if (const auto* loop = Loops_.FindLoopForNode(stateItem.Node().Id())) {
+                CurEnt->LoopId = *loop;
+                Y_ASSERT(CurEnt->LoopId != TNodeId::Invalid);
+            } else {
+                CurEnt->LoopId = TNodeId::Invalid;
+            }
+        }
+
+        void SetModuleNode(TStateItem& stateItem, TState& state) {
+            if (IsModuleType(stateItem.Node()->NodeType)) {
+                stateItem.ModuleNode = stateItem.Node().Id();
+            } else {
+                if (state.Size() > 1) {
+                    stateItem.ModuleNode = state.Parent()->ModuleNode;
+                }
+            }
+        }
+
+        void Leave(TState& state) {
+            TBase::Leave(state);
+
+            auto chldStateItem = state.Top();
+
+            auto prntNode = state.ParentNode();
+            auto chldNode = state.TopNode();
+
+            bool justFinishedChild = chldStateItem.WasEntered;
+            bool makeChildRecursive = justFinishedChild;
+            bool propagateChanges = true;
+
+            if (state.Size() < 2) {
+                propagateChanges = false;
+
+            } else {
+                TVisitorData* chldData = VisitorEntry(chldStateItem);
+                TVisitorData* prntData = VisitorEntry(*++state.begin());
+
+                TNodeId chldLoop = chldData->LoopId;
+                TNodeId prntLoop = prntData->LoopId;
+
+                bool inSameLoop = (chldLoop != TNodeId::Invalid && chldLoop == prntLoop);
+                bool justFinishedLoop = (chldLoop != TNodeId::Invalid && chldLoop != prntLoop) && justFinishedChild;
+
+                if (inSameLoop) {
+                    // Do nothing. All loop nodes will be processed at once when the loop is finished.
+                    makeChildRecursive = false;
+                    propagateChanges = false;
+                }
+
+                if (justFinishedLoop) {
+                    ProcessLoop(chldLoop);
+
+                    // ProcessLoop already set Recursive on all loop nodes
+                    makeChildRecursive = false;
+                }
+
+            }
+
+            if (makeChildRecursive) {
+                chldNode->State.SetChangedFlagsRecursiveScope();
+            }
+
+            if (propagateChanges) {
+                prntNode->State.PropagateChangesFrom(chldNode->State);
+            }
+        }
+
+    private:
+        void ProcessLoop(TNodeId loopId) {
+            TNodeState loopState;
+            loopState.SetLocalChanges(false, false);
+
+            for (TNodeId id : Loops_[loopId]) {
+                loopState.PropagatePartialChangesFrom(Graph_.Get(id)->State);
+            }
+
+            loopState.SetChangedFlagsRecursiveScope();
+
+            for (TNodeId id : Loops_[loopId]) {
+                TNodeState& nodeState = Graph_.Get(id)->State;
+                nodeState.PropagateChangesFrom(loopState);
+                nodeState.SetChangedFlagsRecursiveScope();
+            }
+        }
+
+        TDepGraph& Graph_;
+        const TGraphLoops& Loops_;
+    };
+}
+
+void PropagateChangeFlags(TDepGraph& graph, const TGraphLoops& loops, TVector<TTarget>& startTargets) {
+    NPropagateChangeFlags::TVisitor visitor{graph, loops};
+    IterateAll(graph, startTargets, visitor);
+
+    bool hasStructuralChanges = false;
+    bool hasContentChanges = false;
+    for (auto target : startTargets) {
+        auto node = graph.Get(target.Id);
+        hasStructuralChanges |= node->State.HasRecursiveStructuralChanges();
+        hasContentChanges |= node->State.HasRecursiveContentChanges();
+    }
+
+    NEvent::TGraphChanges ev;
+    ev.SetHasStructuralChanges(hasStructuralChanges);
+    ev.SetHasContentChanges(hasContentChanges);
+    FORCE_TRACE(U, ev);
+}
+
+namespace NSetLocalChangesForGrandBypass {
+    using TStateItem = TGraphIteratorStateItemBase<false>;
+
+    class TVisitor: public TDirectPeerdirsVisitor<TEntryStats, TStateItem> {
+    public:
+        using TBase = TDirectPeerdirsVisitor<TEntryStats, TStateItem>;
+
+    public:
+        bool Enter(TState& state) {
+            bool fresh  = TBase::Enter(state);
+
+            if (fresh) {
+                state.TopNode()->State.SetLocalChanges(false, false);
+            }
+
+            return fresh;
+        }
+    };
+}
+
+void SetLocalChangesForGrandBypass(TDepGraph& graph, const TVector<TTarget>& startTargets) {
+    NSetLocalChangesForGrandBypass::TVisitor visitor;
+    IterateAll(graph, startTargets, visitor);
+}

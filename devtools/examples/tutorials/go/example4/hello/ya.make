@@ -1,0 +1,11 @@
+GO_PROGRAM()
+
+BUILD_ONLY_IF(CGO_ENABLED)
+
+SRCS(say_hello.cpp)
+
+CGO_SRCS(main.go)
+
+USE_UTIL()
+
+END()

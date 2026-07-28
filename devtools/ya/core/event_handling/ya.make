@@ -1,0 +1,20 @@
+PY23_LIBRARY()
+
+PEERDIR(
+    contrib/python/six
+    devtools/ya/core/error
+    devtools/ya/build/evlog
+)
+
+PY_SRCS(
+    __init__.py
+    base_subscriber.py
+    common_subscribers.py
+    event_queue.py
+)
+
+END()
+
+RECURSE_FOR_TESTS(
+    tests
+)

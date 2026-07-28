@@ -1,0 +1,146 @@
+from devtools.yamaker import fileutil
+from devtools.yamaker import pathutil
+from devtools.yamaker.platform_macros import make_llvm_nixattr
+from devtools.yamaker.modules import Library, Switch, Linkable
+from devtools.yamaker.project import NixSourceProject
+
+EXCEPTION_ONLY_SRCS = ["src/cxa_exception.cpp", "src/cxa_personality.cpp"]
+NOEXCEPT_ONLY_SRCS = ["src/cxa_noexception.cpp"]
+RTTI_ONLY_SRCS = ["src/private_typeinfo.cpp"]
+
+
+def post_install(self):
+    # libcxxabi-parts is built from libcxxabi sources
+    # Update VERSION and ORIGINAL_SOURCE values upon libcxxabi update.
+    fileutil.re_sub_file(
+        f"{self.ctx.arc}/contrib/libs/cxxsupp/libcxxabi-parts/ya.make",
+        r"ORIGINAL_SOURCE\(.*\)",
+        f"ORIGINAL_SOURCE({self.source_url})",
+    )
+
+    fileutil.re_sub_file(
+        f"{self.ctx.arc}/contrib/libs/cxxsupp/libcxxabi-parts/ya.make",
+        r"VERSION\(.*\)",
+        f"VERSION({self.version})",
+    )
+
+    self.yamakes["."] = self.module(
+        Library,
+        NO_UTIL=True,
+        NO_RUNTIME=True,
+        NO_COMPILER_WARNINGS=True,
+        # Files are distributed between libcxxabi and libcxx in a weird manner
+        # but we can not peerdir the latter to avoid loops (see below)
+        # FIXME: sort includes open moving glibcxx-shims into its own dir
+        SRCS=fileutil.files(self.dstdir, rel=True, test=pathutil.is_source),
+        ADDINCL=[
+            f"{self.arcdir}/include",
+            "contrib/libs/cxxsupp/libcxx/include",
+            # libcxxabi includes libcxx's private "include/refstring.h" header from src subdirectory
+            "contrib/libs/cxxsupp/libcxx/src",
+        ],
+        PEERDIR=[
+            "contrib/libs/libunwind",
+        ],
+        CFLAGS=[
+            "-D_LIBCPP_BUILDING_LIBRARY",
+            "-D_LIBCXXABI_BUILDING_LIBRARY",
+        ],
+    )
+
+    with self.yamakes["."] as libcxxabi:
+
+        # make that if from https://github.com/llvm/llvm-project/blob/2984a28612bb8c56cd85d858b00319a24c95409a/libcxxabi/src/CMakeLists.txt#L28
+        for src in EXCEPTION_ONLY_SRCS:
+            libcxxabi.SRCS.remove(src)
+        for src in NOEXCEPT_ONLY_SRCS:
+            libcxxabi.SRCS.remove(src)
+        libcxxabi.after(
+            "SRCS",
+            Switch(
+                {
+                    "NO_CXX_EXCEPTIONS": Linkable(SRCS=NOEXCEPT_ONLY_SRCS),
+                    "default": Linkable(SRCS=EXCEPTION_ONLY_SRCS),
+                }
+            ),
+        )
+
+        for src in RTTI_ONLY_SRCS:
+            libcxxabi.SRCS.remove(src)
+
+        libcxxabi.after(
+            "SRCS",
+            Switch(
+                {
+                    "NO_CXX_RTTI": Linkable(BUILD_ONLY_IF="NO_CXX_EXCEPTIONS"),
+                    "default": Linkable(SRCS=RTTI_ONLY_SRCS),
+                }
+            ),
+        )
+
+        libcxxabi.after(
+            "SRCS",
+            """
+            IF (OS_ANDROID)
+                # __cxa_thread_atexit_impl was introduced in Android 6.0
+                # https://android.googlesource.com/platform/bionic/+/main/libc/libc.map.txt#16
+                IF (ANDROID_API >= 23)
+                    CFLAGS(
+                        -DHAVE___CXA_THREAD_ATEXIT_IMPL
+                    )
+                ENDIF()
+            ELSE()
+                # As of 1.2.3, musl libc does not provide __cxa_thread_atexit_impl
+                IF (NOT MUSL)
+                    CFLAGS(
+                        -DHAVE___CXA_THREAD_ATEXIT_IMPL
+                    )
+                ENDIF()
+            ENDIF()
+            """,
+        )
+
+        libcxxabi.after(
+            "SRCS",
+            """
+            IF (OS_EMSCRIPTEN AND ARCH_WASM64)
+                CFLAGS(
+                    -D_LIBCPP_SAFE_STATIC=
+                    -D_LIBCXXABI_DTOR_FUNC=
+                    -D__WASM_EXCEPTIONS__
+                )
+            ELSEIF (OS_EMSCRIPTEN AND ARCH_WASM32)
+                CFLAGS(
+                    -D_LIBCPP_SAFE_STATIC=
+                    -D_LIBCXXABI_DTOR_FUNC=
+                    -D__WASM_EXCEPTIONS__
+                )
+            ENDIF()
+            """,
+        )
+
+        libcxxabi.PEERDIR.add("library/cpp/sanitizer/include")
+
+
+libcxxabi = NixSourceProject(
+    owners=["g:cpp-contrib"],
+    arcdir="contrib/libs/cxxsupp/libcxxabi",
+    # nixos-24.05 merged libcxx and libcxxabi.
+    # Use the primer and override sourceRoot in override.nix as aworkaround.
+    nixattr=make_llvm_nixattr("libcxx"),
+    copy_sources=[
+        "include/__cxxabi_config.h",
+        "include/cxxabi.h",
+        "src/*.cpp",
+        "src/*.h",
+        "src/demangle/*.cpp",
+        "src/demangle/*.def",
+        "src/demangle/*.h",
+    ],
+    disable_includes=[
+        "aix_state_tab_eh.inc",
+        "ptrauth.h",
+        "sys/futex.h",
+    ],
+    post_install=post_install,
+)

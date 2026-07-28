@@ -1,0 +1,824 @@
+{
+    "$schema": "http://json-schema.org/draft-04/schema#",
+    "title": "Package",
+    "description": "Package properties and data files",
+    "type": "object",
+    "definitions": {
+        "build": {
+            "description": "Build properties",
+            "type": "object",
+            "properties": {
+                "targets": {
+                    "description": "Build targets",
+                    "type": "array",
+                    "items": {
+                        "description": "Build target",
+                        "type": "string",
+                        "uniqueItems": true
+                    }
+                },
+                "build_type": {
+                    "description": "Build type (debug, release, etc.)",
+                    "type": "string"
+                },
+                "sanitize": {
+                    "description": "Sanitizer (memory, address, etc.)",
+                    "type": "string"
+                },
+                "sanitizer_flags": {
+                    "description": "Sanitizer flags",
+                    "type": "string"
+                },
+                "race": {
+                    "description": "Golang race sanitizer",
+                    "type": "boolean"
+                },
+                "pgo_use": {
+                    "description": "Build with PGO profiles",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "lto": {
+                    "description": "Build with LTO",
+                    "type": "boolean"
+                },
+                "thinlto": {
+                    "description": "Build with ThinLTO (-flto=thin flag)",
+                    "type": "boolean"
+                },
+                "musl": {
+                    "description": "Build with MUSL",
+                    "type": "boolean"
+                },
+                "maven-export": {
+                    "description": "Create pom.xml file (java build)",
+                    "type": "boolean"
+                },
+                "sources": {
+                    "description": "Create jar with sources (java build)",
+                    "type": "boolean"
+                },
+                "add-result": {
+                    "description": "Process selected build output as a result",
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "uniqueItems": true
+                    }
+                },
+                "target-platforms": {
+                    "description": "Target platforms",
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "uniqueItems": true
+                    }
+                },
+                "force_build_depends": {
+                    "description": "Build targets reachable by RECURSE_FOR_TESTS and DEPENDS macros",
+                    "type": "boolean"
+                },
+                "ignore_recurses": {
+                    "description": "Do not build by RECURSES",
+                    "type": "boolean"
+                },
+                "sanitize_coverage": {
+                    "description": "Enable sanitize coverage",
+                    "type": "string"
+                },
+                "use_afl": {
+                    "description": "Use AFL instead of libFuzzer",
+                    "type": "boolean"
+                },
+                "flags": {
+                    "description": "Build flags",
+                    "type": "array",
+                    "items": {
+                        "description": "Build flag",
+                        "type": "object",
+                        "properties": {
+                            "name": {
+                                "description": "Flag name",
+                                "type": "string"
+                            },
+                            "value": {
+                                "description": "Flag value",
+                                "type": "string"
+                            }
+                        },
+                        "required": ["name", "value"],
+                        "additionalProperties": false
+                    }
+                }
+            },
+            "required": ["targets"],
+            "additionalProperties": false
+        },
+        "buildOutput": {
+            "type": "object",
+            "properties": {
+                "type": { "enum": ["BUILD_OUTPUT"] },
+                "build_key": {
+                    "type": "string"
+                },
+                "path": {
+                    "type": "string"
+                },
+                "files": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "uniqueItems": true
+                    }
+                },
+                "exclude": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "uniqueItems": true
+                    }
+                },
+                "untar": {
+                    "type": "boolean"
+                }
+            },
+            "required": ["type", "path"],
+            "additionalProperties": false
+        },
+        "arcadia": {
+            "type": "object",
+            "properties": {
+                "type": { "enum": ["ARCADIA"] },
+                "path": {
+                    "type": "string"
+                },
+                "files": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "uniqueItems": true
+                    }
+                },
+                "exclude": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "uniqueItems": true
+                    }
+                }
+            },
+            "required": ["type", "path"],
+            "additionalProperties": false
+        },
+        "directory": {
+            "type": "object",
+            "properties": {
+                "type": { "enum": ["DIRECTORY"] }
+            },
+            "required": ["type"],
+            "additionalProperties": false
+        },
+        "relative": {
+            "type": "object",
+            "properties": {
+                "type": { "enum": ["RELATIVE"] },
+                "path": {
+                    "type": "string"
+                },
+                "files": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "uniqueItems": true
+                    }
+                },
+                "exclude": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "uniqueItems": true
+                    }
+                },
+                "symlinks": {
+                    "type": "boolean"
+                }
+            },
+            "required": ["type", "path"],
+            "additionalProperties": false
+        },
+        "symlink": {
+            "type": "object",
+            "properties": {
+                "type": { "enum": ["SYMLINK"] }
+            },
+            "required": ["type"],
+            "additionalProperties": false
+        },
+        "inline": {
+            "type": "object",
+            "properties": {
+                "type": { "enum": ["INLINE"] },
+                "content": {
+                    "type": "string"
+                }
+            },
+            "required": ["type", "content"],
+            "additionalProperties": false
+        },
+        "sandboxResource": {
+            "type": "object",
+            "properties": {
+                "type": { "enum": ["SANDBOX_RESOURCE"] },
+                "id": {
+                    "type": ["integer", "string"]
+                },
+                "path": {
+                    "type": "string"
+                },
+                "files": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "uniqueItems": true
+                    }
+                },
+                "exclude": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "uniqueItems": true
+                    }
+                },
+                "symlinks": {
+                    "type": "boolean"
+                },
+                "untar": {
+                    "type": "boolean"
+                }
+            },
+            "required": ["type", "id"],
+            "additionalProperties": false
+        },
+        "temp": {
+            "type": "object",
+            "properties": {
+                "type": { "enum": ["TEMP"] },
+                "path": {
+                    "type": "string"
+                },
+                "files": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "uniqueItems": true
+                    }
+                },
+                "exclude": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "uniqueItems": true
+                    }
+                }
+            },
+            "required": ["type", "path"],
+            "additionalProperties": false
+        },
+        "attributes": {
+            "type": "object",
+            "properties": {
+                "owner": {
+                    "description": "Change owner",
+                    "type": "object",
+                    "properties": {
+                        "value": {
+                            "description": "File owner (name or ID)",
+                            "type": ["string", "integer"]
+                        },
+                        "recursive": {
+                            "description": "Operate recursively",
+                            "type": "boolean"
+                        }
+                    },
+                    "required": ["value"],
+                    "additionalProperties": false
+                },
+                "group": {
+                    "description": "Change group",
+                    "type": "object",
+                    "properties": {
+                        "value": {
+                            "description": "File group (name or ID)",
+                            "type": ["string", "integer"]
+                        },
+                        "recursive": {
+                            "description": "Operate recursively",
+                            "type": "boolean"
+                        }
+                    },
+                    "required": ["value"],
+                    "additionalProperties": false
+                },
+                "mode": {
+                    "description": "Change mode",
+                    "type": "object",
+                    "properties": {
+                        "value": {
+                            "description": "File mode bits, chmod(1) compatible",
+                            "type": "string"
+                        },
+                        "recursive": {
+                            "description": "Operate recursively",
+                            "type": "boolean"
+                        }
+                    },
+                    "required": ["value"],
+                    "additionalProperties": false
+                }
+            },
+            "additionalProperties": false
+        }
+    },
+    "properties": {
+        "meta": {
+            "description": "Package meta information",
+            "type": "object",
+            "properties": {
+                "name": {
+                    "description": "The unique name of a package",
+                    "type": "string"
+                },
+                "version": {
+                    "description": "Package version",
+                    "type": "string",
+                    "default": "{revision}"
+                },
+                "description": {
+                    "description": "Package description",
+                    "type": "string"
+                },
+                "default-format": {
+                    "description": "Package default format: aar, tar, docker, rpm, debian, wheel, npm.",
+                    "type": "string",
+                    "enum": ["aar", "tar", "docker", "rpm", "debian", "wheel", "npm", "raw-package"]
+                },
+                "maintainer": {
+                    "description": "Package maintainer",
+                    "type": "string"
+                },
+                "homepage": {
+                    "description": "Package homepage",
+                    "type": "string",
+                    "pattern": "^http.+"
+                },
+                "pre-depends": {
+                    "description": "Package pre-dependencies",
+                    "type": "array",
+                    "items": {
+                        "description": "Dependent package name (debian/control syntax for Pre-depends)",
+                        "type": "string",
+                        "uniqueItems": true
+                    }
+                },
+                "depends": {
+                    "description": "Package dependencies",
+                    "type": "array",
+                    "items": {
+                        "description": "Dependent package name (debian/control syntax for Depends)",
+                        "type": "string",
+                        "uniqueItems": true
+                    }
+                },
+                "provides": {
+                    "description": "Virtual package list",
+                    "type": "array",
+                    "items": {
+                        "description": "Package name (debian/control syntax for Provides)",
+                        "type": "string",
+                        "uniqueItems": true
+                    }
+                },
+                "conflicts": {
+                    "description": "Conflict package list",
+                    "type": "array",
+                    "items": {
+                        "description": "Package name (debian/control syntax for Conflicts)",
+                        "type": "string",
+                        "uniqueItems": true
+                    }
+                },
+                "replaces": {
+                    "description": "Replacement package list",
+                    "type": "array",
+                    "items": {
+                        "description": "Package name (debian/control syntax for Replaces)",
+                        "type": "string",
+                        "uniqueItems": true
+                    }
+                },
+                "breaks": {
+                    "type": "array",
+                    "items": {
+                        "description": "Package name (debian/control syntax for Breaks)",
+                        "type": "string",
+                        "uniqueItems": true
+                    }
+                },
+                "build-depends": {
+                    "description": "Package build-dependencies",
+                    "type": "array",
+                    "items": {
+                        "description": "Dependent package name (debian/control syntax for Build-Depends)",
+                        "type": "string",
+                        "uniqueItems": true
+                    }
+                },
+                "section": {
+                    "type": "string"
+                },
+                "source": {
+                    "type": "string"
+                },
+                "noconffiles_all": {
+                    "description": "Set dh_noconffiles --all (debian only, default: true)",
+                    "type": "boolean",
+                    "default": true
+                },
+                "rpm_license": {
+                    "description": "license name",
+                    "type": "string"
+                },
+                "rpm_release": {
+                    "description": "release",
+                    "type": ["string", "integer"]
+                },
+                "rpm_buildarch": {
+                    "description": "build architecture",
+                    "type": "string"
+                },
+                "package_filename": {
+                    "description": "Specify custom package filename with pattern. For more info see https://docs.yandex-team.ru/ya-make/usage/ya_package/json#params",
+                    "type": "string"
+                }
+            },
+            "required": ["name", "maintainer"],
+            "additionalProperties": false
+        },
+        "include": {
+            "description": "Included package files",
+            "type": "array",
+            "items": {
+                "oneOf": [
+                    {
+                        "description": "Arcadia-relative path to the included package",
+                        "type": "string"
+                    },
+                    {
+                        "type": "object",
+                        "properties": {
+                            "package": {
+                                "description": "Arcadia-relative path to the included package",
+                                "type": "string"
+                            },
+                            "targets_root": {
+                                "type": "string"
+                            }
+                        },
+                        "required": ["package"],
+                        "additionalProperties": false
+                    }
+                ],
+                "uniqueItems": true
+            }
+        },
+        "build": {
+            "oneOf": [
+                { "$ref": "#/definitions/build" },
+                {
+                    "type": "object",
+                    "additionalProperties": {
+                        "$ref": "#/definitions/build"
+                    }
+                }
+            ]
+        },
+        "data": {
+            "description": "Package data files",
+            "type": "array",
+            "items": {
+                "description": "Data item (file, directory, symlink, etc)",
+                "type": "object",
+                "properties": {
+                    "source": {
+                        "description": "Where to get it",
+                        "type": "object",
+                        "oneOf": [
+                            {"$ref": "#/definitions/buildOutput"},
+                            {"$ref": "#/definitions/arcadia"},
+                            {"$ref": "#/definitions/directory"},
+                            {"$ref": "#/definitions/relative"},
+                            {"$ref": "#/definitions/symlink"},
+                            {"$ref": "#/definitions/inline"},
+                            {"$ref": "#/definitions/sandboxResource"},
+                            {"$ref": "#/definitions/temp"}
+                        ]
+                    },
+                    "destination": {
+                        "description": "Where to install it on a target host",
+                        "type": "object",
+                        "properties": {
+                            "path": {
+                                "description": "Installation path",
+                                "type": "string",
+                                "pattern": "^\/.*"
+                            },
+                            "archive": {
+                                "type": "string",
+                                "pattern": "^\/.*"
+                            },
+                            "target": {
+                                "description": "Symlink target",
+                                "type": "string"
+                            },
+                            "attributes": {
+                                "$ref": "#/definitions/attributes"
+                            },
+                            "temp": {
+                                "type": "boolean"
+                            }
+                        },
+                        "anyOf": [
+                            {
+                                "required": ["path"]
+                            },
+                            {
+                                "required": ["archive"]
+                            }
+                        ],
+                        "additionalProperties": false
+                    },
+                    "description": {
+                        "description": "Optional comment about data item purpose",
+                        "type": "string"
+                    }
+                },
+                "required": ["source", "destination"],
+                "additionalProperties": false
+            },
+            "uniqueItems": true
+        },
+        "params": {
+            "description": "Fixed 'ya package' parameters",
+            "type": "object",
+            "properties": {
+                "arch_all": {
+                    "description": "Use 'Architecture: all' in debian",
+                    "type": "boolean"
+                },
+                "artifactory": {
+                    "description": "Build package and upload it to artifactory",
+                    "type": "boolean"
+                },
+                "compress_archive": {
+                    "description": "Don't compress tar archive (for --tar only)",
+                    "type": "boolean"
+                },
+                "compression_filter": {
+                    "description": "Specifies compression filter (gzip/zstd)",
+                    "type": "string",
+                    "enum": ["gzip", "zstd"]
+                },
+                "compression_level": {
+                    "description": "Specifies compression level (0-9 for gzip [6 is default], 0-22 for zstd [3 is default])",
+                    "type": "integer"
+                },
+                "create_dbg": {
+                    "description": "Create separate package with debug info (works only in case of --strip or --full-strip)",
+                    "type": "boolean"
+                },
+                "custom_version": {
+                    "description": "Custom package version",
+                    "type": "string"
+                },
+                "debian_arch": {
+                    "description": "Debian arch (passed to debuild as `-a`)",
+                    "type": "string"
+                },
+                "debian_compression_level": {
+                    "description": "Set deb-file compression level",
+                    "type": "string",
+                    "enum": ["none", "low", "medium", "high"]
+                },
+                "debian_compression_type": {
+                    "description": "Deb-file compression type used when building deb-file (allowed types: gzip (default), xz, bzip2, lzma, none)",
+                    "type": "string",
+                    "enum": ["gzip", "xz", "bzip2", "lzma", "none"]
+                },
+                "dist2_repo": {
+                    "description": "Use Dist 2.0 repository",
+                    "type": "boolean"
+                },
+                "dist2_repo_reindex": {
+                    "description": "Dist 2.0 reindex repo",
+                    "type": "boolean"
+                },
+                "dist2_repo_s3_bucket": {
+                    "description": "Dist 2.0 S3 bucket",
+                    "type": "string"
+                },
+                "dist2_repo_s3_endpoint": {
+                    "description": "Dist 2.0 S3 endpoint",
+                    "type": "string"
+                },
+                "docker_add_host": {
+                    "description": "Same as Docker --add-host",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "docker_secrets": {
+                    "description": "Allows to pass secrets to docker similar to `docker --secret`",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "docker_build_arg": {
+                    "description": "--build-arg parameter for `docker build` command, set it in the <key>=<value> form",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "docker_build_network": {
+                    "description": "--network parameter for `docker build` command",
+                    "type": "string"
+                },
+                "docker_platform": {
+                    "description": "Specify platform for docker build (require buildx)",
+                    "type": "string"
+                },
+                "docker_registry": {
+                    "description": "Docker registry",
+                    "type": "string"
+                },
+                "docker_repository": {
+                    "description": "Specify private repository",
+                    "type": "string"
+                },
+                "docker_image_name": {
+                    "description": "Specify custom docker image name",
+                    "type": "string"
+                },
+                "docker_save_image": {
+                    "description": "Save docker image to archive",
+                    "type": "boolean"
+                },
+                "docker_labels": {
+                    "description": "Allows to pass labels to docker similar to `docker --label`",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "docker_target": {
+                    "description": "Specifying target build stage (--target)",
+                    "type": "string"
+                },
+                "dupload_max_attempts": {
+                    "description": "How many times try to run dupload if it fails",
+                    "type": "integer",
+                    "minimum": 1
+                },
+                "dupload_no_mail": {
+                    "description": "Dupload --no-mail",
+                    "type": "boolean"
+                },
+                "ensure_package_published": {
+                    "description": "Ensure that package is available in the repository",
+                    "type": "boolean"
+                },
+                "force_dupload": {
+                    "description": "Dupload --force",
+                    "type": "boolean"
+                },
+                "format": {
+                    "description": "Set specific package format",
+                    "type": "string",
+                    "enum": ["debian", "tar", "docker", "rpm", "wheel", "aar", "npm"]
+                },
+                "full_strip": {
+                    "description": "Strip binaries",
+                    "type": "boolean"
+                },
+                "overwrite_read_only_files": {
+                    "description": "Overwrite read-only files in package",
+                    "type": "boolean"
+                },
+                "raw_package": {
+                    "description": "Used with --tar to get package content without tarring",
+                    "type": "boolean"
+                },
+                "resource_attrs": {
+                    "description": "Resource attr, set it in the <name>=<value> form",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "resource_type": {
+                    "description": "Created resource type",
+                    "type": "string"
+                },
+                "sign": {
+                    "description": "Do not sign debian package",
+                    "type": "boolean"
+                },
+                "sign_debsigs": {
+                    "description": "When debian package signing is enabled, also sign using debsigs (package 'debsigs' must be installed to use this feature)",
+                    "type": "boolean"
+                },
+                "sloppy_deb": {
+                    "description": "Fewer checks and no compression when building debian package",
+                    "type": "boolean"
+                },
+                "store_debian": {
+                    "description": "Save debian package in a separate archive",
+                    "type": "boolean"
+                },
+                "strip": {
+                    "description": "Strip binaries (only debug symbols: 'strip -g')",
+                    "type": "boolean"
+                },
+                "wheel_platform": {
+                    "description": "Set wheel package platform",
+                    "type": "string"
+                },
+                "wheel_limited_api": {
+                    "description": "Set wheel package limited api version",
+                    "type": "string"
+                },
+                "wheel_python3": {
+                    "description": "Use python3 when building wheel package",
+                    "type": "boolean"
+                },
+                "include_traversal_variant": {
+                    "description": "Specify tree traversal algorithm when preparing package after build (preorder/postorder)",
+                    "type": "string",
+                    "enum": ["preorder", "postorder"],
+                    "default": "postorder"
+                }
+            },
+            "uniqueItems": true,
+            "additionalProperties": false
+        },
+        "postprocess": {
+            "description": "Postprocess the package by executing some applications",
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "source": {
+                        "description": "Binary source",
+                        "type": "object",
+                        "oneOf": [
+                            {"$ref": "#/definitions/buildOutput"},
+                            {"$ref": "#/definitions/arcadia"},
+                            {"$ref": "#/definitions/sandboxResource"},
+                            {"$ref": "#/definitions/temp"}
+                        ]
+                    },
+                    "arguments": {
+                        "description": "Command line arguments",
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    "cwd": {
+                        "description": "Current working directory to run binary",
+                        "type": "string"
+                    },
+                    "env": {
+                        "description": "Environment variables to run binary",
+                        "type": "object",
+                        "patternProperties": {
+                            ".*": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "userdata": {
+            "description": "Arbitrary user data",
+            "type": "object"
+        }
+    },
+    "required": ["meta", "data"],
+    "additionalProperties": false
+}

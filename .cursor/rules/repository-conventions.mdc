@@ -1,0 +1,18 @@
+---
+description: Mandatory rules for AI agents working with the portable-tpcc repository
+alwaysApply: true
+---
+
+# portable-tpcc repository rules
+
+Full text: [AGENTS.md](../../AGENTS.md).
+
+## Style and analysis
+
+- Preserve the coding style of the directory being modified; do not perform drive-by refactoring.
+- Before making changes, study the context, dependencies, and `ya.make`; minimize the diff.
+- Ask the user if the task is ambiguous or requires changes in protected areas.
+
+## Do not modify without an explicit user request
+
+Directories: `build/`, `contrib/`, `devtools/`, `library/`, `util/`.

@@ -1,0 +1,13 @@
+diff --git a/include/__ostream/basic_ostream.h b/include/__ostream/basic_ostream.h
+index f7473a3..aaa97d4 100644
+--- a/include/__ostream/basic_ostream.h
++++ b/include/__ostream/basic_ostream.h
+@@ -614,7 +614,7 @@ operator<<(basic_ostream<_CharT, _Traits>& __os, const bitset<_Size>& __x) {
+                                                          std::use_facet<ctype<_CharT> >(__os.getloc()).widen('1'));
+ }
+ 
+-#  if _LIBCPP_STD_VER >= 20
++#  if 0 && _LIBCPP_STD_VER >= 20
+ 
+ #    if _LIBCPP_HAS_WIDE_CHARACTERS
+ template <class _Traits>

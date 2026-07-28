@@ -1,0 +1,93 @@
+#include "command_helpers.h"
+
+namespace {
+    TVector<std::string> splitString(TStringBuf str, const TString &delimiter, bool cleanup) {
+        TVector<std::string> tokens;
+        std::string token;
+
+        TString serviceChars = " \\'\"&";
+        char quote = ' ';
+        bool inQuotes = false;
+        bool inEscape = false;
+
+        for (size_t i = 0; i < str.size(); ++i) {
+            if (str.compare(i, delimiter.size(), delimiter) == 0 && !inEscape && !inQuotes) {
+                if (!token.empty()) {
+                    tokens.push_back(std::move(token));
+                    token.clear();
+                }
+
+                i += delimiter.size() - 1;
+                continue;
+            }
+            if (!inEscape && str[i] == '\\') {
+                inEscape = true;
+                if (!cleanup) token += str[i];
+                continue;
+            }
+            if (inEscape && !inQuotes && serviceChars.find(str[i], 0) == TString::npos) {
+                token += '\\';
+            }
+            if (inEscape && inQuotes && str[i] != '\\' && str[i] != quote) {
+                token += '\\';
+            }
+            if (inEscape) {
+                token += str[i];
+                inEscape = false;
+                continue;
+            }
+            if (inQuotes && str[i] == quote) {
+                if (!cleanup) token += str[i];
+                inQuotes = false;
+                quote = ' ';
+                continue;
+            }
+            if (!inQuotes && (str[i] == '"' || str[i] == '\'')) {
+                if (!cleanup) token += str[i];
+                inQuotes = true;
+                quote = str[i];
+                continue;
+            }
+            token += str[i];
+        }
+
+        if (inQuotes) {
+            throw std::runtime_error{"Invalid shell command"};
+        }
+
+        if (!token.empty()) {
+            tokens.push_back(std::move(token));
+        }
+
+        return tokens;
+    }
+}
+
+TVector<TVector<std::string>> SplitCommandsAndArgs(TStringBuf cmd) {
+    TVector<TVector<std::string>> res;
+    auto split = splitString(cmd, "&&", false);
+    res.reserve(split.size());
+    for(auto& str : split)
+        res.push_back(splitString(str, " ", true));
+    return res;
+}
+
+TVector<std::string> SplitCommands(TStringBuf cmd) {
+    TVector<std::string> res;
+    auto split = splitString(cmd, "&&", false);
+    res.reserve(split.size());
+    for(auto& str : split) {
+        auto args = splitString(str, " ", false);
+        res.emplace_back();
+        for (size_t i = 0; i != args.size(); ++i) {
+            res.back() += args[i];
+            if (i + 1 != args.size())
+                res.back() += " ";
+        }
+    }
+    return res;
+}
+
+TVector<std::string> SplitArgs(TStringBuf cmd) {
+    return splitString(cmd, " ", true);
+}

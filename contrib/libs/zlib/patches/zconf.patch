@@ -1,0 +1,16 @@
+--- contrib/libs/zlib/zconf.h	(index)
++++ contrib/libs/zlib/zconf.h	(working tree)
+@@ -443,11 +443,11 @@ typedef uLong FAR uLongf;
+    typedef unsigned long z_crc_t;
+ #endif
+ 
+-#if 1     /* was set to #if 1 by ./configure */
++#if __has_include(<unistd.h>)
+ #  define Z_HAVE_UNISTD_H
+ #endif
+ 
+-#if 1     /* was set to #if 1 by ./configure */
++#if __has_include(<stdarg.h>)
+ #  define Z_HAVE_STDARG_H
+ #endif
+ 

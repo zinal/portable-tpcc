@@ -1,0 +1,22 @@
+diff --git a/include/math.h b/include/math.h
+index 929bef6..1bdc6b0 100644
+--- a/include/math.h
++++ b/include/math.h
+@@ -293,6 +293,8 @@ long double    truncl(long double x);
+ 
+ #  if defined(__cplusplus) && __cplusplus < 201103L && defined(_LIBCPP_USE_FROZEN_CXX03_HEADERS)
+ #    include <__cxx03/math.h>
++# elif defined(__CUDACC__)
++#    include <math_cuda.h>
+ #  else
+ #    include <__config>
+ 
+@@ -326,7 +328,7 @@ extern "C++" {
+ #        undef isinf
+ #      endif
+ 
+-#      ifdef isnan
++#      if defined(isnan) && !defined(_LIBCPP_MSVCRT)
+ #        undef isnan
+ #      endif
+ 

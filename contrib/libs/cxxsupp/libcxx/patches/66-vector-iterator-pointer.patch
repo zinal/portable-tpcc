@@ -1,0 +1,41 @@
+diff --git a/include/__vector/vector.h b/include/__vector/vector.h
+index 250b3fe..045e46e 100644
+--- a/include/__vector/vector.h
++++ b/include/__vector/vector.h
+@@ -101,7 +101,10 @@ public:
+   using difference_type                = typename __alloc_traits::difference_type;
+   using pointer                        = typename __alloc_traits::pointer;
+   using const_pointer                  = typename __alloc_traits::const_pointer;
+-#ifdef _LIBCPP_ABI_BOUNDED_ITERATORS_IN_VECTOR
++#if _YNDX_LIBCPP_MAKE_STRING_ITERATOR_POINTERS == 1
++  using iterator       = pointer;
++  using const_iterator = const_pointer;
++#elif defined(_LIBCPP_ABI_BOUNDED_ITERATORS_IN_VECTOR)
+   // Users might provide custom allocators, and prior to C++20 we have no existing way to detect whether the allocator's
+   // pointer type is contiguous (though it has to be by the Standard). Using the wrapper type ensures the iterator is
+   // considered contiguous.
+@@ -668,7 +671,12 @@ private:
+   _LIBCPP_CONSTEXPR_SINCE_CXX20 _LIBCPP_HIDE_FROM_ABI void __append(size_type __n, const_reference __x);
+ 
+   _LIBCPP_CONSTEXPR_SINCE_CXX20 _LIBCPP_HIDE_FROM_ABI iterator __make_iter(pointer __p) _NOEXCEPT {
+-#ifdef _LIBCPP_ABI_BOUNDED_ITERATORS_IN_VECTOR
++
++// We need to save the make_iter function and replace all constructor calls with it
++// Made to support pointer iterators
++#if _YNDX_LIBCPP_MAKE_VECTOR_ITERATOR_POINTERS == 0
++  return iterator(this, __p);
++#elif defined(_LIBCPP_ABI_BOUNDED_ITERATORS_IN_VECTOR)
+     // Bound the iterator according to the capacity, rather than the size.
+     //
+     // Vector guarantees that iterators stay valid as long as no reallocation occurs even if new elements are inserted
+@@ -688,7 +696,9 @@ private:
+   }
+ 
+   _LIBCPP_CONSTEXPR_SINCE_CXX20 _LIBCPP_HIDE_FROM_ABI const_iterator __make_iter(const_pointer __p) const _NOEXCEPT {
+-#ifdef _LIBCPP_ABI_BOUNDED_ITERATORS_IN_VECTOR
++#if _YNDX_LIBCPP_MAKE_VECTOR_ITERATOR_POINTERS == 0
++  return const_iterator(this, __p);
++#elif defined(_LIBCPP_ABI_BOUNDED_ITERATORS_IN_VECTOR)
+     // Bound the iterator according to the capacity, rather than the size.
+     return std::__make_bounded_iter(
+         std::__wrap_iter<const_pointer>(__p),

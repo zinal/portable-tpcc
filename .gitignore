@@ -1,0 +1,13 @@
+/.vscode/
+*.a
+*.so
+*.o
+*.dSym
+*.pid
+*.exe
+*.log
+build/export_generators/gradle/.gradle
+/build-out/
+/dist/
+/tools/tpcectl/tpcectl
+*.tar.xz

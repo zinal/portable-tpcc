@@ -1,0 +1,41 @@
+UNION(maven-import-temp)
+{% for artifact in artifacts -%}
+
+RUN_JAVA_PROGRAM(
+    ru.yandex.devtools.maven.importer.Importer
+        --artifact {{ artifact }}
+        --meta {{ session_id }}/{{ artifact|replace(":", "_") }}.meta
+        --local-repo {{ local_repo_abs_path }}
+        --contrib-path ${ARCADIA_ROOT}/contrib/java
+{% for repo in remote_repos -%}
+        --remote-repo {{ repo }}
+{% endfor -%}
+{% for artifact in skip_artifacts -%}
+        --skip-artifact {{ artifact }}
+{% endfor -%}
+{% if resolve_type == "unified" -%}
+        --unified
+{% elif resolve_type == "check" -%}
+        --check-type
+{% endif -%}
+{% if minimal_pom_validation -%}
+        --minimal-pom-validation
+{% endif -%}
+{% if import_dm -%}
+        --import-dm
+{% endif -%}
+{% if ignore_errors -%}
+        --ignore-errors
+{% endif -%}
+{% if repo_auth_username -%}
+        --repo-auth-username {{ repo_auth_username }}
+{% endif -%}
+{% if repo_auth_password -%}
+        --repo-auth-password {{ repo_auth_password }}
+{% endif -%}
+    CLASSPATH devtools/maven-import
+    OUT {{ session_id }}/{{ artifact|replace(":", "_") }}.meta
+)
+{% endfor -%}
+
+END()

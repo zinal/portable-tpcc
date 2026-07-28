@@ -1,0 +1,323 @@
+option optimize_for = SPEED;
+
+import "devtools/ymake/diag/common_msg/msg.ev";
+import "library/cpp/eventlog/proto/events_extension.proto";
+
+package NEvent;
+
+message TNoMakefile {
+    option (message_id) = 3;
+    optional string Where = 1;
+};
+
+message TRebuildGraph {
+    option (message_id) = 5;
+    optional string Why = 1;
+};
+
+message TUntypedError {
+    option (message_id) = 10;
+    optional string What = 1;
+};
+
+message TLoopDetected {
+    option (message_id) = 11;
+    required uint32 LoopId = 1;
+    repeated TLoopItem LoopNodes = 2;
+};
+
+//syntax errors in ya.make-files, missing or bad src files
+message TMakeSyntaxError {
+    option (message_id) = 12;
+    optional string What = 1;
+    optional string Where = 2;
+};
+
+message TInvalidPeerdir {
+    option (message_id) = 16;
+    optional string Dir = 1;
+};
+
+message TInvalidFile {
+    option (message_id) = 17;
+    optional string File = 1;
+    repeated string Dirs = 2;
+    optional string Reason = 3;
+};
+
+message TBadIncl {
+    option (message_id) = 18;
+    required string FromHere = 1;
+    required string Include = 2;
+};
+
+message TInvalidRecurse {
+    option (message_id) = 19;
+    optional string Dir = 1;
+};
+
+message TInvalidSrcDir {
+    option (message_id) = 20;
+    optional string Dir = 1;
+};
+
+message TInvalidAddIncl {
+    option (message_id) = 21;
+    optional string Dir = 1;
+};
+
+message TFileOutsideRoots {
+    option (message_id) = 22;
+    optional string File = 1;
+};
+
+message TInvalidDataDir {
+    option (message_id) = 24;
+    optional string Dir = 1;
+};
+
+message TLoopItem {
+    option (message_id) = 25;
+    required string Type = 1;
+    required string Name = 2;
+};
+
+message TFilesStat {
+    option (message_id) = 26;
+    required uint32 Count = 1;
+    required uint32 Rate = 2;
+};
+
+message TConfModulesStat {
+    option (message_id) = 27;
+    required uint32 Done = 1;
+    required uint32 Total = 2;
+};
+
+message TNeedDirHint {
+    option (message_id) = 28;
+    required string Dir = 1;
+};
+
+message TFailOnRecurse {
+    option (message_id) = 29;
+    repeated string TakenDirs = 1;
+    repeated string IgnoredDirs = 2;
+};
+
+message TRenderModulesStat {
+    option (message_id) = 30;
+    required uint32 Done = 1;
+    required uint32 Total = 2;
+};
+
+message TForeignPlatformTarget {
+    option (message_id) = 31;
+    enum EPlatform {
+        TOOL=0;
+        PIC=1;
+        NOPIC=2;
+        IDE_DEPEND=3;
+    }
+    enum EKind {
+        POSSIBLE=0;
+        REQUIRED=1;
+    }
+    required EPlatform Platform = 1;
+    required string Dir = 2;
+    required EKind Reachable = 3;
+    optional string ModuleTag = 4;
+};
+
+message TAllForeignPlatformsReported {
+    option (message_id) = 32;
+};
+
+message TModulesStats {
+    option (message_id) = 33;
+    required uint32 Accessed = 1;
+    required uint32 Loaded = 2;
+    required uint32 Outdated = 3;
+    required uint32 Parsed = 4;
+    required uint32 Total = 5;
+};
+
+message TMakeCommandStats {
+    option (message_id) = 34;
+    required uint32 InitModuleEnvCalls = 1;
+    required uint32 InitModuleEnv = 2;
+};
+
+message TUpdIterStats {
+    option (message_id) = 35;
+    required uint32 NukedDir = 1;
+};
+
+message TGeneralParserStats {
+    option (message_id) = 36;
+    required uint32 Count = 1;
+    required uint32 Includes = 2;
+    required uint32 UniqueCount = 3;
+    required uint32 Size = 4;
+    required uint32 UniqueSize = 5;
+};
+
+message TIncParserManagerStats {
+    option (message_id) = 37;
+    required uint32 ParseTime = 1;
+    required uint32 ParsedFilesCount = 2;
+    required uint32 ParsedFilesSize = 3;
+    required uint32 ParsedFilesRecovered = 4;
+    required uint32 InFilesCount = 5;
+    required uint32 InFilesSize = 6;
+};
+
+message TFileConfStats {
+    option (message_id) = 38;
+    optional uint32 LoadedSize = 1;
+    optional uint64 LoadTime = 2;
+    optional uint64 LoadedMD5Time = 3;
+    optional uint64 MaxLoadedMD5Time = 4;
+    optional uint32 LoadedCount = 5;
+    optional uint64 MaxLoadTime = 6;
+    optional uint32 MappedSize = 7;
+    optional uint64 MappedMD5Time = 8;
+    optional uint64 MaxMappedMD5Time = 9;
+    optional uint32 MappedCount = 10;
+    optional uint64 MapTime = 11;
+    optional uint32 FromPatchCount = 12;
+    optional uint32 FromPatchSize = 13;
+    optional uint32 FileStatCount = 14;
+    optional uint32 LstatCount = 15;
+    optional uint64 LstatSumUs = 16;
+    optional uint64 LstatMinUs = 17;
+    optional uint64 LstatAvrUs = 18;
+    optional uint64 LstatMaxUs = 19;
+    optional uint32 OpendirCount = 20;
+    optional uint64 OpendirSumUs = 21;
+    optional uint64 OpendirMinUs = 22;
+    optional uint64 OpendirAvrUs = 23;
+    optional uint64 OpendirMaxUs = 24;
+    optional uint32 ReaddirCount = 25;
+    optional uint64 ReaddirSumUs = 26;
+    optional uint64 ReaddirMinUs = 27;
+    optional uint64 ReaddirAvrUs = 28;
+    optional uint64 ReaddirMaxUs = 29;
+    optional uint64 ListDirSumUs = 30;
+    optional uint64 LstatListDirSumUs = 31;
+};
+
+message TFileConfSubStats {
+    option (message_id) = 39;
+    optional uint32 BucketId = 1;
+    optional uint32 LoadedSize = 2;
+    optional uint64 LoadTime = 3;
+    optional uint32 LoadedCount = 4;
+    optional uint64 MaxLoadTime = 5;
+};
+
+message TDepGraphStats {
+    option (message_id) = 40;
+    required uint32 NodesCount = 1;
+    required uint32 EdgesCount = 2;
+    required uint32 FilesCount = 3;
+    required uint32 CommandsCount = 4;
+};
+
+message TInternalCacheSaverStats {
+    option (message_id) = 41;
+    required uint32 TotalCacheSize = 1;
+    required uint32 DiagnosticsCacheSize = 2;
+    required uint32 GraphCacheSize = 3;
+    required uint32 ParsersCacheSize = 4;
+    required uint32 ModulesTableSize = 5;
+    required uint32 TimesTableSize = 6;
+    required uint32 NamesTableSize = 7;
+    required uint32 CommandsSize = 8;
+};
+
+message TJsonCacheStats {
+    option (message_id) = 42;
+    required uint32 LoadedItems = 1;
+    required uint32 AddedItems = 2;
+    required uint32 OldItemsSaved = 3;
+    required uint32 NewItemsSaved = 4;
+    required uint32 TotalItemsSaved = 5;
+    required uint32 FullMatchLoadedItems = 6;
+    required uint32 FullMatchRequests = 7;
+    required uint32 FullMatchSuccess = 8;
+    required uint32 PartialMatchLoadedItems = 9;
+    required uint32 PartialMatchRequests = 10;
+    required uint32 PartialMatchSuccess = 11;
+    required uint32 FullyRendered = 12;
+    required uint32 PartiallyRendered = 13;
+    required uint32 NoRendered = 14;
+};
+
+message TResolveStats {
+    option (message_id) = 43;
+    required uint32 IncludesAttempted = 1;
+    required uint32 IncludesFromCache = 2;
+    required uint32 ResolveAsKnownTotal = 3;
+    required uint32 ResolveAsKnownFromCache = 4;
+};
+
+message TUidsCacheStats {
+    option (message_id) = 44;
+    required uint32 LoadedNodes = 1;
+    required uint32 SkippedNodes = 2;
+    required uint32 DiscardedNodes = 3;
+    required uint32 LoadedLoops = 4;
+    required uint32 SkippedLoops = 5;
+    required uint32 DiscardedLoops = 6;
+    required uint32 SavedNodes = 7;
+    required uint32 SavedLoops = 8;
+};
+
+// Monitoring statistics events
+message TMonitoringStat {
+    option (message_id) = 45;
+    required string Name = 1; // name of event
+    required string Type = 2; // type of value, one of: int, double, bool
+    oneof Value {// value by Type
+        sint64 IntValue = 3;
+        double DoubleValue = 4;
+        bool BoolValue = 5;
+    };
+};
+
+message TGraphChanges {
+    option (message_id) = 46;
+    required bool HasStructuralChanges = 1;
+    required bool HasContentChanges = 2;
+};
+
+message TGraphChangesPrediction {
+    option (message_id) = 47;
+    required bool PredictsStructuralChanges = 1;
+};
+
+message TReadyForUpdateCacheInfo {
+    option (message_id) = 48;
+};
+
+message TNodeChanges {
+    option (message_id) = 49;
+    required bool HasRenderedNodeChanges = 1;
+};
+
+message TArcChanges {
+    option (message_id) = 50;
+    required bool HasChangelist = 1;
+};
+
+message TBypassConfigure {
+    option (message_id) = 51;
+    required bool Enabled = 1;
+    required bool MaybeEnabled = 2;
+};
+
+message TCacheIsExpectedToBeEmpty {
+    option (message_id) = 52;
+    required string CachePath = 1;
+}

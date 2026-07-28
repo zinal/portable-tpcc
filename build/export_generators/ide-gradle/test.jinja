@@ -1,0 +1,61 @@
+{%- if extra_targets|length -%}
+{%-     if named_tests -%}
+{%-         for extra_target in ordered_extra_targets -%}
+{%-             set testname = SourceSetName(extra_target) -%}
+{%-             if testname == NS_TEST %}
+
+tasks.named<Test>("test") {
+{%-             else %}
+tasks.register("{{ testname }}", Test::class) {
+    description = "{{ testname }}"
+    group = "Verification"
+    val testSourceSet = sourceSets["{{ testname }}"]
+    testClassesDirs = testSourceSet.output.classesDirs
+    classpath = testSourceSet.runtimeClasspath
+{%-             endif %}
+    failOnNoDiscoveredTests = false
+    testLogging {
+        showStandardStreams = true
+        events("passed", "skipped", "failed")
+    }
+{%-             if extra_target.extra_depends|length -%}
+{%-                 for extra_depend in extra_target.extra_depends %}
+{%-                     set depend_test_name = TestRelDir2SourceSetName(extra_depend) %}
+    dependsOn(tasks["compile{{ depend_test_name|title }}Java"])
+{%-                 endfor -%}
+{%-             endif -%}
+{%-             if extra_target.junit5_test or extra_target.junit6_test %}
+    useJUnitPlatform()
+{%-             endif %}
+}
+{%-         endfor %}
+
+val testsJar by tasks.registering(Jar::class) {
+    archiveClassifier.set("tests")
+{%-         for extra_target in ordered_extra_targets -%}
+{%-             set testname = SourceSetName(extra_target) %}
+    dependsOn(tasks["compile{{ testname|title }}Java"])
+    from(sourceSets["{{ testname }}"].output)
+{%-         endfor %}
+}
+{%     else %}
+
+tasks.named<Test>("test") {
+    failOnNoDiscoveredTests = false
+    testLogging {
+        showStandardStreams = true
+        events("passed", "skipped", "failed")
+    }
+{%-         if extra_targets|selectattr('junit5_test')|length or extra_targets|selectattr('junit6_test')|length %}
+    useJUnitPlatform()
+{%-         endif %}
+}
+
+val testsJar by tasks.registering(Jar::class) {
+    archiveClassifier.set("tests")
+    dependsOn(tasks["compileTestJava"])
+    from(sourceSets["test"].output)
+}
+{%      endif -%}
+artifacts.add(configurations.create("testArtifacts").name, testsJar)
+{%- endif -%}
