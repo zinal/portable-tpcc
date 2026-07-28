@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "run_id": "20260717T100000Z",
+  "profile_name": "lab-smoke",
+  "generated_at": "2026-07-17T10:00:00Z",
+  "paths": {
+    "data": "flat_in"
+  },
+  "scale": {
+    "active_customers": 5000,
+    "configured_customers": 5000,
+    "scale_factor": 500,
+    "initial_trade_days": 300,
+    "duration_sec": 120
+  },
+  "database": {
+    "dbms": "pgsql",
+    "host": "localhost",
+    "port": 5432,
+    "name": "tpce",
+    "user": "tpce",
+    "sslmode": "prefer",
+    "password_env": "TPCE_PGPASSWORD"
+  },
+  "client_side": true,
+  "base_time_epoch": 1784282520,
+  "endpoint_sets": {
+    "bh": ["127.0.0.1:30000"],
+    "mee": ["127.0.0.1:30010"]
+  }
+}

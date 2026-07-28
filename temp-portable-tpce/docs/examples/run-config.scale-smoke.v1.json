@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "run_id": "scale-smoke-template",
+  "profile_name": "scale-smoke",
+  "generated_at": "2026-01-01T00:00:00Z",
+  "paths": {
+    "data": "flat_in"
+  },
+  "scale": {
+    "active_customers": 5000,
+    "configured_customers": 5000,
+    "scale_factor": 500,
+    "initial_trade_days": 300,
+    "duration_sec": 60
+  },
+  "database": {
+    "dbms": "pgsql",
+    "host": "localhost",
+    "port": 5432,
+    "name": "tpce",
+    "user": "tpce",
+    "sslmode": "prefer",
+    "password_env": "TPCE_PGPASSWORD"
+  },
+  "client_side": true,
+  "base_time_epoch": 2000000000,
+  "endpoint_sets": {
+    "bh": ["127.0.0.1:30000", "127.0.0.1:30001"],
+    "mee": ["127.0.0.1:30010", "127.0.0.1:30011"]
+  }
+}

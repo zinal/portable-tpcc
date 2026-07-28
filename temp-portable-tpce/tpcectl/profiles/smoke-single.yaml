@@ -1,0 +1,75 @@
+apiVersion: tpcectl/v1
+kind: Profile
+
+name: smoke-single
+run_id: ""
+
+ssh:
+  user: ""
+  private_key: ""
+
+paths:
+  local_bin: ../../dbt5
+  local_data: ../../data
+  local_sql: ../../sql/pgsql
+  remote_root: /opt/tpce
+
+scale:
+  customers: 5000
+  active_customers: 5000
+  scale_factor: 500
+  initial_trade_days: 300
+  duration_sec: 120
+  client_side: true
+
+base_time_epoch: null
+base_time_lead_sec: 30
+
+timeouts:
+  config_distribute: 30s
+  ready: 60s
+  cleanup_wait: 300s
+  ce_completion_grace: 5m
+  mee_drain: 10s
+  stop_grace: 30s
+
+db:
+  host: localhost
+  port: 5432
+  name: tpce
+  user: tpce
+  password_env: TPCE_PGPASSWORD
+  sslmode: prefer
+
+schema:
+  mode: base
+  apply_indexes: true
+  apply_fks: false
+
+hosts:
+  mid1: { address: 127.0.0.1 }
+  drv1: { address: 127.0.0.1 }
+
+deploy:
+  artifacts:
+    - { src: "{{ local_bin }}/pgsql_bin/BrokerageHouse/BrokerageHouseMain-pgsql.exe", dst: bin/BrokerageHouseMain-pgsql.exe, mode: "0755" }
+    - { src: "{{ local_bin }}/MarketExchange/MarketExchange.exe", dst: bin/MarketExchange.exe, mode: "0755" }
+    - { src: "{{ local_bin }}/Driver/Driver.exe", dst: bin/Driver.exe, mode: "0755" }
+    - { src: "{{ local_data }}", dst: data, recursive: true }
+
+standalone_driver:
+  enabled: true
+  host: drv1
+  users: 8
+  ce_id_base: 1
+  duration_sec: 120
+  output: "runs/{{ run_id }}/driver_all"
+
+bh:
+  - { name: bh1, host: mid1, listen: 30000, output: "runs/{{ run_id }}/bh1" }
+
+mee:
+  - { name: mee1, host: mid1, listen: 30010, unique_id: 1, output: "runs/{{ run_id }}/mee1" }
+
+collect:
+  dest: "./results/{{ run_id }}"
