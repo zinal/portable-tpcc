@@ -1,0 +1,386 @@
+package orchestrator
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+
+	"portable-tpcc/tools/tpccctl/internal/assignment"
+	"portable-tpcc/tools/tpccctl/internal/canonical"
+	"portable-tpcc/tools/tpccctl/internal/config"
+	"portable-tpcc/tools/tpccctl/internal/consolidate"
+	"portable-tpcc/tools/tpccctl/internal/deploy"
+	"portable-tpcc/tools/tpccctl/internal/profile"
+	"portable-tpcc/tools/tpccctl/internal/redact"
+	"portable-tpcc/tools/tpccctl/internal/specclient"
+	"portable-tpcc/tools/tpccctl/internal/state"
+	"portable-tpcc/tools/tpccctl/internal/validate"
+)
+
+// Options configure the orchestrator runtime.
+type Options struct {
+	ProfilePath    string
+	RunID          string
+	SpecBinary     string
+	WorkerBinary   string
+	SourceRevision string
+	SkipSteps      []string
+}
+
+// Orchestrator coordinates tpccctl stages.
+type Orchestrator struct {
+	Opts       Options
+	Profile    *profile.Profile
+	Expanded   config.ExpandedPaths
+	StateStore *state.Store
+	SpecClient *specclient.Client
+}
+
+// Context holds materialized configuration for a run.
+type Context struct {
+	RunID           string
+	ProfileSHA      string
+	RunConfig       *config.RunConfig
+	RunConfigSHA    string
+	ControlConfig   *config.ControlConfig
+	LoadPlan        *config.LoadPlan
+	LoadPlanSHA     string
+	SpecStatePath   string
+	SpecStateSHA    string
+	RunDir          string
+	WorkerBinarySHA string
+}
+
+// New creates an orchestrator from a profile path.
+func New(opts Options) (*Orchestrator, error) {
+	p, err := profile.ParseFile(opts.ProfilePath)
+	if err != nil {
+		return nil, err
+	}
+	ep, err := config.ExpandProfilePaths(p)
+	if err != nil {
+		return nil, err
+	}
+	store := &state.Store{StateDir: ep.StateDir}
+	return &Orchestrator{
+		Opts:       opts,
+		Profile:    p,
+		Expanded:   ep,
+		StateStore: store,
+		SpecClient: specclient.New(opts.SpecBinary),
+	}, nil
+}
+
+// Validate runs profile validation without side effects.
+func (o *Orchestrator) Validate() *validate.Result {
+	return validate.Profile(o.Profile)
+}
+
+// Materialize builds run configuration artifacts on the control host.
+func (o *Orchestrator) Materialize() (*Context, error) {
+	vr := o.Validate()
+	if !vr.Valid {
+		return nil, fmt.Errorf("profile invalid: %v", vr.Errors)
+	}
+	runID := o.Opts.RunID
+	if runID == "" {
+		runID = config.GenerateRunID(o.Profile.Metadata.Name)
+	}
+	profileBytes, err := os.ReadFile(o.Opts.ProfilePath)
+	if err != nil {
+		return nil, err
+	}
+	profileSHA := canonical.SHA256Bytes(profileBytes)
+
+	desc, err := o.SpecClient.Describe(o.Profile.Spec.Edition)
+	if err != nil {
+		return nil, err
+	}
+
+	runDir := filepath.Join(o.StateStore.RunDir(runID))
+	specStatePath := filepath.Join(runDir, "spec-state.json")
+	scale := map[string]interface{}{"warehouses": o.Profile.Scale.Warehouses}
+	seedSource := map[string]interface{}{"mode": o.Profile.Mode}
+	if o.Profile.Data.Seed != nil {
+		seedSource["seed"] = *o.Profile.Data.Seed
+	}
+	if err := o.SpecClient.Materialize(specclient.MaterializeInput{
+		Edition:    o.Profile.Spec.Edition,
+		Scale:      scale,
+		SeedSource: seedSource,
+	}, specStatePath); err != nil {
+		return nil, err
+	}
+	specStateSHA, err := canonical.SHA256File(specStatePath)
+	if err != nil {
+		return nil, err
+	}
+
+	workerSHA := ""
+	if o.Opts.WorkerBinary != "" {
+		workerSHA, err = canonical.SHA256File(o.Opts.WorkerBinary)
+		if err != nil {
+			return nil, err
+		}
+	}
+	specBinSHA := ""
+	if o.Opts.SpecBinary != "" {
+		specBinSHA, err = canonical.SHA256File(o.Opts.SpecBinary)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	buildIn := config.BuildInput{
+		Profile:         o.Profile,
+		ProfilePath:     o.Opts.ProfilePath,
+		ProfileSHA256:   profileSHA,
+		RunID:           runID,
+		SpecDescribe:    desc,
+		SpecStatePath:   specStatePath,
+		SpecStateSHA256: specStateSHA,
+		WorkerBinary:    o.Opts.WorkerBinary,
+		WorkerBinarySHA: workerSHA,
+		SpecBinary:      o.Opts.SpecBinary,
+		SpecBinarySHA:   specBinSHA,
+		SourceRevision:  o.Opts.SourceRevision,
+	}
+
+	loadAssign, err := assignment.BuildLoaderAssignments(o.Profile.LoaderInstances(), o.Profile.Scale.Warehouses)
+	if err != nil {
+		return nil, err
+	}
+	loadPlan, loadPlanSHA, err := config.BuildLoadPlan(runID, loadAssign, specStateSHA, workerSHA)
+	if err != nil {
+		return nil, err
+	}
+
+	rc, err := config.BuildRunConfig(buildIn, o.Expanded, loadPlanSHA, loadPlan.LoadID)
+	if err != nil {
+		return nil, err
+	}
+	rc.Load.PlanSHA256 = loadPlanSHA
+	rc.Load.LoadID = loadPlan.LoadID
+
+	runConfigSHA, err := canonical.SHA256Any(rc)
+	if err != nil {
+		return nil, err
+	}
+
+	cc, err := config.BuildControlConfig(buildIn, config.ExpandedPaths{
+		LocalArtifacts: o.Expanded.LocalArtifacts,
+		RemoteRoot:     o.Expanded.RemoteRoot,
+		ResultRoot:     o.Expanded.ResultRoot,
+		StateDir:       o.Expanded.StateDir,
+		KnownHosts:     o.Expanded.KnownHosts,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		return nil, err
+	}
+	if err := state.WriteJSON(runDir, "run-config.json", rc); err != nil {
+		return nil, err
+	}
+	if err := state.WriteJSON(runDir, "control-config.json", cc); err != nil {
+		return nil, err
+	}
+	if err := state.WriteJSON(runDir, "load-plan.json", loadPlan); err != nil {
+		return nil, err
+	}
+	redacted, err := redact.RedactYAML(profileBytes)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(filepath.Join(runDir, "profile.redacted.yaml"), redacted, 0644); err != nil {
+		return nil, err
+	}
+
+	return &Context{
+		RunID:           runID,
+		ProfileSHA:      profileSHA,
+		RunConfig:       rc,
+		RunConfigSHA:    runConfigSHA,
+		ControlConfig:   cc,
+		LoadPlan:        loadPlan,
+		LoadPlanSHA:     loadPlanSHA,
+		SpecStatePath:   specStatePath,
+		SpecStateSHA:    specStateSHA,
+		RunDir:          runDir,
+		WorkerBinarySHA: workerSHA,
+	}, nil
+}
+
+// Plan returns a plan snapshot.
+func (o *Orchestrator) Plan() (*config.PlanSnapshot, error) {
+	ctx, err := o.Materialize()
+	if err != nil {
+		return nil, err
+	}
+	return config.BuildPlanSnapshot(ctx.RunConfig, ctx.RunConfigSHA, ctx.LoadPlanSHA), nil
+}
+
+// Deploy distributes local artifacts to target hosts (local mode).
+func (o *Orchestrator) Deploy(ctx *Context) error {
+	if err := o.StateStore.Transition(ctx.RunID, state.StateDeploying); err != nil {
+		return err
+	}
+	ld := &deploy.LocalDeploy{
+		SourceRoot: o.Expanded.LocalArtifacts,
+		TargetRoot: o.Expanded.RemoteRoot,
+	}
+	_, err := ld.Deploy(o.Expanded.LocalArtifacts, true)
+	if err != nil {
+		o.StateStore.Fail(ctx.RunID, err)
+		return err
+	}
+	return o.StateStore.Transition(ctx.RunID, state.StateSchema)
+}
+
+// Run executes the full pipeline per specification §8.2.
+func (o *Orchestrator) Run() error {
+	ctx, err := o.Materialize()
+	if err != nil {
+		return err
+	}
+	if err := o.StateStore.AcquireProfileLock(o.Profile.Metadata.Name, ctx.RunID); err != nil {
+		return err
+	}
+	defer o.StateStore.ReleaseProfileLock(o.Profile.Metadata.Name, ctx.RunID)
+
+	steps := []struct {
+		name string
+		fn   func() error
+	}{
+		{"deploy", func() error { return o.Deploy(ctx) }},
+		{"schema", func() error { return o.schema(ctx) }},
+		{"load", func() error { return o.load(ctx) }},
+		{"check_after_import", func() error { return o.check(ctx, "after-import") }},
+		{"start", func() error { return o.start(ctx) }},
+		{"collect", func() error { return o.collect(ctx) }},
+		{"consolidate", func() error { return o.consolidate(ctx) }},
+	}
+	for _, step := range steps {
+		if o.shouldSkip(step.name) {
+			continue
+		}
+		if err := step.fn(); err != nil {
+			o.StateStore.Fail(ctx.RunID, err)
+			return fmt.Errorf("%s: %w", step.name, err)
+		}
+	}
+	return o.StateStore.Transition(ctx.RunID, state.StateCompleted)
+}
+
+func (o *Orchestrator) shouldSkip(name string) bool {
+	for _, s := range o.Opts.SkipSteps {
+		if s == name {
+			return true
+		}
+	}
+	return false
+}
+
+func (o *Orchestrator) schema(ctx *Context) error {
+	return o.StateStore.Transition(ctx.RunID, state.StateSchema)
+}
+
+// RunSchema transitions to schema state.
+func (o *Orchestrator) RunSchema(ctx *Context) error {
+	return o.schema(ctx)
+}
+
+func (o *Orchestrator) load(ctx *Context) error {
+	if err := o.StateStore.Transition(ctx.RunID, state.StateLoading); err != nil {
+		return err
+	}
+	return o.StateStore.Transition(ctx.RunID, state.StateCheckingImport)
+}
+
+// RunLoad transitions through loading states.
+func (o *Orchestrator) RunLoad(ctx *Context) error {
+	return o.load(ctx)
+}
+
+func (o *Orchestrator) check(ctx *Context, phase string) error {
+	if phase == "after-import" {
+		return o.StateStore.Transition(ctx.RunID, state.StateCheckingImport)
+	}
+	return o.StateStore.Transition(ctx.RunID, state.StateCheckingResult)
+}
+
+// RunCheck records check phase in run state.
+func (o *Orchestrator) RunCheck(ctx *Context, phase string) error {
+	return o.check(ctx, phase)
+}
+
+func (o *Orchestrator) start(ctx *Context) error {
+	if err := o.StateStore.Transition(ctx.RunID, state.StatePreparing); err != nil {
+		return err
+	}
+	if err := o.StateStore.Transition(ctx.RunID, state.StateArming); err != nil {
+		return err
+	}
+	if err := o.StateStore.Transition(ctx.RunID, state.StateRamping); err != nil {
+		return err
+	}
+	if err := o.StateStore.Transition(ctx.RunID, state.StateMeasuring); err != nil {
+		return err
+	}
+	return o.StateStore.Transition(ctx.RunID, state.StateDraining)
+}
+
+// RunStart executes prepare/arm/ramp/measure/drain state transitions.
+func (o *Orchestrator) RunStart(ctx *Context) error {
+	return o.start(ctx)
+}
+
+func (o *Orchestrator) collect(ctx *Context) error {
+	return o.StateStore.Transition(ctx.RunID, state.StateCollecting)
+}
+
+// RunCollect transitions to collecting state.
+func (o *Orchestrator) RunCollect(ctx *Context) error {
+	return o.collect(ctx)
+}
+
+func (o *Orchestrator) consolidate(ctx *Context) error {
+	if err := o.StateStore.Transition(ctx.RunID, state.StateConsolidating); err != nil {
+		return err
+	}
+	specQual, err := o.SpecClient.Qualify(ctx.SpecStatePath, map[string]interface{}{
+		"run_id": ctx.RunID,
+	})
+	if err != nil {
+		return err
+	}
+	cons := &consolidate.Consolidator{ResultRoot: o.Expanded.ResultRoot}
+	agg, err := cons.Consolidate(ctx.RunID, ctx.RunConfig, ctx.RunConfigSHA, specQual)
+	if err != nil {
+		return err
+	}
+	return consolidate.WriteAggregate(o.Expanded.ResultRoot, ctx.RunID, agg)
+}
+
+// RunConsolidate merges artifacts into aggregate.json.
+func (o *Orchestrator) RunConsolidate(ctx *Context) error {
+	return o.consolidate(ctx)
+}
+
+// Status returns current run state.
+func (o *Orchestrator) Status(runID string) (*state.RunState, error) {
+	return o.StateStore.Load(runID)
+}
+
+// Cleanup deploy artifacts.
+func (o *Orchestrator) Cleanup(yes bool) error {
+	return deploy.Cleanup(o.Expanded.RemoteRoot, yes)
+}
+
+// WritePlanJSON encodes plan snapshot to JSON.
+func WritePlanJSON(plan *config.PlanSnapshot) ([]byte, error) {
+	return json.MarshalIndent(plan, "", "  ")
+}
