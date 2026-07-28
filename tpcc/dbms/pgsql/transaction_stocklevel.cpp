@@ -1,12 +1,10 @@
 #include "transactions.h"
-#include <rng.h>
 #include <coro_traits.h>
 
 #include <constants.h>
+#include <rng.h>
 #include <log.h>
 #include <domain_util.h>
-
-#include <string>
 
 namespace NTpcc {
 
@@ -22,9 +20,23 @@ TFuture<bool> GetStockLevelTask(
     TTransactionInflightGuard guard;
     co_await TTaskReady(context.TaskQueue, context.TerminalID);
 
-    const int warehouseID = context.WarehouseID;
-    const int districtID = RandomNumber(DISTRICT_LOW_ID, DISTRICT_HIGH_ID);
-    const int threshold = RandomNumber(10, 20);
+    struct TInputs {
+        int WarehouseID;
+        int DistrictID;
+        int Threshold;
+    };
+
+    const auto& in = FixedTransactionInputs<TInputs>(context, [&] {
+        return TInputs{
+            .WarehouseID = static_cast<int>(context.WarehouseID),
+            .DistrictID = static_cast<int>(RandomNumber(DISTRICT_LOW_ID, DISTRICT_HIGH_ID)),
+            .Threshold = static_cast<int>(RandomNumber(10, 20)),
+        };
+    });
+
+    const int warehouseID = in.WarehouseID;
+    const int districtID = in.DistrictID;
+    const int threshold = in.Threshold;
 
     LOG_T("Terminal {} started StockLevel: W={}, D={}", context.TerminalID, warehouseID, districtID);
 
@@ -50,7 +62,7 @@ TFuture<bool> GetStockLevelTask(
         "AND ol.ol_o_id < $3 AND ol.ol_o_id >= $4 "
         "AND s.s_w_id = $5 AND s.s_quantity < $6",
         warehouseID, districtID, nextOrderID, nextOrderID - 20,
-        warehouseID, threshold);
+                     warehouseID, threshold);
     auto stockResult = co_await TSuspendWithFuture(std::move(stockFuture), context.TaskQueue, context.TerminalID);
 
     LOG_T("Terminal {} committing StockLevel", context.TerminalID);

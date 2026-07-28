@@ -11,3 +11,4 @@ build/export_generators/gradle/.gradle
 /dist/
 /tools/tpcectl/tpcectl
 *.tar.xz
+/tpcc/app/pgsql/tpcc-pgsql

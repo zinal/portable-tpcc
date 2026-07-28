@@ -1,15 +1,15 @@
 #include "transactions.h"
-#include <rng.h>
 #include <coro_traits.h>
 
 #include <constants.h>
+#include <rng.h>
 #include <log.h>
 #include <domain_util.h>
 
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <vector>
-#include <set>
 
 namespace NTpcc {
 
@@ -68,42 +68,63 @@ TFuture<bool> GetNewOrderTask(
     TTransactionInflightGuard guard;
     co_await TTaskReady(context.TaskQueue, context.TerminalID);
 
-    const int warehouseID = context.WarehouseID;
-    const int districtID = RandomNumber(DISTRICT_LOW_ID, DISTRICT_HIGH_ID);
-    const int customerID = GetRandomCustomerID();
+    struct TInputs {
+        int WarehouseID;
+        int DistrictID;
+        int CustomerID;
+        int NumItems;
+        std::vector<int> ItemIDs;
+        std::vector<int> SupplierWarehouseIDs;
+        std::vector<int> OrderQuantities;
+        int AllLocal;
+        bool HasInvalidItem;
+    };
+
+    const auto& in = FixedTransactionInputs<TInputs>(context, [&] {
+        TInputs generated;
+        generated.WarehouseID = static_cast<int>(context.WarehouseID);
+        generated.DistrictID = RandomNumber(DISTRICT_LOW_ID, DISTRICT_HIGH_ID);
+        generated.CustomerID = GetRandomCustomerID();
+        generated.NumItems = RandomNumber(MIN_ITEMS, MAX_ITEMS);
+        generated.ItemIDs.reserve(generated.NumItems);
+        generated.SupplierWarehouseIDs.reserve(generated.NumItems);
+        generated.OrderQuantities.reserve(generated.NumItems);
+        generated.AllLocal = 1;
+
+        for (int i = 0; i < generated.NumItems; ++i) {
+            generated.ItemIDs.push_back(GetRandomItemID());
+            if (RandomNumber(1, 100) > 1) {
+                generated.SupplierWarehouseIDs.push_back(generated.WarehouseID);
+            } else {
+                int supplierID;
+                do {
+                    supplierID = RandomNumber(1, context.WarehouseCount);
+                } while (supplierID == generated.WarehouseID && context.WarehouseCount > 1);
+                generated.SupplierWarehouseIDs.push_back(supplierID);
+                generated.AllLocal = 0;
+            }
+            generated.OrderQuantities.push_back(RandomNumber(1, 10));
+        }
+
+        generated.HasInvalidItem = false;
+        if (RandomNumber(1, 100) == 1) {
+            generated.ItemIDs[generated.NumItems - 1] = INVALID_ITEM_ID;
+            generated.HasInvalidItem = true;
+        }
+        return generated;
+    });
+
+    const int warehouseID = in.WarehouseID;
+    const int districtID = in.DistrictID;
+    const int customerID = in.CustomerID;
+    const int numItems = in.NumItems;
+    const auto& itemIDs = in.ItemIDs;
+    const auto& supplierWarehouseIDs = in.SupplierWarehouseIDs;
+    const auto& orderQuantities = in.OrderQuantities;
+    const int allLocal = in.AllLocal;
+    const bool hasInvalidItem = in.HasInvalidItem;
 
     LOG_T("Terminal {} started NewOrder: W={}, D={}, C={}", context.TerminalID, warehouseID, districtID, customerID);
-
-    const int numItems = RandomNumber(MIN_ITEMS, MAX_ITEMS);
-
-    std::vector<int> itemIDs;
-    std::vector<int> supplierWarehouseIDs;
-    std::vector<int> orderQuantities;
-    itemIDs.reserve(numItems);
-    supplierWarehouseIDs.reserve(numItems);
-    orderQuantities.reserve(numItems);
-    int allLocal = 1;
-
-    for (int i = 0; i < numItems; ++i) {
-        itemIDs.push_back(GetRandomItemID());
-        if (RandomNumber(1, 100) > 1) {
-            supplierWarehouseIDs.push_back(warehouseID);
-        } else {
-            int supplierID;
-            do {
-                supplierID = RandomNumber(1, context.WarehouseCount);
-            } while (supplierID == warehouseID && context.WarehouseCount > 1);
-            supplierWarehouseIDs.push_back(supplierID);
-            allLocal = 0;
-        }
-        orderQuantities.push_back(RandomNumber(1, 10));
-    }
-
-    bool hasInvalidItem = false;
-    if (RandomNumber(1, 100) == 1) {
-        itemIDs[numItems - 1] = INVALID_ITEM_ID;
-        hasInvalidItem = true;
-    }
 
     // Get customer discount/credit
     auto custFuture = session.ExecuteQuery(
@@ -243,7 +264,7 @@ TFuture<bool> GetNewOrderTask(
             "s_order_cnt = s_order_cnt + 1, s_remote_cnt = s_remote_cnt + $3 "
             "WHERE s_w_id = $4 AND s_i_id = $5",
             stock.s_quantity, static_cast<double>(qty),
-            (supWh == warehouseID ? 0 : 1), supWh, iid);
+                         (supWh == warehouseID ? 0 : 1), supWh, iid);
         co_await TSuspendWithFuture(std::move(updStockFuture), context.TaskQueue, context.TerminalID);
 
         std::string distInfo = GetDistInfo(districtID, stock);
@@ -253,7 +274,7 @@ TFuture<bool> GetNewOrderTask(
             "ol_amount, ol_supply_w_id, ol_quantity, ol_dist_info) "
             "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
             warehouseID, districtID, nextOrderID, olNum, iid,
-            olAmount, supWh, static_cast<double>(qty), distInfo);
+                         olAmount, supWh, static_cast<double>(qty), distInfo);
         co_await TSuspendWithFuture(std::move(olFuture), context.TaskQueue, context.TerminalID);
     }
 
