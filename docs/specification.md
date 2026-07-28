@@ -73,7 +73,7 @@
 - пересоздание входа при retry;
 - неявное умножение terminal population при запуске второго процесса;
 - асинхронная очистка общих счётчиков на границе warmup;
-- ограничение tpmC теоретическим максимумом;
+- искусственное ограничение вычисленной стандартной метрики;
 - текстовый вывод без машиночитаемого результата;
 - невалидируемые нулевые и отрицательные размеры пулов;
 - частичная загрузка, после которой возможен только полный `clean`;
@@ -157,7 +157,39 @@ runtime. Из TPC-E переносится организация control plane,
 
 ## 5. Компоненты и границы библиотек
 
-### 5.1. `tpcc/domain`
+### 5.1. `tpcc/spec`
+
+Выбранная редакция стандарта представляется одним versioned C++ package. Он
+содержит только машиноисполняемые правила и test vectors, необходимые
+реализации; нормативным источником остаётся внешний документ TPC-C.
+
+Package собирается как:
+
+- библиотека, с которой линкуются `domain`, workload binaries и contract
+  tests;
+- DBMS-neutral CLI `tpcc-spec`, используемый Go-оркестратором;
+- JSON Schema для входов и выходов CLI.
+
+Минимальный CLI:
+
+```text
+tpcc-spec describe --edition <id>
+tpcc-spec materialize --edition <id> --scale <json> --seed-source <json>
+tpcc-spec derive-terminals --spec-state <json> --warehouse-ranges <json>
+tpcc-spec expected-data --spec-state <json> --load-plan <json>
+tpcc-spec qualify --spec-state <json> --aggregate-input <json>
+```
+
+Все команды являются чистыми функциями и выводят canonical JSON. `describe`
+возвращает immutable edition ID, URL нормативного документа, его известный
+SHA-256, module ABI version и module SHA. `materialize` создаёт opaque
+`spec-state.json`; оркестратор не интерпретирует его внутренние параметры.
+
+`tpccctl` MUST NOT реализовывать правила TPC-C на Go. Он вызывает `tpcc-spec`,
+валидирует JSON Schema и сохраняет binary/module hash. Workload binary при
+старте проверяет, что linked module SHA совпадает с `spec-state.json`.
+
+### 5.2. `tpcc/domain`
 
 Не зависит от SDK СУБД, сети и планировщика:
 
@@ -175,7 +207,7 @@ Scale и ограничения типов задаёт versioned spec module. �
 десятичные значения представляются checked fixed-point типами; преобразование
 в `double` внутри domain и adapter API MUST NOT использоваться.
 
-### 5.2. `tpcc/generator`
+### 5.3. `tpcc/generator`
 
 - создаёт общие параметры генератора на test run;
 - создаёт начальные данные;
@@ -187,39 +219,38 @@ Scale и ограничения типов задаёт versioned spec module. �
 Параллелизм MUST NOT менять содержимое базы. Для одного `run_seed` хэш
 канонической строки каждой записи одинаков при любом sharding.
 
-### 5.3. `tpcc/transactions`
+### 5.4. `tpcc/transactions`
 
 Содержит общую последовательность бизнес-операций. Библиотека работает через
 типизированный `ITpccSession`, а не через SQL, `pqxx`, YDB SDK или `MYSQL*`.
 
-Интерфейс предоставляет крупные семантические batch-операции, например:
+Нормативный adapter API:
 
 ```text
-Begin(isolation)
-ReadCustomer(...)
-ReadWarehouse(...)
-LockAndAdvanceDistrict(...)
-InsertOrder(...)
-ReadItems(ids)
-ReadAndLockStock(keys)
-UpdateStock(batch)
-InsertOrderLines(batch)
-Commit()
-Rollback()
+Begin(TIsolation) -> TTransaction
+Execute(TTransaction&, TSemanticOperation) -> TOperationResult
+ExecuteBatch(TTransaction&, TSemanticBatch) -> TBatchResult
+ExecuteFinalAndCommit(TTransaction&, TSemanticOperation)
+    -> {TOperationResult, TCommitOutcome}
+Commit(TTransaction&) -> TCommitOutcome
+Rollback(TTransaction&) -> TRollbackOutcome
+Cancel(TTransaction&) -> TCancelOutcome
 ```
 
-Аналогичные операции определяются для Payment, Order-Status, Delivery и
-Stock-Level. Результаты строго типизированы; отсутствие обязательной строки,
-неожиданное число изменённых строк или duplicate key являются ошибкой
-целостности, а не пустым успешным результатом.
+`TTransaction` имеет явные состояния `active`, `committing`, `committed`,
+`rolled_back`, `outcome_unknown`. `TCommitOutcome` содержит certainty и native
+diagnostics. Operation result задаёт ожидаемую cardinality; нарушение
+ожидания является `integrity`, а не пустым успешным результатом.
 
 Batch-граница нужна, чтобы YDB мог выполнять set-oriented YQL, PostgreSQL —
 prepared SQL/COPY, а OceanBase — cached prepared statements без изменения
-общего алгоритма.
+общего алгоритма. `ExecuteFinalAndCommit` позволяет YDB объединить последний
+запрос и commit без скрытых deferred side effects. Дополнительное fusion
+разрешено только внутри одной semantic operation/batch.
 
-### 5.4. `tpcc/runtime`
+### 5.5. `tpcc/runtime`
 
-- десять terminal state machine на склад;
+- terminal state machines из assignment spec module;
 - coroutine scheduler;
 - keying и think time;
 - admission control;
@@ -232,16 +263,17 @@ prepared SQL/COPY, а OceanBase — cached prepared statements без измен
 
 Runtime зависит только от `domain`, `transactions` и абстрактного adapter API.
 
-### 5.5. `tpcc/loader`
+### 5.6. `tpcc/loader`
 
 - строит план строк по shard;
 - выделяет единственного владельца DB-wide набора данных;
 - создаёт resumable batch с устойчивым идентификатором и hash;
 - передаёт typed batch в адаптер;
-- ведёт checkpoint `(table, range, batch_id, hash, status)`;
+- ведёт локальный cache состояния batch, но источником истины считает
+  DB-side load ledger или полную reconciliation адаптера;
 - сверяет cardinality и канонические выборочные hash после загрузки.
 
-### 5.6. `tpcc/checks`
+### 5.7. `tpcc/checks`
 
 Общие описания:
 
@@ -255,7 +287,7 @@ SQL/запрос для каждого условия реализуется а�
 ссылка на пункт стандарта, ожидаемая семантика и формат результата общие.
 Текст стандартного условия в библиотеке и этой спецификации не копируется.
 
-### 5.7. `tpcc/metrics`
+### 5.8. `tpcc/metrics`
 
 - счётчики;
 - гистограммы с общими границами;
@@ -264,7 +296,7 @@ SQL/запрос для каждого условия реализуется а�
 - детерминированное слияние;
 - qualification flags.
 
-### 5.8. Адаптеры
+### 5.9. Адаптеры
 
 Каждый `tpcc/dbms/<name>` реализует:
 
@@ -278,7 +310,7 @@ SQL/запрос для каждого условия реализуется а�
 
 SDK-типы MUST NOT выходить за границу адаптера.
 
-### 5.9. Исполняемые файлы
+### 5.10. Исполняемые файлы
 
 Первая версия собирает отдельные программы:
 
@@ -286,6 +318,7 @@ SDK-типы MUST NOT выходить за границу адаптера.
 tpcc-ydb
 tpcc-pgsql
 tpcc-oceanbase
+tpcc-spec
 tpccctl
 ```
 
@@ -303,8 +336,9 @@ Versioned spec module строит полный набор стандартны�
 заданного scale. Оркестратор не знает формулу этого набора и работает с
 готовым assignment.
 
-Worker владеет полными складами; один склад MUST NOT делиться между
-worker-процессами. Диапазоны складов:
+Assignment определяет владение **домашними терминалами** склада; он не
+ограничивает доступ транзакций к строкам других складов. Один набор домашних
+терминалов склада MUST NOT делиться между worker-процессами. Диапазоны:
 
 - непустые и полуоткрытые `[begin, end)`;
 - не пересекаются;
@@ -312,7 +346,8 @@ worker-процессами. Диапазоны складов:
 
 Добавление worker изменяет только assignment. Оно MUST NOT менять logical
 scale, число терминалов, их идентичность или параметры генератора. Worker
-получает assignment в подписанном hash неизменяемого `run-config.json`.
+получает assignment в неизменяемом `run-config.json` и проверяет его SHA-256
+из start token.
 
 Статическое владение выбрано намеренно: динамический reassignment во время
 measurement меняет pacing, RNG streams и набор соединений, поэтому запрещён.
@@ -458,16 +493,28 @@ Connector/C, local index syntax, timeout variables и catalog queries остаю
 
 ### 8.2. Возобновление
 
-Loader записывает checkpoint только после подтверждённой записи batch.
+Каждый адаптер MUST объявить один crash-safe режим:
 
-При `ambiguous` результате:
+`transactional_ledger`
+: Изменения batch и строка DB-side ledger
+  `(load_id, batch_id, hash, row_count, committed_at)` фиксируются одной
+  транзакцией. Повтор видит ledger, проверяет hash и пропускает batch.
 
-- адаптер проверяет batch по key/hash, если умеет;
-- иначе phase помечается failed и не выполняет blind replay.
+`idempotent_reconcile`
+: Batch состоит только из детерминированных keyed writes. После любого
+  неподтверждённого завершения, а также после crash loader выполняет полную
+  read-back reconciliation ключевого диапазона и фактического canonical hash.
+  Только совпавший hash переводит batch в `committed`.
+
+Разрыв «commit данных → локальный checkpoint» MUST NOT приводить к blind
+replay. Локальный checkpoint — оптимизация; authoritative status получается
+из ledger/reconciliation. Адаптер без одного из этих режимов не поддерживает
+`--resume`.
 
 Повторный `load --resume`:
 
-- проверяет profile SHA и data seed;
+- проверяет run, profile, load-plan, spec-state, generator и binary SHA;
+- reconciles все batch в состояниях `started` и `unknown`;
 - пропускает только полностью подтверждённые batch с тем же hash;
 - не принимает checkpoint от другого run;
 - после всех batch создаёт indexes/statistics;
@@ -499,12 +546,12 @@ MUST выполняться на quiescent database:
 3. SSH + SFTP/tar без обязательного агента;
 4. `plan` без side effects;
 5. immutable `run-config.json`, byte-identical на runtime hosts;
-6. per-process параметры в argv;
+6. argv содержит только путь к config, instance selector и process-local пути;
 7. mutable `run-state.json` только на control host;
 8. host-local deploy manifest;
-9. PID files, stdout/stderr и readiness files в каталоге instance;
+9. process identity, stdout/stderr и readiness files в каталоге instance;
 10. SHA-256 после распространения конфигурации;
-11. profile lock и не более одного активного run;
+11. local profile lock плюс DB-scoped fencing lease;
 12. fail-fast для параллельных стадий;
 13. сбор сырых артефактов даже при неуспехе;
 14. secrets только через environment и временные файлы mode 0600.
@@ -545,22 +592,32 @@ validate → deploy → schema → load → check(after-import)
 
 - schema version и run ID;
 - SHA profile и binaries;
+- edition metadata, `tpcc-spec` binary SHA и `spec-state.json` SHA;
 - dbms kind и не-секретную конфигурацию;
-- scale и полное assignment;
-- seed/NURand constants;
-- абсолютные UTC phase epochs;
-- длительности;
+- scale и warehouse assignment;
+- opaque generator/spec state reference;
+- относительные длительности и phase policy;
 - histogram schema;
 - expected workers;
 - policy retry/failure;
 - пути артефактов.
 
 Пароль в run-config отсутствует; сохраняется только имя environment variable.
+Функциональные параметры worker MUST NOT дублироваться в argv. Worker
+запускается как `tpcc-<dbms> worker --run-config <path> --instance <name>` и
+выбирает собственный assignment по `instance`.
 
 Примеры:
 
 - [profile.v1.yaml](examples/profile.v1.yaml);
-- [run-config.v1.json](examples/run-config.v1.json).
+- [run-config.v1.json](examples/run-config.v1.json);
+- [start-token.v1.json](examples/start-token.v1.json).
+
+Реализация MUST хранить JSON Schema для profile, run-config, spec-state,
+start-token, lease, readiness, process state и результатов. YAML profile
+валидируется как JSON data model с `additionalProperties:false`. Defaults
+материализуются только в run-config; после его создания profile больше не
+является источником runtime-параметров.
 
 ### 9.4. Каталоги
 
@@ -573,10 +630,14 @@ Runtime host:
 ├── schema/
 └── runs/<run_id>/
     ├── run-config.json
+    ├── spec-state.json
+    ├── start-token.json
+    ├── lease.json
     ├── loader/<name>/
     └── worker/<name>/
-        ├── tpccctl.pid
+        ├── process.json
         ├── ready.json
+        ├── armed.json
         ├── stdout.log
         ├── stderr.log
         ├── events.jsonl
@@ -593,6 +654,7 @@ Control host:
     ├── run-state.json
     ├── profile.redacted.yaml
     ├── run-config.json
+    ├── spec-state.json
     └── load-plan.json
 ```
 
@@ -608,28 +670,47 @@ Deploy:
 Cleanup удаляет только пути из полного manifest и никогда не выполняет
 безусловный `rm -rf remote_root`. В non-interactive режиме требуется `--yes`.
 
-### 9.6. Синхронизация часов и фаз
+### 9.6. DB-scoped fence
 
-До генерации run-config оркестратор измеряет clock offset всех worker hosts.
-Profile задаёт `max_clock_skew_ms`. Превышение:
+До `schema`, `load`, `check` или `start` control получает через `IAdminAdapter`
+lease на canonical database identity `(dbms, endpoint, database, path)`.
+Адаптер реализует его advisory lock или служебной metadata record вне
+benchmark tables. Lease содержит `run_id`, случайный fencing token, generation
+и expiry; control обновляет его до завершения mutating phase.
 
-- fail в `conformance`;
-- явное deviation в `engineering`.
+Другой profile/control не может получить fence для той же logical database.
+Loader и worker сверяют token перед началом своей стадии. Потеря fence
+останавливает новые действия и делает run failed. Fencing metadata не входит
+в измеряемую схему и удаляется только владельцем token.
 
-Оркестратор выбирает будущие timestamps:
+### 9.7. Синхронизация часов и двухфазный старт
 
-```text
-process_start_deadline
-ramp_start
-measurement_start
-measurement_end
-drain_deadline
-async_work_drain_deadline
-```
+Clock calibration использует несколько samples на host, выбирает sample с
+минимальным RTT и сохраняет offset вместе с uncertainty. Проверка повторяется
+перед measurement и после него; worker обнаруживает wall-clock step, а
+deadlines исполняет по monotonic clock. Profile задаёт максимальные skew,
+uncertainty и drift.
 
-Lead time MUST покрывать distribution и process readiness. Worker сверяет
-config hash, подключается к БД, создаёт terminal state и пишет `ready.json`,
-но не начинает нагрузку до `ramp_start`.
+Старт разделён на prepare и commit:
+
+1. Control распространяет `run-config.json` и `spec-state.json`.
+2. Worker проверяет hashes, DB fence и adapter, создаёт runtime и пишет
+   `ready.json`, но не запускает workload.
+3. После полного ready set control создаёт `start-token.json`, связанный с
+   config SHA, fence token и hash ready set. Token содержит будущие phase
+   epochs и короткий initial lease, истекающий до ramp.
+4. Worker атомарно принимает token и пишет `armed.json`.
+5. Только после полного armed set control начинает атомарно обновлять
+   `lease.json`. Worker допускает workload лишь при свежей lease нужной
+   generation.
+
+Если ready/armed set неполон или control теряет возможность обновлять lease,
+ни один корректный worker не достигает measurement. Это fail-closed
+дополнение к future timestamps из TPC-E orchestrator.
+
+`lease.json` публикуется через temporary file + rename и связан с run,
+start-token и DB fence hashes. Generation только растёт; worker отвергает
+rollback generation и lease с уже истёкшим `not_after`.
 
 `ready.json` содержит:
 
@@ -638,7 +719,9 @@ config hash, подключается к БД, создаёт terminal state и 
   "schema_version": 1,
   "run_id": "20260728-lab-ydb",
   "instance": "worker-a",
+  "instance_nonce": "...",
   "run_config_sha256": "...",
+  "spec_state_sha256": "...",
   "binary_sha256": "...",
   "adapter": "ydb",
   "warehouse_ranges": [[1, 101]],
@@ -647,30 +730,28 @@ config hash, подключается к БД, создаёт terminal state и 
 }
 ```
 
-Если хотя бы один expected worker не ready до deadline, measurement не
-начинается, а уже запущенные процессы останавливаются.
+### 9.8. Учёт на границах фаз
 
-### 9.7. Учёт на границах фаз
+Worker хранит отдельные сырые populations по временам submit/start/complete и
+не очищает shared counters на границе warmup. Для каждой логической операции
+сохраняются monotonic timestamps, phase epochs и outcome. Drain operations
+учитываются отдельно.
 
-Worker использует monotonic clock, связанный с зафиксированным wall-clock
-epoch.
+Какие populations входят в стандартные throughput и response-time metrics,
+решает только `tpcc-spec qualify`. Оркестратор не кодирует эти правила и не
+перекладывает поздние completions между populations.
 
-- ramp-up metrics хранятся отдельно и никогда не очищают общий объект;
-- measurement принимает новые логические транзакции только в полуоткрытом
-  интервале `[measurement_start, measurement_end)`;
-- транзакция относится к фазе по времени начала логического request;
-- после `measurement_end` новые requests запрещены;
-- начатые транзакции завершаются до `drain_deadline`;
-- их результат остаётся в measurement counters;
-- незавершённые к deadline получают `cancelled_at_drain`, делают результат
-  non-conforming;
-- асинхронные очереди получают отдельные deadlines из spec module.
+### 9.9. Process supervision
 
-Знаменатель tpmC — заданная длительность measurement, а не время shutdown.
+Первая версия использует `nohup`, но PID не считается достаточной
+идентичностью. Перед launch через atomic create регистрируется
+`process.json`: PID, `/proc` start time, случайный instance nonce, run/config
+hashes и generation. Повторный start сначала reconciles remote record; сигнал
+можно послать только процессу с совпавшими PID, start time и nonce.
 
-### 9.8. Process supervision
-
-Первая версия использует `nohup`, PID file и remote `kill -0`.
+Если control упал между launch и записью local state, следующий запуск
+восстанавливает процессы по remote records и config hash. Stale record
+перемещается в artifacts, а не молча перезаписывается.
 
 Stop:
 
@@ -685,12 +766,12 @@ Stop:
 общий run как failed; reassignment запрещён, потому что изменил бы terminal
 population и timing.
 
-### 9.9. Состояния
+### 9.10. Состояния
 
 ```text
-planned → deploying → loading → checking_import
-→ arming → ramping → measuring → draining
-→ checking_result → collecting → completed
+planned → deploying → schema → loading → checking_import
+→ preparing → arming → ramping → measuring → draining
+→ checking_result → collecting → consolidating → completed
 ```
 
 Любое состояние может перейти в `stopping` и затем `failed`. Запись
@@ -716,8 +797,9 @@ run-state выполняется атомарно через temporary file + re
 - clock diagnostics;
 - fatal errors и deviations.
 
-Histogram хранит counts общих buckets в микросекундах. Worker не является
-источником итоговых percentile.
+Histogram хранит counts общих buckets в микросекундах, encoding/version,
+underflow/overflow, а также mergeable `count`, точную сумму duration и точный
+maximum. Worker не является источником итоговых percentile или average.
 
 ### 10.2. Консолидация
 
@@ -740,8 +822,8 @@ Histogram хранит counts общих buckets в микросекундах. 
 - складывать или усреднять p99;
 - масштабировать частичный результат на отсутствующие workers;
 - заменять потерянные samples нулями;
-- скрывать failed/user rollback;
-- ограничивать tpmC теоретическим максимумом.
+- скрывать outcomes;
+- ограничивать вычисленную стандартную метрику искусственным максимумом.
 
 ### 10.3. Итоговые артефакты
 
@@ -752,7 +834,9 @@ results/<run_id>/
 ├── orchestrator/
 │   ├── profile.redacted.yaml
 │   ├── run-config.json
+│   ├── spec-state.json
 │   ├── run-state.json
+│   ├── start-token.json
 │   └── load-plan.json
 ├── checks/
 │   ├── after-import.json
@@ -763,6 +847,13 @@ results/<run_id>/
 
 `aggregate.json` — канонический результат. `summary.txt` только представляет
 его и не содержит уникальных данных.
+
+Перед collect каждый процесс атомарно публикует `artifact-manifest.json` с
+размером и SHA-256 каждого файла, exit status, instance nonce и
+`finalized:true`. Collector сначала копирует во временный каталог, затем
+проверяет manifest и только после этого публикует raw instance directory.
+Незапечатанные данные сохраняются как `partial`, но не участвуют в qualified
+aggregate.
 
 ### 10.4. Qualification flags
 
@@ -777,6 +868,8 @@ post_import_checks_valid
 post_run_checks_valid
 no_ambiguous_commit
 no_integrity_errors
+no_drain_cancellations
+artifacts_sealed
 ```
 
 Стандартные qualification flags поставляет versioned spec module. Итог
@@ -792,7 +885,7 @@ flags выбранного режима. Итоговый JSON хранит sour
 | `deploy` | повторяемый по manifest/hash |
 | `schema` | проверяет существующее состояние; destructive recreate только с явным флагом |
 | `load` | resume только по подтверждённым batch/hash |
-| `start` | запрещён при активном run/profile lock |
+| `start` | разрешён только владельцу profile lock и DB fence; другой активный run запрещён |
 | `stop` | повторяемый, already stopped = success |
 | `collect` | повторяет download во временный каталог и атомарно публикует |
 | `consolidate` | чистая детерминированная функция артефактов |
@@ -847,6 +940,7 @@ isolation, schema state и физическую конфигурацию.
 - domain types и canonical encoding;
 - immutable input across injected retries;
 - transaction workflows через fake adapter;
+- `tpcc-spec` CLI/library equivalence;
 - terminal identity и warehouse assignment;
 - phase classification на граничных timestamps;
 - histogram merge;
@@ -858,6 +952,7 @@ isolation, schema state и физическую конфигурацию.
 
 - DDL/create/clean;
 - initial population hash/cardinality;
+- load crash между data commit и local checkpoint;
 - все операции, экспортированные выбранным spec module;
 - transaction rollback atomicity;
 - deadlock/serialization retry;
@@ -874,10 +969,14 @@ isolation, schema state и физическую конфигурацию.
 - redaction;
 - config distribution/hash mismatch;
 - overlapping assignment rejection;
+- collision DB-scoped fence из другого profile;
 - missing worker/early exit;
+- incomplete ready/armed set и expiry control lease;
 - startup deadline;
 - normative stop/drain;
+- PID reuse и recovery после control crash;
 - partial artifact collection;
+- artifact manifest tampering;
 - aggregate golden files;
 - integration test через локальный SSH target.
 
@@ -895,6 +994,7 @@ isolation, schema state и физическую конфигурацию.
 
 ```text
 tpcc/
+├── spec/
 ├── domain/
 ├── generator/
 ├── transactions/
@@ -942,13 +1042,11 @@ docs/
 
 1. конкретный C++ future/coroutine ABI общих библиотек;
 2. bucket layout гистограмм и максимальную измеряемую latency;
-3. точные conformance limits из выбранной редакции TPC-C;
+3. набор поддерживаемых edition packages и правила их обновления;
 4. стратегию разрешения ambiguous commit для каждой СУБД;
 5. формат canonical row encoding для cross-DB hash;
 6. минимальные поддерживаемые версии YDB, PostgreSQL и OceanBase;
-7. границу между common semantic operation и допустимой fused operation
-   адаптера;
-8. политику хранения асинхронных очередей при аварии worker.
+7. политику хранения асинхронных очередей при аварии worker.
 
 Эти решения MUST быть приняты как versioned ADR до стабилизации
 `portable-tpcc/v1`; они не должны незаметно кодироваться в первом адаптере.

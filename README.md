@@ -7,7 +7,8 @@
 
 - [спецификация portable-tpcc](docs/specification.md);
 - [пример профиля оркестратора](docs/examples/profile.v1.yaml);
-- [пример нормализованной конфигурации запуска](docs/examples/run-config.v1.json).
+- [пример нормализованной конфигурации запуска](docs/examples/run-config.v1.json);
+- [пример токена синхронизированного старта](docs/examples/start-token.v1.json).
 
 Спецификация основана на анализе веток `someshit` реализаций
 `zinal/ydb`, `zinal/tpcc-postgres-cpp`, `zinal/tpcc-oceanbase-cpp` и локальных

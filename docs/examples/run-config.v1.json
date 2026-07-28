@@ -7,10 +7,24 @@
     "name": "lab-ydb-200",
     "sha256": "PROFILE_SHA256"
   },
+  "spec": {
+    "edition": "tpc-c-5.11.0",
+    "document_url": "https://www.tpc.org/tpc_documents_current_versions/pdf/tpc-c_v5.11.0.pdf",
+    "document_sha256": "TPC_C_DOCUMENT_SHA256",
+    "module_abi": 1,
+    "module_sha256": "SPEC_MODULE_SHA256",
+    "state_sha256": "SPEC_STATE_SHA256"
+  },
   "artifacts": {
     "worker_binary": "tpcc-ydb",
     "worker_binary_sha256": "BINARY_SHA256",
+    "spec_binary": "tpcc-spec",
+    "spec_binary_sha256": "SPEC_BINARY_SHA256",
     "source_revision": "GIT_COMMIT"
+  },
+  "paths": {
+    "remote_root": "/opt/portable-tpcc",
+    "run_dir": "/opt/portable-tpcc/runs/20260728-lab-ydb-200-01"
   },
   "database": {
     "dbms": "ydb",
@@ -24,13 +38,17 @@
     }
   },
   "scale": {
-    "warehouses": 200,
-    "spec_edition": "tpc-c-current",
-    "spec_module_sha256": "SPEC_MODULE_SHA256"
+    "warehouses": 200
   },
   "random": {
     "seed": 731910246,
     "generator_state_sha256": "GENERATOR_STATE_SHA256"
+  },
+  "load": {
+    "plan_sha256": "LOAD_PLAN_SHA256",
+    "batch_rows": 10000,
+    "resume": true,
+    "recovery_mode": "idempotent_reconcile"
   },
   "load_assignment": [
     {
@@ -51,7 +69,6 @@
       "instance": "worker-a",
       "host": "worker-a",
       "warehouse_ranges": [[1, 101]],
-      "terminal_count": 1000,
       "threads": 4,
       "max_inflight": 256
     },
@@ -59,19 +76,20 @@
       "instance": "worker-b",
       "host": "worker-b",
       "warehouse_ranges": [[101, 201]],
-      "terminal_count": 1000,
       "threads": 4,
       "max_inflight": 256
     }
   ],
-  "phases": {
-    "process_start_deadline": "2026-07-28T12:00:00Z",
-    "ramp_start": "2026-07-28T12:00:15Z",
-    "measurement_start": "2026-07-28T12:05:15Z",
-    "measurement_end": "2026-07-28T12:35:15Z",
-    "drain_deadline": "2026-07-28T12:35:45Z",
-    "async_work_drain_deadline": "2026-07-28T12:36:35Z",
-    "max_clock_skew_ms": 100
+  "phase_policy": {
+    "start_lead_ms": 45000,
+    "ramp_up_ms": 300000,
+    "measurement_ms": 1800000,
+    "transaction_drain_ms": 30000,
+    "async_work_drain": "from_spec_state",
+    "stop_grace_ms": 15000,
+    "max_clock_skew_ms": 100,
+    "max_clock_uncertainty_ms": 25,
+    "max_clock_drift_ms": 25
   },
   "runtime": {
     "pacing": "enabled",
@@ -94,5 +112,21 @@
     "after_import": true,
     "after_run": true,
     "fail_fast": true
-  }
+  },
+  "collect": {
+    "include_events": true,
+    "include_logs": true,
+    "require_sealed_artifacts": true
+  },
+  "failure_policy": {
+    "missing_worker": "fail",
+    "lost_database_fence": "fail",
+    "unsealed_artifact": "fail"
+  },
+  "deviations": [
+    {
+      "code": "fixed_generator_seed",
+      "reason": "repeatable cross-DB engineering comparison"
+    }
+  ]
 }
