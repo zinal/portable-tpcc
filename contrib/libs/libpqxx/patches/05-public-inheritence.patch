@@ -1,0 +1,22 @@
+--- contrib/libs/libpqxx/include/pqxx/stream_from.hxx	(index)
++++ contrib/libs/libpqxx/include/pqxx/stream_from.hxx	(working tree)
+@@ -57,7 +57,7 @@ constexpr from_query_t from_query;
+  * Usually you'll want the @c stream convenience wrapper in transaction_base,
+  * so you don't need to deal with this class directly.
+  */
+-class PQXX_LIBEXPORT stream_from : internal::transactionfocus
++class PQXX_LIBEXPORT stream_from : public internal::transactionfocus
+ {
+ public:
+   using raw_line =
+--- contrib/libs/libpqxx/include/pqxx/stream_to.hxx	(index)
++++ contrib/libs/libpqxx/include/pqxx/stream_to.hxx	(working tree)
+@@ -66,7 +66,7 @@ namespace pqxx
+  * either a @c std::tuple or something iterable, such as a @c std::vector, or
+  * anything else with a @c begin and @c end.
+  */
+-class PQXX_LIBEXPORT stream_to : internal::transactionfocus
++class PQXX_LIBEXPORT stream_to : public internal::transactionfocus
+ {
+ public:
+   /// Create a stream, without specifying columns.

@@ -1,0 +1,104 @@
+--- contrib/libs/libpqxx/include/pqxx/connection.hxx	(index)
++++ contrib/libs/libpqxx/include/pqxx/connection.hxx	(working tree)
+@@ -754,7 +754,7 @@ private:
+ 
+   prepare::internal::prepared_def &register_prepared(std::string_view);
+ 
+-  result exec_prepared(std::string_view statement, internal::params const &);
++  result exec_prepared(std::string_view statement, internal::params const &, result_format format = result_format::text);
+ 
+   /// Throw @c usage_error if this connection is not in a movable state.
+   void check_movable() const;
+--- contrib/libs/libpqxx/include/pqxx/internal/gates/connection-transaction.hxx	(index)
++++ contrib/libs/libpqxx/include/pqxx/internal/gates/connection-transaction.hxx	(working tree)
+@@ -31,9 +31,9 @@ class PQXX_PRIVATE connection_transaction : callgate<connection>
+   void write_copy_line(std::string_view line) { home().write_copy_line(line); }
+   void end_copy_write() { home().end_copy_write(); }
+ 
+-  result exec_prepared(zview statement, internal::params const &args)
++  result exec_prepared(zview statement, internal::params const &args, result_format format)
+   {
+-    return home().exec_prepared(statement, args);
++    return home().exec_prepared(statement, args, format);
+   }
+ 
+   result exec_params(std::string const &query, internal::params const &args)
+--- contrib/libs/libpqxx/include/pqxx/result.hxx	(index)
++++ contrib/libs/libpqxx/include/pqxx/result.hxx	(working tree)
+@@ -67,6 +67,13 @@ namespace pqxx
+  * the same result set--even if it is doing so through a different result
+  * object!
+  */
++
++enum class result_format
++{
++    text = 0,
++    binary = 1
++};
++
+ class PQXX_LIBEXPORT result
+ {
+ public:
+--- contrib/libs/libpqxx/include/pqxx/transaction_base.hxx	(index)
++++ contrib/libs/libpqxx/include/pqxx/transaction_base.hxx	(working tree)
+@@ -406,7 +406,15 @@ public:
+   result exec_prepared(zview statement, Args &&... args)
+   {
+     return internal_exec_prepared(
+-      statement, internal::params(std::forward<Args>(args)...));
++      statement, internal::params(std::forward<Args>(args)...), result_format::text);
++  }
++
++  /// Execute a prepared statement, with optional arguments. Returns binary format.
++  template<typename... Args>
++  result exec_prepared_binary(zview statement, Args &&... args)
++  {
++    return internal_exec_prepared(
++      statement, internal::params(std::forward<Args>(args)...), result_format::binary);
+   }
+ 
+   /// Execute a prepared statement, and expect a single-row result.
+@@ -519,7 +527,7 @@ private:
+   }
+   template<typename T> bool parm_is_null(T) const noexcept { return false; }
+ 
+-  result internal_exec_prepared(zview statement, internal::params const &args);
++  result internal_exec_prepared(zview statement, internal::params const &args, result_format format);
+ 
+   result
+   internal_exec_params(std::string const &query, internal::params const &args);
+--- contrib/libs/libpqxx/src/connection.cxx	(index)
++++ contrib/libs/libpqxx/src/connection.cxx	(working tree)
+@@ -690,7 +690,7 @@ void pqxx::connection_base::prepare_now(std::string_view name)
+ 
+ 
+ pqxx::result pqxx::connection::exec_prepared(
+-  std::string_view statement, internal::params const &args)
++  std::string_view statement, internal::params const &args, result_format format)
+ {
+   register_prepared(statement);
+   auto const pointers{args.get_pointers()};
+@@ -698,7 +698,7 @@ pqxx::result pqxx::connection::exec_prepared(
+   auto const pq_result{PQexecPrepared(
+     m_conn, q->c_str(),
+     check_cast<int>(std::size(args.nonnulls), "exec_prepared"),
+-    pointers.data(), args.lengths.data(), args.binaries.data(), 0)};
++    pointers.data(), args.lengths.data(), args.binaries.data(), format == result_format::binary? 1 : 0)};
+   auto const r{make_result(pq_result, q)};
+   get_notifs();
+   return r;
+--- contrib/libs/libpqxx/src/transaction_base.cxx	(index)
++++ contrib/libs/libpqxx/src/transaction_base.cxx	(working tree)
+@@ -282,10 +282,10 @@ void pqxx::transaction_base::check_rowcount_params(
+ 
+ 
+ pqxx::result pqxx::transaction_base::internal_exec_prepared(
+-  zview statement, internal::params const &args)
++  zview statement, internal::params const &args, result_format format)
+ {
+   return pqxx::internal::gate::connection_transaction{conn()}.exec_prepared(
+-    statement, args);
++    statement, args, format);
+ }
+ 
+ 

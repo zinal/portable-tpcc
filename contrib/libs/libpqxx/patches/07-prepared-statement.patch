@@ -1,0 +1,251 @@
+--- contrib/libs/libpqxx/include/pqxx/connection.hxx	(index)
++++ contrib/libs/libpqxx/include/pqxx/connection.hxx	(working tree)
+@@ -16,6 +16,7 @@
+ #include "pqxx/compiler-public.hxx"
+ #include "pqxx/internal/compiler-internal-pre.hxx"
+ 
++#include <bitset>
+ #include <cstddef>
+ #include <ctime>
+ #include <functional>
+@@ -494,6 +495,7 @@ public:
+    * @{
+    */
+ 
++// TODO: Stop deferring prepared statement registration.
+   /// Define a prepared statement.
+   /**
+    * The statement's definition can refer to a parameter using the parameter's
+@@ -513,21 +515,29 @@ public:
+    * }
+    * @endcode
+    *
++   * Prepared statements aren't really registered with the backend until they
++   * are first used.  If this is not what you want, e.g. because you have very
++   * specific realtime requirements, you can use the @c prepare_now() function
++   * to force immediate preparation.
++   *
++   * This also means that if there's a syntax error in the statement, you may
++   * only see it when you first try to call the statement.
++   *
+    * @param name unique name for the new prepared statement.
+    * @param definition SQL statement to prepare.
+    */
+-  void prepare(char const name[], char const definition[]);
+-
+-  void prepare(std::string const &name, std::string const &definition)
+-  {
+-    prepare(name.c_str(), definition.c_str());
+-  }
+-
+   void prepare(zview name, zview definition)
+   {
+     prepare(name.c_str(), definition.c_str());
+   }
+ 
++  /**
++   * @param name unique name for the new prepared statement.
++   * @param definition SQL statement to prepare.
++   * @param redefinition is a fix for the empty name, don't use it in your code.
++   */
++  void prepare(char const name[], char const definition[], bool const redefinition = false) &;
++
+   /// Define a nameless prepared statement.
+   /**
+    * This can be useful if you merely want to pass large binary parameters to a
+@@ -536,12 +546,15 @@ public:
+    * the nameless statement being redefined unexpectedly by code somewhere
+    * else.
+    */
+-  void prepare(char const definition[]);
+-  void prepare(zview definition) { return prepare(definition.c_str()); }
++  void prepare(char const definition[]) &;
++  void prepare(zview definition) & { return prepare(definition.c_str()); }
+ 
+   /// Drop prepared statement.
+   void unprepare(std::string_view name);
+ 
++  /// If prepared statement was not registered with the server yet, do it now.
++  void prepare_now(std::string_view name);
++
+   /**
+    * @}
+    */
+@@ -742,6 +755,10 @@ private:
+ 
+   void PQXX_PRIVATE process_notice_raw(char const msg[]) noexcept;
+ 
++  prepare::internal::prepared_def &find_prepared(std::string_view);
++
++  prepare::internal::prepared_def &register_prepared(std::string_view);
++
+   result exec_prepared(std::string_view statement, internal::params const &);
+ 
+   /// Throw @c usage_error if this connection is not in a movable state.
+@@ -798,6 +815,10 @@ private:
+   /// Notification receivers.
+   receiver_list m_receivers;
+ 
++  using PSMap = std::map<std::string, prepare::internal::prepared_def, std::less<>>;
++  /// Prepared statements existing in this section.
++  PSMap m_prepared;
++
+   /// Unique number to use as suffix for identifiers (see adorn_name()).
+   int m_unique_id = 0;
+ };
+--- contrib/libs/libpqxx/include/pqxx/prepared_statement.hxx	(index)
++++ contrib/libs/libpqxx/include/pqxx/prepared_statement.hxx	(working tree)
+@@ -90,6 +90,23 @@ make_dynamic_params(C &container, ACCESSOR accessor)
+   using IT = decltype(std::begin(container));
+   return pqxx::internal::dynamic_params<IT, ACCESSOR>{container, accessor};
+ }
++
++namespace internal
++{
++/// Internal representation of a prepared statement definition.
++struct PQXX_LIBEXPORT prepared_def
++{
++  /// Name of prepared statement.
++  std::string name;
++  /// Text of prepared query.
++  std::string definition;
++  /// Has this prepared statement been prepared in the current session?
++  bool registered = false;
++
++  prepared_def() =default;
++  prepared_def(std::string, std::string);
++};
++} // namespace pqxx::prepare::internal
+ } // namespace pqxx::prepare
+ 
+ #include "pqxx/internal/compiler-internal-post.hxx"
+--- contrib/libs/libpqxx/src/connection.cxx	(index)
++++ contrib/libs/libpqxx/src/connection.cxx	(working tree)
+@@ -259,6 +259,8 @@ std::string pqxx::connection::get_variable(std::string_view var)
+  */
+ void pqxx::connection::set_up_state()
+ {
++  for (auto &p: m_prepared) p.second.registered = false;
++
+   if (auto const proto_ver{protocol_version()}; proto_ver < 3)
+   {
+     if (proto_ver == 0)
+@@ -609,31 +611,88 @@ std::string pqxx::connection::encrypt_password(
+ }
+ 
+ 
+-void pqxx::connection::prepare(char const name[], char const definition[])
++void pqxx::connection::prepare(char const name[], char const definition[], bool redefinition) &
+ {
+-  // Allocate once, re-use across invocations.
+-  static auto const q{std::make_shared<std::string>("[PREPARE]")};
+-
+-  auto const r{
+-    make_result(PQprepare(m_conn, name, definition, 0, nullptr), q)};
++  auto i = m_prepared.find(name);
++  if (i != m_prepared.end())
++  {
++    if (definition != i->second.definition)
++    {
++      if (not redefinition)
++        throw argument_error{
++               "Inconsistent redefinition of prepared statement"};
++      i->second.registered = false;
++      i->second.name = name;
++      i->second.definition = definition;
++    }
++  }
++  else
++  {
++    m_prepared.try_emplace(
++       std::string{name},
++       std::string{name}, std::string{definition});
++  }
+ }
+ 
+ 
+-void pqxx::connection::prepare(char const definition[])
++void pqxx::connection::prepare(char const definition[]) &
+ {
+-  this->prepare("", definition);
++  this->prepare("", definition, true);
+ }
+ 
+ 
+ void pqxx::connection::unprepare(std::string_view name)
+ {
+-  exec("DEALLOCATE " + quote_name(name));
++  auto i = m_prepared.find(name);
++
++  // Quietly ignore duplicated or spurious unprepare()s
++  if (i == m_prepared.end()) return;
++
++  if (i->second.registered) exec("DEALLOCATE " + quote_name(name));
++
++  m_prepared.erase(i);
++}
++
++
++pqxx::prepare::internal::prepared_def &
++pqxx::connection_base::find_prepared(std::string_view statement)
++{
++  auto s = m_prepared.find(statement);
++  if (s == m_prepared.end())
++    throw argument_error{"Unknown prepared statement"};
++  return s->second;
++}
++
++
++pqxx::prepare::internal::prepared_def &
++pqxx::connection_base::register_prepared(std::string_view name)
++{
++  static auto const q = std::make_shared<std::string>("[PREPARE]");
++  auto &s = find_prepared(name);
++
++  // "Register" (i.e., define) prepared statement with backend on demand
++  if (not s.registered)
++  {
++    auto r = make_result(
++      PQprepare(m_conn, s.name.c_str(), s.definition.c_str(), 0, nullptr), q);
++    s.registered = not name.empty();
++    return s;
++  }
++
++  return s;
++}
++
++
++void pqxx::connection_base::prepare_now(std::string_view name)
++{
++  register_prepared(name);
+ }
+ 
+ 
+ pqxx::result pqxx::connection::exec_prepared(
+   std::string_view statement, internal::params const &args)
+ {
++  register_prepared(statement);
+   auto const pointers{args.get_pointers()};
+   auto const q{std::make_shared<std::string>(statement)};
+   auto const pq_result{PQexecPrepared(
+--- contrib/libs/libpqxx/src/prepared_statement.cxx	(index)
++++ contrib/libs/libpqxx/src/prepared_statement.cxx	(working tree)
+@@ -0,0 +1,18 @@
++/** Helper classes for defining and executing prepared statements>
++ *
++ * See the connection_base hierarchy for more about prepared statements.
++ *
++ * Copyright (c) 2000-2019, Jeroen T. Vermeulen.
++ *
++ * See COPYING for copyright license.  If you did not receive a file called
++ * COPYING with this source code, please notify the distributor of this mistake,
++ * or contact the author.
++ */
++#include "pqxx/prepared_statement"
++
++
++pqxx::prepare::internal::prepared_def::prepared_def(
++    std::string n, std::string def) :
++  name{std::move(n)}, definition{std::move(def)}
++{
++}

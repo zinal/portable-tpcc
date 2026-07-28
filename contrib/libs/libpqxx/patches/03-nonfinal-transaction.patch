@@ -1,0 +1,11 @@
+--- contrib/libs/libpqxx/include/pqxx/transaction.hxx	(index)
++++ contrib/libs/libpqxx/include/pqxx/transaction.hxx	(working tree)
+@@ -63,7 +63,7 @@ namespace pqxx
+ template<
+   isolation_level ISOLATION = isolation_level::read_committed,
+   write_policy READWRITE = write_policy::read_write>
+-class transaction final : public internal::basic_transaction
++class transaction : public internal::basic_transaction
+ {
+ public:
+   /// Create a transaction.

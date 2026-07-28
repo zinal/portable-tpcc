@@ -1,0 +1,14 @@
+--- contrib/libs/libpqxx/include/pqxx/zview.hxx	(index)
++++ contrib/libs/libpqxx/include/pqxx/zview.hxx	(working tree)
+@@ -57,6 +57,11 @@ public:
+   {}
+ 
+   /* implicit */
++  constexpr zview(char const str[]) noexcept(noexcept(std::string_view{str})) :
++          std::string_view{str}
++  {}
++
++  /* implicit */
+   zview(std::string const &str) : std::string_view(str) {}
+ 
+   /* implicit */

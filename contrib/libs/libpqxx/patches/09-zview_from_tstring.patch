@@ -1,0 +1,23 @@
+--- contrib/libs/libpqxx/include/pqxx/zview.hxx	(index)
++++ contrib/libs/libpqxx/include/pqxx/zview.hxx	(working tree)
+@@ -16,6 +16,8 @@
+ #include <string_view>
+ #include <type_traits>
+ 
++#include <util/generic/string.h>
++
+ 
+ namespace pqxx
+ {
+@@ -62,6 +64,11 @@ public:
+   {}
+ 
+   /* implicit */
++  constexpr zview(const TBasicString<char>& str) :
++          std::string_view{str}
++  {}
++
++  /* implicit */
+   zview(std::string const &str) : std::string_view(str) {}
+ 
+   /* implicit */

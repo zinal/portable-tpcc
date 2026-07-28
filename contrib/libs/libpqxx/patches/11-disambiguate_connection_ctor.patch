@@ -1,0 +1,14 @@
+--- contrib/libs/libpqxx/include/pqxx/connection.hxx	(index)
++++ contrib/libs/libpqxx/include/pqxx/connection.hxx	(working tree)
+@@ -167,11 +167,6 @@ class PQXX_LIBEXPORT connection
+ public:
+   connection() : connection{""} {}
+ 
+-  explicit connection(std::string const &options) : connection{options.c_str()}
+-  {
+-    // (Delegates to other constructor which calls check_version for us.)
+-  }
+-
+   explicit connection(char const options[])
+   {
+     check_version();

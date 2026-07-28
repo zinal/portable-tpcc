@@ -1,0 +1,18 @@
+--- contrib/libs/libpqxx/include/pqxx/types.hxx	(index)
++++ contrib/libs/libpqxx/include/pqxx/types.hxx	(working tree)
+@@ -15,13 +15,13 @@
+ namespace pqxx
+ {
+ /// Number of rows in a result set.
+-using result_size_type = int;
++using result_size_type = size_t;
+ 
+ /// Difference between result sizes.
+ using result_difference_type = int;
+ 
+ /// Number of fields in a row of database data.
+-using row_size_type = int;
++using row_size_type = size_t;
+ 
+ /// Difference between row sizes.
+ using row_difference_type = int;

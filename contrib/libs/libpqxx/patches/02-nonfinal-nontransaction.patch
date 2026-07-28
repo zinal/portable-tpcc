@@ -1,0 +1,11 @@
+--- contrib/libs/libpqxx/include/pqxx/nontransaction.hxx	(index)
++++ contrib/libs/libpqxx/include/pqxx/nontransaction.hxx	(working tree)
+@@ -49,7 +49,7 @@ namespace pqxx
+  * Database features that require a backend transaction, such as cursors or
+  * large objects, will not work in a nontransaction.
+  */
+-class PQXX_LIBEXPORT nontransaction final : public transaction_base
++class PQXX_LIBEXPORT nontransaction : public transaction_base
+ {
+ public:
+   /// Constructor.
