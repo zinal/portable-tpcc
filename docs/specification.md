@@ -218,10 +218,9 @@ Runtime зависит только от `domain`, `transactions` и абстр�
 
 - строит план строк по shard;
 - выделяет единственного владельца DB-wide набора данных;
-- создаёт resumable batch с устойчивым идентификатором и hash;
-- передаёт typed batch в адаптер;
-- ведёт локальный cache состояния batch, но источником истины считает
-  DB-side load ledger или полную reconciliation адаптера;
+- создаёт детерминированный batch с устойчивым идентификатором и hash;
+- передаёт его в единый идемпотентный `PutBatch`;
+- MAY вести локальный cache успешно завершённых batch только как оптимизацию;
 - сверяет cardinality и канонические выборочные hash после загрузки.
 
 ### 4.7. `tpcc/checks`
@@ -252,7 +251,7 @@ SQL/запрос для каждого условия реализуется а�
 Каждый `tpcc/dbms/<name>` реализует:
 
 1. `IAdminAdapter` — schema, index, analyze/compact, clean и metadata;
-2. `ILoadAdapter` — typed bulk batches и checkpoint semantics;
+2. `ILoadAdapter` — идемпотентный `PutBatch` и `Ensure*`-операции;
 3. `ISessionFactory` / `ITpccSession` — транзакции;
 4. `ICheckAdapter` — запросы общих инвариантов;
 5. `IErrorClassifier` — нормализованные ошибки;
@@ -461,40 +460,56 @@ Connector/C, local index syntax, timeout variables и catalog queries остаю
 
 ### 7.2. Возобновление
 
-Каждый адаптер MUST объявить один crash-safe режим:
+У loader есть один DBMS-neutral контракт:
 
-`transactional_ledger`
-: Изменения batch и строка DB-side ledger
-  `(load_id, batch_id, hash, row_count, committed_at)` фиксируются одной
-  транзакцией. Повтор видит ledger, проверяет hash и пропускает batch.
+```text
+PutBatch(load_id, batch_id, table, key_range, rows, payload_sha256)
+    -> completed | outcome_unknown | failed
+```
 
-`idempotent_reconcile`
-: Batch состоит только из детерминированных keyed writes. После любого
-  неподтверждённого завершения, а также после crash loader выполняет полную
-  read-back reconciliation ключевого диапазона и фактического canonical hash.
-  Только совпавший hash переводит batch в `committed`.
+`PutBatch` MUST быть идемпотентным: любое число повторов одного batch, в том
+числе после `outcome_unknown` или crash, приводит к тому же конечному набору
+строк, что и одно успешное выполнение. Поэтому неподтверждённый batch всегда
+повторяется без отдельного recovery mode.
 
-Разрыв «commit данных → локальный checkpoint» MUST NOT приводить к blind
-replay. Локальный checkpoint — оптимизация; authoritative status получается
-из ledger/reconciliation. Адаптер без одного из этих режимов не поддерживает
-`--resume`.
+Перед первым batch адаптер атомарно связывает workload path с `load_id`.
+Пустой path принимает новый идентификатор, частично загруженный path — только
+тот же идентификатор. Наличие другого `load_id` является `integrity` и требует
+явного `clean`/нового path; это предотвращает смешивание двух datasets и
+остаточные строки от другого scale.
 
-Повторный `load --resume`:
+Для выполнения контракта:
 
-- проверяет run, profile, load-plan, spec-state (включая generator state) и
-  binary SHA;
-- reconciles все batch в состояниях `started` и `unknown`;
-- пропускает только полностью подтверждённые batch с тем же hash;
-- не принимает checkpoint от другого run;
-- после всех batch создаёт indexes/statistics;
-- запускает post-import check.
+- строки и все их значения полностью детерминированы `spec-state`;
+- batch содержит полные значения, а не относительные increments;
+- logical/technical keys стабильны;
+- server-generated timestamps, sequences и другие меняющиеся defaults при
+  загрузке запрещены;
+- `batch_id` связан с `load_id`, key range и `payload_sha256`;
+- другой payload для того же batch identity является `integrity`;
+- таблица без подходящего logical key получает детерминированный служебный
+  ключ либо реализуется адаптером через staging + replace-range.
+
+`PutBatch` — семантическая операция, а не требование использовать SQL
+`INSERT`. Адаптер MAY применять upsert, staging/merge, replace-range или
+внутренний ledger, но эти варианты не видны loader и profile.
+
+Локальный checkpoint успешных batch MAY ускорять повторный `load`. Он связан
+с hashes run/profile/load-plan/spec-state/binary и не является условием
+корректности: при отсутствии или неопределённости checkpoint batch просто
+повторяется.
+
+Создание схемы, indexes и statistics выполняется отдельными идемпотентными
+`EnsureSchema`, `EnsureIndexes` и `EnsureStatistics`. После всех `PutBatch`
+оркестратор запускает post-import checks; их результат является
+authoritative подтверждением полноты загрузки.
 
 ### 7.3. Проверки после импорта
 
 MUST выполняться на quiescent database:
 
 - все проверки, помеченные spec module как `after-import`;
-- полнота batch/checkpoint manifest;
+- полнота batch manifest;
 - отсутствие пересечений и пропусков load assignment;
 - соответствие фактических cardinality ожидаемым значениям, вычисленным spec
   module для scale;
@@ -532,7 +547,7 @@ tpccctl validate
 tpccctl plan
 tpccctl deploy
 tpccctl schema
-tpccctl load [--resume]
+tpccctl load
 tpccctl check [--after-import|--after-run]
 tpccctl start
 tpccctl status
@@ -886,7 +901,7 @@ flags выбранного режима. Итоговый JSON хранит sour
 | `validate`, `plan` | без side effects |
 | `deploy` | повторяемый по manifest/hash |
 | `schema` | проверяет существующее состояние; destructive recreate только с явным флагом |
-| `load` | resume только по подтверждённым batch/hash |
+| `load` | повторяемый: неизвестные batch безопасно проходят через `PutBatch` повторно |
 | `start` | разрешён только владельцу profile lock, DB fence и prepared execution gate; другой активный run запрещён |
 | `stop` | повторяемый, already stopped = success |
 | `collect` | повторяет download во временный каталог и атомарно публикует |
@@ -958,7 +973,7 @@ isolation, schema state и физическую конфигурацию.
 
 - DDL/create/clean;
 - initial population hash/cardinality;
-- load crash между data commit и local checkpoint;
+- прерывание `PutBatch` на разных стадиях и безопасный повтор;
 - все операции, экспортированные выбранным spec module;
 - transaction rollback atomicity;
 - deadlock/serialization retry;
@@ -1040,7 +1055,7 @@ docs/
 9. Post-import и post-run checks успешны.
 10. Aggregate воспроизводится из raw artifacts без доступа к СУБД.
 11. Profile, run-config и results не содержат секретов.
-12. `plan`, resume load, idempotent stop/collect и manifest cleanup покрыты
+12. `plan`, повторяемый load, idempotent stop/collect и manifest cleanup покрыты
     тестами.
 
 ## 16. Открытые решения перед реализацией

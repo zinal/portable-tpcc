@@ -52,8 +52,7 @@
     "load_id": "LOAD_ID_SHA256",
     "plan_sha256": "LOAD_PLAN_SHA256",
     "batch_rows": 10000,
-    "resume": true,
-    "recovery_mode": "idempotent_reconcile"
+    "write_contract": "idempotent-put-batch-v1"
   },
   "expected_instances": {
     "loaders": ["loader-a", "loader-b"],

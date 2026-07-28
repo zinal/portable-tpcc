@@ -54,7 +54,6 @@ data:
   # Явный seed разрешён только в engineering.
   seed: 731910246
   batch_rows: 10000
-  resume: true
 
 loaders:
   - name: loader-a
