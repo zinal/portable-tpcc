@@ -11,7 +11,7 @@ spec:
 
 deviations:
   - code: fixed_generator_seed
-    reason: repeatable cross-DB engineering comparison
+    reason: repeatable cross-DBMS engineering comparison
 
 ssh:
   user: tpcc
@@ -51,7 +51,7 @@ scale:
   warehouses: 200
 
 data:
-  # Явный seed разрешён только в engineering.
+  # An explicit seed is permitted only in engineering mode.
   seed: 731910246
   batch_rows: 10000
 
