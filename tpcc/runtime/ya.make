@@ -8,14 +8,12 @@ ADDINCL(
 
 SRCS(
     task_queue.cpp
+    log_backend.cpp
 )
 
 PEERDIR(
     tpcc/metrics
-)
-
-CFLAGS(
-    -DTPCC_NO_SPDLOG
+    contrib/restricted/spdlog
 )
 
 END()

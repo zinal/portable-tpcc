@@ -1,4 +1,4 @@
-#include "util.h"
+#include <domain_util.h>
 
 #include <iomanip>
 #include <sstream>
@@ -65,5 +65,9 @@ size_t NumberOfMyCpus() {
     return std::thread::hardware_concurrency();
 }
 #endif
+
+std::string GetEffectiveSchema(const std::string& path) {
+    return path.empty() ? "public" : path;
+}
 
 } // namespace NTpcc

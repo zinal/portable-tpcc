@@ -7,7 +7,7 @@ ADDINCL(
 )
 
 SRCS(
-    util.cpp
+    domain_util.cpp
 )
 
 PEERDIR(

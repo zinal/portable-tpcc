@@ -11,5 +11,8 @@ This repository currently contains the architecture draft:
 - [normalized run configuration example](docs/examples/run-config.v1.json);
 - [synchronized start-token example](docs/examples/start-token.v1.json).
 
-Implementation has not started. Results produced by the future software MUST
-NOT be called official TPC-C results without the required TPC verification.
+Implementation has started. The initial PostgreSQL port (`tpcc-pgsql`) and
+shared libraries are described in [docs/dependencies.md](docs/dependencies.md).
+
+Results produced by the software MUST NOT be called official TPC-C results
+without the required TPC verification.

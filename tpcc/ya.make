@@ -3,4 +3,6 @@ RECURSE(
     metrics
     runtime
     transactions
+    dbms
+    app
 )

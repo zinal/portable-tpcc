@@ -9,6 +9,8 @@ namespace NTpcc {
 
 std::string GetFormattedSize(size_t size);
 
+std::string GetEffectiveSchema(const std::string& path);
+
 std::stop_source& GetGlobalInterruptSource();
 std::atomic<bool>& GetGlobalErrorVariable();
 

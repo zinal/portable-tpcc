@@ -1,18 +1,18 @@
 #pragma once
 
-#include "future.h"
+#include <future.h>
 
 #include <coroutine>
 #include <exception>
 
-namespace NTpcc {
+namespace std {
 
 template <typename T, typename... Args>
-struct coroutine_traits<TFuture<T>, Args...> {
+struct coroutine_traits<NTpcc::TFuture<T>, Args...> {
     struct promise_type {
-        TPromise<T> promise;
+        NTpcc::TPromise<T> promise;
 
-        TFuture<T> get_return_object() {
+        NTpcc::TFuture<T> get_return_object() {
             return promise.GetFuture();
         }
 
@@ -30,11 +30,11 @@ struct coroutine_traits<TFuture<T>, Args...> {
 };
 
 template <typename... Args>
-struct coroutine_traits<TFuture<void>, Args...> {
+struct coroutine_traits<NTpcc::TFuture<void>, Args...> {
     struct promise_type {
-        TPromise<void> promise;
+        NTpcc::TPromise<void> promise;
 
-        TFuture<void> get_return_object() {
+        NTpcc::TFuture<void> get_return_object() {
             return promise.GetFuture();
         }
 
@@ -51,7 +51,7 @@ struct coroutine_traits<TFuture<void>, Args...> {
     };
 };
 
-} // namespace NTpcc
+} // namespace std
 
 // NOTE: a bare `operator co_await(TFuture<T>&&)` was intentionally removed.
 // It would resume the coroutine inline on whatever thread sets the promise
