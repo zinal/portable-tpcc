@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "run_id": "20260728-lab-ydb-200-01",
+  "generation": 1,
+  "run_config_sha256": "RUN_CONFIG_SHA256",
+  "spec_state_sha256": "SPEC_STATE_SHA256",
+  "database_fence": {
+    "token_sha256": "DATABASE_FENCE_TOKEN_SHA256",
+    "generation": 7,
+    "not_after": "2026-07-28T12:40:00Z"
+  },
+  "ready_set_sha256": "READY_SET_SHA256",
+  "expected_workers_sha256": "EXPECTED_WORKERS_SHA256",
+  "issued_at": "2026-07-28T11:59:30Z",
+  "execution_gate": {
+    "key": "20260728-lab-ydb-200-01",
+    "generation": 1,
+    "required_state": "committed"
+  },
+  "phases": {
+    "ramp_start": "2026-07-28T12:00:15Z",
+    "measurement_start": "2026-07-28T12:05:15Z",
+    "measurement_end": "2026-07-28T12:35:15Z",
+    "drain_deadline": "2026-07-28T12:35:45Z",
+    "async_work_drain_deadline": "2026-07-28T12:36:35Z"
+  }
+}
