@@ -28,6 +28,6 @@
     "verify_sha256": true
   },
   "secrets": {
-    "database_password_env": "YDB_TOKEN"
+    "database_password_env": "YDB_PASSWORD"
   }
 }

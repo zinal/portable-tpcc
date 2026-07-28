@@ -42,7 +42,7 @@ database:
   endpoint: grpcs://ydb.example.net:2135
   database: /Root/tpcc
   path: portable_tpcc
-  password_env: YDB_TOKEN
+  password_env: YDB_PASSWORD
   options:
     tx_mode: serializable-rw
     compact_after_load: true

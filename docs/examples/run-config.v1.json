@@ -39,7 +39,7 @@
       "database_id": "/Root/tpcc",
       "workload_path": "portable_tpcc"
     },
-    "password_env": "YDB_TOKEN",
+    "password_env": "YDB_PASSWORD",
     "options": {
       "compact_after_load": true,
       "tx_mode": "serializable-rw"
