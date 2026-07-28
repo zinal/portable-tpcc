@@ -1,4 +1,5 @@
 #include "import.h"
+#include "warehouse_range.h"
 #include "pqxx_compat.h"
 #include <rng.h>
 
@@ -468,36 +469,60 @@ void LoadWarehouse(pqxx::connection& conn, int wh, TImportState& state) {
 //-----------------------------------------------------------------------------
 
 void ImportSync(const TImportConfig& config) {
-    if (config.WarehouseCount == 0) {
-        LOG_E("Specified zero warehouses");
-        throw std::runtime_error("Warehouse count must be greater than zero");
+    std::vector<TWarehouseRange> ranges = config.WarehouseRanges;
+    if (ranges.empty()) {
+        if (config.WarehouseCount == 0) {
+            LOG_E("Specified zero warehouses");
+            throw std::runtime_error("Warehouse count must be greater than zero");
+        }
+        ranges.push_back(TWarehouseRange{1, static_cast<int>(config.WarehouseCount) + 1});
     }
+
+    const size_t assignedWarehouses = CountWarehouses(ranges);
+    const int scaleWarehouses = config.TotalWarehouses > 0
+        ? config.TotalWarehouses
+        : static_cast<int>(assignedWarehouses);
 
     size_t threadCount = config.LoadThreadCount;
     if (threadCount == 0) {
-        threadCount = std::min({config.WarehouseCount, NumberOfMyCpus(), MAX_LOADER_THREADS});
+        threadCount = std::min({assignedWarehouses, NumberOfMyCpus(), MAX_LOADER_THREADS});
     }
     threadCount = std::max(threadCount, size_t(1));
-    threadCount = std::min(threadCount, config.WarehouseCount);
+    threadCount = std::min(threadCount, assignedWarehouses);
 
-    LOG_I("Starting TPC-C data import for {} warehouses using {} threads",
-          config.WarehouseCount, threadCount);
+    LOG_I("Starting TPC-C data import for {} assigned warehouses (scale {}) using {} threads",
+          assignedWarehouses, scaleWarehouses, threadCount);
 
     auto startTime = Clock::now();
 
     TImportState state{GetGlobalInterruptSource().get_token()};
     state.ApproximateDataSize =
-        EstimateSharedDataSize() + config.WarehouseCount * EstimatePerWarehouseDataSize();
+        (config.OwnsGlobalData ? EstimateSharedDataSize() : 0) +
+        assignedWarehouses * EstimatePerWarehouseDataSize();
 
-    // Load small tables on the main connection
+    // Global tables and warehouse metadata for assigned ranges.
     {
         pqxx::connection conn(config.ConnectionString);
         SetSearchPath(conn, config.Path);
         DisableSynchronousCommit(conn);
-        LoadItems(conn);
-        state.DataSizeLoaded.fetch_add(EstimateSharedDataSize(), std::memory_order_relaxed);
-        LoadWarehouses(conn, 1, static_cast<int>(config.WarehouseCount));
-        LoadDistricts(conn, 1, static_cast<int>(config.WarehouseCount));
+        if (config.OwnsGlobalData) {
+            LoadItems(conn);
+            state.DataSizeLoaded.fetch_add(EstimateSharedDataSize(), std::memory_order_relaxed);
+        }
+        for (const auto& range : ranges) {
+            const int start = RangeStartInclusive(range);
+            const int end = RangeEndInclusive(range);
+            LoadWarehouses(conn, start, end);
+            LoadDistricts(conn, start, end);
+        }
+    }
+
+    // Flatten assigned warehouse ids for parallel per-warehouse loading.
+    std::vector<int> warehouseIds;
+    for (const auto& range : ranges) {
+        for (int wh = range.Start; wh < range.End; ++wh) {
+            warehouseIds.push_back(wh);
+        }
     }
 
     // Load per-warehouse data in parallel
@@ -505,20 +530,21 @@ void ImportSync(const TImportConfig& config) {
     threads.reserve(threadCount);
 
     for (size_t tid = 0; tid < threadCount; ++tid) {
-        int whStart = static_cast<int>(tid * config.WarehouseCount / threadCount + 1);
-        int whEnd = static_cast<int>((tid + 1) * config.WarehouseCount / threadCount);
+        const size_t begin = tid * warehouseIds.size() / threadCount;
+        const size_t end = (tid + 1) * warehouseIds.size() / threadCount;
 
-        threads.emplace_back([&config, &state, whStart, whEnd]() {
+        threads.emplace_back([&config, &state, &warehouseIds, begin, end, assignedWarehouses]() {
             try {
                 pqxx::connection conn(config.ConnectionString);
                 SetSearchPath(conn, config.Path);
                 DisableSynchronousCommit(conn);
-                for (int wh = whStart; wh <= whEnd; ++wh) {
+                for (size_t i = begin; i < end; ++i) {
                     if (state.StopToken.stop_requested()) return;
+                    const int wh = warehouseIds[i];
                     LoadWarehouse(conn, wh, state);
 
                     LOG_I("Warehouse {} loaded ({}/{})",
-                          wh, state.WarehousesLoaded.load(), config.WarehouseCount);
+                          wh, state.WarehousesLoaded.load(), assignedWarehouses);
                 }
             } catch (const std::exception& ex) {
                 LOG_E("Import thread failed: {}", ex.what());
@@ -534,7 +560,7 @@ void ImportSync(const TImportConfig& config) {
         StartLogCapture(logCapture);
         TImportDisplayData initData(state);
         tui = std::make_unique<TImportTui>(
-            logCapture, config.WarehouseCount, threadCount, initData);
+            logCapture, assignedWarehouses, threadCount, initData);
     }
 #endif
 
@@ -542,7 +568,7 @@ void ImportSync(const TImportConfig& config) {
         size_t prevLoaded = state.DataSizeLoaded.load(std::memory_order_relaxed);
         auto prevTime = Clock::now();
 
-        while (state.WarehousesLoaded.load(std::memory_order_relaxed) < config.WarehouseCount
+        while (state.WarehousesLoaded.load(std::memory_order_relaxed) < assignedWarehouses
                && !state.StopToken.stop_requested())
         {
             std::this_thread::sleep_for(std::chrono::milliseconds(500));

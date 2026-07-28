@@ -28,6 +28,10 @@ SRCS(
     tui_base.cpp
     scroller.cpp
     logs_scroller.cpp
+    warehouse_range.cpp
+    run_config.cpp
+    artifacts.cpp
+    worker_loader.cpp
 )
 
 PEERDIR(
@@ -38,6 +42,8 @@ PEERDIR(
     contrib/libs/fmt
     contrib/restricted/spdlog
     contrib/libs/ftxui
+    contrib/restricted/nlohmann_json
+    contrib/libs/openssl
 )
 
 CFLAGS(

@@ -1,9 +1,12 @@
 #pragma once
 
+#include "warehouse_range.h"
+
 #include <atomic>
 #include <chrono>
 #include <stop_token>
 #include <string>
+#include <vector>
 
 namespace NTpcc {
 
@@ -13,6 +16,11 @@ struct TImportConfig {
     size_t WarehouseCount = 1;
     size_t LoadThreadCount = 0;
     bool UseTui = true;
+
+    // Orchestrated loader: half-open warehouse ranges from run-config assignment.
+    std::vector<TWarehouseRange> WarehouseRanges;
+    bool OwnsGlobalData = true;
+    int TotalWarehouses = 0;
 };
 
 struct TImportState {
