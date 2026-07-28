@@ -34,54 +34,9 @@
 архитектурные способы совместно реализовать эти правила для нескольких СУБД и
 нескольких хостов генератора.
 
-## 2. Исходные реализации и принятые решения
+## 2. Область применимости
 
-Анализ выполнен по запрошенным веткам `someshit`:
-
-| Реализация | Ревизия | Основные исходники |
-| --- | --- | --- |
-| YDB workload TPC-C | [`2d39067964be819513b8483e141a2bf923d5614d`](https://github.com/zinal/ydb/tree/2d39067964be819513b8483e141a2bf923d5614d/ydb/library/workload/tpcc) | `runner.*`, `terminal.*`, `transaction_*.cpp`, `import.cpp`, `check.cpp` |
-| PostgreSQL C++ | [`bcaace663928ab955b4605b074a5c509fae1814f`](https://github.com/zinal/tpcc-postgres-cpp/tree/bcaace663928ab955b4605b074a5c509fae1814f) | `src/runner.*`, `src/terminal.*`, `src/transaction_*.cpp`, `src/pg_*`, `src/import.cpp` |
-| OceanBase C++ | [`43ec1a594a1fab7a7f62b78d53628e3591e82a06`](https://github.com/zinal/tpcc-oceanbase-cpp/tree/43ec1a594a1fab7a7f62b78d53628e3591e82a06) | `src/db/`, `src/transaction_*.cpp`, `src/init.cpp`, `src/import.cpp` |
-
-Принципы оркестратора взяты из локального снимка TPC-E tools, добавленного в
-этот репозиторий ревизией
-[`783a6e6a1c06ccc533511a0cf7d920b66bd470d4`](https://github.com/zinal/portable-tpcc/tree/783a6e6a1c06ccc533511a0cf7d920b66bd470d4/temp-portable-tpce):
-
-- [контракт оркестратора](../temp-portable-tpce/docs/spec-orchestrator.md);
-- [горизонтальное масштабирование](../temp-portable-tpce/docs/spec-scalability.md);
-- [разделение общей части и адаптеров СУБД](../temp-portable-tpce/docs/spec-multiple-databases.md);
-- [реализация `tpcectl`](../temp-portable-tpce/tpcectl/).
-
-### 2.1. Что обязательно переносится из веток `someshit`
-
-1. Случайные входные данные создаются один раз на **логическую** транзакцию и
-   не меняются при повторных попытках.
-2. Исправления initial dataset из веток `someshit` закрепляются test vectors
-   versioned spec module, а не переносятся вручную между адаптерами.
-3. Индекс последнего заказа не дублируется эквивалентным индексом.
-4. Идентификаторы склада имеют одинаковый тип на границах модели и БД.
-5. Адаптер MAY объединять последнюю операцию и `COMMIT`, как в YDB, если
-   результат и классификация неопределённого commit остаются корректными.
-
-### 2.2. Что не переносится
-
-Обнаруженные в исходных реализациях ограничения не являются частью целевой
-архитектуры:
-
-- один процесс, владеющий всеми складами;
-- пересоздание входа при retry;
-- неявное умножение terminal population при запуске второго процесса;
-- асинхронная очистка общих счётчиков на границе warmup;
-- искусственное ограничение вычисленной стандартной метрики;
-- текстовый вывод без машиночитаемого результата;
-- невалидируемые нулевые и отрицательные размеры пулов;
-- частичная загрузка, после которой возможен только полный `clean`;
-- SQL и типы клиентской библиотеки в общей транзакционной логике.
-
-## 3. Область применимости
-
-### 3.1. Цели
+### 2.1. Цели
 
 - Одна логическая база TPC-C и произвольное число хостов генератора.
 - Однозначное владение складами worker-процессами.
@@ -93,7 +48,7 @@
 - Полный воспроизводимый manifest запуска.
 - Автоматические проверки до и после теста.
 
-### 3.2. Не-цели первой версии
+### 2.2. Не-цели первой версии
 
 - Создание или администрирование кластеров СУБД.
 - Kubernetes, Ansible или systemd как обязательная среда.
@@ -107,7 +62,7 @@
 независимой проверки всех требований TPC. По умолчанию отчёт содержит
 `result_class: engineering`.
 
-### 3.3. Режимы
+### 2.3. Режимы
 
 `engineering` разрешает profile overrides стандартных параметров для
 диагностики. Каждое такое изменение MUST быть явно перечислено в
@@ -119,7 +74,7 @@
 versioned модуль `tpcc/spec/<edition>`. Само имя режима не является заявлением
 о сертификации результата.
 
-## 4. Общая архитектура
+## 3. Общая архитектура
 
 ```text
                          CONTROL HOST
@@ -151,13 +106,9 @@ versioned модуль `tpcc/spec/<edition>`. Само имя режима не 
 | `worker` | 1..N | workload закреплённых складов |
 | `results` | 1 | каталог консолидированных артефактов |
 
-В TPC-C нет аналогов TPC-E MEE, BH и единственного DM. Эти роли, `SetBaseTime`,
-`Trade-Cleanup`, MEE drain и C_ID partitioning MUST NOT появляться в TPC-C
-runtime. Из TPC-E переносится организация control plane, а не ролевая модель.
+## 4. Компоненты и границы библиотек
 
-## 5. Компоненты и границы библиотек
-
-### 5.1. `tpcc/spec`
+### 4.1. `tpcc/spec`
 
 Выбранная редакция стандарта представляется одним versioned C++ package. Он
 содержит только машиноисполняемые правила и test vectors, необходимые
@@ -189,7 +140,7 @@ SHA-256, module ABI version и module SHA. `materialize` создаёт opaque
 валидирует JSON Schema и сохраняет binary/module hash. Workload binary при
 старте проверяет, что linked module SHA совпадает с `spec-state.json`.
 
-### 5.2. `tpcc/domain`
+### 4.2. `tpcc/domain`
 
 Не зависит от SDK СУБД, сети и планировщика:
 
@@ -207,7 +158,7 @@ Scale и ограничения типов задаёт versioned spec module. �
 десятичные значения представляются checked fixed-point типами; преобразование
 в `double` внутри domain и adapter API MUST NOT использоваться.
 
-### 5.3. `tpcc/generator`
+### 4.3. `tpcc/generator`
 
 - создаёт общие параметры генератора на test run;
 - создаёт начальные данные;
@@ -219,7 +170,7 @@ Scale и ограничения типов задаёт versioned spec module. �
 Параллелизм MUST NOT менять содержимое базы. Для одного `run_seed` хэш
 канонической строки каждой записи одинаков при любом sharding.
 
-### 5.4. `tpcc/transactions`
+### 4.4. `tpcc/transactions`
 
 Содержит общую последовательность бизнес-операций. Библиотека работает через
 типизированный `ITpccSession`, а не через SQL, `pqxx`, YDB SDK или `MYSQL*`.
@@ -248,7 +199,7 @@ prepared SQL/COPY, а OceanBase — cached prepared statements без измен
 запрос и commit без скрытых deferred side effects. Дополнительное fusion
 разрешено только внутри одной semantic operation/batch.
 
-### 5.5. `tpcc/runtime`
+### 4.5. `tpcc/runtime`
 
 - terminal state machines из assignment spec module;
 - coroutine scheduler;
@@ -263,7 +214,7 @@ prepared SQL/COPY, а OceanBase — cached prepared statements без измен
 
 Runtime зависит только от `domain`, `transactions` и абстрактного adapter API.
 
-### 5.6. `tpcc/loader`
+### 4.6. `tpcc/loader`
 
 - строит план строк по shard;
 - выделяет единственного владельца DB-wide набора данных;
@@ -273,7 +224,7 @@ Runtime зависит только от `domain`, `transactions` и абстр�
   DB-side load ledger или полную reconciliation адаптера;
 - сверяет cardinality и канонические выборочные hash после загрузки.
 
-### 5.7. `tpcc/checks`
+### 4.7. `tpcc/checks`
 
 Общие описания:
 
@@ -287,7 +238,7 @@ SQL/запрос для каждого условия реализуется а�
 ссылка на пункт стандарта, ожидаемая семантика и формат результата общие.
 Текст стандартного условия в библиотеке и этой спецификации не копируется.
 
-### 5.8. `tpcc/metrics`
+### 4.8. `tpcc/metrics`
 
 - счётчики;
 - гистограммы с общими границами;
@@ -296,7 +247,7 @@ SQL/запрос для каждого условия реализуется а�
 - детерминированное слияние;
 - qualification flags.
 
-### 5.9. Адаптеры
+### 4.9. Адаптеры
 
 Каждый `tpcc/dbms/<name>` реализует:
 
@@ -310,7 +261,7 @@ SQL/запрос для каждого условия реализуется а�
 
 SDK-типы MUST NOT выходить за границу адаптера.
 
-### 5.10. Исполняемые файлы
+### 4.10. Исполняемые файлы
 
 Первая версия собирает отдельные программы:
 
@@ -326,11 +277,11 @@ C++-программы линкуют одни и те же общие библ�
 подход не требует runtime plugin ABI и не тащит клиентские библиотеки всех
 СУБД в один binary.
 
-`tpccctl` — отдельный Go binary по модели `tpcectl`.
+`tpccctl` — отдельный self-contained Go binary.
 
-## 6. Горизонтальное исполнение workload
+## 5. Горизонтальное исполнение workload
 
-### 6.1. Assignment
+### 5.1. Assignment
 
 Versioned spec module строит полный набор стандартных terminal identities для
 заданного scale. Пользовательский profile перечисляет только loader/worker
@@ -363,7 +314,7 @@ scale, число терминалов, их идентичность или п�
 Статическое владение выбрано намеренно: динамический reassignment во время
 measurement меняет pacing, RNG streams и набор соединений, поэтому запрещён.
 
-### 6.2. Runtime worker
+### 5.2. Runtime worker
 
 Один worker содержит:
 
@@ -379,7 +330,7 @@ measurement меняет pacing, RNG streams и набор соединений,
 соединений и inflight операций — параметры производительности worker, а не
 параметры logical scale.
 
-### 6.3. Логическая транзакция и retry
+### 5.3. Логическая транзакция и retry
 
 До первой попытки runtime создаёт immutable envelope:
 
@@ -397,8 +348,8 @@ measurement меняет pacing, RNG streams и набор соединений,
 ```
 
 Все входы, timestamps и logical ID MUST оставаться неизменными до
-окончательного результата. Это переносит исправление веток `someshit` в общий
-runtime и не позволяет адаптерам повторно вызывать генератор при retry.
+окончательного результата. Общий runtime не позволяет адаптерам повторно
+вызывать генератор при retry.
 
 Нормализованные классы ошибок:
 
@@ -414,7 +365,7 @@ runtime и не позволяет адаптерам повторно вызы�
 Внутренний retry SDK и общий retry runtime MUST образовывать один наблюдаемый
 budget. Число попыток, задержки и native error code попадают в метрики.
 
-### 6.4. Асинхронные части workload
+### 5.4. Асинхронные части workload
 
 Требуемые стандартом отложенные операции реализуются общим runtime через
 типизированную bounded queue и отдельный executor. Adapter выполняет только
@@ -425,9 +376,9 @@ measurement admission прекращается, а уже принятые эл�
 отдельное окно drain. Конкретные сроки и критерии берутся из versioned spec
 module, а не задаются этим документом.
 
-## 7. Разделение логической и физической схемы
+## 6. Разделение логической и физической схемы
 
-### 7.1. Общий schema model
+### 6.1. Общий schema model
 
 Versioned spec module описывает таблицы, столбцы, ограничения и логически
 необходимые access paths в DBMS-neutral AST. Он является единственным
@@ -443,7 +394,7 @@ Adapter преобразует AST в DDL и physical layout. Он MAY доба�
 
 Точные десятичные типы domain MUST отображаться в точные типы СУБД.
 
-### 7.2. YDB
+### 6.2. YDB
 
 Адаптер SHOULD:
 
@@ -459,7 +410,7 @@ Adapter преобразует AST в DDL и physical layout. Он MAY доба�
 `.sys/nodes`, compaction, index implementation tables и YDB status codes
 остаются внутри адаптера.
 
-### 7.3. PostgreSQL
+### 6.3. PostgreSQL
 
 Адаптер SHOULD:
 
@@ -472,7 +423,7 @@ Adapter преобразует AST в DDL и physical layout. Он MAY доба�
   транспорта; если используется blocking libpqxx, IO pool MUST быть ограничен;
 - создавать customer index после bulk load и затем выполнять `ANALYZE`.
 
-### 7.4. OceanBase
+### 6.4. OceanBase
 
 Адаптер SHOULD:
 
@@ -490,9 +441,9 @@ Adapter преобразует AST в DDL и physical layout. Он MAY доба�
 Connector/C, local index syntax, timeout variables и catalog queries остаются
 в адаптере.
 
-## 8. Горизонтальная загрузка
+## 7. Горизонтальная загрузка
 
-### 8.1. План
+### 7.1. План
 
 Оркестратор строит `load-plan.json`:
 
@@ -508,7 +459,7 @@ Connector/C, local index syntax, timeout variables и catalog queries остаю
   данных;
 - assignment не зависит от порядка запуска.
 
-### 8.2. Возобновление
+### 7.2. Возобновление
 
 Каждый адаптер MUST объявить один crash-safe режим:
 
@@ -538,7 +489,7 @@ replay. Локальный checkpoint — оптимизация; authoritative 
 - после всех batch создаёт indexes/statistics;
 - запускает post-import check.
 
-### 8.3. Проверки после импорта
+### 7.3. Проверки после импорта
 
 MUST выполняться на quiescent database:
 
@@ -553,11 +504,11 @@ MUST выполняться на quiescent database:
 Отчёт хранит идентификаторы проверок, ссылки на пункты стандарта и
 машиночитаемые результаты. Он не копирует нормативный текст TPC-C.
 
-## 9. Оркестратор `tpccctl`
+## 8. Оркестратор `tpccctl`
 
-### 9.1. Принципы
+### 8.1. Принципы
 
-По образцу `tpcectl`:
+Control plane следует следующим принципам:
 
 1. один self-contained Go binary;
 2. декларативный YAML profile `portable-tpcc/v1`;
@@ -574,7 +525,7 @@ MUST выполняться на quiescent database:
 13. сбор сырых артефактов даже при неуспехе;
 14. secrets только через environment и временные файлы mode 0600.
 
-### 9.2. Команды
+### 8.2. Команды
 
 ```text
 tpccctl validate
@@ -603,7 +554,7 @@ validate → deploy → schema → load → check(after-import)
 Отдельные skip flags разрешены только в `engineering`; все пропуски
 записываются как deviations.
 
-### 9.3. Profile и run-config
+### 8.3. Profile и run-config
 
 Человек редактирует profile. Оркестратор валидирует его и создаёт
 нормализованный `run-config.json`, включающий:
@@ -647,7 +598,7 @@ spec-state, start-token, readiness, process state и результатов. YAM
 Control-config содержит SSH inventory, local/state/result paths и deploy
 policy. Run-config содержит только параметры runtime hosts.
 
-### 9.4. Каталоги
+### 8.4. Каталоги
 
 Runtime host:
 
@@ -687,7 +638,7 @@ Control host:
     └── load-plan.json
 ```
 
-### 9.5. Deploy и cleanup
+### 8.5. Deploy и cleanup
 
 Deploy:
 
@@ -699,7 +650,7 @@ Deploy:
 Cleanup удаляет только пути из полного manifest и никогда не выполняет
 безусловный `rm -rf remote_root`. В non-interactive режиме требуется `--yes`.
 
-### 9.6. DB-scoped fence
+### 8.6. DB-scoped fence
 
 До `schema`, `load`, `check` или `start` control получает через `IAdminAdapter`
 fence на adapter-discovered canonical database identity. Identity MUST
@@ -718,7 +669,7 @@ generation; БД отклоняет stale generation.
 первый control упал. Потеря/преждевременное истечение fence делает run failed.
 Metadata не входит в измеряемую схему и удаляется только владельцем token.
 
-### 9.7. Синхронизация часов и двухфазный старт
+### 8.7. Синхронизация часов и двухфазный старт
 
 Clock calibration использует несколько samples на host, выбирает sample с
 минимальным RTT и сохраняет offset вместе с uncertainty. Проверка повторяется
@@ -771,7 +722,7 @@ uncertainty и drift.
 }
 ```
 
-### 9.8. Учёт на границах фаз
+### 8.8. Учёт на границах фаз
 
 Worker хранит отдельные сырые populations по временам submit/start/complete и
 не очищает shared counters на границе warmup. Для каждой логической операции
@@ -782,7 +733,7 @@ Worker хранит отдельные сырые populations по времен�
 решает только `tpcc-spec qualify`. Оркестратор не кодирует эти правила и не
 перекладывает поздние completions между populations.
 
-### 9.9. Process supervision
+### 8.9. Process supervision
 
 Первая версия использует `nohup`, но PID не считается достаточной
 идентичностью. `nohup` запускает маленький wrapper с заранее созданным
@@ -811,7 +762,7 @@ Stop:
 общий run как failed; reassignment запрещён, потому что изменил бы terminal
 population и timing.
 
-### 9.10. Состояния
+### 8.10. Состояния
 
 ```text
 planned → deploying → schema → loading → checking_import
@@ -823,9 +774,9 @@ planned → deploying → schema → loading → checking_import
 run-state выполняется атомарно через temporary file + rename и содержит
 последнюю ошибку и все известные процессы.
 
-## 10. Метрики и консолидация
+## 9. Метрики и консолидация
 
-### 10.1. Worker result
+### 9.1. Worker result
 
 Каждый worker пишет JSON с:
 
@@ -846,7 +797,7 @@ Histogram хранит counts общих buckets в микросекундах, 
 underflow/overflow, а также mergeable `count`, точную сумму duration и точный
 maximum. Worker не является источником итоговых percentile или average.
 
-### 10.2. Консолидация
+### 9.2. Консолидация
 
 `consolidate` MUST:
 
@@ -870,7 +821,7 @@ maximum. Worker не является источником итоговых perc
 - скрывать outcomes;
 - ограничивать вычисленную стандартную метрику искусственным максимумом.
 
-### 10.3. Итоговые артефакты
+### 9.3. Итоговые артефакты
 
 ```text
 results/<run_id>/
@@ -906,7 +857,7 @@ results. Aggregate строится только из файлов этого ma
 SHA-256. Незапечатанные данные остаются как `partial`, но не участвуют в
 qualified aggregate.
 
-### 10.4. Qualification flags
+### 9.4. Qualification flags
 
 Оркестратор формирует инфраструктурные flags:
 
@@ -928,7 +879,7 @@ artifacts_sealed
 flags выбранного режима. Итоговый JSON хранит source (`orchestrator` или
 `spec:<edition>`) каждого flag.
 
-## 11. Ошибки, восстановление и идемпотентность
+## 10. Ошибки, восстановление и идемпотентность
 
 | Операция | Контракт |
 | --- | --- |
@@ -946,7 +897,7 @@ flags выбранного режима. Итоговый JSON хранит sour
 остановить уже запущенные процессы и собрать их логи. Ошибка collect не
 переписывает исходную причину failure, а добавляется отдельной причиной.
 
-## 12. Безопасность
+## 11. Безопасность
 
 - DB и SSH passwords MUST NOT находиться в profile artifacts, argv, logs,
   run-config или run-state.
@@ -961,7 +912,7 @@ flags выбранного режима. Итоговый JSON хранит sour
   отклоняются.
 - Логи native drivers проходят redaction известных connection-string форм.
 
-## 13. Валидация
+## 12. Валидация
 
 `tpccctl validate` MUST отвергать:
 
@@ -987,9 +938,9 @@ flags выбранного режима. Итоговый JSON хранит sour
 Adapter preflight проверяет server version, permissions, connectivity,
 isolation, schema state и физическую конфигурацию.
 
-## 14. Проверки и тесты реализации
+## 13. Проверки и тесты реализации
 
-### 14.1. Общие unit tests
+### 13.1. Общие unit tests
 
 - test vectors versioned spec module;
 - domain types и canonical encoding;
@@ -1001,7 +952,7 @@ isolation, schema state и физическую конфигурацию.
 - histogram merge;
 - load sharding независимо от числа shards.
 
-### 14.2. Adapter contract suite
+### 13.2. Adapter contract suite
 
 Один набор тестов запускается для каждой СУБД:
 
@@ -1016,7 +967,7 @@ isolation, schema state и физическую конфигурацию.
 - полный каталог общих checks;
 - cancellation и reconnect policy.
 
-### 14.3. Orchestrator tests
+### 13.3. Orchestrator tests
 
 - strict profile validation;
 - plan snapshots и argv;
@@ -1036,7 +987,7 @@ isolation, schema state и физическую конфигурацию.
 - aggregate golden files;
 - integration test через локальный SSH target.
 
-### 14.4. Cross-DB equivalence
+### 13.4. Cross-DB equivalence
 
 Для небольшого общего seed:
 
@@ -1046,7 +997,7 @@ isolation, schema state и физическую конфигурацию.
 4. сравнить normalized outputs и checks;
 5. отдельно разрешить только документированные различия physical metadata.
 
-## 15. Предлагаемая структура репозитория
+## 14. Предлагаемая структура репозитория
 
 ```text
 tpcc/
@@ -1076,7 +1027,7 @@ docs/
 Все C++ targets описываются `ya.make`. Go orchestrator собирается существующей
 поддержкой Go в `ya make`; альтернативная корневая build system не вводится.
 
-## 16. Критерии готовности первой версии
+## 15. Критерии готовности первой версии
 
 1. Три binaries проходят одну adapter contract suite.
 2. Одинаковый seed создаёт эквивалентные logical datasets.
@@ -1092,7 +1043,7 @@ docs/
 12. `plan`, resume load, idempotent stop/collect и manifest cleanup покрыты
     тестами.
 
-## 17. Открытые решения перед реализацией
+## 16. Открытые решения перед реализацией
 
 До начала кодирования требуется зафиксировать:
 
