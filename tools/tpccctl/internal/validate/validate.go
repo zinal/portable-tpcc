@@ -1,0 +1,216 @@
+package validate
+
+import (
+	"fmt"
+	"strings"
+
+	"portable-tpcc/tools/tpccctl/internal/assignment"
+	"portable-tpcc/tools/tpccctl/internal/profile"
+)
+
+var allowedDBMS = map[string]bool{
+	"ydb":       true,
+	"pgsql":     true,
+	"oceanbase": true,
+}
+
+var allowedModes = map[string]bool{
+	"engineering":  true,
+	"conformance":    true,
+}
+
+// Result holds validation outcome.
+type Result struct {
+	Valid  bool
+	Errors []string
+}
+
+func (r *Result) Add(err string) {
+	r.Valid = false
+	r.Errors = append(r.Errors, err)
+}
+
+// Profile validates a parsed profile per specification §12.
+func Profile(p *profile.Profile) *Result {
+	res := &Result{Valid: true}
+
+	if p.APIVersion != profile.APIVersion {
+		res.Add(fmt.Sprintf("unknown apiVersion %q, want %s", p.APIVersion, profile.APIVersion))
+	}
+	if p.Kind != profile.Kind {
+		res.Add(fmt.Sprintf("unknown kind %q, want %s", p.Kind, profile.Kind))
+	}
+	if !allowedModes[p.Mode] {
+		res.Add(fmt.Sprintf("unknown mode %q", p.Mode))
+	}
+	if p.Spec.Edition == "" {
+		res.Add("spec.edition is required")
+	}
+	if p.Metadata.Name == "" {
+		res.Add("metadata.name is required")
+	}
+	if p.SSH.User == "" {
+		res.Add("ssh.user is required")
+	}
+	if !allowedDBMS[p.Database.DBMS] {
+		res.Add(fmt.Sprintf("unknown database.dbms %q", p.Database.DBMS))
+	}
+	if p.Database.Endpoint == "" {
+		res.Add("database.endpoint is required")
+	}
+	if p.Database.PasswordEnv == "" {
+		res.Add("database.password_env is required")
+	} else if looksLikeSecret(p.Database.PasswordEnv) {
+		res.Add("database.password_env must be an environment variable name, not a secret literal")
+	}
+	if containsCredential(p.Database.Endpoint) {
+		res.Add("credentials must not appear in database.endpoint")
+	}
+	if p.Scale.Warehouses <= 0 {
+		res.Add("scale.warehouses must be positive")
+	}
+	if len(p.Loaders) == 0 {
+		res.Add("loaders list must not be empty")
+	}
+	if len(p.Workers) == 0 {
+		res.Add("workers list must not be empty")
+	}
+	if len(p.Loaders) > p.Scale.Warehouses {
+		res.Add("loader count exceeds warehouse count")
+	}
+	if len(p.Workers) > p.Scale.Warehouses {
+		res.Add("worker count exceeds warehouse count")
+	}
+	if p.Data.BatchRows <= 0 {
+		res.Add("data.batch_rows must be positive")
+	}
+	if p.Runtime.ThreadsPerWorker <= 0 {
+		res.Add("runtime.threads_per_worker must be positive")
+	}
+	if p.Runtime.MaxInflightPerWorker <= 0 {
+		res.Add("runtime.max_inflight_per_worker must be positive")
+	}
+
+	if p.Data.Seed != nil && p.Mode != "engineering" {
+		res.Add("explicit data.seed is permitted only in engineering mode")
+	}
+
+	if p.SSH.InsecureIgnore && p.Mode != "engineering" {
+		res.Add("ssh.insecure_ignore_host_key is permitted only in engineering mode")
+	}
+
+	seenNames := map[string]bool{}
+	remoteKeys := map[string]bool{}
+
+	validateInstances(p, res, p.Loaders, "loader", seenNames, remoteKeys)
+	validateInstances(p, res, p.Workers, "worker", seenNames, remoteKeys)
+
+	if _, err := profile.ParseDurationMs(p.Phases.StartLead); err != nil {
+		res.Add("phases.start_lead: " + err.Error())
+	}
+	if _, err := profile.ParseDurationMs(p.Phases.RampUp); err != nil {
+		res.Add("phases.ramp_up: " + err.Error())
+	}
+	if _, err := profile.ParseDurationMs(p.Phases.Measurement); err != nil {
+		res.Add("phases.measurement: " + err.Error())
+	}
+	if _, err := profile.ParseDurationMs(p.Phases.TransactionDrain); err != nil {
+		res.Add("phases.transaction_drain: " + err.Error())
+	}
+	if _, err := profile.ParseDurationMs(p.Phases.StopGrace); err != nil {
+		res.Add("phases.stop_grace: " + err.Error())
+	}
+
+	if p.Runtime.Retry.MaxAttempts <= 0 {
+		res.Add("runtime.retry.max_attempts must be positive")
+	}
+
+	// Assignment sanity.
+	loadAssign, err := assignment.BuildLoaderAssignments(p.LoaderInstances(), p.Scale.Warehouses)
+	if err != nil {
+		res.Add("loader assignment: " + err.Error())
+	} else if err := assignment.ValidateAssignment(loadAssign, p.Scale.Warehouses); err != nil {
+		res.Add("loader assignment invalid: " + err.Error())
+	}
+	_, err = assignment.BuildWorkerAssignments(
+		p.WorkerInstances(),
+		p.Scale.Warehouses,
+		p.Runtime.ThreadsPerWorker,
+		p.Runtime.MaxInflightPerWorker,
+	)
+	if err != nil {
+		res.Add("worker assignment: " + err.Error())
+	}
+
+	// Reject forbidden manual fields in raw YAML.
+	if p.Raw != nil {
+		for _, key := range []string{"warehouse_ranges", "assignment", "owns_global_data"} {
+			if hasNestedKey(p.Raw, key) {
+				res.Add(fmt.Sprintf("manual %q in profile is prohibited", key))
+			}
+		}
+	}
+
+	return res
+}
+
+func validateInstances(
+	p *profile.Profile,
+	res *Result,
+	items []profile.NamedHost,
+	role string,
+	seenNames map[string]bool,
+	remoteKeys map[string]bool,
+) {
+	for _, item := range items {
+		if err := profile.ValidateInstanceName(item.Name); err != nil {
+			res.Add(fmt.Sprintf("%s %s: %v", role, item.Name, err))
+		}
+		if seenNames[item.Name] {
+			res.Add(fmt.Sprintf("duplicate instance name %q", item.Name))
+		}
+		seenNames[item.Name] = true
+		if item.Host == "" {
+			res.Add(fmt.Sprintf("%s %s: host is required", role, item.Name))
+		}
+		if _, ok := p.Hosts[item.Host]; !ok {
+			res.Add(fmt.Sprintf("%s %s: unknown host %q", role, item.Name, item.Host))
+		}
+		key := fmt.Sprintf("%s:%s:%s", p.Hosts[item.Host].Address, p.Paths.RemoteRoot, item.Name)
+		if remoteKeys[key] {
+			res.Add(fmt.Sprintf("duplicate remote (host, run_dir, instance): %s", key))
+		}
+		remoteKeys[key] = true
+	}
+}
+
+func looksLikeSecret(s string) bool {
+	if strings.Contains(s, "=") || (strings.Contains(s, ":") && strings.Contains(s, "@")) {
+		return true
+	}
+	return false
+}
+
+func containsCredential(endpoint string) bool {
+	lower := strings.ToLower(endpoint)
+	return strings.Contains(lower, "password=") || strings.Contains(lower, "user=")
+}
+
+func hasNestedKey(m map[string]interface{}, key string) bool {
+	for k, v := range m {
+		if k == key {
+			return true
+		}
+		if sub, ok := v.(map[string]interface{}); ok && hasNestedKey(sub, key) {
+			return true
+		}
+		if arr, ok := v.([]interface{}); ok {
+			for _, elem := range arr {
+				if sub, ok := elem.(map[string]interface{}); ok && hasNestedKey(sub, key) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
