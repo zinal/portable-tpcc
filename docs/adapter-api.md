@@ -131,7 +131,9 @@ Lifecycle of the physical database objects for one workload path:
 | `EnsureStatistics` | `ANALYZE` / equivalent so the planner or tablet layer is ready. |
 | `Clean` | Remove all objects for this path. |
 | `Describe` | Adapter/server version strings for `result.json`. |
-| `AcquireFence` / `ReleaseFence` | DB-scoped control fence outside benchmark tables (specification §7). |
+
+There is no `AcquireFence` / `ReleaseFence`. Multi-host start synchronization
+uses wall-clock `--start-at` (specification §7), not DBMS metadata.
 
 PostgreSQL reference: `InitSync` + `CreateIndexes` (`init.*`), `CleanSync`
 (`clean.*`), path checks (`path_checker.*`). Indexes are created after import;
@@ -162,27 +164,35 @@ warehouse-range sharding, `OwnsGlobalData`.
 
 ### 4.3. Session and transaction API
 
-Target surface (also sketched in specification §4.2 and
-`tpcc/transactions/session.h`):
+Normative surface (also sketched in specification §4.2). Methods are
+**asynchronous** and return `TFuture<…>` from `tpcc/runtime` (resolved open
+decision: coroutine/`TFuture` ABI).
 
 ```text
-ISessionFactory::CreateSession() -> ITpccSession
+ISessionFactory::CreateSession() -> TFuture<ITpccSession>   # or sync create + async ops
 
-ITpccSession::Begin(isolation) -> ITpccTransaction
+ITpccSession::Begin(isolation) -> TFuture<ITpccTransaction>
 
-ITpccTransaction::Execute(op)              -> TOperationResult
-ITpccTransaction::ExecuteBatch(ops)        -> TBatchResult
-ITpccTransaction::ExecuteFinalAndCommit(op)-> {TOperationResult, TCommitResult}
-ITpccTransaction::Commit()                 -> TCommitResult
-ITpccTransaction::Rollback()               -> TCommitResult
-ITpccTransaction::Cancel()                 -> TCommitResult
+ITpccTransaction::Execute(op)              -> TFuture<TOperationResult>
+ITpccTransaction::ExecuteBatch(ops)        -> TFuture<TBatchResult>
+ITpccTransaction::ExecuteFinalAndCommit(op)-> TFuture<{TOperationResult, TCommitResult}>
+ITpccTransaction::Commit()                 -> TFuture<TCommitResult>
+ITpccTransaction::Rollback()               -> TFuture<TCommitResult>
+ITpccTransaction::Cancel()                 -> TFuture<TCommitResult>
 ```
 
-#### 4.3.1. Operation results
+`CreateSession` MAY be synchronous if session construction does not block on
+the DBMS; all transaction operations that touch the database MUST be async.
+
+Adapters MAY run blocking SDK IO on a bounded `IExecutor` (PostgreSQL /
+libpqxx pattern) and resume coroutines on the shared scheduler.
+
+#### 4.3.1. Operation results and semantic encoding
 
 `TOperationResult` carries success/failure, expected vs actual cardinality,
 normalized `EErrorClass`, and native diagnostics. Cardinality mismatch is an
-`integrity` error, not a successful empty read.
+`integrity` error, not a successful empty read. Row/payload results use a
+typed variant (or op-specific out fields) — not raw SDK row types.
 
 `TCommitResult` carries `ECommitOutcome` (`Committed`, `RolledBack`,
 `OutcomeUnknown`) plus the same error classification fields.
@@ -191,13 +201,20 @@ Transaction states: `active` → (`committing`) → `committed` |
 `rolled_back` | `outcome_unknown`. After a terminal state the handle MUST NOT
 accept further `Execute*` calls.
 
+**Semantic operation encoding:** a closed set of structs in
+`tpcc/transactions/ops.h` (for example `TGetCustomerById`, `TUpdateStock`,
+…). `Execute` takes `const TSemanticOp&` where `TSemanticOp` is a
+`std::variant` of those structs (or an equivalent tag + payload). Opaque
+`void*` / size pairs MUST NOT be used. Adapters switch on the alternative and
+bind SQL or SDK calls.
+
 #### 4.3.2. Why `ExecuteBatch` and `ExecuteFinalAndCommit`
 
 | Primitive | Purpose |
 | --- | --- |
 | `Execute` | One semantic op → one round trip (or equivalent). |
-| `ExecuteBatch` | Set-oriented optimization: YDB YQL batches, PG multi-row prepared statements / pipelining, OceanBase multi-value DML — without changing the shared workflow’s logical steps. |
-| `ExecuteFinalAndCommit` | Fuse the last semantic operation with commit. **Required for efficient YDB** interactive transactions; optional elsewhere (MAY be implemented as `Execute` + `Commit`). |
+| `ExecuteBatch` | Set-oriented optimization: YDB YQL batches, PG multi-row prepared statements / pipelining, OceanBase multi-value DML — without changing the shared workflow’s logical steps. Adapters that do not optimize MAY emulate as a sequence of `Execute` calls. |
+| `ExecuteFinalAndCommit` | Fuse the last semantic operation with commit. **Required for efficient YDB** interactive transactions; elsewhere MAY be implemented as `Execute` + `Commit`. |
 
 Shared workflows SHOULD mark the last mutating/read op of a transaction so
 adapters that benefit from fusion can use `ExecuteFinalAndCommit`. Workflows
@@ -221,8 +238,9 @@ reference for:
 - bounded executor pool for blocking IO;
 - shutdown cancellation via a shared flag.
 
-New shared workflows MUST NOT take `PgSession&`; they take `ITpccTransaction&`
-(or a thin async wrapper around it).
+New shared workflows MUST NOT take `PgSession&`; they take the abstract
+async `ITpccTransaction` surface above. `PgSession` becomes an implementation
+detail behind the PostgreSQL adapter’s `ISessionFactory`.
 
 ### 4.4. `ICheckAdapter`
 
@@ -267,6 +285,8 @@ Declarative feature flags consumed by runtime and preflight:
 
 - supported isolation levels;
 - whether `ExecuteBatch` / `ExecuteFinalAndCommit` are optimized or emulated;
+- whether Delivery runs asynchronously (`async_delivery`); when false,
+  Delivery executes inline in the terminal and async drain is a no-op;
 - cancel support;
 - max recommended inflight / sessions;
 - bulk-load mechanism (`copy`, `bulk_upsert`, `multi_insert`, …);
@@ -363,17 +383,31 @@ Rules:
 3. `RETURNING` / multiple result sets are optional optimizations; shared code
    consumes typed operation results, not raw cursors.
 4. Identifier quoting and schema qualification are adapter-local.
+5. Semantic ops are the `TSemanticOp` variant described in §4.3.1; adapters
+   MUST NOT invent a parallel opaque encoding.
 
 ## 7. Worker and loader binary roles
 
-Each `tpcc-<dbms>` binary exposes at least:
+Each `tpcc-<dbms>` binary **MUST** expose:
 
 | Role | Adapter use |
 | --- | --- |
 | `schema` | `EnsureSchema` (+ optional early indexes if required by the DBMS) |
 | `loader` | `PutBatch` over assigned ranges; then `EnsureIndexes` / `EnsureStatistics` as needed |
-| `worker` | sessions for terminals; phase schedule from run-config; write `ready.json` / `result.json` |
+| `worker` | sessions for terminals; honor `--start-at` (specification §7); write diagnostics / `result.json` |
 | `check` | `ICheckAdapter` for `--after-import` / `--after-run` |
+
+Orchestrated remotes pass at least `--run-config`, `--instance`, and for
+workers `--start-at=<RFC3339-UTC>`.
+
+Binaries **MAY** keep standalone aliases for local use:
+
+| Alias | Meaning |
+| --- | --- |
+| `init` | ≡ `schema` (local flags; may drop/recreate) |
+| `import` | standalone load without run-config assignment |
+| `run` | standalone worker without run-config / `--start-at` |
+| `clean` | local-only admin; not a remote orchestrated role |
 
 Non-DBMS logic (assignment interpretation, phase timing, artifact layout)
 comes from shared libraries and the distributed `run-config.json`.
@@ -383,10 +417,13 @@ comes from shared libraries and the distributed `run-config.json`.
 | Piece | Status |
 | --- | --- |
 | `tpcc/domain`, `runtime`, `metrics` | Present |
-| `tpcc/transactions/session.h` | Abstract skeleton |
+| `tpcc/transactions/session.h` | Skeleton; migrating to async + `TSemanticOp` variant |
 | `tpcc/dbms/pgsql` | Concrete admin/load/session/check; SQL workflows still in adapter |
 | `tpcc/dbms/ydb`, `tpcc/dbms/oceanbase` | Not started |
 | Shared generator / loader / checks packages | Not started (logic partially inside pgsql) |
+
+Alignment sequencing and accepted API decisions:
+[alignment-plan.md](alignment-plan.md).
 
 Adapter authors for YDB/OceanBase SHOULD implement against §4 even while the
 PostgreSQL port finishes migrating workflows onto `ITpccSession`.
@@ -395,6 +432,8 @@ PostgreSQL port finishes migrating workflows onto `ITpccSession`.
 
 - [specification.md](specification.md) — product architecture, config, phases,
   results, orchestrator commands.
+- [alignment-plan.md](alignment-plan.md) — phased implementation plan and
+  accepted API decisions.
 - [dependencies.md](dependencies.md) — third-party libraries and port status.
 - [examples/run-config.v1.json](examples/run-config.v1.json) — concrete settings
   distributed to loaders and workers.

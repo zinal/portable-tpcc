@@ -2,6 +2,7 @@
   "schema_version": 1,
   "run_id": "20260728-lab-ydb-200-01",
   "issued_at": "2026-07-28T11:59:30Z",
+  "start_at": "2026-07-28T12:00:15Z",
   "expected_workers": ["worker-a", "worker-b"],
   "phases": {
     "ramp_start": "2026-07-28T12:00:15Z",
