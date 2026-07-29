@@ -15,7 +15,7 @@ to implement all adapters described in [specification.md](specification.md).
 | gflags | `contrib/libs/gflags` | CLI for `tpcc-pgsql` |
 | ftxui | `contrib/libs/ftxui` | Terminal UI (optional, enabled in `tpcc-pgsql`) |
 | googletest | `contrib/restricted/googletest` | Unit and integration tests (not yet ported) |
-| nlohmann_json | `contrib/restricted/nlohmann_json` | JSON for run-config, metrics, spec CLI |
+| nlohmann_json | `contrib/restricted/nlohmann_json` | JSON for run-config and metrics |
 | abseil-cpp | `contrib/restricted/abseil-cpp` | optional utilities |
 | tcmalloc | `contrib/libs/tcmalloc` | optional allocator |
 | util | `util/` | strings, threading, system, random |
@@ -57,12 +57,11 @@ required for the current port.
 
 | Module | Blocker |
 | --- | --- |
-| `tpcc/spec` | edition module and `tpcc-spec` CLI |
-| `tpcc/generator` | deterministic load and transaction inputs (spec) |
-| `tpcc/loader`, `tpcc/checks` | horizontal scaling (spec) |
-| `tpcc/runtime` (terminal phases) | phase barriers, retry loop per spec |
+| `tpcc/generator` | deterministic load and transaction inputs |
+| `tpcc/loader`, `tpcc/checks` | horizontal scaling |
+| `tpcc/runtime` (terminal phases) | phase barriers, retry loop |
 | `tpcc/dbms/ydb`, `tpcc/dbms/oceanbase` | external SDKs |
-| `tools/tpccctl` | initial | Go orchestrator (`validate`, `plan`, `deploy`, `run`, etc.) |
+| `tools/tpccctl` | Go orchestrator (`validate`, `plan`, `deploy`, `run`, etc.) |
 | unit/integration tests | port from `tpcc-postgres-cpp/src/ut` |
 
 ## SDKs outside this repository
