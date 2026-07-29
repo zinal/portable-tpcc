@@ -350,6 +350,177 @@ TFuture<TOperationResult> TPgTpccTransaction::Execute(const TSemanticOp& op) {
                 p->Amount.ToString(), p->Data).Get();
             return ReadyOp(OkOp(1, 1));
         }
+        if (const auto* p = std::get_if<TGetCustomersByLastName>(&op)) {
+            auto result = Session_.ExecuteQuery(
+                "SELECT c_id, c_first, c_middle, c_last, c_street_1, c_street_2, c_city, c_state, "
+                "c_zip, c_phone, c_credit, c_credit_lim, c_discount, c_balance, c_ytd_payment, "
+                "c_payment_cnt, c_delivery_cnt, c_data, c_since "
+                "FROM customer WHERE c_w_id = $1 AND c_d_id = $2 AND c_last = $3 "
+                "ORDER BY c_first",
+                p->WarehouseID, p->DistrictID, p->LastName).Get();
+            std::vector<TCustomerRow> customers;
+            while (NextRow(result)) {
+                TCustomerRow cust;
+                cust.CustomerID = result.GetInt32(0);
+                cust.First = result.GetString(1);
+                cust.Middle = result.GetString(2);
+                cust.Last = result.GetString(3);
+                cust.Street1 = result.GetString(4);
+                cust.Street2 = result.GetString(5);
+                cust.City = result.GetString(6);
+                cust.State = result.GetString(7);
+                cust.Zip = result.GetString(8);
+                cust.Phone = result.GetString(9);
+                cust.Credit = result.GetString(10);
+                cust.CreditLimit = MoneyFromDouble(result.GetDouble(11));
+                cust.Discount = RateFromDouble(result.GetDouble(12));
+                cust.Balance = MoneyFromDouble(result.GetDouble(13));
+                cust.YtdPayment = MoneyFromDouble(result.GetDouble(14));
+                cust.PaymentCount = result.GetInt32(15);
+                cust.DeliveryCount = result.GetInt32(16);
+                cust.Data = result.GetString(17);
+                cust.Since = result.GetString(18);
+                customers.push_back(std::move(cust));
+            }
+            return ReadyOp(OkOp(customers.size(), customers.size(), std::move(customers)));
+        }
+        if (const auto* p = std::get_if<TGetStocksForUpdate>(&op)) {
+            std::vector<TStockRow> stocks;
+            stocks.reserve(p->Stocks.size());
+            for (const auto& key : p->Stocks) {
+                auto result = Session_.ExecuteQuery(
+                    "SELECT s_quantity, s_ytd, s_order_cnt, s_remote_cnt, s_data, "
+                    "s_dist_01, s_dist_02, s_dist_03, s_dist_04, s_dist_05, "
+                    "s_dist_06, s_dist_07, s_dist_08, s_dist_09, s_dist_10 "
+                    "FROM stock WHERE s_w_id = $1 AND s_i_id = $2 FOR UPDATE",
+                    key.WarehouseID, key.ItemID).Get();
+                if (!NextRow(result)) {
+                    return ReadyOp(FailOp(EErrorClass::Integrity, "stock not found"));
+                }
+                TStockRow row;
+                row.WarehouseID = key.WarehouseID;
+                row.ItemID = key.ItemID;
+                row.Quantity = result.GetInt32(0);
+                row.Ytd = MoneyFromDouble(result.GetDouble(1));
+                row.OrderCount = result.GetInt32(2);
+                row.RemoteCount = result.GetInt32(3);
+                row.Data = result.GetString(4);
+                const int distIdx = p->DistrictID;
+                if (distIdx >= 1 && distIdx <= 10) {
+                    row.DistInfo = result.GetString(static_cast<size_t>(4 + distIdx));
+                }
+                stocks.push_back(std::move(row));
+            }
+            return ReadyOp(OkOp(p->Stocks.size(), stocks.size(), std::move(stocks)));
+        }
+        if (const auto* p = std::get_if<TGetCustomerData>(&op)) {
+            auto result = Session_.ExecuteQuery(
+                "SELECT c_data FROM customer WHERE c_w_id = $1 AND c_d_id = $2 AND c_id = $3",
+                p->WarehouseID, p->DistrictID, p->CustomerID).Get();
+            if (!NextRow(result)) {
+                return ReadyOp(FailOp(EErrorClass::Integrity, "customer not found"));
+            }
+            return ReadyOp(OkOp(1, 1, result.GetString(0)));
+        }
+        if (const auto* p = std::get_if<TUpdateCustomerPayment>(&op)) {
+            if (p->UpdateData) {
+                Session_.ExecuteModify(
+                    "UPDATE customer SET c_balance = $1, c_ytd_payment = $2, c_payment_cnt = $3, c_data = $4 "
+                    "WHERE c_w_id = $5 AND c_d_id = $6 AND c_id = $7",
+                    p->NewBalance.ToString(), p->NewYtdPayment.ToString(), p->NewPaymentCount,
+                    p->NewData, p->WarehouseID, p->DistrictID, p->CustomerID).Get();
+            } else {
+                Session_.ExecuteModify(
+                    "UPDATE customer SET c_balance = $1, c_ytd_payment = $2, c_payment_cnt = $3 "
+                    "WHERE c_w_id = $4 AND c_d_id = $5 AND c_id = $6",
+                    p->NewBalance.ToString(), p->NewYtdPayment.ToString(), p->NewPaymentCount,
+                    p->WarehouseID, p->DistrictID, p->CustomerID).Get();
+            }
+            return ReadyOp(OkOp(1, 1));
+        }
+        if (const auto* p = std::get_if<TGetLatestCustomerOrder>(&op)) {
+            auto result = Session_.ExecuteQuery(
+                "SELECT o_id, o_c_id, o_carrier_id, o_entry_d FROM oorder "
+                "WHERE o_w_id = $1 AND o_d_id = $2 AND o_c_id = $3 "
+                "ORDER BY o_id DESC LIMIT 1",
+                p->WarehouseID, p->DistrictID, p->CustomerID).Get();
+            if (!NextRow(result)) {
+                return ReadyOp(OkOp(0, 0));
+            }
+            TOrderHeader header;
+            header.OrderID = result.GetInt32(0);
+            header.CustomerID = result.GetInt32(1);
+            // o_carrier_id may be null
+            auto carrierField = result.GetRawResult()[0][2];
+            if (!carrierField.is_null()) {
+                header.CarrierID = carrierField.as<int>();
+            }
+            header.EntryDate = result.GetString(3);
+            return ReadyOp(OkOp(1, 1, std::move(header)));
+        }
+        if (const auto* p = std::get_if<TGetOrderStatusLines>(&op)) {
+            auto result = Session_.ExecuteQuery(
+                "SELECT ol_i_id, ol_supply_w_id, ol_quantity, ol_amount, ol_delivery_d "
+                "FROM order_line WHERE ol_w_id = $1 AND ol_d_id = $2 AND ol_o_id = $3",
+                p->WarehouseID, p->DistrictID, p->OrderID).Get();
+            std::vector<TOrderStatusLine> lines;
+            size_t rowIdx = 0;
+            while (NextRow(result)) {
+                TOrderStatusLine line;
+                line.ItemID = result.GetInt32(0);
+                line.SupplyWarehouseID = result.GetInt32(1);
+                line.Quantity = result.GetInt32(2);
+                line.Amount = MoneyFromDouble(result.GetDouble(3));
+                auto deliv = result.GetRawResult()[rowIdx][4];
+                if (!deliv.is_null()) {
+                    line.DeliveryDate = deliv.as<std::string>();
+                }
+                lines.push_back(std::move(line));
+                ++rowIdx;
+            }
+            return ReadyOp(OkOp(lines.size(), lines.size(), std::move(lines)));
+        }
+        if (const auto* p = std::get_if<TGetDeliveryOrderInfo>(&op)) {
+            auto cid = Session_.ExecuteQuery(
+                "SELECT o_c_id FROM oorder WHERE o_w_id = $1 AND o_d_id = $2 AND o_id = $3",
+                p->WarehouseID, p->DistrictID, p->OrderID).Get();
+            if (!NextRow(cid)) {
+                return ReadyOp(FailOp(EErrorClass::Integrity, "order not found"));
+            }
+            TDeliveryOrderInfo info;
+            info.CustomerID = cid.GetInt32(0);
+            auto ol = Session_.ExecuteQuery(
+                "SELECT ol_amount FROM order_line "
+                "WHERE ol_w_id = $1 AND ol_d_id = $2 AND ol_o_id = $3",
+                p->WarehouseID, p->DistrictID, p->OrderID).Get();
+            int64_t totalCents = 0;
+            while (NextRow(ol)) {
+                totalCents += MoneyFromDouble(ol.GetDouble(0)).Cents();
+                ++info.LineCount;
+            }
+            info.TotalAmount = TMoney::FromCents(totalCents);
+            return ReadyOp(OkOp(1, 1, std::move(info)));
+        }
+        if (const auto* p = std::get_if<TCompleteOrderDelivery>(&op)) {
+            Session_.ExecuteModify(
+                "DELETE FROM new_order WHERE no_w_id = $1 AND no_d_id = $2 AND no_o_id = $3",
+                p->WarehouseID, p->DistrictID, p->OrderID).Get();
+            Session_.ExecuteModify(
+                "UPDATE oorder SET o_carrier_id = $1 WHERE o_w_id = $2 AND o_d_id = $3 AND o_id = $4",
+                p->CarrierID, p->WarehouseID, p->DistrictID, p->OrderID).Get();
+            Session_.ExecuteModify(
+                "UPDATE order_line SET ol_delivery_d = CURRENT_TIMESTAMP "
+                "WHERE ol_w_id = $1 AND ol_d_id = $2 AND ol_o_id = $3",
+                p->WarehouseID, p->DistrictID, p->OrderID).Get();
+            return ReadyOp(OkOp(3, 3));
+        }
+        if (const auto* p = std::get_if<TApplyDeliveryToCustomer>(&op)) {
+            Session_.ExecuteModify(
+                "UPDATE customer SET c_balance = c_balance + $1, c_delivery_cnt = c_delivery_cnt + 1 "
+                "WHERE c_w_id = $2 AND c_d_id = $3 AND c_id = $4",
+                p->Amount.ToString(), p->WarehouseID, p->DistrictID, p->CustomerID).Get();
+            return ReadyOp(OkOp(1, 1));
+        }
 
         return ReadyOp(FailOp(
             EErrorClass::Permanent,

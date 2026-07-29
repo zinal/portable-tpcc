@@ -5,6 +5,7 @@ SUBSCRIBER(g:tpcc)
 SRCS(
     session_ut.cpp
     error_classifier_ut.cpp
+    workflow_ut.cpp
 )
 
 PEERDIR(

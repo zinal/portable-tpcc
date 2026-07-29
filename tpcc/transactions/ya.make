@@ -8,6 +8,12 @@ ADDINCL(
 
 SRCS(
     error_classifier.cpp
+    context.cpp
+    new_order.cpp
+    payment.cpp
+    delivery.cpp
+    order_status.cpp
+    stock_level.cpp
 )
 
 PEERDIR(

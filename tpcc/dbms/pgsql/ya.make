@@ -9,12 +9,6 @@ ADDINCL(
 SRCS(
     pg_session.cpp
     pg_connection_pool.cpp
-    common_queries.cpp
-    transaction_neworder.cpp
-    transaction_delivery.cpp
-    transaction_orderstatus.cpp
-    transaction_payment.cpp
-    transaction_stocklevel.cpp
     transaction_simulation.cpp
     init.cpp
     import.cpp
