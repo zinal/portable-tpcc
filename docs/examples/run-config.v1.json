@@ -8,10 +8,8 @@
     "sha256": "PROFILE_SHA256"
   },
   "spec": {
-    "edition": "tpc-c-5.11.0",
     "document_url": "https://www.tpc.org/tpc_documents_current_versions/pdf/tpc-c_v5.11.0.pdf",
     "document_sha256": "TPC_C_DOCUMENT_SHA256",
-    "module_abi": 1,
     "module_sha256": "SPEC_MODULE_SHA256",
     "state_sha256": "SPEC_STATE_SHA256"
   },

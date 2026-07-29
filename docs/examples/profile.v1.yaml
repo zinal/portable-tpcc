@@ -6,9 +6,6 @@ metadata:
 
 mode: engineering
 
-spec:
-  edition: tpc-c-5.11.0
-
 deviations:
   - code: fixed_generator_seed
     reason: repeatable cross-DBMS engineering comparison

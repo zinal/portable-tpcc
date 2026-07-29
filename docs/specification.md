@@ -29,10 +29,12 @@ The architecture must not require a fork of the shared logic to add a DBMS.
 This document neither replaces nor restates the TPC-C standard. The schema
 composition, data generation rules, transaction profiles, terminal model,
 input distributions, response-time requirements, and standard metric formulas
-are defined by the selected TPC-C edition. `portable-tpcc` stores the reference
-and identifier for that edition in the run manifest. This document defines
-only the architectural mechanisms for implementing these rules jointly across
-multiple DBMSs and multiple generator hosts.
+are defined by that standard. `portable-tpcc` implements a single fixed
+revision of TPC-C and records the normative document reference in the run
+manifest for provenance. This document defines only the architectural
+mechanisms for implementing these rules jointly across multiple DBMSs and
+multiple generator hosts. The project does not provide a framework for
+selecting, packaging, or evolving multiple TPC-C editions.
 
 ## 2. Scope
 
@@ -57,6 +59,7 @@ multiple DBMSs and multiple generator hosts.
 - Automatic TPC result certification.
 - Automatic continuation of measurement after a worker is lost.
 - Dynamic terminal rebalancing during measurement.
+- Support for multiple, selectable, or evolving TPC-C editions.
 
 `portable-tpcc` MUST call a result an official TPC-C result only after
 independent verification of all TPC requirements. By default, the report contains
@@ -69,10 +72,10 @@ diagnostics. Every such change MUST be explicitly listed in
 `deviations`.
 
 `conformance` prohibits overrides of standard parameters and requires the full
-set of checks and artifacts defined by the selected edition of the standard.
-Specific values are not duplicated in this specification; they are provided by
-the versioned `tpcc/spec/<edition>` module. The mode name itself does not
-constitute a claim that the result is certified.
+set of checks and artifacts defined by the TPC-C standard as encoded in the
+`tpcc/spec` module. Specific values are not duplicated in this specification;
+they are provided by that module. The mode name itself does not constitute a
+claim that the result is certified.
 
 ## 3. Overall Architecture
 
@@ -110,10 +113,11 @@ Roles:
 
 ### 4.1. `tpcc/spec`
 
-The selected edition of the standard is represented by a single versioned C++
-package. It contains only the machine-executable rules and test vectors needed
-by the implementation; the external TPC-C document remains the normative
-source.
+The TPC-C standard is encoded by a single C++ package. It contains only the
+machine-executable rules and test vectors needed by the implementation; the
+external TPC-C document remains the normative source. There is no edition
+selector, no edition package tree, and no provision for concurrent support of
+multiple standard revisions.
 
 The package is built as:
 
@@ -124,17 +128,17 @@ The package is built as:
 Minimum CLI:
 
 ```text
-tpcc-spec describe --edition <id>
-tpcc-spec materialize --edition <id> --scale <json> --seed-source <json>
+tpcc-spec describe
+tpcc-spec materialize --scale <json> --seed-source <json>
 tpcc-spec derive-terminals --spec-state <json> --assignment <json>
 tpcc-spec expected-data --spec-state <json> --load-plan <json>
 tpcc-spec qualify --spec-state <json> --aggregate-input <json>
 ```
 
 All commands are pure functions and output canonical JSON. `describe` returns
-an immutable edition ID, the URL of the normative document, its known SHA-256,
-the module ABI version, and the module SHA. `materialize` creates an opaque
-`spec-state.json`; the orchestrator does not interpret its internal parameters.
+the URL of the normative document, its known SHA-256, and the module SHA.
+`materialize` creates an opaque `spec-state.json`; the orchestrator does not
+interpret its internal parameters.
 
 `tpccctl` MUST NOT implement TPC-C rules in Go. It invokes `tpcc-spec`,
 validates the JSON Schema, and records the binary/module hash. At startup, the
@@ -144,7 +148,6 @@ workload binary verifies that the linked module SHA matches `spec-state.json`.
 
 Independent of DBMS SDKs, networking, and the scheduler:
 
-- a versioned representation of the requirements of the selected TPC-C edition;
 - identifier types;
 - exact numeric types;
 - immutable transaction input and output types exported by the spec module;
@@ -154,9 +157,9 @@ Independent of DBMS SDKs, networking, and the scheduler:
 - shared business calculations;
 - invariants and expected cardinalities.
 
-Scale and type constraints are defined by the versioned spec module. In C++,
-exact decimal values are represented by checked fixed-point types; conversion
-to `double` within the domain and adapter API MUST NOT be used.
+Scale and type constraints are defined by the spec module. In C++, exact
+decimal values are represented by checked fixed-point types; conversion to
+`double` within the domain and adapter API MUST NOT be used.
 
 ### 4.3. `tpcc/generator`
 
@@ -232,8 +235,8 @@ API.
 
 Shared definitions:
 
-- the check catalog for the selected edition of the standard;
-- a versioned identifier and expected result type for each check;
+- the check catalog defined by the spec module;
+- an identifier and expected result type for each check;
 - checks for load completeness and shard consistency;
 - statistical checks of the executed workload;
 - infrastructure checks for phases, ownership, and artifacts.
@@ -288,10 +291,10 @@ for every DBMS into a single binary.
 
 ### 5.1. Assignment
 
-The versioned spec module constructs the full set of standard terminal
-identities for the specified scale. The user profile lists only loader/worker
-instances and hosts; the profile contains neither manual warehouse ranges nor
-a DB-wide data ownership flag.
+The spec module constructs the full set of standard terminal identities for
+the specified scale. The user profile lists only loader/worker instances and
+hosts; the profile contains neither manual warehouse ranges nor a DB-wide data
+ownership flag.
 
 The assignment defines ownership of a warehouse's **home terminals**; it does
 not restrict transactions from accessing rows belonging to other warehouses.
@@ -382,15 +385,15 @@ executes only the atomic database portion of a queue item.
 The queue records the logical ID and enqueue/start/completion times. At the
 measurement boundary, admission stops and already accepted items receive a
 separate drain window. The specific time limits and criteria come from the
-versioned spec module rather than from this document.
+spec module rather than from this document.
 
 ## 6. Separation of Logical and Physical Schemas
 
 ### 6.1. Shared Schema Model
 
-The versioned spec module describes tables, columns, constraints, and logically
-required access paths in a DBMS-neutral AST. It is the sole source of the
-schema for the generator, checks, and adapter contract tests.
+The spec module describes tables, columns, constraints, and logically required
+access paths in a DBMS-neutral AST. It is the sole source of the schema for
+the generator, checks, and adapter contract tests.
 
 The adapter transforms the AST into DDL and a physical layout. It MAY add
 technical keys, indexes, partitions, and storage options provided that:
@@ -591,7 +594,8 @@ normalized `run-config.json` containing:
 
 - schema version and run ID;
 - profile and binary SHAs;
-- edition metadata, the `tpcc-spec` binary SHA, and the `spec-state.json` SHA;
+- normative document reference, the `tpcc-spec` binary SHA, the spec module
+  SHA, and the `spec-state.json` SHA;
 - DBMS kind and non-secret configuration;
 - scale and warehouse assignment;
 - an opaque generator/spec state reference;
@@ -817,7 +821,7 @@ recent error and all known processes.
 Each worker writes JSON containing:
 
 - run/config/binary/profile SHAs;
-- the TPC-C edition identifier and spec module SHA;
+- the normative document reference and spec module SHA;
 - adapter and server version;
 - assignment;
 - actual phase timestamps;
@@ -911,10 +915,10 @@ no_drain_cancellations
 artifacts_sealed
 ```
 
-Standard qualification flags are provided by the versioned spec module. The
-final `qualified` value is the conjunction of the infrastructure flags and the
+Standard qualification flags are provided by the spec module. The final
+`qualified` value is the conjunction of the infrastructure flags and the
 mandatory standard flags for the selected mode. The final JSON stores the
-source (`orchestrator` or `spec:<edition>`) of each flag.
+source (`orchestrator` or `spec`) of each flag.
 
 ## 10. Errors, Recovery, and Idempotency
 
@@ -981,7 +985,7 @@ isolation, schema state, and physical configuration.
 
 ### 13.1. Shared Unit Tests
 
-- test vectors from the versioned spec module;
+- test vectors from the spec module;
 - domain types and canonical encoding;
 - immutable input across injected retries;
 - transaction workflows through a fake adapter;
@@ -998,7 +1002,7 @@ One test suite is run for each DBMS:
 - DDL/create/clean;
 - initial population hash/cardinality;
 - interruption of `PutBatch` at different stages and safe retry;
-- all operations exported by the selected spec module;
+- all operations exported by the spec module;
 - transaction rollback atomicity;
 - deadlock/serialization retry;
 - ambiguous commit injection;
@@ -1091,11 +1095,10 @@ The following must be decided before coding begins:
 
 1. the specific C++ future/coroutine ABI for the shared libraries;
 2. the histogram bucket layout and maximum measurable latency;
-3. the set of supported edition packages and their update rules;
-4. the ambiguous commit resolution strategy for each DBMS;
-5. the canonical row encoding format for cross-DB hashes;
-6. the minimum supported versions of YDB, PostgreSQL, and OceanBase;
-7. the retention policy for asynchronous queues after a worker failure.
+3. the ambiguous commit resolution strategy for each DBMS;
+4. the canonical row encoding format for cross-DB hashes;
+5. the minimum supported versions of YDB, PostgreSQL, and OceanBase;
+6. the retention policy for asynchronous queues after a worker failure.
 
 These decisions MUST be adopted as versioned ADRs before
 `portable-tpcc/v1` is stabilized; they must not be encoded implicitly in the
