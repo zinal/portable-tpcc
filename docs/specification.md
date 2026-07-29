@@ -102,6 +102,10 @@ Begin / Execute / ExecuteBatch / ExecuteFinalAndCommit
 Commit / Rollback / Cancel
 ```
 
+Details, module boundaries, PostgreSQL reference mapping, and DBMS-specific
+guidance (YDB fused commit, DDL/query differences, OceanBase notes) are in
+[adapter-api.md](adapter-api.md).
+
 ### 4.3. Binaries
 
 `tpccctl` orchestrates. Each `tpcc-<dbms>` binary exposes roles such as
@@ -269,11 +273,15 @@ indexes, and technical keys if logical semantics stay intact and the choice is
 visible in the result settings/options.
 
 - **YDB:** warehouse-leading keys, range partitions, typed bulk load; no
-  exact values as `Double`; no hidden SDK retries.
+  exact values as `Double`; no hidden SDK retries; prefer
+  `ExecuteFinalAndCommit` for the last statement.
 - **PostgreSQL:** prepared statements, `COPY`, DECIMAL, SQLSTATE mapping,
   bounded IO if using blocking libpqxx, `ANALYZE` after indexes.
 - **OceanBase:** warehouse partitioning, cached statements, clear error
   classes, optional FKs as a recorded physical option.
+
+See [adapter-api.md](adapter-api.md) §5–§6 for the full logical/physical and
+query-binding contract.
 
 ## 12. Repository Layout
 
@@ -284,6 +292,7 @@ tpcc/
 └── app/{ydb,pgsql,oceanbase}/
 tools/tpccctl/
 docs/specification.md
+docs/adapter-api.md
 docs/examples/
 ```
 

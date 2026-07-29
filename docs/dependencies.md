@@ -2,7 +2,8 @@
 
 This document tracks third-party libraries required to complete the migration
 from [tpcc-postgres-cpp](https://github.com/ydb-platform/tpcc-postgres-cpp) and
-to implement all adapters described in [specification.md](specification.md).
+to implement all adapters described in [specification.md](specification.md)
+and [adapter-api.md](adapter-api.md).
 
 ## Available in the repository
 
