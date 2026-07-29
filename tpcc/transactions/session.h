@@ -1,6 +1,12 @@
 #pragma once
 
+#include "ops.h"
+
+#include <future.h>
+
+#include <memory>
 #include <string>
+#include <vector>
 
 namespace NTpcc {
 
@@ -39,29 +45,46 @@ struct TOperationResult {
     EErrorClass ErrorClass = EErrorClass::Permanent;
     std::string NativeCode;
     std::string Message;
+    TOperationPayload Payload;
+};
+
+struct TBatchResult {
+    bool Ok = false;
+    EErrorClass ErrorClass = EErrorClass::Permanent;
+    std::string NativeCode;
+    std::string Message;
+    std::vector<TOperationResult> Results;
+};
+
+struct TFinalCommitResult {
+    TOperationResult Operation;
+    TCommitResult Commit;
 };
 
 class ITpccTransaction {
 public:
     virtual ~ITpccTransaction() = default;
 
-    virtual TOperationResult ExecuteSemantic(const void* operation, size_t operationSize) = 0;
-    virtual TCommitResult Commit() = 0;
-    virtual TCommitResult Rollback() = 0;
-    virtual TCommitResult Cancel() = 0;
+    virtual TFuture<TOperationResult> Execute(const TSemanticOp& op) = 0;
+    virtual TFuture<TBatchResult> ExecuteBatch(const std::vector<TSemanticOp>& ops) = 0;
+    virtual TFuture<TFinalCommitResult> ExecuteFinalAndCommit(const TSemanticOp& op) = 0;
+    virtual TFuture<TCommitResult> Commit() = 0;
+    virtual TFuture<TCommitResult> Rollback() = 0;
+    virtual TFuture<TCommitResult> Cancel() = 0;
 };
 
 class ITpccSession {
 public:
     virtual ~ITpccSession() = default;
 
-    virtual std::unique_ptr<ITpccTransaction> Begin(EIsolationLevel isolation) = 0;
+    virtual TFuture<std::unique_ptr<ITpccTransaction>> Begin(EIsolationLevel isolation) = 0;
 };
 
 class ISessionFactory {
 public:
     virtual ~ISessionFactory() = default;
 
+    // MAY be synchronous when construction does not block on the DBMS.
     virtual std::unique_ptr<ITpccSession> CreateSession() = 0;
 };
 

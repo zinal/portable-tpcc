@@ -3,12 +3,15 @@ LIBRARY()
 SUBSCRIBER(g:tpcc)
 
 ADDINCL(
-    GLOBAL tpcc/transactions
+    GLOBAL tpcc/generator
+)
+
+SRCS(
+    populate.cpp
 )
 
 PEERDIR(
     tpcc/domain
-    tpcc/runtime
 )
 
 END()

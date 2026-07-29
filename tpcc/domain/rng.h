@@ -20,6 +20,10 @@ public:
         State_ = s ? s : 0x9E3779B97F4A7C15ULL;
     }
 
+    explicit TFastRng(uint64_t seed) {
+        State_ = seed ? seed : 0x9E3779B97F4A7C15ULL;
+    }
+
     uint64_t Next() {
         uint64_t x = State_;
         x ^= x >> 12;
@@ -27,6 +31,10 @@ public:
         x ^= x >> 27;
         State_ = x;
         return x * 0x2545F4914F6CDD1DULL;
+    }
+
+    uint64_t State() const {
+        return State_;
     }
 
 private:
@@ -40,11 +48,10 @@ inline TFastRng& ThreadLocalFastRng() {
 
 // Lemire's nearly-divisionless unbiased bounded random in [0, range).
 // https://arxiv.org/abs/1805.10941
-inline uint64_t BoundedRandom(uint64_t range) {
+inline uint64_t BoundedRandom(TFastRng& rng, uint64_t range) {
     if (range == 0) {
         return 0;
     }
-    TFastRng& rng = ThreadLocalFastRng();
     uint64_t x = rng.Next();
     __uint128_t m = static_cast<__uint128_t>(x) * static_cast<__uint128_t>(range);
     uint64_t l = static_cast<uint64_t>(m);
@@ -59,22 +66,84 @@ inline uint64_t BoundedRandom(uint64_t range) {
     return static_cast<uint64_t>(m >> 64);
 }
 
-} // namespace NDetail
-
-// [from; to] inclusive range
-inline size_t RandomNumber(size_t from, size_t to) {
-    return from + static_cast<size_t>(NDetail::BoundedRandom(to - from + 1));
+inline uint64_t BoundedRandom(uint64_t range) {
+    return BoundedRandom(ThreadLocalFastRng(), range);
 }
 
-// Non-uniform random number generation as per TPC-C spec
-inline int NonUniformRandom(int A, int C, int min, int max) {
-    int randomNum = RandomNumber(0, A);
-    int randomNum2 = RandomNumber(min, max);
+} // namespace NDetail
+
+// Explicitly seeded RNG for deterministic load and transaction inputs.
+class TSeededRng {
+public:
+    explicit TSeededRng(uint64_t seed)
+        : Rng_(seed)
+    {}
+
+    uint64_t Next() {
+        return Rng_.Next();
+    }
+
+    // Derive an independent sub-stream seed (e.g. per warehouse / table).
+    uint64_t Mix(uint64_t salt) const {
+        uint64_t x = Rng_.State() ^ (salt + 0x9E3779B97F4A7C15ULL);
+        x ^= x >> 30;
+        x *= 0xBF58476D1CE4E5B9ULL;
+        x ^= x >> 27;
+        x *= 0x94D049BB133111EBULL;
+        x ^= x >> 31;
+        return x ? x : 0xA0761D6478BD642FULL;
+    }
+
+    TSeededRng Fork(uint64_t salt) const {
+        return TSeededRng(Mix(salt));
+    }
+
+    NDetail::TFastRng& Impl() {
+        return Rng_;
+    }
+
+private:
+    NDetail::TFastRng Rng_;
+};
+
+// [from; to] inclusive range
+inline size_t RandomNumber(NDetail::TFastRng& rng, size_t from, size_t to) {
+    return from + static_cast<size_t>(NDetail::BoundedRandom(rng, to - from + 1));
+}
+
+inline size_t RandomNumber(TSeededRng& rng, size_t from, size_t to) {
+    return RandomNumber(rng.Impl(), from, to);
+}
+
+// Legacy thread-local RNG (non-deterministic). Prefer TSeededRng for load/txn inputs.
+inline size_t RandomNumber(size_t from, size_t to) {
+    return RandomNumber(NDetail::ThreadLocalFastRng(), from, to);
+}
+
+inline int NonUniformRandom(NDetail::TFastRng& rng, int A, int C, int min, int max) {
+    int randomNum = static_cast<int>(RandomNumber(rng, 0, A));
+    int randomNum2 = static_cast<int>(RandomNumber(rng, min, max));
     return (((randomNum | randomNum2) + C) % (max - min + 1)) + min;
+}
+
+inline int NonUniformRandom(TSeededRng& rng, int A, int C, int min, int max) {
+    return NonUniformRandom(rng.Impl(), A, C, min, max);
+}
+
+inline int NonUniformRandom(int A, int C, int min, int max) {
+    return NonUniformRandom(NDetail::ThreadLocalFastRng(), A, C, min, max);
+}
+
+inline int GetRandomCustomerID(TSeededRng& rng) {
+    return NonUniformRandom(rng, 1023, C_ID_C, 1, CUSTOMERS_PER_DISTRICT);
 }
 
 inline int GetRandomCustomerID() {
     return NonUniformRandom(1023, C_ID_C, 1, CUSTOMERS_PER_DISTRICT);
+}
+
+inline int GetRandomItemID(TSeededRng& rng) {
+    return NonUniformRandom(rng, 8191, OL_I_ID_C, 1, ITEM_COUNT);
 }
 
 inline int GetRandomItemID() {
@@ -92,8 +161,16 @@ inline std::string GetLastName(int num) {
     return result;
 }
 
+inline std::string GetNonUniformRandomLastNameForRun(TSeededRng& rng) {
+    return GetLastName(NonUniformRandom(rng, 255, C_LAST_RUN_C, 0, 999));
+}
+
 inline std::string GetNonUniformRandomLastNameForRun() {
     return GetLastName(NonUniformRandom(255, C_LAST_RUN_C, 0, 999));
+}
+
+inline std::string GetNonUniformRandomLastNameForLoad(TSeededRng& rng) {
+    return GetLastName(NonUniformRandom(rng, 255, C_LAST_LOAD_C, 0, 999));
 }
 
 inline std::string GetNonUniformRandomLastNameForLoad() {

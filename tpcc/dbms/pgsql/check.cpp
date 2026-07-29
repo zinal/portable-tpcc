@@ -440,18 +440,19 @@ void PostImportCheckNextOrderId(pqxx::nontransaction& txn) {
 }
 
 void PostImportCheckWarehouseYtd(pqxx::nontransaction& txn) {
-    double expectedYtd = DISTRICT_INITIAL_YTD * DISTRICT_COUNT;
+    const std::string expectedYtd = WAREHOUSE_INITIAL_YTD.ToString();
     std::string sql = fmt::format(
-        "SELECT W_ID, W_YTD FROM {} WHERE ABS(W_YTD - {}) > 1e-3 LIMIT 1",
+        "SELECT W_ID, W_YTD FROM {} WHERE W_YTD <> {}::numeric LIMIT 1",
         TABLE_WAREHOUSE, expectedYtd);
     CheckNoRows(txn, sql, fmt::format("W_YTD must be {} after import", expectedYtd));
 }
 
 void PostImportCheckDistrictYtd(pqxx::nontransaction& txn) {
+    const std::string expectedYtd = DISTRICT_INITIAL_YTD.ToString();
     std::string sql = fmt::format(
-        "SELECT D_W_ID, D_ID, D_YTD FROM {} WHERE ABS(D_YTD - {}) > 1e-3 LIMIT 1",
-        TABLE_DISTRICT, DISTRICT_INITIAL_YTD);
-    CheckNoRows(txn, sql, fmt::format("D_YTD must be {} after import", DISTRICT_INITIAL_YTD));
+        "SELECT D_W_ID, D_ID, D_YTD FROM {} WHERE D_YTD <> {}::numeric LIMIT 1",
+        TABLE_DISTRICT, expectedYtd);
+    CheckNoRows(txn, sql, fmt::format("D_YTD must be {} after import", expectedYtd));
 }
 
 void PostImportCheckNoCarriers(pqxx::nontransaction& txn) {

@@ -20,6 +20,7 @@ DEFINE_string(connection, "host=localhost dbname=tpcc user=postgres", "PostgreSQ
 DEFINE_string(path, "", "PostgreSQL schema for benchmark tables (default: empty, uses server search_path)");
 
 DEFINE_int32(warehouses, 1, "Number of warehouses");
+DEFINE_uint64(seed, 1, "Deterministic data generation seed");
 DEFINE_int32(warmup, 0, "Warmup duration in minutes (0 = adaptive)");
 DEFINE_bool(skip_warmup, false, "Skip warmup entirely and start measurement immediately");
 DEFINE_int32(duration, 10, "Benchmark run duration in minutes");
@@ -212,6 +213,7 @@ void RunImport() {
     config.WarehouseCount = FLAGS_warehouses;
     config.LoadThreadCount = FLAGS_threads;
     config.UseTui = !FLAGS_no_tui;
+    config.Seed = FLAGS_seed;
     NTpcc::ImportSync(config);
 }
 

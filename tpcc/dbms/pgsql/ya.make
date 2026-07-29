@@ -36,6 +36,7 @@ SRCS(
 
 PEERDIR(
     tpcc/domain
+    tpcc/generator
     tpcc/metrics
     tpcc/runtime
     contrib/libs/libpqxx

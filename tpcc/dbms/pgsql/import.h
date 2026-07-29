@@ -4,6 +4,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <stop_token>
 #include <string>
 #include <vector>
@@ -21,6 +22,8 @@ struct TImportConfig {
     std::vector<TWarehouseRange> WarehouseRanges;
     bool OwnsGlobalData = true;
     int TotalWarehouses = 0;
+    // Deterministic population seed (run-config data.seed). Default 1 for standalone CLI.
+    uint64_t Seed = 1;
 };
 
 struct TImportState {
