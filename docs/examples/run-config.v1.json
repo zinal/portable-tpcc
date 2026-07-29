@@ -6,21 +6,14 @@
     "name": "lab-ydb-200",
     "sha256": "PROFILE_SHA256"
   },
-  "spec": {
-    "module_sha256": "SPEC_MODULE_SHA256",
-    "state_sha256": "SPEC_STATE_SHA256"
-  },
   "artifacts": {
     "worker_binary": "tpcc-ydb",
     "worker_binary_sha256": "BINARY_SHA256",
-    "spec_binary": "tpcc-spec",
-    "spec_binary_sha256": "SPEC_BINARY_SHA256",
     "source_revision": "GIT_COMMIT"
   },
   "paths": {
     "remote_root": "/home/user/portable-tpcc",
     "run_dir": "/home/user/portable-tpcc/runs/20260728-lab-ydb-200-01",
-    "spec_state": "/home/user/portable-tpcc/runs/20260728-lab-ydb-200-01/spec-state.json",
     "load_plan": "/home/user/portable-tpcc/runs/20260728-lab-ydb-200-01/load-plan.json"
   },
   "database": {
@@ -42,6 +35,10 @@
   },
   "scale": {
     "warehouses": 200
+  },
+  "data": {
+    "seed": 731910246,
+    "batch_rows": 10000
   },
   "workload": {
     "terminals_per_warehouse": 10,

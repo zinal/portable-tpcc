@@ -12,11 +12,14 @@ multiple DBMSs. The project consists of:
 
 1. shared C++ libraries containing the TPC-C model, data generator, terminal
    runtime, metrics, and checks;
-2. DBMS adapters;
-3. executables linked with a specific adapter;
-4. a separate `tpccctl` orchestrator that prepares the database, distributes
+2. DBMS adapters and one executable per DBMS that links those libraries with
+   the corresponding adapter;
+3. a separate `tpccctl` orchestrator that prepares the database, distributes
    the workload across hosts, synchronizes phases, collects artifacts, and
    produces a consolidated result.
+
+The shipped binaries are only `tpccctl` and `tpcc-<dbms>` for each supported
+adapter. There is no additional DBMS-neutral helper binary.
 
 The initial set of adapters:
 
@@ -63,6 +66,8 @@ TPC-C standard.
 - Checking that configured parameters (mix, timings, scale constraints, and
   similar) match those prescribed by any TPC-C edition.
 - Producing a conformance or qualification verdict against the TPC-C standard.
+- A separate DBMS-neutral helper binary (for example `tpcc-spec`) invoked by
+  the orchestrator.
 
 `portable-tpcc` MUST call a result an official TPC-C result only after
 independent verification of all TPC requirements. By default, the report
@@ -102,39 +107,24 @@ Roles:
 
 ## 4. Components and Library Boundaries
 
-### 4.1. `tpcc/spec`
+### 4.1. Shared Workload Libraries
 
-A single C++ package provides the fixed workload model used by generators,
-runtime binaries, and contract tests: schema AST helpers, scale/seed
-materialization, terminal derivation, expected cardinalities, and related test
-vectors. There is no edition selector and no package tree of standard
-revisions.
+The fixed TPC-C-style workload model lives in shared C++ libraries linked into
+every DBMS binary:
 
-The package is built as:
+- schema AST and expected cardinalities;
+- scale and seed interpretation;
+- terminal identity derivation;
+- data and transaction-input generation helpers;
+- related unit-test vectors.
 
-- a library linked by `domain`, workload binaries, and contract tests;
-- the DBMS-neutral `tpcc-spec` CLI used by the Go orchestrator for pure
-  materialization helpers;
-- JSON Schema for CLI inputs and outputs.
+There is **no** separate DBMS-neutral `tpcc-spec` (or similar) CLI. The
+orchestrator does not shell out to a C++ helper binary. Generator inputs,
+terminal counts, and expected row counts are derived inside the DBMS binary
+from the immutable `run-config.json` using those shared libraries.
 
-Minimum CLI:
-
-```text
-tpcc-spec describe
-tpcc-spec materialize --scale <json> --seed-source <json>
-tpcc-spec derive-terminals --spec-state <json> --assignment <json>
-tpcc-spec expected-data --spec-state <json> --load-plan <json>
-```
-
-All commands are pure functions and output canonical JSON. `describe` returns
-the module SHA. `materialize` creates an opaque `spec-state.json` for the
-generator; the orchestrator does not interpret its internal fields.
-
-The orchestrator owns run parameters (transaction mix, think/keying times, and
-similar defaults). It materializes them into `run-config.json` and does not ask
-`tpcc-spec` to validate those parameters against any TPC-C edition. At
-startup, the workload binary verifies that the linked module SHA matches
-`spec-state.json`.
+The libraries are not shipped as a standalone product. Contract tests and
+DBMS executables link them directly.
 
 ### 4.2. `tpcc/domain`
 
@@ -261,31 +251,37 @@ SDK types MUST NOT cross the adapter boundary.
 
 ### 4.10. Executables
 
-The initial version builds separate programs:
+The project ships exactly these programs:
 
 ```text
+tpccctl
 tpcc-ydb
 tpcc-pgsql
 tpcc-oceanbase
-tpcc-spec
-tpccctl
 ```
 
-C++ programs link the same shared libraries and one adapter. This approach
-does not require a runtime plugin ABI and does not pull the client libraries
-for every DBMS into a single binary.
+`tpccctl` is a self-contained Go orchestrator. Each `tpcc-<dbms>` binary links
+the shared workload libraries and exactly one adapter. This approach does not
+require a runtime plugin ABI and does not pull the client libraries for every
+DBMS into a single binary.
 
-`tpccctl` is a separate self-contained Go binary.
+Each DBMS binary exposes the process roles the orchestrator launches, for
+example `schema`, `loader`, `worker`, and `check`. All role logic that is not
+DBMS-specific comes from the shared libraries; only adapter and driver code is
+DBMS-specific.
+
+No additional DBMS-neutral helper binary is part of the product.
 
 ## 5. Horizontally Scaled Workload Execution
 
 ### 5.1. Assignment
 
-The orchestrator and `tpcc-spec` construct the full set of terminal identities
-for the specified scale using the terminals-per-warehouse setting from the
-run-config. The user profile lists only loader/worker instances and hosts; the
-profile contains neither manual warehouse ranges nor a DB-wide data ownership
-flag.
+The orchestrator records warehouse assignment and the terminals-per-warehouse
+setting in `run-config.json`. Each DBMS worker/loader derives the full set of
+terminal identities for its assigned warehouses from that run-config via the
+shared libraries. The user profile lists only loader/worker instances and
+hosts; the profile contains neither manual warehouse ranges nor a DB-wide data
+ownership flag.
 
 The assignment defines ownership of a warehouse's **home terminals**; it does
 not restrict transactions from accessing rows belonging to other warehouses.
@@ -381,9 +377,9 @@ separate drain window. Drain limits come from the orchestrator run-config
 
 ### 6.1. Shared Schema Model
 
-The spec module describes tables, columns, constraints, and logically required
-access paths in a DBMS-neutral AST. It is the sole source of the schema for
-the generator, checks, and adapter contract tests.
+Shared libraries describe tables, columns, constraints, and logically required
+access paths in a DBMS-neutral AST. That AST is the sole source of the schema
+for the generator, checks, and adapter contract tests.
 
 The adapter transforms the AST into DDL and a physical layout. It MAY add
 technical keys, indexes, partitions, and storage options provided that:
@@ -452,11 +448,12 @@ The orchestrator constructs `load-plan.json`:
 - first, a canonical `plan_payload` consisting only of assignments and batches;
 - `plan_payload_sha256` — the hash of the entire plan payload;
 - `load_id` — the SHA-256 of the canonical tuple
-  `(run_id, plan_payload_sha256, spec-state SHA, loader binary SHA)`;
+  `(run_id, plan_payload_sha256, run_config_sha256, loader binary SHA)`;
 - the final document contains the payload, `plan_payload_sha256`, and
   `load_id`, after which the hash of the entire `load-plan.json` is computed
   separately;
-- exactly one shard owns the DB-wide data defined by the spec module;
+- exactly one shard owns the DB-wide data defined by the shared workload
+  model;
 - warehouse-scoped data is divided into non-overlapping warehouse ranges;
 - a batch has a `batch_id`, key range, row count, and its own
   `batch_payload_sha256` for the canonical rows;
@@ -484,7 +481,8 @@ mixing two datasets and retaining residual rows from another scale.
 
 To satisfy the contract:
 
-- rows and all their values are fully determined by `spec-state`;
+- rows and all their values are fully determined by the run-config (scale,
+  seed, and related generator inputs) as interpreted by the shared libraries;
 - a batch contains complete values rather than relative increments;
 - logical and technical keys are stable;
 - server-generated timestamps, sequences, and other changing defaults are
@@ -500,9 +498,9 @@ adapter MAY use upsert, staging/merge, replace-range, or an internal ledger,
 but these alternatives are not visible to the loader or profile.
 
 A local checkpoint of successful batches MAY accelerate a repeated `load`. It
-is bound to the run/profile/load-plan/spec-state/binary hashes and is not a
-condition of correctness: if the checkpoint is absent or uncertain, the batch
-is simply retried.
+is bound to the run/profile/load-plan/binary hashes and is not a condition of
+correctness: if the checkpoint is absent or uncertain, the batch is simply
+retried.
 
 Schema, index, and statistics creation is performed by the separate idempotent
 operations `EnsureSchema`, `EnsureIndexes`, and `EnsureStatistics`. After all
@@ -517,7 +515,7 @@ The following MUST be performed on a quiescent database:
 - batch manifest completeness;
 - absence of overlaps and gaps in the load assignment;
 - correspondence of actual cardinalities to the expected values computed by
-  the spec module for the scale;
+  the shared libraries for the scale and seed in the run-config;
 - canonical sample hashes that are identical for all adapters;
 - readiness of DBMS-specific indexes/statistics.
 
@@ -585,20 +583,22 @@ built-in defaults for omitted workload parameters, and creates a normalized
 `run-config.json` containing:
 
 - schema version and run ID;
-- profile and binary SHAs;
-- the `tpcc-spec` binary SHA, the spec module SHA, and the `spec-state.json`
-  SHA;
+- profile and DBMS-binary SHAs;
 - DBMS kind and non-secret configuration;
-- scale and warehouse assignment;
+- scale, seed, and warehouse assignment;
 - workload parameters: transaction mix, think/keying times, terminals per
   warehouse, and related settings (defaults from orchestrator code unless
   overridden in the profile);
-- an opaque generator/spec state reference;
 - relative durations and phase policy;
 - histogram schema;
 - expected workers;
 - retry/failure policy;
 - artifact paths.
+
+The run-config is the sole declarative input for loaders and workers. Shared
+libraries inside the DBMS binary derive generator streams, terminal
+identities, and expected cardinalities from it. There is no separate opaque
+`spec-state.json` artifact and no DBMS-neutral helper binary.
 
 The orchestrator MUST NOT reject a profile because its workload parameters
 differ from any TPC-C edition. Mix weights MUST be positive and sum to 100
@@ -625,13 +625,12 @@ computed from canonical JSON according to RFC 8785 or from the original binary
 bytes. Test fixtures MUST contain real, verifiable hashes.
 
 The implementation MUST provide JSON Schema for the profile, control-config,
-run-config, spec-state, start-token, readiness, process state, and results. The
-YAML profile is validated as a JSON data model with
-`additionalProperties:false`. Defaults are materialized into the local
-immutable `control-config.json` and runtime `run-config.json`; the original
-profile is not read thereafter. The control-config contains the SSH inventory,
-local/state/result paths, and deploy policy. The run-config contains only
-parameters for runtime hosts.
+run-config, start-token, readiness, process state, and results. The YAML
+profile is validated as a JSON data model with `additionalProperties:false`.
+Defaults are materialized into the local immutable `control-config.json` and
+runtime `run-config.json`; the original profile is not read thereafter. The
+control-config contains the SSH inventory, local/state/result paths, and
+deploy policy. The run-config contains only parameters for runtime hosts.
 
 ### 8.4. Directories
 
@@ -644,7 +643,6 @@ Runtime host:
 ├── schema/
 └── runs/<run_id>/
     ├── run-config.json
-    ├── spec-state.json
     ├── start-token.json
     ├── load-plan.json
     ├── loader/<name>/
@@ -669,7 +667,6 @@ Control host:
     ├── control-config.json
     ├── profile.redacted.yaml
     ├── run-config.json
-    ├── spec-state.json
     └── load-plan.json
 ```
 
@@ -718,9 +715,10 @@ skew, uncertainty, and drift.
 
 Startup is divided into prepare and commit:
 
-1. The control process distributes `run-config.json` and `spec-state.json`.
-2. The worker verifies hashes, the DB fence, and the adapter, creates the
-   runtime, and writes `ready.json`, but does not start the workload.
+1. The control process distributes `run-config.json`.
+2. The worker verifies the run-config hash, the DB fence, and the adapter,
+   creates the runtime from the run-config via shared libraries, and writes
+   `ready.json`, but does not start the workload.
 3. Once the ready set is complete, the control process creates
    `start-token.json`, bound to the config SHA, fence generation, and ready-set
    hash. The token contains future phase epochs and the expected generation of
@@ -748,7 +746,6 @@ heartbeat/status and causes the final run to fail.
   "instance": "worker-a",
   "instance_nonce": "...",
   "run_config_sha256": "...",
-  "spec_state_sha256": "...",
   "binary_sha256": "...",
   "adapter": "ydb",
   "warehouse_ranges": [[1, 101]],
@@ -822,7 +819,6 @@ recent error and all known processes.
 Each worker writes JSON containing:
 
 - run/config/binary/profile SHAs;
-- the spec module SHA;
 - adapter and server version;
 - assignment;
 - actual phase timestamps;
@@ -871,7 +867,6 @@ results/<run_id>/
 ├── orchestrator/
 │   ├── profile.redacted.yaml
 │   ├── run-config.json
-│   ├── spec-state.json
 │   ├── run-state.json
 │   ├── start-token.json
 │   └── load-plan.json
@@ -894,7 +889,7 @@ verifies the manifest, and only then publishes the raw instance directory.
 
 After collection, the control process atomically creates
 `collection-manifest.json`, covering all process manifests, the control-config,
-run/spec/start state, load plan, and check results. The aggregate is built only
+run/start state, load plan, and check results. The aggregate is built only
 from files in this manifest and stores its SHA-256. Unsealed data remains
 marked `partial` and is excluded from the primary aggregate.
 
@@ -988,12 +983,11 @@ isolation, schema state, and physical configuration.
 
 ### 13.1. Shared Unit Tests
 
-- test vectors from the spec module;
+- shared workload-model test vectors;
 - domain types and canonical encoding;
 - immutable input across injected retries;
 - transaction workflows through a fake adapter;
-- `tpcc-spec` CLI/library equivalence;
-- terminal identity and warehouse assignment;
+- terminal identity and warehouse assignment derived from run-config;
 - phase classification at boundary timestamps;
 - histogram merging;
 - load sharding independent of the number of shards.
@@ -1005,7 +999,7 @@ One test suite is run for each DBMS:
 - DDL/create/clean;
 - initial population hash/cardinality;
 - interruption of `PutBatch` at different stages and safe retry;
-- all operations exported by the spec module;
+- all shared semantic operations;
 - transaction rollback atomicity;
 - deadlock/serialization retry;
 - ambiguous commit injection;
@@ -1051,7 +1045,6 @@ For a small shared seed:
 
 ```text
 tpcc/
-├── spec/
 ├── domain/
 ├── generator/
 ├── transactions/
@@ -1073,6 +1066,11 @@ docs/
 ├── specification.md
 └── examples/
 ```
+
+Shared libraries under `tpcc/` (except `dbms/` and `app/`) contain the unified
+workload logic. Each `tpcc/app/<dbms>` target links those libraries with one
+adapter and produces one DBMS binary. `tpccctl` is the only other shipped
+binary.
 
 All C++ targets are described by `ya.make`. The Go orchestrator is built using
 the existing Go support in `ya make`; no alternative root build system is

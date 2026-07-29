@@ -57,10 +57,9 @@ required for the current port.
 
 | Module | Blocker |
 | --- | --- |
-| `tpcc/spec` | fixed workload-model helpers and `tpcc-spec` CLI |
-| `tpcc/generator` | deterministic load and transaction inputs (spec) |
-| `tpcc/loader`, `tpcc/checks` | horizontal scaling (spec) |
-| `tpcc/runtime` (terminal phases) | phase barriers, retry loop per spec |
+| `tpcc/generator` | deterministic load and transaction inputs |
+| `tpcc/loader`, `tpcc/checks` | horizontal scaling |
+| `tpcc/runtime` (terminal phases) | phase barriers, retry loop |
 | `tpcc/dbms/ydb`, `tpcc/dbms/oceanbase` | external SDKs |
 | `tools/tpccctl` | initial | Go orchestrator (`validate`, `plan`, `deploy`, `run`, etc.) |
 | unit/integration tests | port from `tpcc-postgres-cpp/src/ut` |
