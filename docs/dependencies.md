@@ -50,7 +50,7 @@ required for the current port.
 | `tpcc/runtime` | done | coroutine scheduler, futures, logging, thread pool |
 | `tpcc/transactions` | in progress | async `ITpccSession` + `TSemanticOp` variant (`ops.h`) |
 | `tpcc/generator` | in progress | deterministic population; wired into PG `ImportSync` |
-| `tpcc/loader` | skeleton | `ILoadAdapter` / `PutBatch` header only |
+| `tpcc/loader` | in progress | `ILoadAdapter`; PG idempotent PutBatch helpers |
 | `tpcc/checks` | not started | still inside `dbms/pgsql/check.*` |
 ### PostgreSQL adapter and executable
 
@@ -63,7 +63,6 @@ required for the current port.
 
 | Module | Notes |
 | --- | --- |
-| Idempotent PG `PutBatch` | generator exists; import still uses non-idempotent COPY |
 | Shared checks package | lift from pgsql |
 | Runtime `--start-at` phases | wall-clock sync per specification §7 |
 | `tpcc/dbms/ydb`, `oceanbase` | external SDKs |
@@ -73,14 +72,15 @@ required for the current port.
 
 These are intentional interim gaps while Phases 1–5 of the alignment plan land:
 
-1. **Load not idempotent** — plain `COPY`; retries can PK-conflict.
-2. **Money path still uses `double` in PG transaction workflows** — `TMoney`
+1. **Money path still uses `double` in PG transaction workflows** — `TMoney`
    is used for load; New-Order/Payment/`query_result` still convert via
    `double`.
-3. **Workers emit percentiles** — not raw histogram buckets (spec §8).
-4. **No `--start-at` handling** — workers start on local clocks.
-5. **SQLSTATE error classifier missing** — only `transaction_rollback` retries.
-6. **Run-config `workload.*` largely ignored** — mix/timings hardcoded.
+2. **Workers emit percentiles** — not raw histogram buckets (spec §8).
+3. **No `--start-at` handling** — workers start on local clocks.
+4. **SQLSTATE error classifier missing** — only `transaction_rollback` retries.
+5. **Run-config `workload.*` largely ignored** — mix/timings hardcoded.
+6. **PutBatch row payloads** — PG adapter regenerates from seed; shared-loader
+   serialized rows not yet consumed.
 
 ## SDKs outside this repository
 

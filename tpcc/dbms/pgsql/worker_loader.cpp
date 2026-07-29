@@ -37,6 +37,7 @@ int RunLoaderFromRunConfig(const std::string& runConfigPath, const std::string& 
     if (doc.HasSeed) {
         importCfg.Seed = static_cast<uint64_t>(doc.Seed);
     }
+    importCfg.RunId = doc.RunId;
 
     int exitCode = 0;
     try {

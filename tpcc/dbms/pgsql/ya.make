@@ -18,6 +18,7 @@ SRCS(
     transaction_simulation.cpp
     init.cpp
     import.cpp
+    load_batch.cpp
     clean.cpp
     check.cpp
     path_checker.cpp
@@ -37,6 +38,7 @@ SRCS(
 PEERDIR(
     tpcc/domain
     tpcc/generator
+    tpcc/loader
     tpcc/metrics
     tpcc/runtime
     contrib/libs/libpqxx

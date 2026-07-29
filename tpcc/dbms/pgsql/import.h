@@ -24,6 +24,8 @@ struct TImportConfig {
     int TotalWarehouses = 0;
     // Deterministic population seed (run-config data.seed). Default 1 for standalone CLI.
     uint64_t Seed = 1;
+    // Optional run identity for PutBatch logging / future checkpoints.
+    std::string RunId;
 };
 
 struct TImportState {
