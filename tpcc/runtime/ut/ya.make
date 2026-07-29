@@ -1,0 +1,14 @@
+GTEST()
+
+SUBSCRIBER(g:tpcc)
+
+SRCS(
+    time_util_ut.cpp
+    phase_controller_ut.cpp
+)
+
+PEERDIR(
+    tpcc/runtime
+)
+
+END()

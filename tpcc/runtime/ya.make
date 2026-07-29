@@ -9,6 +9,7 @@ ADDINCL(
 SRCS(
     task_queue.cpp
     log_backend.cpp
+    time_util.cpp
 )
 
 PEERDIR(
@@ -17,3 +18,7 @@ PEERDIR(
 )
 
 END()
+
+RECURSE_FOR_TESTS(
+    ut
+)

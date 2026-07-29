@@ -128,16 +128,16 @@ Goal: same `run-config` (scale, seed) → same logical rows; load retries safe.
 
 ### Phase 3 — Runtime phases, metrics, worker artifacts **[F][§2.1]**
 
-| # | Task | Notes |
-| --- | --- | --- |
-| 3.1 | Shared phase controller; stop admission at measurement end | |
-| 3.2 | Honor `--start-at`; wait until instant; fatal if prepare late | Wall-clock sync |
-| 3.3 | Derive phase timestamps from `start-at` + run-config durations | |
-| 3.4 | Fix warmup exclusion; measurement ends at `measurement_end` | |
-| 3.5 | Drain = in-flight only when `async_delivery=false` **[F]** | |
-| 3.6 | `result.json`: raw histogram buckets, retries, versions; no final percentiles | |
-| 3.7 | Apply full `workload.*` / histogram / pacing from run-config | |
-| 3.8 | Stable process nonce; prepare artifacts for diagnostics | |
+| # | Task | Notes | Status |
+| --- | --- | --- | --- |
+| 3.1 | Shared phase controller; stop admission at measurement end | | Done |
+| 3.2 | Honor `--start-at`; wait until instant; fatal if prepare late | Wall-clock sync | Done |
+| 3.3 | Derive phase timestamps from `start-at` + run-config durations | | Done |
+| 3.4 | Fix warmup exclusion; measurement ends at `measurement_end` | | Done |
+| 3.5 | Drain = in-flight only when `async_delivery=false` **[F]** | | Done |
+| 3.6 | `result.json`: raw histogram buckets, retries, versions; no final percentiles | | Done |
+| 3.7 | Apply full `workload.*` / histogram / pacing from run-config | | Partial (`terminals_per_warehouse` + pacing) |
+| 3.8 | Stable process nonce; prepare artifacts for diagnostics | | Done |
 
 **Exit:** workers sharing the same `--start-at` share phase boundaries;
 missed deadline fails the process; consolidate can merge raw histograms.
@@ -218,6 +218,7 @@ Phase 0 (headers/docs)
 
 ## 6. Immediate next step
 
-Phase 0–2 complete (five workflows on `ITpccTransaction`; simulation remains
-PG-local on `PgSession`). Next: **Phase 3** — `--start-at`, phase controller,
-raw histogram buckets in worker results.
+Phase 0–3 largely complete (`--start-at`, phase controller, raw histograms,
+stable nonce). Remaining Phase 3.7: full `workload.transaction_mix` /
+keying/think / histogram layout from run-config. Next major: **Phase 4**
+(checks + admin) and **Phase 5** (`tpccctl` orchestration).

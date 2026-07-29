@@ -6,11 +6,14 @@
 #include <log.h>
 #include <log_backend.h>
 #include "pg_connection_pool.h"
+#include "pg_capabilities.h"
 #include "runner_display_data.h"
+#include <phase_controller.h>
 #include <task_queue.h>
 #include "terminal.h"
 #include "transactions.h"
 #include <domain_util.h>
+#include <time_util.h>
 
 #ifdef TPCC_HAS_TUI
 #include "runner_tui.h"
@@ -214,7 +217,10 @@ TRunOutcome RunSync(const TRunConfig& config, TTerminalStats* aggregatedStats) {
     }
     const size_t warehouseCount = CountWarehouses(ranges);
     const size_t scaleWarehouses = config.ScaleWarehouses > 0 ? config.ScaleWarehouses : warehouseCount;
-    const size_t terminalCount = warehouseCount * TERMINALS_PER_WAREHOUSE;
+    const size_t terminalsPerWh = config.TerminalsPerWarehouse > 0
+        ? config.TerminalsPerWarehouse
+        : TERMINALS_PER_WAREHOUSE;
+    const size_t terminalCount = warehouseCount * terminalsPerWh;
 
     const size_t maxInflight = config.MaxInflight;
     const size_t poolSize = std::min(terminalCount, maxInflight);
@@ -287,7 +293,7 @@ TRunOutcome RunSync(const TRunConfig& config, TTerminalStats* aggregatedStats) {
     auto taskQueue = CreateTaskQueue(threadCount, maxInflight, terminalCount, terminalCount);
 
     auto stopToken = GetGlobalInterruptSource().get_token();
-    std::atomic<bool> stopWarmup{false};
+    TPhaseController phaseController;
 
     std::vector<std::shared_ptr<TTerminalStats>> perThreadStats;
     perThreadStats.reserve(threadCount);
@@ -301,7 +307,7 @@ TRunOutcome RunSync(const TRunConfig& config, TTerminalStats* aggregatedStats) {
     size_t terminalIndex = 0;
     for (const auto& range : ranges) {
         for (int wh = range.Start; wh < range.End; ++wh) {
-            for (size_t t = 0; t < TERMINALS_PER_WAREHOUSE; ++t) {
+            for (size_t t = 0; t < terminalsPerWh; ++t) {
                 const size_t threadIndex = terminalIndex % threadCount;
 
                 terminals.push_back(std::make_unique<TTerminal>(
@@ -312,7 +318,7 @@ TRunOutcome RunSync(const TRunConfig& config, TTerminalStats* aggregatedStats) {
                     connectionPool.get(),
                     config.NoDelays,
                     stopToken,
-                    stopWarmup,
+                    phaseController,
                     perThreadStats[threadIndex],
                     config.SimulateTransactionMs,
                     config.SimulateTransactionSelect1,
@@ -330,44 +336,133 @@ TRunOutcome RunSync(const TRunConfig& config, TTerminalStats* aggregatedStats) {
         static_cast<uint32_t>(terminalCount * MinWarmupPerTerminalMs.count() / 1000 + 1);
 
     bool forcedWarmup = false;
-    uint32_t warmupSeconds = 0;
-    std::chrono::seconds runDuration = config.RunDuration;
-    uint32_t drainSeconds = 0;
+    TPhaseDurations durations;
 
-    if (config.Orchestrated) {
-        warmupSeconds = static_cast<uint32_t>(config.PhasePolicy.RampUpMs / 1000);
-        runDuration = std::chrono::seconds(config.PhasePolicy.MeasurementMs / 1000);
-        drainSeconds = static_cast<uint32_t>(config.PhasePolicy.TransactionDrainMs / 1000);
+    if (config.Orchestrated || config.StartAt.has_value()) {
+        durations.RampUpMs = config.PhasePolicy.RampUpMs;
+        durations.MeasurementMs = config.PhasePolicy.MeasurementMs;
+        durations.TransactionDrainMs = config.PhasePolicy.TransactionDrainMs;
+        durations.StopGraceMs = config.PhasePolicy.StopGraceMs;
+        if (durations.MeasurementMs <= 0 && !config.Orchestrated) {
+            durations.MeasurementMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                config.RunDuration).count();
+        }
     } else if (config.SkipWarmup) {
-        warmupSeconds = 0;
-    } else if (config.WarmupDuration.count() == 0) {
-        // adaptive warmup
-        if (warehouseCount <= 10) {
-            warmupSeconds = 30;
-        } else if (warehouseCount <= 100) {
-            warmupSeconds = 5 * 60;
-        } else if (warehouseCount <= 1000) {
-            warmupSeconds = 10 * 60;
-        } else {
-            warmupSeconds = 30 * 60;
-        }
-        warmupSeconds = std::max(warmupSeconds, minWarmupSeconds);
+        durations.RampUpMs = 0;
+        durations.MeasurementMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+            config.RunDuration).count();
     } else {
-        warmupSeconds = static_cast<uint32_t>(config.WarmupDuration.count());
-        if (warmupSeconds < minWarmupSeconds) {
-            forcedWarmup = true;
-            warmupSeconds = minWarmupSeconds;
+        uint32_t warmupSeconds = 0;
+        if (config.WarmupDuration.count() == 0) {
+            if (warehouseCount <= 10) {
+                warmupSeconds = 30;
+            } else if (warehouseCount <= 100) {
+                warmupSeconds = 5 * 60;
+            } else if (warehouseCount <= 1000) {
+                warmupSeconds = 10 * 60;
+            } else {
+                warmupSeconds = 30 * 60;
+            }
+            warmupSeconds = std::max(warmupSeconds, minWarmupSeconds);
+        } else {
+            warmupSeconds = static_cast<uint32_t>(config.WarmupDuration.count());
+            if (warmupSeconds < minWarmupSeconds) {
+                forcedWarmup = true;
+                warmupSeconds = minWarmupSeconds;
+            }
         }
+        durations.RampUpMs = static_cast<int64_t>(warmupSeconds) * 1000;
+        durations.MeasurementMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+            config.RunDuration).count();
     }
 
-    const bool skipWarmup = config.Orchestrated
-        ? (warmupSeconds == 0)
-        : config.SkipWarmup;
+    // async_delivery=false (PG): drain waits for in-flight only; no async queue.
+    const bool asyncDelivery = TPgCapabilities{}.Get().AsyncDelivery;
+    if (!asyncDelivery) {
+        // Keep TransactionDrainMs as the max wait for in-flight to finish.
+    }
+
+    // Start terminals during prepare (they wait until MayAdmit).
+    for (size_t i = 0; i < terminals.size() && !stopToken.stop_requested(); ++i) {
+        terminals[i]->Start();
+        std::this_thread::sleep_for(MinWarmupPerTerminalMs);
+    }
+
+    using SysClock = std::chrono::system_clock;
+    const auto preparedAt = SysClock::now();
+
+    SysClock::time_point rampStart;
+    if (config.StartAt.has_value()) {
+        rampStart = *config.StartAt;
+        if (preparedAt >= rampStart) {
+            LOG_E("Missed --start-at deadline {}: prepare finished at {}",
+                  FormatRfc3339Utc(rampStart), FormatRfc3339Utc(preparedAt));
+            GetGlobalErrorVariable().store(true);
+            GetGlobalInterruptSource().request_stop();
+            if (connectionPool) {
+                connectionPool->CancelAll();
+            }
+            taskQueue->WakeupAndNeverSleep();
+            taskQueue->Join();
+            outcome.ExitCode = 1;
+            return outcome;
+        }
+        LOG_I("Prepared; waiting until start-at {} ({} ms)",
+              FormatRfc3339Utc(rampStart),
+              std::chrono::duration_cast<std::chrono::milliseconds>(rampStart - preparedAt).count());
+        while (!stopToken.stop_requested()) {
+            const auto now = SysClock::now();
+            if (now >= rampStart) {
+                break;
+            }
+            const auto remain = rampStart - now;
+            const auto slice = remain > std::chrono::milliseconds(50)
+                ? std::chrono::milliseconds(50)
+                : std::chrono::duration_cast<std::chrono::milliseconds>(remain);
+            std::this_thread::sleep_for(slice);
+        }
+        if (stopToken.stop_requested()) {
+            phaseController.SetPhase(ERunPhase::Stop);
+            GetGlobalInterruptSource().request_stop();
+            if (connectionPool) {
+                connectionPool->CancelAll();
+            }
+            taskQueue->WakeupAndNeverSleep();
+            taskQueue->Join();
+            outcome.ExitCode = GetGlobalErrorVariable().load() ? 1 : 0;
+            return outcome;
+        }
+    } else {
+        rampStart = SysClock::now();
+    }
+
+    auto schedule = BuildPhaseSchedule(rampStart, durations);
+    phaseController.SetSchedule(schedule);
+    outcome.RampStart = schedule.RampStart;
+    outcome.MeasurementStart = schedule.MeasurementStart;
+    outcome.MeasurementEnd = schedule.MeasurementEnd;
+    outcome.DrainDeadline = schedule.DrainDeadline;
+    outcome.MeasurementSeconds =
+        std::chrono::duration<double>(schedule.MeasurementEnd - schedule.MeasurementStart).count();
+
+    if (forcedWarmup) {
+        LOG_I("Forced minimal warmup: {}ms", durations.RampUpMs);
+    }
+
+    LOG_I("Phase schedule: ramp={} measure_start={} measure_end={} drain={}",
+          FormatRfc3339Utc(schedule.RampStart),
+          FormatRfc3339Utc(schedule.MeasurementStart),
+          FormatRfc3339Utc(schedule.MeasurementEnd),
+          FormatRfc3339Utc(schedule.DrainDeadline));
+
+    phaseController.SetPhase(ERunPhase::Ramp);
+    if (durations.RampUpMs <= 0) {
+        phaseController.SetPhase(ERunPhase::Measure);
+    }
 
     auto startTs = Clock::now();
-    outcome.RampStart = std::chrono::system_clock::now();
-    auto warmupEnd = startTs + std::chrono::seconds(warmupSeconds);
-    auto runEnd = warmupEnd + runDuration;
+    auto warmupEnd = startTs + std::chrono::milliseconds(durations.RampUpMs);
+    auto runEnd = warmupEnd + std::chrono::milliseconds(durations.MeasurementMs);
 
 #ifdef TPCC_HAS_TUI
     TLogCapture logCapture(TUI_LOG_LINES);
@@ -376,45 +471,15 @@ TRunOutcome RunSync(const TRunConfig& config, TTerminalStats* aggregatedStats) {
         StartLogCapture(logCapture);
         auto initData = CollectDisplayData(
             config, threadCount, terminalCount, *taskQueue,
-            perThreadStats, startTs, warmupEnd, runEnd, false);
+            perThreadStats, startTs, warmupEnd, runEnd, durations.RampUpMs <= 0);
         tui = std::make_unique<TRunnerTui>(logCapture, initData);
     }
 #endif
 
-    if (forcedWarmup) {
-        LOG_I("Forced minimal warmup: {}s (requested {}s, need at least {}s for {} terminals)",
-              warmupSeconds, config.WarmupDuration.count(), minWarmupSeconds, terminalCount);
-    }
-
-    if (skipWarmup) {
-        LOG_I("Benchmark running (warmup: skipped, measure: {}s)...",
-              runDuration.count());
-    } else {
-        LOG_I("Benchmark running (warmup: {}s, measure: {}s)...",
-              warmupSeconds, runDuration.count());
-    }
-
-    bool warmupDone = skipWarmup;
-    if (warmupDone) {
-        warmupEnd = Clock::now();
-        runEnd = warmupEnd + runDuration;
-        outcome.MeasurementStart = std::chrono::system_clock::now();
-    }
     Clock::time_point lastDisplayUpdate = startTs;
     std::shared_ptr<TRunDisplayData> prevData;
-    bool drainPhase = false;
-    Clock::time_point drainEnd;
 
-    auto maybeUpdateDisplay = [&](Clock::time_point now) {
-        if (!warmupDone && now >= warmupEnd) {
-            LOG_I("Warmup complete, starting measurement");
-            stopWarmup.store(true);
-            warmupDone = true;
-            warmupEnd = now;
-            runEnd = now + runDuration;
-            outcome.MeasurementStart = std::chrono::system_clock::now();
-        }
-
+    auto maybeUpdateDisplay = [&](Clock::time_point now, bool warmupDone) {
         auto sinceLast = std::chrono::duration_cast<std::chrono::seconds>(now - lastDisplayUpdate);
         const auto updateInterval = std::chrono::seconds(
 #ifdef TPCC_HAS_TUI
@@ -443,53 +508,40 @@ TRunOutcome RunSync(const TRunConfig& config, TTerminalStats* aggregatedStats) {
         lastDisplayUpdate = now;
     };
 
-    // Stagger terminal starts to avoid overwhelming the task queue. Keep the
-    // display refreshing throughout, since with many warehouses this loop can
-    // take tens of seconds.
-    for (size_t i = 0; i < terminals.size() && !stopToken.stop_requested(); ++i) {
-        terminals[i]->Start();
-        std::this_thread::sleep_for(MinWarmupPerTerminalMs);
-        maybeUpdateDisplay(Clock::now());
-    }
-
     while (!stopToken.stop_requested()) {
-        auto now = Clock::now();
+        const auto wallNow = SysClock::now();
+        phaseController.Tick(wallNow);
+        const auto phase = phaseController.Phase();
 
-        if (warmupDone && !drainPhase && now >= runEnd) {
-            outcome.MeasurementEnd = std::chrono::system_clock::now();
-            if (drainSeconds > 0) {
-                LOG_I("Measurement complete, draining for {}s...", drainSeconds);
-                drainPhase = true;
-                drainEnd = now + std::chrono::seconds(drainSeconds);
-            } else {
-                LOG_I("Benchmark duration reached, stopping...");
+        if (phase == ERunPhase::Drain || phase == ERunPhase::Stop) {
+            // Stop admission; wait for in-flight (async_delivery=false → no async drain).
+            const size_t inflight = TransactionsInflight.load(std::memory_order_relaxed);
+            if (inflight == 0) {
+                LOG_I("Drain complete (in-flight=0)");
                 break;
+            }
+            if (wallNow >= schedule.DrainDeadline) {
+                LOG_I("Drain deadline reached with {} in-flight transactions", inflight);
+                break;
+            }
+            if (!asyncDelivery) {
+                LOG_T("Draining in-flight={}", inflight);
             }
         }
 
-        if (drainPhase && now >= drainEnd) {
-            LOG_I("Drain deadline reached, stopping...");
-            break;
-        }
-
-        maybeUpdateDisplay(now);
-
+        maybeUpdateDisplay(Clock::now(), phase == ERunPhase::Measure || phase == ERunPhase::Drain);
         std::this_thread::sleep_for(TRunConfig::SleepMsEveryIterationMainLoop);
     }
+
+    phaseController.SetPhase(ERunPhase::Stop);
 
 #ifdef TPCC_HAS_TUI
     tui.reset();
     StopLogCapture();
 #endif
 
-    auto measureEnd = Clock::now();
-    if (outcome.MeasurementEnd.time_since_epoch().count() == 0) {
-        outcome.MeasurementEnd = std::chrono::system_clock::now();
-    }
-    auto measureElapsed = warmupDone
-        ? std::chrono::duration<double>(measureEnd - warmupEnd)
-        : std::chrono::duration<double>(0);
-    outcome.MeasurementSeconds = measureElapsed.count();
+    auto measureElapsed = std::chrono::duration<double>(
+        schedule.MeasurementEnd - schedule.MeasurementStart);
 
     LOG_I("Stopping terminals...");
     GetGlobalInterruptSource().request_stop();

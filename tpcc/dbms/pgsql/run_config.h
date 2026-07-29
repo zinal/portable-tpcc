@@ -47,6 +47,7 @@ struct TRunConfigDocument {
     bool PacingEnabled = true;
     size_t RetryMaxAttempts = 0;
     bool RetryAmbiguousCommit = false;
+    size_t TerminalsPerWarehouse = 0;
 
     std::vector<TLoaderAssignment> LoadAssignments;
     std::vector<TWorkerAssignment> WorkerAssignments;
