@@ -12,3 +12,7 @@ build/export_generators/gradle/.gradle
 /tools/tpcectl/tpcectl
 *.tar.xz
 /tpcc/app/pgsql/tpcc-pgsql
+
+# ya make test artifacts
+tpcc/**/ut/test-results
+tpcc/**/ut/tpcc-*-ut
