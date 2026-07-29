@@ -1,7 +1,13 @@
 #pragma once
 
+#include "phase_policy.h"
+#include "warehouse_range.h"
+
+#include "terminal.h"
+
 #include <chrono>
 #include <string>
+#include <vector>
 
 namespace NTpcc {
 
@@ -29,6 +35,14 @@ struct TRunConfig {
     int SimulateTransactionSelect1 = 0;
     bool UseTui = false;
 
+    // Orchestrated worker fields (portable-tpcc run-config).
+    bool Orchestrated = false;
+    std::vector<TWarehouseRange> WarehouseRanges;
+    size_t ScaleWarehouses = 0;
+    TPhasePolicy PhasePolicy;
+    std::string Instance;
+    std::string InstanceDir;
+
     bool IsSimulationMode() const {
         return SimulateTransactionMs > 0 || SimulateTransactionSelect1 > 0;
     }
@@ -36,6 +50,15 @@ struct TRunConfig {
     static constexpr auto SleepMsEveryIterationMainLoop = std::chrono::milliseconds(50);
 };
 
-void RunSync(const TRunConfig& config);
+struct TRunOutcome {
+    std::chrono::system_clock::time_point RampStart;
+    std::chrono::system_clock::time_point MeasurementStart;
+    std::chrono::system_clock::time_point MeasurementEnd;
+    double MeasurementSeconds = 0.0;
+    int ExitCode = 0;
+    bool HighResHistogram = false;
+};
+
+TRunOutcome RunSync(const TRunConfig& config, TTerminalStats* aggregatedStats = nullptr);
 
 } // namespace NTpcc

@@ -51,7 +51,7 @@ required for the current port.
 | Module | Status | Notes |
 | --- | --- | --- |
 | `tpcc/dbms/pgsql` | done (initial port) | session, pool, transactions, init/import/run/check |
-| `tpcc/app/pgsql` (`tpcc-pgsql`) | done (initial port) | CLI: init, import, run, clean, check |
+| `tpcc/app/pgsql` (`tpcc-pgsql`) | orchestrated runtime | CLI: init, import, run, clean, check; `worker`/`loader` with run-config |
 
 ### Not yet started
 

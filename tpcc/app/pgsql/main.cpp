@@ -4,6 +4,8 @@
 #include "clean.h"
 #include "check.h"
 #include "path_checker.h"
+#include "worker_loader.h"
+
 #include <log.h>
 #include <domain_util.h>
 
@@ -43,6 +45,8 @@ void PrintHelp() {
         "  init      Create TPC-C schema (tables, indexes)\n"
         "  import    Load TPC-C data into the database\n"
         "  run       Run the TPC-C benchmark\n"
+        "  worker    Run orchestrated worker from run-config.json\n"
+        "  loader    Run orchestrated loader from run-config.json\n"
         "  clean     Drop all TPC-C tables\n"
         "  check     Run TPC-C consistency checks\n"
         "\n"
@@ -62,6 +66,10 @@ void PrintHelp() {
         "  --log-level           Log level: trace, debug, info, warn, error (default: \"info\")\n"
         "  --no-tui              Disable terminal UI (default: false)\n"
         "  --after-import        check: verify freshly loaded data (default: false)\n"
+        "\n"
+        "Orchestrated mode (tpccctl):\n"
+        "  worker --run-config <path> --instance <name>\n"
+        "  loader --run-config <path> --instance <name>\n"
         "\n"
         "Simulation (for testing without real TPC-C transactions):\n"
         "  --simulate-ms         Sleep N ms per transaction (default: 0 = disabled)\n"
@@ -85,7 +93,32 @@ spdlog::level::level_enum ParseLogLevel(const std::string& level) {
 }
 
 bool IsValidCommand(const std::string& cmd) {
-    return cmd == "init" || cmd == "import" || cmd == "run" || cmd == "clean" || cmd == "check";
+    return cmd == "init" || cmd == "import" || cmd == "run" || cmd == "worker" ||
+           cmd == "loader" || cmd == "clean" || cmd == "check";
+}
+
+bool ParseOrchestratedArgs(int argc, char** argv, std::string& runConfig, std::string& instance) {
+    for (int i = 2; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "--run-config" && i + 1 < argc) {
+            runConfig = argv[++i];
+        } else if (arg == "--instance" && i + 1 < argc) {
+            instance = argv[++i];
+        }
+    }
+    return !runConfig.empty() && !instance.empty();
+}
+
+int RunOrchestrated(const std::string& command, const std::string& runConfig, const std::string& instance) {
+    if (command == "worker") {
+        LOG_I("Starting orchestrated worker {}...", instance);
+        return NTpcc::RunWorkerFromRunConfig(runConfig, instance);
+    }
+    if (command == "loader") {
+        LOG_I("Starting orchestrated loader {}...", instance);
+        return NTpcc::RunLoaderFromRunConfig(runConfig, instance);
+    }
+    return 1;
 }
 
 // Maps a short flag character to its long-form gflags name (using
@@ -202,7 +235,7 @@ void RunBenchmark() {
         NTpcc::CheckDbForRun(FLAGS_connection, FLAGS_warehouses, FLAGS_path);
     }
 
-    NTpcc::RunSync(config);
+    NTpcc::RunSync(config, nullptr);
 }
 
 void RunClean() {
@@ -225,6 +258,26 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    if (argc >= 2) {
+        const std::string earlyCommand = argv[1];
+        if (earlyCommand == "worker" || earlyCommand == "loader") {
+            std::string runConfig;
+            std::string instance;
+            if (!ParseOrchestratedArgs(argc, argv, runConfig, instance)) {
+                std::cerr << "Error: worker/loader require --run-config and --instance\n";
+                return 1;
+            }
+            NTpcc::InitLogging();
+            spdlog::set_level(spdlog::level::info);
+            try {
+                return RunOrchestrated(earlyCommand, runConfig, instance);
+            } catch (const std::exception& ex) {
+                LOG_E("Fatal error: {}", ex.what());
+                return 1;
+            }
+        }
+    }
+
     std::vector<std::string> argStorage;
     std::vector<char*> argvStorage;
     std::string command = PreprocessArgs(argc, argv, argStorage, argvStorage);
@@ -237,7 +290,7 @@ int main(int argc, char* argv[]) {
 
     if (!IsValidCommand(command)) {
         std::cerr << "Unknown command: " << command << "\n";
-        std::cerr << "Valid commands: init, import, run, clean, check\n";
+        std::cerr << "Valid commands: init, import, run, worker, loader, clean, check\n";
         return 1;
     }
 
@@ -267,6 +320,14 @@ int main(int argc, char* argv[]) {
             LOG_I("Running TPC-C consistency checks...");
             RunCheck();
             LOG_I("Consistency checks complete");
+        } else if (command == "worker" || command == "loader") {
+            std::string runConfig;
+            std::string instance;
+            if (!ParseOrchestratedArgs(argc, argv, runConfig, instance)) {
+                std::cerr << "Error: worker/loader require --run-config and --instance\n";
+                return 1;
+            }
+            return RunOrchestrated(command, runConfig, instance);
         }
     } catch (const std::exception& ex) {
         LOG_E("Fatal error: {}", ex.what());
