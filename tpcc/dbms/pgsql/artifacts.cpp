@@ -57,12 +57,21 @@ std::string FormatTime(SysClock::time_point tp) {
     return ss.str();
 }
 
-Json HistogramSummary(const TTerminalStats::TTransactionStats& stats) {
+Json HistogramRaw(const THistogram& hist) {
     Json h = Json::object();
-    h["p50_ms"] = stats.LatencyHistogramFullMs.GetValueAtPercentile(50);
-    h["p90_ms"] = stats.LatencyHistogramFullMs.GetValueAtPercentile(90);
-    h["p99_ms"] = stats.LatencyHistogramFullMs.GetValueAtPercentile(99);
+    h["layout"] = "linear_exp";
+    h["unit"] = "ms";
+    h["hdr_till"] = hist.HdrTill();
+    h["max_value"] = hist.MaxValue();
+    h["total_count"] = hist.TotalCount();
+    h["max_recorded"] = hist.MaxRecordedValue();
+    h["buckets"] = hist.Buckets();
     return h;
+}
+
+Json HistogramPayload(const TTerminalStats::TTransactionStats& stats) {
+    // Workers emit raw buckets for consolidate; no final percentiles.
+    return HistogramRaw(stats.LatencyHistogramFullMs);
 }
 
 } // anonymous
@@ -84,7 +93,8 @@ void EnsureInstanceDir(const std::string& instanceDir) {
 }
 
 void WriteProcessJson(const TArtifactPaths& paths, const TRunConfigDocument& doc,
-                      const std::string& instance, const std::string& role, int pid) {
+                      const std::string& instance, const std::string& role, int pid,
+                      const std::string& instanceNonce) {
     Json j = {
         {"schema_version", 1},
         {"run_id", doc.RunId},
@@ -92,19 +102,20 @@ void WriteProcessJson(const TArtifactPaths& paths, const TRunConfigDocument& doc
         {"role", role},
         {"pid", pid},
         {"run_config_sha256", doc.RunConfigSha256},
-        {"instance_nonce", GenerateInstanceNonce()},
+        {"instance_nonce", instanceNonce},
         {"started_at", FormatTime(SysClock::now())},
     };
     WriteJsonAtomic(paths.ProcessJson, j);
 }
 
 void WriteReadyJson(const TArtifactPaths& paths, const TRunConfigDocument& doc,
-                    const std::string& instance, const std::vector<TWarehouseRange>& ranges) {
+                    const std::string& instance, const std::vector<TWarehouseRange>& ranges,
+                    const std::string& instanceNonce) {
     Json j = {
         {"schema_version", 1},
         {"run_id", doc.RunId},
         {"instance", instance},
-        {"instance_nonce", GenerateInstanceNonce()},
+        {"instance_nonce", instanceNonce},
         {"run_config_sha256", doc.RunConfigSha256},
         {"adapter", "pgsql"},
         {"warehouse_ranges", WarehouseRangesJson(ranges)},
@@ -145,7 +156,9 @@ void WriteWorkerResultJson(const TArtifactPaths& paths, const TRunConfigDocument
                            SysClock::time_point rampStart,
                            SysClock::time_point measurementStart,
                            SysClock::time_point measurementEnd,
-                           double measureSeconds, int exitCode) {
+                           SysClock::time_point drainDeadline,
+                           double measureSeconds, int exitCode,
+                           const std::string& instanceNonce) {
     Json counters = Json::object();
     Json histograms = Json::object();
     size_t totalFailed = 0;
@@ -163,11 +176,11 @@ void WriteWorkerResultJson(const TArtifactPaths& paths, const TRunConfigDocument
         if (type == ETransactionType::NewOrder) {
             totalNewOrderOk = ok;
         }
-        if (ok > 0 || failed > 0 || retried > 0) {
+        if (ok > 0 || failed > 0 || retried > 0 || s.LatencyHistogramFullMs.TotalCount() > 0) {
             counters[std::string(TransactionTypeToString(type)) + "_ok"] = ok;
             counters[std::string(TransactionTypeToString(type)) + "_failed"] = failed;
             counters[std::string(TransactionTypeToString(type)) + "_retried"] = retried;
-            histograms[TransactionTypeToString(type)] = HistogramSummary(s);
+            histograms[TransactionTypeToString(type)] = HistogramPayload(s);
         }
     }
 
@@ -178,6 +191,7 @@ void WriteWorkerResultJson(const TArtifactPaths& paths, const TRunConfigDocument
         {"schema_version", 1},
         {"run_id", doc.RunId},
         {"instance", instance},
+        {"instance_nonce", instanceNonce},
         {"role", "worker"},
         {"run_config_sha256", doc.RunConfigSha256},
         {"assignment", {
@@ -191,6 +205,7 @@ void WriteWorkerResultJson(const TArtifactPaths& paths, const TRunConfigDocument
             {"ramp_start", FormatTime(rampStart)},
             {"measurement_start", FormatTime(measurementStart)},
             {"measurement_end", FormatTime(measurementEnd)},
+            {"drain_deadline", FormatTime(drainDeadline)},
         }},
         {"counters", counters},
         {"histograms", histograms},
@@ -201,6 +216,10 @@ void WriteWorkerResultJson(const TArtifactPaths& paths, const TRunConfigDocument
             {"total_failed", totalFailed},
             {"total_retried", totalRetried},
             {"high_res_histogram", highResHistogram},
+        }},
+        {"versions", {
+            {"adapter", "pgsql"},
+            {"binary", doc.Binary.empty() ? "tpcc-pgsql" : doc.Binary},
         }},
         {"exit_status", exitCode},
         {"completed_at", FormatTime(SysClock::now())},

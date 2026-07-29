@@ -8,6 +8,7 @@
 #include "runner.h"
 
 #include <log.h>
+#include <time_util.h>
 
 #include <unistd.h>
 
@@ -19,9 +20,10 @@ int RunLoaderFromRunConfig(const std::string& runConfigPath, const std::string& 
     const std::string instanceDir = InstanceWorkDir(doc, "loader", instance);
     EnsureInstanceDir(instanceDir);
     const auto paths = MakeArtifactPaths(instanceDir);
+    const std::string nonce = GenerateInstanceNonce();
 
-    WriteProcessJson(paths, doc, instance, "loader", static_cast<int>(::getpid()));
-    WriteReadyJson(paths, doc, instance, assign.WarehouseRanges);
+    WriteProcessJson(paths, doc, instance, "loader", static_cast<int>(::getpid()), nonce);
+    WriteReadyJson(paths, doc, instance, assign.WarehouseRanges, nonce);
 
     const std::string connection = BuildPgConnectionString(doc);
     CheckDbForImport(connection, doc.Path);
@@ -49,19 +51,24 @@ int RunLoaderFromRunConfig(const std::string& runConfigPath, const std::string& 
     }
 
     WriteLoaderResultJson(paths, doc, instance, assign, exitCode);
-    WriteArtifactManifest(paths, instance, GenerateInstanceNonce(), exitCode);
+    WriteArtifactManifest(paths, instance, nonce, exitCode);
     return exitCode;
 }
 
-int RunWorkerFromRunConfig(const std::string& runConfigPath, const std::string& instance) {
+int RunWorkerFromRunConfig(
+    const std::string& runConfigPath,
+    const std::string& instance,
+    const std::optional<std::string>& startAtRfc3339)
+{
     const auto doc = LoadRunConfigDocument(runConfigPath);
     const auto assign = FindWorkerAssignment(doc, instance);
     const std::string instanceDir = InstanceWorkDir(doc, "worker", instance);
     EnsureInstanceDir(instanceDir);
     const auto paths = MakeArtifactPaths(instanceDir);
+    const std::string nonce = GenerateInstanceNonce();
 
-    WriteProcessJson(paths, doc, instance, "worker", static_cast<int>(::getpid()));
-    WriteReadyJson(paths, doc, instance, assign.WarehouseRanges);
+    WriteProcessJson(paths, doc, instance, "worker", static_cast<int>(::getpid()), nonce);
+    WriteReadyJson(paths, doc, instance, assign.WarehouseRanges, nonce);
 
     const std::string connection = BuildPgConnectionString(doc);
     CheckDbForRun(connection, doc.ScaleWarehouses, doc.Path);
@@ -82,6 +89,13 @@ int RunWorkerFromRunConfig(const std::string& runConfigPath, const std::string& 
     runCfg.UseTui = false;
     runCfg.RetryMaxAttempts = doc.RetryMaxAttempts;
     runCfg.RetryAmbiguousCommit = doc.RetryAmbiguousCommit;
+    runCfg.TerminalsPerWarehouse = doc.TerminalsPerWarehouse;
+
+    if (startAtRfc3339.has_value()) {
+        runCfg.StartAt = ParseRfc3339Utc(*startAtRfc3339);
+    } else {
+        throw std::runtime_error("orchestrated worker requires --start-at=<RFC3339-UTC>");
+    }
 
     TTerminalStats aggregated(false);
     TRunOutcome outcome;
@@ -97,8 +111,8 @@ int RunWorkerFromRunConfig(const std::string& runConfigPath, const std::string& 
     WriteWorkerResultJson(
         paths, doc, instance, assign, aggregated, outcome.HighResHistogram,
         outcome.RampStart, outcome.MeasurementStart, outcome.MeasurementEnd,
-        outcome.MeasurementSeconds, exitCode);
-    WriteArtifactManifest(paths, instance, GenerateInstanceNonce(), exitCode);
+        outcome.DrainDeadline, outcome.MeasurementSeconds, exitCode, nonce);
+    WriteArtifactManifest(paths, instance, nonce, exitCode);
     return exitCode;
 }
 

@@ -13,6 +13,7 @@
 #include <spdlog/spdlog.h>
 
 #include <iostream>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -69,7 +70,7 @@ void PrintHelp() {
         "  --after-import        check: verify freshly loaded data (default: false)\n"
         "\n"
         "Orchestrated mode (tpccctl):\n"
-        "  worker --run-config <path> --instance <name>\n"
+        "  worker --run-config <path> --instance <name> --start-at=<RFC3339-UTC>\n"
         "  loader --run-config <path> --instance <name>\n"
         "\n"
         "Simulation (for testing without real TPC-C transactions):\n"
@@ -98,22 +99,37 @@ bool IsValidCommand(const std::string& cmd) {
            cmd == "loader" || cmd == "clean" || cmd == "check";
 }
 
-bool ParseOrchestratedArgs(int argc, char** argv, std::string& runConfig, std::string& instance) {
+bool ParseOrchestratedArgs(
+    int argc,
+    char** argv,
+    std::string& runConfig,
+    std::string& instance,
+    std::optional<std::string>& startAt)
+{
     for (int i = 2; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "--run-config" && i + 1 < argc) {
             runConfig = argv[++i];
         } else if (arg == "--instance" && i + 1 < argc) {
             instance = argv[++i];
+        } else if (arg.rfind("--start-at=", 0) == 0) {
+            startAt = arg.substr(std::string("--start-at=").size());
+        } else if (arg == "--start-at" && i + 1 < argc) {
+            startAt = argv[++i];
         }
     }
     return !runConfig.empty() && !instance.empty();
 }
 
-int RunOrchestrated(const std::string& command, const std::string& runConfig, const std::string& instance) {
+int RunOrchestrated(
+    const std::string& command,
+    const std::string& runConfig,
+    const std::string& instance,
+    const std::optional<std::string>& startAt)
+{
     if (command == "worker") {
         LOG_I("Starting orchestrated worker {}...", instance);
-        return NTpcc::RunWorkerFromRunConfig(runConfig, instance);
+        return NTpcc::RunWorkerFromRunConfig(runConfig, instance, startAt);
     }
     if (command == "loader") {
         LOG_I("Starting orchestrated loader {}...", instance);
@@ -265,14 +281,19 @@ int main(int argc, char* argv[]) {
         if (earlyCommand == "worker" || earlyCommand == "loader") {
             std::string runConfig;
             std::string instance;
-            if (!ParseOrchestratedArgs(argc, argv, runConfig, instance)) {
+            std::optional<std::string> startAt;
+            if (!ParseOrchestratedArgs(argc, argv, runConfig, instance, startAt)) {
                 std::cerr << "Error: worker/loader require --run-config and --instance\n";
+                return 1;
+            }
+            if (earlyCommand == "worker" && !startAt.has_value()) {
+                std::cerr << "Error: worker requires --start-at=<RFC3339-UTC>\n";
                 return 1;
             }
             NTpcc::InitLogging();
             spdlog::set_level(spdlog::level::info);
             try {
-                return RunOrchestrated(earlyCommand, runConfig, instance);
+                return RunOrchestrated(earlyCommand, runConfig, instance, startAt);
             } catch (const std::exception& ex) {
                 LOG_E("Fatal error: {}", ex.what());
                 return 1;
@@ -325,11 +346,16 @@ int main(int argc, char* argv[]) {
         } else if (command == "worker" || command == "loader") {
             std::string runConfig;
             std::string instance;
-            if (!ParseOrchestratedArgs(argc, argv, runConfig, instance)) {
+            std::optional<std::string> startAt;
+            if (!ParseOrchestratedArgs(argc, argv, runConfig, instance, startAt)) {
                 std::cerr << "Error: worker/loader require --run-config and --instance\n";
                 return 1;
             }
-            return RunOrchestrated(command, runConfig, instance);
+            if (command == "worker" && !startAt.has_value()) {
+                std::cerr << "Error: worker requires --start-at=<RFC3339-UTC>\n";
+                return 1;
+            }
+            return RunOrchestrated(command, runConfig, instance, startAt);
         }
     } catch (const std::exception& ex) {
         LOG_E("Fatal error: {}", ex.what());

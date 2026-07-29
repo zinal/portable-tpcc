@@ -17,6 +17,12 @@ public:
     uint64_t GetValueAtPercentile(double percentile) const;
     void Reset();
 
+    uint64_t HdrTill() const { return HdrTill_; }
+    uint64_t MaxValue() const { return MaxValue_; }
+    uint64_t TotalCount() const { return TotalCount_; }
+    uint64_t MaxRecordedValue() const { return MaxRecordedValue_; }
+    const std::vector<uint64_t>& Buckets() const { return Buckets_; }
+
 private:
     size_t GetBucketIndex(uint64_t value) const;
     uint64_t GetBucketUpperBound(size_t bucketIndex) const;

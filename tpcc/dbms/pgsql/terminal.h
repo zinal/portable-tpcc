@@ -3,6 +3,7 @@
 #include <task_queue.h>
 #include <constants.h>
 #include <histogram.h>
+#include <phase_controller.h>
 #include "transactions.h"
 #include "pg_connection_pool.h"
 
@@ -147,7 +148,7 @@ public:
         PgConnectionPool* connectionPool,
         bool noDelays,
         std::stop_token stopToken,
-        std::atomic<bool>& stopWarmup,
+        TPhaseController& phaseController,
         std::shared_ptr<TTerminalStats>& stats,
         int simulateTransactionMs = 0,
         int simulateTransactionSelect1 = 0,
@@ -173,14 +174,13 @@ private:
     TTransactionContext Context;
     bool NoDelays;
     std::stop_token StopToken;
-    std::atomic<bool>& StopWarmup;
+    TPhaseController& PhaseController;
     std::shared_ptr<TTerminalStats> Stats;
     size_t RetryMaxAttempts = 4;
     bool RetryAmbiguousCommit = false;
 
     std::atomic<bool> Done{false};
     bool Started = false;
-    bool WarmupWasStopped = false;
 };
 
 } // namespace NTpcc

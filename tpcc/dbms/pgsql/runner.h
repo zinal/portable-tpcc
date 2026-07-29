@@ -5,7 +5,10 @@
 
 #include "terminal.h"
 
+#include <phase_controller.h>
+
 #include <chrono>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -43,6 +46,13 @@ struct TRunConfig {
     std::string Instance;
     std::string InstanceDir;
 
+    // Absolute wall-clock ramp start (RFC3339). When set, schedule is derived from
+    // StartAt + PhasePolicy; prepare must finish before StartAt or the run fails.
+    std::optional<std::chrono::system_clock::time_point> StartAt;
+
+    // 0 → use TERMINALS_PER_WAREHOUSE from constants.
+    size_t TerminalsPerWarehouse = 0;
+
     // Total attempts per business transaction (including the first). 0 → default 4.
     size_t RetryMaxAttempts = 0;
     // When false (default), AmbiguousCommit MUST NOT be blind-retried.
@@ -59,6 +69,7 @@ struct TRunOutcome {
     std::chrono::system_clock::time_point RampStart;
     std::chrono::system_clock::time_point MeasurementStart;
     std::chrono::system_clock::time_point MeasurementEnd;
+    std::chrono::system_clock::time_point DrainDeadline;
     double MeasurementSeconds = 0.0;
     int ExitCode = 0;
     bool HighResHistogram = false;

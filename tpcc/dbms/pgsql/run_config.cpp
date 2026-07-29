@@ -118,6 +118,10 @@ TRunConfigDocument LoadRunConfigDocument(const std::string& path) {
             doc.RetryAmbiguousCommit = rt["retry"].value("retry_ambiguous_commit", false);
         }
     }
+    if (root.contains("workload") && root["workload"].is_object()) {
+        const auto& wl = root["workload"];
+        doc.TerminalsPerWarehouse = wl.value("terminals_per_warehouse", 0);
+    }
     if (root.contains("load_assignment") && root["load_assignment"].is_array()) {
         for (const auto& item : root["load_assignment"]) {
             TLoaderAssignment a;

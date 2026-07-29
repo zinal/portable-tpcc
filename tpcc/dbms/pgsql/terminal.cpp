@@ -85,7 +85,7 @@ TTerminal::TTerminal(size_t terminalID,
                      PgConnectionPool* connectionPool,
                      bool noDelays,
                      std::stop_token stopToken,
-                     std::atomic<bool>& stopWarmup,
+                     TPhaseController& phaseController,
                      std::shared_ptr<TTerminalStats>& stats,
                      int simulateTransactionMs,
                      int simulateTransactionSelect1,
@@ -97,7 +97,7 @@ TTerminal::TTerminal(size_t terminalID,
               simulateTransactionMs, simulateTransactionSelect1, {}}
     , NoDelays(noDelays)
     , StopToken(stopToken)
-    , StopWarmup(stopWarmup)
+    , PhaseController(phaseController)
     , Stats(stats)
     , RetryMaxAttempts(EffectiveRetryMaxAttempts(retryMaxAttempts))
     , RetryAmbiguousCommit(retryAmbiguousCommit)
@@ -118,11 +118,18 @@ TFuture<void> TTerminal::Run() {
     TPgErrorClassifier classifier;
 
     while (!StopToken.stop_requested()) {
-        if (!WarmupWasStopped && StopWarmup.load(std::memory_order::relaxed)) {
-            Stats->ClearOnce();
-            WarmupWasStopped = true;
+        if (!PhaseController.MayAdmit()) {
+            if (PhaseController.Phase() == ERunPhase::Drain ||
+                PhaseController.Phase() == ERunPhase::Stop)
+            {
+                break;
+            }
+            // Prepare: wait for ramp_start / admission.
+            co_await TSuspend(TaskQueue, Context.TerminalID, std::chrono::milliseconds(10));
+            continue;
         }
 
+        const bool recordMetrics = PhaseController.MayRecord();
         const bool simulationMode =
             Context.SimulateTransactionMs > 0 || Context.SimulateTransactionSelect1 > 0;
 
@@ -136,11 +143,14 @@ TFuture<void> TTerminal::Run() {
                 Context.TerminalID, transaction.Name, transaction.KeyingTime.count());
             co_await TSuspend(TaskQueue, Context.TerminalID, transaction.KeyingTime);
             if (StopToken.stop_requested()) break;
+            if (!PhaseController.MayAdmit()) {
+                continue;
+            }
         }
 
         auto startTime = std::chrono::steady_clock::now();
         co_await TTaskHasInflight(TaskQueue, Context.TerminalID);
-        if (StopToken.stop_requested()) {
+        if (StopToken.stop_requested() || !PhaseController.MayAdmit()) {
             TaskQueue.DecInflight();
             break;
         }
@@ -153,6 +163,27 @@ TFuture<void> TTerminal::Run() {
 
         // Reset so each business transaction gets fresh inputs; retries reuse FixedInputs.
         Context.FixedInputs.reset();
+
+        auto recordOk = [&](auto latencyTransaction, auto latencyFull) {
+            if (recordMetrics) {
+                Stats->AddOK(txType, latencyTransaction, latencyFull, latencyPure);
+            }
+        };
+        auto recordFailed = [&]() {
+            if (recordMetrics) {
+                Stats->IncFailed(txType);
+            }
+        };
+        auto recordUserAborted = [&]() {
+            if (recordMetrics) {
+                Stats->IncUserAborted(txType);
+            }
+        };
+        auto recordRetried = [&]() {
+            if (recordMetrics) {
+                Stats->IncRetried(txType);
+            }
+        };
 
         for (size_t attempt = 0; attempt < RetryMaxAttempts; ++attempt) {
             bool shouldRetry = false;
@@ -174,10 +205,10 @@ TFuture<void> TTerminal::Run() {
                     auto latencyFull = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime);
                     auto latencyTransaction = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTimeTransaction);
                     if (result) {
-                        Stats->AddOK(txType, latencyTransaction, latencyFull, latencyPure);
+                        recordOk(latencyTransaction, latencyFull);
                         LOG_T("Terminal {} {} succeeded", Context.TerminalID, txName);
                     } else {
-                        Stats->IncFailed(txType);
+                        recordFailed();
                         LOG_D("Terminal {} {} failed", Context.TerminalID, txName);
                     }
                 } else {
@@ -192,15 +223,15 @@ TFuture<void> TTerminal::Run() {
                     auto latencyFull = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime);
                     auto latencyTransaction = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTimeTransaction);
                     if (result) {
-                        Stats->AddOK(txType, latencyTransaction, latencyFull, latencyPure);
+                        recordOk(latencyTransaction, latencyFull);
                         LOG_T("Terminal {} {} succeeded", Context.TerminalID, txName);
                     } else {
-                        Stats->IncFailed(txType);
+                        recordFailed();
                         LOG_D("Terminal {} {} failed", Context.TerminalID, txName);
                     }
                 }
             } catch (const TUserAbortedException&) {
-                Stats->IncUserAborted(txType);
+                recordUserAborted();
                 LOG_T("Terminal {} {} user aborted", Context.TerminalID, txName);
             } catch (const TClassifiedError& ex) {
                 if (StopToken.stop_requested()) {
@@ -213,18 +244,18 @@ TFuture<void> TTerminal::Run() {
 
                 if (cls == EErrorClass::Integrity) {
                     LOG_E("Terminal {} integrity error in {}: {}", Context.TerminalID, txName, ex.what());
-                    Stats->IncFailed(txType);
+                    recordFailed();
                     fatal = true;
                 } else if (cls == EErrorClass::Cancelled) {
                     LOG_D("Terminal {} {} cancelled: {}", Context.TerminalID, txName, ex.what());
                     break;
                 } else if (ShouldRetryClass(cls, RetryAmbiguousCommit) && attemptsRemain) {
                     shouldRetry = true;
-                    Stats->IncRetried(txType);
+                    recordRetried();
                     LOG_D("Terminal {} {} classified retry {}/{}: {}",
                           Context.TerminalID, txName, attempt + 1, RetryMaxAttempts, ex.what());
                 } else {
-                    Stats->IncFailed(txType);
+                    recordFailed();
                     if (cls == EErrorClass::AmbiguousCommit && !RetryAmbiguousCommit) {
                         LOG_E("Terminal {} {} ambiguous commit (blind retry disabled): {}",
                               Context.TerminalID, txName, ex.what());
@@ -248,21 +279,21 @@ TFuture<void> TTerminal::Run() {
 
                 if (cls == EErrorClass::Integrity) {
                     LOG_E("Terminal {} integrity error in {}: {}", Context.TerminalID, txName, ex.what());
-                    Stats->IncFailed(txType);
+                    recordFailed();
                     fatal = true;
                 } else if (cls == EErrorClass::Cancelled) {
                     LOG_D("Terminal {} {} cancelled: {}", Context.TerminalID, txName, ex.what());
                     break;
                 } else if (ShouldRetryClass(cls, RetryAmbiguousCommit) && attemptsRemain) {
                     shouldRetry = true;
-                    Stats->IncRetried(txType);
+                    recordRetried();
                     LOG_D("Terminal {} {} classified {} ({})",
                           Context.TerminalID, txName,
                           static_cast<int>(cls), ex.what());
                     LOG_D("Terminal {} {} retry {}/{}",
                           Context.TerminalID, txName, attempt + 1, RetryMaxAttempts);
                 } else {
-                    Stats->IncFailed(txType);
+                    recordFailed();
                     if (cls == EErrorClass::AmbiguousCommit && !RetryAmbiguousCommit) {
                         LOG_E("Terminal {} {} ambiguous commit (blind retry disabled): {}",
                               Context.TerminalID, txName, ex.what());
@@ -288,7 +319,7 @@ TFuture<void> TTerminal::Run() {
             co_return;
         }
 
-        if (!NoDelays && !simulationMode) {
+        if (!NoDelays && !simulationMode && PhaseController.MayAdmit()) {
             auto& transaction = Transactions[txIndex];
             LOG_T("Terminal {} think time: {}s", Context.TerminalID, transaction.ThinkTime.count());
             co_await TSuspend(TaskQueue, Context.TerminalID, transaction.ThinkTime);
