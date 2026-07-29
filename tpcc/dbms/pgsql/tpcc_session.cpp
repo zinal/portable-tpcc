@@ -2,7 +2,6 @@
 
 #include "query_result.h"
 
-#include <coro_traits.h>
 #include <log.h>
 #include <money.h>
 
@@ -62,6 +61,25 @@ TFuture<TCommitResult> ReadyCommit(TCommitResult result) {
     return f;
 }
 
+TFuture<TBatchResult> ReadyBatch(TBatchResult result) {
+    TPromise<TBatchResult> p;
+    auto f = p.GetFuture();
+    p.SetValue(std::move(result));
+    return f;
+}
+
+TFuture<TFinalCommitResult> ReadyFinal(TFinalCommitResult result) {
+    TPromise<TFinalCommitResult> p;
+    auto f = p.GetFuture();
+    p.SetValue(std::move(result));
+    return f;
+}
+
+// PgSession futures complete on the IO executor. Callers of ITpccTransaction
+// must use TSuspendWithFuture when awaiting the outer TFuture; inside the
+// adapter we block with Get() so we never resume a task-queue coroutine on
+// an IO thread (see coro_traits.h).
+
 } // namespace
 
 TPgTpccTransaction::TPgTpccTransaction(PgSession& session)
@@ -74,62 +92,61 @@ bool TPgTpccTransaction::TerminalState() const {
 
 TFuture<TCommitResult> TPgTpccTransaction::Commit() {
     if (Terminal_) {
-        co_return TCommitResult{
+        return ReadyCommit({
             ECommitOutcome::OutcomeUnknown,
             EErrorClass::Permanent,
             {},
-            "Commit called in terminal state"};
+            "Commit called in terminal state"});
     }
     try {
-        co_await Session_.Commit();
+        Session_.Commit().Get();
         Terminal_ = true;
-        co_return TCommitResult{ECommitOutcome::Committed, EErrorClass::Permanent, {}, {}};
+        return ReadyCommit({ECommitOutcome::Committed, EErrorClass::Permanent, {}, {}});
     } catch (const std::exception& ex) {
         Terminal_ = true;
         const auto cls = Classifier_.ClassifyCommitException(ex);
-        co_return TCommitResult{
+        return ReadyCommit({
             cls == EErrorClass::AmbiguousCommit ? ECommitOutcome::OutcomeUnknown
                                                 : ECommitOutcome::RolledBack,
             cls,
             PgSqlStateOf(ex),
-            ex.what()};
+            ex.what()});
     }
 }
 
 TFuture<TCommitResult> TPgTpccTransaction::Rollback() {
     if (Terminal_) {
-        co_return TCommitResult{
+        return ReadyCommit({
             ECommitOutcome::RolledBack,
             EErrorClass::Permanent,
             {},
-            "Rollback called in terminal state"};
+            "Rollback called in terminal state"});
     }
     try {
-        co_await Session_.Rollback();
+        Session_.Rollback().Get();
         Terminal_ = true;
-        co_return TCommitResult{ECommitOutcome::RolledBack, EErrorClass::Permanent, {}, {}};
+        return ReadyCommit({ECommitOutcome::RolledBack, EErrorClass::Permanent, {}, {}});
     } catch (const std::exception& ex) {
         Terminal_ = true;
-        co_return TCommitResult{
+        return ReadyCommit({
             ECommitOutcome::RolledBack,
             Classifier_.ClassifyException(ex),
             PgSqlStateOf(ex),
-            ex.what()};
+            ex.what()});
     }
 }
 
 TFuture<TCommitResult> TPgTpccTransaction::Cancel() {
-    // Best-effort rollback; PgSession cancellation is via shutdown flag on the pool.
-    auto result = co_await Rollback();
+    auto result = Rollback().Get();
     result.ErrorClass = EErrorClass::Cancelled;
-    co_return result;
+    return ReadyCommit(std::move(result));
 }
 
 TFuture<TBatchResult> TPgTpccTransaction::ExecuteBatch(const std::vector<TSemanticOp>& ops) {
     TBatchResult batch;
     batch.Ok = true;
     for (const auto& op : ops) {
-        auto one = co_await Execute(op);
+        auto one = Execute(op).Get();
         batch.Results.push_back(one);
         if (!one.Ok) {
             batch.Ok = false;
@@ -139,60 +156,60 @@ TFuture<TBatchResult> TPgTpccTransaction::ExecuteBatch(const std::vector<TSemant
             break;
         }
     }
-    co_return batch;
+    return ReadyBatch(std::move(batch));
 }
 
 TFuture<TFinalCommitResult> TPgTpccTransaction::ExecuteFinalAndCommit(const TSemanticOp& op) {
     TFinalCommitResult out;
-    out.Operation = co_await Execute(op);
+    out.Operation = Execute(op).Get();
     if (!out.Operation.Ok) {
-        out.Commit = co_await Rollback();
-        co_return out;
+        out.Commit = Rollback().Get();
+        return ReadyFinal(std::move(out));
     }
-    out.Commit = co_await Commit();
-    co_return out;
+    out.Commit = Commit().Get();
+    return ReadyFinal(std::move(out));
 }
 
 TFuture<TOperationResult> TPgTpccTransaction::Execute(const TSemanticOp& op) {
     if (Terminal_) {
-        co_return FailOp(EErrorClass::Permanent, "Execute called in terminal state");
+        return ReadyOp(FailOp(EErrorClass::Permanent, "Execute called in terminal state"));
     }
     try {
         if (const auto* p = std::get_if<TGetWarehouseTax>(&op)) {
-            auto result = co_await Session_.ExecuteQuery(
-                "SELECT w_tax FROM warehouse WHERE w_id = $1", p->WarehouseID);
+            auto result = Session_.ExecuteQuery(
+                "SELECT w_tax FROM warehouse WHERE w_id = $1", p->WarehouseID).Get();
             if (!NextRow(result)) {
-                co_return FailOp(EErrorClass::Integrity, "warehouse not found", {});
+                return ReadyOp(FailOp(EErrorClass::Integrity, "warehouse not found", {}));
             }
-            co_return OkOp(1, 1, RateFromDouble(result.GetDouble(0)));
+            return ReadyOp(OkOp(1, 1, RateFromDouble(result.GetDouble(0))));
         }
         if (const auto* p = std::get_if<TReserveDistrictOrderId>(&op)) {
-            auto result = co_await Session_.ExecuteQuery(
+            auto result = Session_.ExecuteQuery(
                 "SELECT d_next_o_id, d_tax FROM district "
                 "WHERE d_w_id = $1 AND d_id = $2 FOR UPDATE",
-                p->WarehouseID, p->DistrictID);
+                p->WarehouseID, p->DistrictID).Get();
             if (!NextRow(result)) {
-                co_return FailOp(EErrorClass::Integrity, "district not found");
+                return ReadyOp(FailOp(EErrorClass::Integrity, "district not found"));
             }
             const int nextId = result.GetInt32(0);
             const auto tax = RateFromDouble(result.GetDouble(1));
-            co_await Session_.ExecuteModify(
+            Session_.ExecuteModify(
                 "UPDATE district SET d_next_o_id = $1 WHERE d_w_id = $2 AND d_id = $3",
-                nextId + 1, p->WarehouseID, p->DistrictID);
+                nextId + 1, p->WarehouseID, p->DistrictID).Get();
             TDistrictOrderReservation res;
             res.NextOrderID = nextId;
             res.DistrictTax = tax;
-            co_return OkOp(1, 1, res);
+            return ReadyOp(OkOp(1, 1, res));
         }
         if (const auto* p = std::get_if<TGetCustomerById>(&op)) {
-            auto result = co_await Session_.ExecuteQuery(
+            auto result = Session_.ExecuteQuery(
                 "SELECT c_id, c_first, c_middle, c_last, c_street_1, c_street_2, c_city, c_state, "
                 "c_zip, c_phone, c_credit, c_credit_lim, c_discount, c_balance, c_ytd_payment, "
                 "c_payment_cnt, c_delivery_cnt, c_data, c_since "
                 "FROM customer WHERE c_w_id = $1 AND c_d_id = $2 AND c_id = $3",
-                p->WarehouseID, p->DistrictID, p->CustomerID);
+                p->WarehouseID, p->DistrictID, p->CustomerID).Get();
             if (!NextRow(result)) {
-                co_return FailOp(EErrorClass::Integrity, "customer not found");
+                return ReadyOp(FailOp(EErrorClass::Integrity, "customer not found"));
             }
             TCustomerRow cust;
             cust.CustomerID = result.GetInt32(0);
@@ -214,16 +231,16 @@ TFuture<TOperationResult> TPgTpccTransaction::Execute(const TSemanticOp& op) {
             cust.DeliveryCount = result.GetInt32(16);
             cust.Data = result.GetString(17);
             cust.Since = result.GetString(18);
-            co_return OkOp(1, 1, std::move(cust));
+            return ReadyOp(OkOp(1, 1, std::move(cust)));
         }
         if (const auto* p = std::get_if<TGetItems>(&op)) {
             std::vector<TItemRow> items;
             items.reserve(p->ItemIDs.size());
             for (int id : p->ItemIDs) {
-                auto result = co_await Session_.ExecuteQuery(
-                    "SELECT i_id, i_price, i_name, i_data FROM item WHERE i_id = $1", id);
+                auto result = Session_.ExecuteQuery(
+                    "SELECT i_id, i_price, i_name, i_data FROM item WHERE i_id = $1", id).Get();
                 if (!NextRow(result)) {
-                    co_return FailOp(EErrorClass::Integrity, "item not found");
+                    return ReadyOp(FailOp(EErrorClass::Integrity, "item not found"));
                 }
                 TItemRow item;
                 item.ItemID = result.GetInt32(0);
@@ -232,79 +249,79 @@ TFuture<TOperationResult> TPgTpccTransaction::Execute(const TSemanticOp& op) {
                 item.Data = result.GetString(3);
                 items.push_back(std::move(item));
             }
-            co_return OkOp(p->ItemIDs.size(), items.size(), std::move(items));
+            return ReadyOp(OkOp(p->ItemIDs.size(), items.size(), std::move(items)));
         }
         if (const auto* p = std::get_if<TCreateOrder>(&op)) {
-            co_await Session_.ExecuteModify(
+            Session_.ExecuteModify(
                 "INSERT INTO oorder (o_id, o_d_id, o_w_id, o_c_id, o_entry_d, o_ol_cnt, o_all_local) "
                 "VALUES ($1,$2,$3,$4,CURRENT_TIMESTAMP,$5,$6)",
-                p->OrderID, p->DistrictID, p->WarehouseID, p->CustomerID, p->LineCount, p->AllLocal);
-            co_await Session_.ExecuteModify(
+                p->OrderID, p->DistrictID, p->WarehouseID, p->CustomerID, p->LineCount, p->AllLocal).Get();
+            Session_.ExecuteModify(
                 "INSERT INTO new_order (no_o_id, no_d_id, no_w_id) VALUES ($1,$2,$3)",
-                p->OrderID, p->DistrictID, p->WarehouseID);
-            co_return OkOp(2, 2);
+                p->OrderID, p->DistrictID, p->WarehouseID).Get();
+            return ReadyOp(OkOp(2, 2));
         }
         if (const auto* p = std::get_if<TUpdateStock>(&op)) {
-            co_await Session_.ExecuteModify(
+            Session_.ExecuteModify(
                 "UPDATE stock SET s_quantity=$1, s_ytd=s_ytd+$2, s_order_cnt=s_order_cnt+1, "
                 "s_remote_cnt=s_remote_cnt+$3 WHERE s_w_id=$4 AND s_i_id=$5",
                 p->NewQuantity, p->OrderedQuantity, p->RemoteIncrement,
-                p->WarehouseID, p->ItemID);
-            co_return OkOp(1, 1);
+                p->WarehouseID, p->ItemID).Get();
+            return ReadyOp(OkOp(1, 1));
         }
         if (const auto* p = std::get_if<TInsertOrderLine>(&op)) {
-            co_await Session_.ExecuteModify(
+            Session_.ExecuteModify(
                 "INSERT INTO order_line (ol_o_id, ol_d_id, ol_w_id, ol_number, ol_i_id, "
                 "ol_supply_w_id, ol_quantity, ol_amount, ol_dist_info) "
                 "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
                 p->OrderID, p->DistrictID, p->WarehouseID, p->LineNumber, p->ItemID,
-                p->SupplyWarehouseID, p->Quantity, p->Amount.ToString(), p->DistInfo);
-            co_return OkOp(1, 1);
+                p->SupplyWarehouseID, p->Quantity, p->Amount.ToString(), p->DistInfo).Get();
+            return ReadyOp(OkOp(1, 1));
         }
         if (const auto* p = std::get_if<TCountRecentLowStock>(&op)) {
-            auto dist = co_await Session_.ExecuteQuery(
+            auto dist = Session_.ExecuteQuery(
                 "SELECT d_next_o_id FROM district WHERE d_w_id=$1 AND d_id=$2",
-                p->WarehouseID, p->DistrictID);
+                p->WarehouseID, p->DistrictID).Get();
             if (!NextRow(dist)) {
-                co_return FailOp(EErrorClass::Integrity, "district not found");
+                return ReadyOp(FailOp(EErrorClass::Integrity, "district not found"));
             }
             const int nextOid = dist.GetInt32(0);
-            auto stock = co_await Session_.ExecuteQuery(
+            auto stock = Session_.ExecuteQuery(
                 "SELECT COUNT(DISTINCT s.s_i_id) FROM order_line ol, stock s "
                 "WHERE ol.ol_w_id=$1 AND ol.ol_d_id=$2 AND ol.ol_o_id < $3 AND "
                 "ol.ol_o_id >= $4 AND s.s_w_id=$1 AND s.s_i_id=ol.ol_i_id AND s.s_quantity < $5",
                 p->WarehouseID, p->DistrictID, nextOid,
-                nextOid - p->RecentOrderCount, p->Threshold);
+                nextOid - p->RecentOrderCount, p->Threshold).Get();
             int count = 0;
             if (NextRow(stock)) {
                 count = stock.GetInt32(0);
             }
-            co_return OkOp(1, 1, count);
+            return ReadyOp(OkOp(1, 1, count));
         }
         if (const auto* p = std::get_if<TGetOldestNewOrder>(&op)) {
-            auto result = co_await Session_.ExecuteQuery(
+            auto result = Session_.ExecuteQuery(
                 "SELECT no_o_id FROM new_order WHERE no_w_id=$1 AND no_d_id=$2 "
                 "ORDER BY no_o_id ASC LIMIT 1",
-                p->WarehouseID, p->DistrictID);
+                p->WarehouseID, p->DistrictID).Get();
             if (!NextRow(result)) {
-                co_return OkOp(0, 0, 0);
+                return ReadyOp(OkOp(0, 0, 0));
             }
-            co_return OkOp(1, 1, result.GetInt32(0));
+            return ReadyOp(OkOp(1, 1, result.GetInt32(0)));
         }
         if (const auto* p = std::get_if<TApplyPaymentToLocation>(&op)) {
-            co_await Session_.ExecuteModify(
+            Session_.ExecuteModify(
                 "UPDATE warehouse SET w_ytd = w_ytd + $1 WHERE w_id = $2",
-                p->Amount.ToString(), p->WarehouseID);
-            co_await Session_.ExecuteModify(
+                p->Amount.ToString(), p->WarehouseID).Get();
+            Session_.ExecuteModify(
                 "UPDATE district SET d_ytd = d_ytd + $1 WHERE d_w_id = $2 AND d_id = $3",
-                p->Amount.ToString(), p->WarehouseID, p->DistrictID);
-            auto wh = co_await Session_.ExecuteQuery(
+                p->Amount.ToString(), p->WarehouseID, p->DistrictID).Get();
+            auto wh = Session_.ExecuteQuery(
                 "SELECT w_name, w_street_1, w_street_2, w_city, w_state, w_zip "
-                "FROM warehouse WHERE w_id=$1", p->WarehouseID);
-            auto dist = co_await Session_.ExecuteQuery(
+                "FROM warehouse WHERE w_id=$1", p->WarehouseID).Get();
+            auto dist = Session_.ExecuteQuery(
                 "SELECT d_name, d_street_1, d_street_2, d_city, d_state, d_zip "
                 "FROM district WHERE d_w_id=$1 AND d_id=$2",
-                p->WarehouseID, p->DistrictID);
+                p->WarehouseID, p->DistrictID).Get();
             TWarehouseDistrictInfo info;
             if (NextRow(wh)) {
                 info.WarehouseName = wh.GetString(0);
@@ -322,23 +339,23 @@ TFuture<TOperationResult> TPgTpccTransaction::Execute(const TSemanticOp& op) {
                 info.DistrictState = dist.GetString(4);
                 info.DistrictZip = dist.GetString(5);
             }
-            co_return OkOp(2, 2, std::move(info));
+            return ReadyOp(OkOp(2, 2, std::move(info)));
         }
         if (const auto* p = std::get_if<TInsertPaymentHistory>(&op)) {
-            co_await Session_.ExecuteModify(
+            Session_.ExecuteModify(
                 "INSERT INTO history (h_c_id, h_c_d_id, h_c_w_id, h_d_id, h_w_id, h_date, h_amount, h_data) "
                 "VALUES ($1,$2,$3,$4,$5,CURRENT_TIMESTAMP,$6,$7)",
                 p->CustomerID, p->CustomerDistrictID, p->CustomerWarehouseID,
                 p->PaymentDistrictID, p->PaymentWarehouseID,
-                p->Amount.ToString(), p->Data);
-            co_return OkOp(1, 1);
+                p->Amount.ToString(), p->Data).Get();
+            return ReadyOp(OkOp(1, 1));
         }
 
-        co_return FailOp(
+        return ReadyOp(FailOp(
             EErrorClass::Permanent,
-            "semantic op not yet bound in TPgTpccTransaction");
+            "semantic op not yet bound in TPgTpccTransaction"));
     } catch (const std::exception& ex) {
-        co_return FailOp(Classifier_.ClassifyException(ex), ex.what(), PgSqlStateOf(ex));
+        return ReadyOp(FailOp(Classifier_.ClassifyException(ex), ex.what(), PgSqlStateOf(ex)));
     }
 }
 
@@ -360,7 +377,7 @@ class TPgOwnedTpccSession : public ITpccSession {
 public:
     explicit TPgOwnedTpccSession(PgConnectionPool::SessionGuard guard)
         : Guard_(std::move(guard))
-        , Inner_(**Guard_)
+        , Inner_(*Guard_)
     {}
 
     TFuture<std::unique_ptr<ITpccTransaction>> Begin(EIsolationLevel isolation) override {

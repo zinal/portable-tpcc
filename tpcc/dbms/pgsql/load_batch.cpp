@@ -283,7 +283,7 @@ TPutBatchResult PutWarehouseIdempotent(
     pqxx::connection& conn,
     uint64_t seed,
     int warehouseId,
-    const std::string& runId)
+    [[maybe_unused]] const std::string& runId)
 {
     try {
         LOG_D("Idempotent replace warehouse {} (seed={}, run_id={})", warehouseId, seed,
