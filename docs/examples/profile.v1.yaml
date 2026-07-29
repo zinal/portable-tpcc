@@ -68,6 +68,8 @@ workers:
     host: worker-b
 
 phases:
+  # Launch + prepare budget before absolute --start-at (orchestrator chooses
+  # start-at = now + start_lead). Hosts must keep clocks tightly synced.
   start_lead: 45s
   ramp_up: 5m
   measurement: 30m

@@ -95,12 +95,16 @@ Each `tpcc/dbms/<name>` implements admin, load (`PutBatch`), session/factory,
 checks, error classification, and capabilities. SDK types stay inside the
 adapter.
 
-Session surface:
+Session surface (async; methods return `TFuture<…>` — see
+[adapter-api.md](adapter-api.md)):
 
 ```text
 Begin / Execute / ExecuteBatch / ExecuteFinalAndCommit
 Commit / Rollback / Cancel
 ```
+
+Semantic operations are a closed set of tagged structs (`std::variant` or
+equivalent), not opaque `void*` blobs.
 
 Details, module boundaries, PostgreSQL reference mapping, and DBMS-specific
 guidance (YDB fused commit, DDL/query differences, OceanBase notes) are in
@@ -108,9 +112,13 @@ guidance (YDB fused commit, DDL/query differences, OceanBase notes) are in
 
 ### 4.3. Binaries
 
-`tpccctl` orchestrates. Each `tpcc-<dbms>` binary exposes roles such as
-`schema`, `loader`, `worker`, and `check`. Non-DBMS logic comes from shared
-libraries; only the adapter/driver is DBMS-specific.
+`tpccctl` orchestrates. Each `tpcc-<dbms>` binary **MUST** expose the
+normative roles `schema`, `loader`, `worker`, and `check`. Non-DBMS logic
+comes from shared libraries; only the adapter/driver is DBMS-specific.
+
+Binaries **MAY** keep standalone aliases for local use (`init` ≡ `schema`,
+`import` / `run` with flag-driven config, `clean` as local-only admin).
+Orchestrated remotes use only the four normative role names.
 
 ## 5. Configuration Model
 
@@ -167,22 +175,38 @@ on retry.
 Normalized errors: `retryable_abort`, `not_committed`, `ambiguous_commit`
 (no blind retry), `permanent`, `integrity` (fail the run), `cancelled`.
 
-Phases: prepare → ramp-up → measurement → drain. Phase schedule comes from
-the run-config. Warmup samples do not enter measurement metrics. Async work
-uses a bounded drain window from the run-config.
+Phases: prepare → ramp-up → measurement → drain. Absolute phase instants are
+derived from a wall-clock `--start-at` plus durations in the run-config.
+Warmup samples do not enter measurement metrics.
 
-Startup (simple barrier):
+Delivery-style work **MAY** run inline in the terminal when the adapter
+reports `async_delivery = false`; in that mode there is no separate async
+queue and `async_work_drain` is a no-op. When `async_delivery = true`, async
+work uses a bounded drain window from the run-config.
+
+Startup (wall-clock rendezvous):
 
 1. Distribute the same `run-config.json` to all hosts.
-2. Each worker prepares and reports ready (instance name, ranges, clock skew
-   sample).
-3. When the expected set is ready, `tpccctl` writes `start-token.json` with
-   absolute phase timestamps and starts the run.
-4. Workers admit work only after accepting that token.
+2. `tpccctl` chooses an absolute UTC start instant
+   `--start-at = now + phases.start_lead` (plus any other configured
+   launch/init margin) large enough for remote start and local prepare on
+   every host. Hosts are assumed to keep system clocks tightly synchronized;
+   `phases.max_clock_skew_ms` records the skew budget for status/validation.
+3. Launch each required process with that `--start-at` on the command line.
+4. Each process prepares (connect, pools, terminals, …). Until `--start-at`
+   it MUST NOT admit workload transactions.
+5. If wall-clock time reaches `--start-at` before the process is ready to
+   admit work, the process MUST exit fatally (missed start deadline).
+6. If any required process exits fatally before measurement (including a
+   missed deadline), `tpccctl` MUST abort the run and stop remaining
+   processes.
+7. At `--start-at`, workers begin ramp-up; later phase boundaries follow
+   run-config durations. The orchestrator SHOULD record the chosen schedule
+   under `orchestrator/` (for example `start-token.json`) for audit.
 
-A DB-scoped fence (adapter metadata outside benchmark tables) prevents two
-control processes from driving the same database path concurrently. Loss of a
-worker during measurement fails the run; terminals are not reassigned.
+There is no DB-scoped control fence. Operators MUST NOT run two control
+processes against the same database path concurrently. Loss of a worker
+during measurement fails the run; terminals are not reassigned.
 
 Process supervision may use `nohup` plus an instance lock and `process.json`
 (PID, start time, nonce) so stop/restart does not signal the wrong process.
@@ -310,8 +334,11 @@ Build with existing `ya make` (C++). Use Go-native tools for Golang. No alternat
 
 ## 14. Open Decisions
 
-1. C++ coroutine/future ABI for shared libraries.
+1. ~~C++ coroutine/future ABI for shared libraries.~~ **Resolved:** shared
+   libraries use `TFuture` (see [adapter-api.md](adapter-api.md) §4.3).
 2. Histogram bucket layout and max latency.
 3. Per-DBMS ambiguous-commit handling.
 4. Canonical row bytes for cross-DB sample checks.
 5. Minimum supported YDB / PostgreSQL / OceanBase versions.
+
+Further alignment sequencing: [alignment-plan.md](alignment-plan.md).

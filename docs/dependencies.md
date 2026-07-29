@@ -45,7 +45,7 @@ required for the current port.
 | `tpcc/domain` | done | constants, NURand/RNG, utilities |
 | `tpcc/metrics` | done | mergeable latency histograms |
 | `tpcc/runtime` | done | coroutine scheduler, futures, logging, thread pool |
-| `tpcc/transactions` | skeleton | abstract `ITpccSession` API (per specification) |
+| `tpcc/transactions` | skeleton → async `TFuture` + `TSemanticOp` variant | abstract session API (see alignment-plan decisions A/C) |
 
 ### PostgreSQL adapter and executable
 
