@@ -4,12 +4,6 @@ kind: TpccRunProfile
 metadata:
   name: lab-ydb-200
 
-mode: engineering
-
-deviations:
-  - code: fixed_generator_seed
-    reason: repeatable cross-DBMS engineering comparison
-
 ssh:
   user: tpcc
   use_agent: true
@@ -48,9 +42,18 @@ scale:
   warehouses: 200
 
 data:
-  # An explicit seed is permitted only in engineering mode.
+  # Explicit seed for repeatable cross-DBMS engineering comparison.
   seed: 731910246
   batch_rows: 10000
+
+# Omitted workload fields use defaults embedded in tpccctl.
+workload:
+  transaction_mix:
+    new_order: 45
+    payment: 43
+    order_status: 4
+    delivery: 4
+    stock_level: 4
 
 loaders:
   - name: loader-a

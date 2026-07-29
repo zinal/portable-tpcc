@@ -26,15 +26,15 @@ The initial set of adapters:
 
 The architecture must not require a fork of the shared logic to add a DBMS.
 
-This document neither replaces nor restates the TPC-C standard. The schema
-composition, data generation rules, transaction profiles, terminal model,
-input distributions, response-time requirements, and standard metric formulas
-are defined by that standard. `portable-tpcc` implements a single fixed
-revision of TPC-C and records the normative document reference in the run
-manifest for provenance. This document defines only the architectural
-mechanisms for implementing these rules jointly across multiple DBMSs and
-multiple generator hosts. The project does not provide a framework for
-selecting, packaging, or evolving multiple TPC-C editions.
+This document neither replaces nor restates the TPC-C standard. `portable-tpcc`
+implements a single fixed TPC-C-style workload model (schema shape, generator,
+and transaction logic). Workload parameters that govern a run — including the
+transaction mix, think/keying times, terminal counts, and related defaults —
+are owned by the `tpccctl` orchestrator: they are embedded as code defaults and
+MAY be customized through the orchestrator profile. The project does not
+provide a framework for selecting, packaging, or evolving multiple TPC-C
+editions, and it does not validate run parameters against any edition of the
+TPC-C standard.
 
 ## 2. Scope
 
@@ -48,7 +48,7 @@ selecting, packaging, or evolving multiple TPC-C editions.
 - Synchronized ramp-up, measurement, and drain boundaries.
 - Merging of counters and histograms without averaging percentiles.
 - A complete, reproducible run manifest.
-- Automated checks before and after the test.
+- Automated integrity and infrastructure checks before and after the test.
 
 ### 2.2. Non-goals for the Initial Version
 
@@ -60,22 +60,13 @@ selecting, packaging, or evolving multiple TPC-C editions.
 - Automatic continuation of measurement after a worker is lost.
 - Dynamic terminal rebalancing during measurement.
 - Support for multiple, selectable, or evolving TPC-C editions.
+- Checking that configured parameters (mix, timings, scale constraints, and
+  similar) match those prescribed by any TPC-C edition.
+- Producing a conformance or qualification verdict against the TPC-C standard.
 
 `portable-tpcc` MUST call a result an official TPC-C result only after
-independent verification of all TPC requirements. By default, the report contains
-`result_class: engineering`.
-
-### 2.3. Modes
-
-`engineering` permits profile overrides of standard parameters for
-diagnostics. Every such change MUST be explicitly listed in
-`deviations`.
-
-`conformance` prohibits overrides of standard parameters and requires the full
-set of checks and artifacts defined by the TPC-C standard as encoded in the
-`tpcc/spec` module. Specific values are not duplicated in this specification;
-they are provided by that module. The mode name itself does not constitute a
-claim that the result is certified.
+independent verification of all TPC requirements. By default, the report
+contains `result_class: engineering`.
 
 ## 3. Overall Architecture
 
@@ -113,16 +104,17 @@ Roles:
 
 ### 4.1. `tpcc/spec`
 
-The TPC-C standard is encoded by a single C++ package. It contains only the
-machine-executable rules and test vectors needed by the implementation; the
-external TPC-C document remains the normative source. There is no edition
-selector, no edition package tree, and no provision for concurrent support of
-multiple standard revisions.
+A single C++ package provides the fixed workload model used by generators,
+runtime binaries, and contract tests: schema AST helpers, scale/seed
+materialization, terminal derivation, expected cardinalities, and related test
+vectors. There is no edition selector and no package tree of standard
+revisions.
 
 The package is built as:
 
 - a library linked by `domain`, workload binaries, and contract tests;
-- the DBMS-neutral `tpcc-spec` CLI used by the Go orchestrator;
+- the DBMS-neutral `tpcc-spec` CLI used by the Go orchestrator for pure
+  materialization helpers;
 - JSON Schema for CLI inputs and outputs.
 
 Minimum CLI:
@@ -132,17 +124,17 @@ tpcc-spec describe
 tpcc-spec materialize --scale <json> --seed-source <json>
 tpcc-spec derive-terminals --spec-state <json> --assignment <json>
 tpcc-spec expected-data --spec-state <json> --load-plan <json>
-tpcc-spec qualify --spec-state <json> --aggregate-input <json>
 ```
 
 All commands are pure functions and output canonical JSON. `describe` returns
-the URL of the normative document, its known SHA-256, and the module SHA.
-`materialize` creates an opaque `spec-state.json`; the orchestrator does not
-interpret its internal parameters.
+the module SHA. `materialize` creates an opaque `spec-state.json` for the
+generator; the orchestrator does not interpret its internal fields.
 
-`tpccctl` MUST NOT implement TPC-C rules in Go. It invokes `tpcc-spec`,
-validates the JSON Schema, and records the binary/module hash. At startup, the
-workload binary verifies that the linked module SHA matches `spec-state.json`.
+The orchestrator owns run parameters (transaction mix, think/keying times, and
+similar defaults). It materializes them into `run-config.json` and does not ask
+`tpcc-spec` to validate those parameters against any TPC-C edition. At
+startup, the workload binary verifies that the linked module SHA matches
+`spec-state.json`.
 
 ### 4.2. `tpcc/domain`
 
@@ -150,16 +142,15 @@ Independent of DBMS SDKs, networking, and the scheduler:
 
 - identifier types;
 - exact numeric types;
-- immutable transaction input and output types exported by the spec module;
+- immutable transaction input and output types;
 - NURand and string generation;
 - derivation of deterministic RNG streams;
 - initial population rules;
 - shared business calculations;
 - invariants and expected cardinalities.
 
-Scale and type constraints are defined by the spec module. In C++, exact
-decimal values are represented by checked fixed-point types; conversion to
-`double` within the domain and adapter API MUST NOT be used.
+In C++, exact decimal values are represented by checked fixed-point types;
+conversion to `double` within the domain and adapter API MUST NOT be used.
 
 ### 4.3. `tpcc/generator`
 
@@ -207,7 +198,7 @@ fusion is permitted only within a single semantic operation/batch.
 
 ### 4.5. `tpcc/runtime`
 
-- terminal state machines from the spec module assignment;
+- terminal state machines from the assignment in the run-config;
 - coroutine scheduler;
 - keying and think time;
 - admission control;
@@ -235,16 +226,15 @@ API.
 
 Shared definitions:
 
-- the check catalog defined by the spec module;
+- a catalog of integrity and infrastructure checks;
 - an identifier and expected result type for each check;
 - checks for load completeness and shard consistency;
-- statistical checks of the executed workload;
 - infrastructure checks for phases, ownership, and artifacts.
 
 The SQL/query for each condition is implemented by the adapter, but the
-identifier, reference to the relevant section of the standard, expected
-semantics, and result format are shared. The text of the standard condition is
-not copied into either the library or this specification.
+identifier, expected semantics, and result format are shared. The catalog does
+not include checks that the configured mix, timings, or other run parameters
+match any TPC-C edition.
 
 ### 4.8. `tpcc/metrics`
 
@@ -253,7 +243,7 @@ not copied into either the library or this specification.
 - error/retry events;
 - worker result serialization;
 - deterministic merging;
-- qualification flags.
+- infrastructure health flags.
 
 ### 4.9. Adapters
 
@@ -291,10 +281,11 @@ for every DBMS into a single binary.
 
 ### 5.1. Assignment
 
-The spec module constructs the full set of standard terminal identities for
-the specified scale. The user profile lists only loader/worker instances and
-hosts; the profile contains neither manual warehouse ranges nor a DB-wide data
-ownership flag.
+The orchestrator and `tpcc-spec` construct the full set of terminal identities
+for the specified scale using the terminals-per-warehouse setting from the
+run-config. The user profile lists only loader/worker instances and hosts; the
+profile contains neither manual warehouse ranges nor a DB-wide data ownership
+flag.
 
 The assignment defines ownership of a warehouse's **home terminals**; it does
 not restrict transactions from accessing rows belonging to other warehouses.
@@ -330,8 +321,7 @@ A worker contains:
 - terminal state machines for its assigned warehouses;
 - a coroutine scheduler and monotonic timers;
 - a concurrency limiter for adapter calls;
-- separate executors for asynchronous parts of the workload required by the
-  standard;
+- separate executors for asynchronous parts of the workload;
 - local counters and mergeable histograms;
 - a phase controller and graceful drain.
 
@@ -378,14 +368,14 @@ the metrics.
 
 ### 5.4. Asynchronous Parts of the Workload
 
-Deferred operations required by the standard are implemented by the shared
+Deferred operations required by the workload are implemented by the shared
 runtime through a typed bounded queue and a separate executor. The adapter
 executes only the atomic database portion of a queue item.
 
 The queue records the logical ID and enqueue/start/completion times. At the
 measurement boundary, admission stops and already accepted items receive a
-separate drain window. The specific time limits and criteria come from the
-spec module rather than from this document.
+separate drain window. Drain limits come from the orchestrator run-config
+(defaults embedded in `tpccctl`, overridable in the profile).
 
 ## 6. Separation of Logical and Physical Schemas
 
@@ -523,7 +513,7 @@ is the authoritative confirmation that the load is complete.
 
 The following MUST be performed on a quiescent database:
 
-- all checks marked `after-import` by the spec module;
+- all checks marked `after-import` in the shared check catalog;
 - batch manifest completeness;
 - absence of overlaps and gaps in the load assignment;
 - correspondence of actual cardinalities to the expected values computed by
@@ -531,8 +521,7 @@ The following MUST be performed on a quiescent database:
 - canonical sample hashes that are identical for all adapters;
 - readiness of DBMS-specific indexes/statistics.
 
-The report stores check identifiers, references to sections of the standard,
-and machine-readable results. It does not copy normative TPC-C text.
+The report stores check identifiers and machine-readable results.
 
 ## 8. The `tpccctl` Orchestrator
 
@@ -542,20 +531,22 @@ The control plane follows these principles:
 
 1. one self-contained Go binary;
 2. a declarative YAML profile, `portable-tpcc/v1`;
-3. SSH + SFTP/tar without a mandatory agent;
-4. `plan` without side effects;
-5. an immutable `run-config.json` that is byte-identical on runtime hosts;
-6. argv contains only the config path, instance selector, and process-local
+3. workload parameters (transaction mix, think/keying times, and related
+   defaults) embedded in orchestrator code and overridable via the profile;
+4. SSH + SFTP/tar without a mandatory agent;
+5. `plan` without side effects;
+6. an immutable `run-config.json` that is byte-identical on runtime hosts;
+7. argv contains only the config path, instance selector, and process-local
    paths;
-7. mutable `run-state.json` only on the control host;
-8. a host-local deploy manifest;
-9. process identity, stdout/stderr, and readiness files in the instance
-   directory;
-10. SHA-256 verification after configuration distribution;
-11. a local profile lock plus a DB-scoped fence and execution gate;
-12. fail-fast behavior for parallel stages;
-13. collection of raw artifacts even on failure;
-14. secrets supplied only through the environment and temporary mode 0600
+8. mutable `run-state.json` only on the control host;
+9. a host-local deploy manifest;
+10. process identity, stdout/stderr, and readiness files in the instance
+    directory;
+11. SHA-256 verification after configuration distribution;
+12. a local profile lock plus a DB-scoped fence and execution gate;
+13. fail-fast behavior for parallel stages;
+14. collection of raw artifacts even on failure;
+15. secrets supplied only through the environment and temporary mode 0600
     files.
 
 ### 8.2. Commands
@@ -584,26 +575,35 @@ validate → deploy → schema → load → check(after-import)
 → check(after-run) → collect → consolidate
 ```
 
-Individual skip flags are permitted only in `engineering`; all skipped steps
-are recorded as deviations.
+Individual skip flags are permitted; every skipped step is recorded in the
+run-state and aggregate.
 
 ### 8.3. Profile and run-config
 
-The profile is edited by a human. The orchestrator validates it and creates a
-normalized `run-config.json` containing:
+The profile is edited by a human. The orchestrator validates it, applies
+built-in defaults for omitted workload parameters, and creates a normalized
+`run-config.json` containing:
 
 - schema version and run ID;
 - profile and binary SHAs;
-- normative document reference, the `tpcc-spec` binary SHA, the spec module
-  SHA, and the `spec-state.json` SHA;
+- the `tpcc-spec` binary SHA, the spec module SHA, and the `spec-state.json`
+  SHA;
 - DBMS kind and non-secret configuration;
 - scale and warehouse assignment;
+- workload parameters: transaction mix, think/keying times, terminals per
+  warehouse, and related settings (defaults from orchestrator code unless
+  overridden in the profile);
 - an opaque generator/spec state reference;
 - relative durations and phase policy;
 - histogram schema;
 - expected workers;
 - retry/failure policy;
 - artifact paths.
+
+The orchestrator MUST NOT reject a profile because its workload parameters
+differ from any TPC-C edition. Mix weights MUST be positive and sum to 100
+(or an equivalent normalized representation); beyond that structural check,
+parameter values are taken as configured.
 
 The run-config contains no password; only the name of the environment variable
 is stored. The profile contains the instance inventory but no assignment; all
@@ -769,9 +769,10 @@ and does not clear shared counters at the warmup boundary. Monotonic
 timestamps, phase epochs, and the outcome are recorded for every logical
 operation. Drain operations are accounted for separately.
 
-Only `tpcc-spec qualify` determines which populations are included in standard
-throughput and response-time metrics. The orchestrator does not encode these
-rules or move late completions between populations.
+The orchestrator and shared metrics code classify populations using the phase
+epochs and accounting policy recorded in `run-config.json`. They do not apply
+TPC-C edition qualification rules or move late completions between
+populations outside that configured policy.
 
 ### 8.9. Process Supervision
 
@@ -821,17 +822,17 @@ recent error and all known processes.
 Each worker writes JSON containing:
 
 - run/config/binary/profile SHAs;
-- the normative document reference and spec module SHA;
+- the spec module SHA;
 - adapter and server version;
 - assignment;
 - actual phase timestamps;
-- standard workload counters according to the spec module schema;
+- per-transaction counters according to the configured mix;
 - retries by normalized class and native code;
 - telemetry for asynchronous queues;
 - response, DB-attempt, admission-wait, and end-to-end histograms;
-- input statistics required by the spec module to check the workload;
+- input statistics useful for engineering analysis;
 - clock diagnostics;
-- fatal errors and deviations.
+- fatal errors.
 
 A histogram stores counts for shared buckets in microseconds,
 encoding/version, underflow/overflow, as well as a mergeable `count`, the exact
@@ -848,11 +849,9 @@ percentiles or averages.
 4. verify identical histogram schemas;
 5. sum bucket counts and counters;
 6. compute percentiles only after merging;
-7. pass the merged data to the spec module to calculate standard metrics
-   without artificial clamping;
-8. calculate derived engineering metrics separately;
-9. apply qualification rules;
-10. retain references to the original worker artifacts.
+7. compute throughput and response-time summaries from the merged data and
+   the configured phase/accounting policy, without artificial clamping;
+8. retain references to the original worker artifacts.
 
 The following are prohibited:
 
@@ -860,7 +859,8 @@ The following are prohibited:
 - scaling a partial result to account for missing workers;
 - replacing missing samples with zeros;
 - hiding outcomes;
-- limiting a computed standard metric to an artificial maximum.
+- limiting a computed metric to an artificial maximum;
+- emitting a TPC-C conformance or standard-qualification verdict.
 
 ### 9.3. Final Artifacts
 
@@ -896,9 +896,9 @@ After collection, the control process atomically creates
 `collection-manifest.json`, covering all process manifests, the control-config,
 run/spec/start state, load plan, and check results. The aggregate is built only
 from files in this manifest and stores its SHA-256. Unsealed data remains
-marked `partial` but does not participate in the qualified aggregate.
+marked `partial` and is excluded from the primary aggregate.
 
-### 9.4. Qualification Flags
+### 9.4. Infrastructure Health Flags
 
 The orchestrator produces infrastructure flags:
 
@@ -915,10 +915,9 @@ no_drain_cancellations
 artifacts_sealed
 ```
 
-Standard qualification flags are provided by the spec module. The final
-`qualified` value is the conjunction of the infrastructure flags and the
-mandatory standard flags for the selected mode. The final JSON stores the
-source (`orchestrator` or `spec`) of each flag.
+These flags describe run completeness and integrity only. The aggregate MUST
+NOT include flags or a `qualified` verdict that assert compliance with any
+TPC-C edition's parameter or metric requirements.
 
 ## 10. Errors, Recovery, and Idempotency
 
@@ -949,8 +948,8 @@ as a separate cause.
 - The database secret is passed as the name of an environment variable.
 - When necessary, a remote secret is created with mode 0600, sourced by the
   wrapper shell, and deleted before `exec`.
-- Host keys MUST be verified; `insecure_ignore_host_key` is permitted only in
-  `engineering` and is recorded as a deviation.
+- Host keys MUST be verified; `insecure_ignore_host_key` is permitted only when
+  explicitly set in the profile and is recorded in the run-state.
 - All paths are normalized relative to permitted roots; `..` and symlink
   escapes are rejected.
 - Native driver logs are redacted for known connection-string forms.
@@ -965,6 +964,8 @@ as a separate cause.
 - an empty loader/worker list, or more instances than warehouses;
 - any manual `warehouse_ranges`, `assignment`, or `owns_global_data` in the
   profile;
+- a transaction mix that is empty, contains a non-positive weight, or does not
+  normalize to a complete distribution;
 - zero or negative threads, pool, duration, timeout, or batch size;
 - an incomplete computed assignment or more than one owner of the DB-wide data
   shard;
@@ -973,10 +974,12 @@ as a separate cause.
 - a secret literal instead of `password_env`;
 - credentials in an endpoint URL, connection string, or DBMS options;
 - incompatible adapter capabilities/isolation;
-- disabling a required spec module runtime subsystem in conformance mode;
 - insufficient lead time;
 - incompatible histogram schemas;
 - a retry policy that permits replay after `ambiguous_commit`.
+
+Validation MUST NOT reject a profile because workload parameters differ from
+those of any TPC-C edition.
 
 Adapter preflight checks the server version, permissions, connectivity,
 isolation, schema state, and physical configuration.
@@ -1013,6 +1016,10 @@ One test suite is run for each DBMS:
 ### 13.3. Orchestrator Tests
 
 - strict profile validation;
+- materialization of built-in workload defaults and profile overrides (mix,
+  think/keying times, and related settings);
+- rejection of structurally invalid mixes without comparing them to any TPC-C
+  edition;
 - plan snapshots and argv;
 - manifest-safe cleanup;
 - redaction;
@@ -1023,11 +1030,11 @@ One test suite is run for each DBMS:
 - missing worker/early exit;
 - incomplete ready/armed set and uncommitted execution gate;
 - startup deadline;
-- normative stop/drain;
+- stop/drain;
 - PID reuse and recovery after a control process crash;
 - partial artifact collection;
 - artifact manifest tampering;
-- aggregate golden files;
+- aggregate golden files without a TPC-C conformance verdict;
 - integration testing through a local SSH target.
 
 ### 13.4. Cross-DB Equivalence
@@ -1080,8 +1087,7 @@ introduced.
 4. Loss of a worker causes the run to fail but preserves partial artifacts.
 5. Phases are synchronized, and warmup samples do not enter measurement.
 6. Retry fault injection confirms input immutability.
-7. All asynchronous operations required by the spec module have completion
-   metrics.
+7. All asynchronous workload operations have completion metrics.
 8. Domain values retain precision at the adapter boundary.
 9. Post-import and post-run checks succeed.
 10. The aggregate is reproducible from raw artifacts without DBMS access.
