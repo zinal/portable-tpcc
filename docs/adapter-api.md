@@ -1,0 +1,400 @@
+# Shared Libraries and DBMS Adapter API
+
+Status: architecture draft, companion to [specification.md](specification.md).
+
+This document describes the C++ library boundaries inside `tpcc/` and the
+contract each `tpcc/dbms/<name>` adapter MUST implement. It is normative for
+adapter authors. Orchestration (`tpccctl`), profile YAML, and result packaging
+remain in the main specification.
+
+The keywords **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT**, and **MAY**
+are to be interpreted as described in RFC 2119.
+
+## 1. Goals
+
+- Keep one workload model for all DBMSs: domain types, generator inputs,
+  transaction workflows, terminal pacing, metrics, and integrity checks.
+- Confine every SDK type (`pqxx::*`, YDB client types, OceanBase/MariaDB
+  connector handles, …) inside `tpcc/dbms/<name>/`.
+- Allow physical optimizations (DDL layout, query text, bulk load, fused
+  commit) without forking the shared algorithm.
+- Match the current PostgreSQL port where it already exists, and define the
+  target abstract surface the port is migrating toward.
+
+## 2. Layering
+
+```text
+tpccctl  ──SSH──>  tpcc-<dbms>  (schema | loader | worker | check)
+                         │
+                         ├─ shared: domain / generator / transactions /
+                         │          runtime / loader / checks / metrics
+                         └─ adapter: tpcc/dbms/<name>/
+```
+
+| Layer | Owns | MUST NOT own |
+| --- | --- | --- |
+| Shared libraries | Logical schema, generator, workflows, retry policy shape, check catalog IDs, histograms | SQL dialects, SDK types, connection strings with secrets |
+| Adapter | DDL, physical keys/partitions, query text, `PutBatch`, error mapping, fence metadata | Workload mix, terminal identity, phase schedule |
+| Binary `tpcc-<dbms>` | CLI roles, wiring factory → runtime | A second copy of the workload model |
+
+Shared code talks to the database only through the adapter interfaces below.
+Today’s PostgreSQL binary still embeds some SQL inside
+`tpcc/dbms/pgsql/transaction_*.cpp`; that is transitional. New adapters MUST
+target the abstract session API so shared workflows can move out of the
+adapter directory.
+
+## 3. Shared Libraries
+
+### 3.1. `tpcc/domain`
+
+- Logical table and column names (`warehouse`, `district`, …).
+- Scale constants (districts per warehouse, customers per district, item
+  count, …).
+- NURand / string helpers and RNG wrappers.
+- Exact decimal / money types (target: checked fixed-point; **MUST NOT** use
+  `double` in the domain↔adapter value path).
+
+Money and tax fields that cross the adapter boundary MUST use exact types.
+Adapters map them to `DECIMAL` / YDB `Decimal` / OceanBase `DECIMAL`, never to
+binary floating point.
+
+### 3.2. `tpcc/generator` (target)
+
+Produces:
+
+- initial population rows for each logical table;
+- per-transaction logical inputs (New-Order line set, Payment customer
+  selection, …).
+
+For a given `run-config` (scale, seed, …), logical contents MUST be identical
+across adapters and across loader/worker counts. Parallelism MUST NOT change
+row values. Inputs for a business transaction are fixed before the first
+attempt and reused on retry (see current `FixedTransactionInputs` in the
+PostgreSQL port).
+
+### 3.3. `tpcc/transactions`
+
+Shared business workflows over `ITpccSession` / `ITpccTransaction`. Workflows
+express **semantic operations** (read customer by id, update stock quantity,
+insert order line, …), not SQL strings.
+
+Skeleton today: `tpcc/transactions/session.h`. PostgreSQL still implements
+workflows against `PgSession`; the migration target is the abstract surface in
+§4.3.
+
+### 3.4. `tpcc/runtime`
+
+- Terminal state machines, keying/think times, admission / inflight limits.
+- Coroutine scheduler and futures (`TFuture`, task queue).
+- Phase controller (prepare → ramp-up → measurement → drain).
+- Retry loop driven by normalized error classes (§5).
+- Bounded drain for async Delivery-style work.
+
+Runtime depends on domain, transactions, metrics, and the abstract adapter
+API only.
+
+### 3.5. `tpcc/loader` (target)
+
+Builds deterministic batches for the loader’s warehouse ranges (and the single
+DB-wide shard owner), then calls `ILoadAdapter::PutBatch`. Cardinality and
+sample checks after load are shared; query text is adapter-owned.
+
+### 3.6. `tpcc/checks` (target)
+
+Shared check **catalog**: identifier, expected semantics, result shape.
+Adapters supply the DBMS-specific query or scan that evaluates each check.
+This is integrity / infrastructure checking, not TPC-C edition conformance.
+
+PostgreSQL already implements a concrete suite in `tpcc/dbms/pgsql/check.*`
+(cardinality + consistency conditions). The catalog SHOULD be lifted into
+shared code with adapter-provided evaluators.
+
+### 3.7. `tpcc/metrics`
+
+Mergeable counters and latency histograms. Workers emit raw histograms;
+`tpccctl consolidate` merges buckets and only then computes percentiles.
+Adapters MUST NOT emit final p99 as the authoritative result.
+
+## 4. Adapter Interfaces
+
+Each `tpcc/dbms/<name>` implements the following. Names are logical; C++
+headers may use `I…` prefixes consistent with the repository style.
+
+### 4.1. `IAdminAdapter`
+
+Lifecycle of the physical database objects for one workload path:
+
+| Method | Semantics |
+| --- | --- |
+| `EnsureSchema` | Create logical tables (idempotent). MAY drop/recreate when the path is empty; MUST NOT destroy foreign data silently. |
+| `EnsureIndexes` | Create access paths required by the workload (often after bulk load). |
+| `EnsureStatistics` | `ANALYZE` / equivalent so the planner or tablet layer is ready. |
+| `Clean` | Remove all objects for this path. |
+| `Describe` | Adapter/server version strings for `result.json`. |
+| `AcquireFence` / `ReleaseFence` | DB-scoped control fence outside benchmark tables (specification §7). |
+
+PostgreSQL reference: `InitSync` + `CreateIndexes` (`init.*`), `CleanSync`
+(`clean.*`), path checks (`path_checker.*`). Indexes are created after import;
+`ANALYZE` SHOULD follow.
+
+### 4.2. `ILoadAdapter`
+
+```text
+PutBatch(table, key_range, rows) -> completed | outcome_unknown | failed
+```
+
+Normative properties (specification §6):
+
+- Idempotent for the same `run_id` / logical batch identity: retries MUST leave
+  the same final rows.
+- Rows are fully determined by the run-config (scale, seed, …). No
+  server-default timestamps or sequences during load.
+- Exactly one loader owns DB-wide tables (`item`, and any other global
+  population); others own disjoint warehouse ranges.
+- `PutBatch` is semantic: the adapter MAY use `COPY`, `BulkUpsert`, staging +
+  replace-range, or upsert. The loader MUST NOT depend on SQL `INSERT`.
+
+Optional helpers: `EnsureEmptyRange`, local checkpoint of completed batches
+(optimization only; absence MUST still be correct via retry).
+
+PostgreSQL reference: `ImportSync` with `COPY` via `PgSession::ExecuteCopy`,
+warehouse-range sharding, `OwnsGlobalData`.
+
+### 4.3. Session and transaction API
+
+Target surface (also sketched in specification §4.2 and
+`tpcc/transactions/session.h`):
+
+```text
+ISessionFactory::CreateSession() -> ITpccSession
+
+ITpccSession::Begin(isolation) -> ITpccTransaction
+
+ITpccTransaction::Execute(op)              -> TOperationResult
+ITpccTransaction::ExecuteBatch(ops)        -> TBatchResult
+ITpccTransaction::ExecuteFinalAndCommit(op)-> {TOperationResult, TCommitResult}
+ITpccTransaction::Commit()                 -> TCommitResult
+ITpccTransaction::Rollback()               -> TCommitResult
+ITpccTransaction::Cancel()                 -> TCommitResult
+```
+
+#### 4.3.1. Operation results
+
+`TOperationResult` carries success/failure, expected vs actual cardinality,
+normalized `EErrorClass`, and native diagnostics. Cardinality mismatch is an
+`integrity` error, not a successful empty read.
+
+`TCommitResult` carries `ECommitOutcome` (`Committed`, `RolledBack`,
+`OutcomeUnknown`) plus the same error classification fields.
+
+Transaction states: `active` → (`committing`) → `committed` |
+`rolled_back` | `outcome_unknown`. After a terminal state the handle MUST NOT
+accept further `Execute*` calls.
+
+#### 4.3.2. Why `ExecuteBatch` and `ExecuteFinalAndCommit`
+
+| Primitive | Purpose |
+| --- | --- |
+| `Execute` | One semantic op → one round trip (or equivalent). |
+| `ExecuteBatch` | Set-oriented optimization: YDB YQL batches, PG multi-row prepared statements / pipelining, OceanBase multi-value DML — without changing the shared workflow’s logical steps. |
+| `ExecuteFinalAndCommit` | Fuse the last semantic operation with commit. **Required for efficient YDB** interactive transactions; optional elsewhere (MAY be implemented as `Execute` + `Commit`). |
+
+Shared workflows SHOULD mark the last mutating/read op of a transaction so
+adapters that benefit from fusion can use `ExecuteFinalAndCommit`. Workflows
+MUST NOT assume fusion always happens: semantics after success equal
+`Execute` then successful `Commit`.
+
+#### 4.3.3. Isolation
+
+`Begin` takes `EIsolationLevel` (`ReadCommitted`, `RepeatableRead`,
+`Serializable`). The adapter maps to the nearest supported level and records
+the effective choice in capabilities / result settings. PostgreSQL currently
+uses repeatable-read snapshot transactions in `PgSession`.
+
+#### 4.3.4. PostgreSQL transitional API
+
+`PgSession` exposes coroutine-friendly `ExecuteQuery` / `ExecuteModify` /
+`Commit` / `Rollback` / `ExecuteCopy` over libpqxx. It is the concrete
+reference for:
+
+- lazy transaction start on first statement;
+- bounded executor pool for blocking IO;
+- shutdown cancellation via a shared flag.
+
+New shared workflows MUST NOT take `PgSession&`; they take `ITpccTransaction&`
+(or a thin async wrapper around it).
+
+### 4.4. `ICheckAdapter`
+
+Evaluates shared catalog entries against the live database:
+
+- assignment coverage / expected cardinalities for the configured scale;
+- consistency conditions (the PostgreSQL port’s 3.3.2.x suite is the
+  reference set);
+- post-import stricter invariants (initial YTD, null carrier on undelivered
+  orders, …);
+- optional sample content checks once a cross-DB canonical row encoding
+  exists (open decision in the main specification).
+
+The adapter returns a structured pass/fail with native detail; the orchestrator
+stores results under `results/<run_id>/checks/`.
+
+### 4.5. `IErrorClassifier`
+
+Maps native errors to:
+
+| Class | Runtime action |
+| --- | --- |
+| `retryable_abort` | Confirmed rollback; bounded retry with backoff + jitter |
+| `not_committed` | Safe retry per adapter contract |
+| `ambiguous_commit` | **MUST NOT** blind-retry; resolve or fail |
+| `permanent` | Fail the operation; run policy decides abort |
+| `integrity` | Fail the run |
+| `cancelled` | Phase stop; not a retry |
+
+Internal SDK retries and shared runtime retries MUST share one observable
+budget. Native codes and attempt counts appear in metrics / worker results.
+
+PostgreSQL SHOULD classify by SQLSTATE (serialization failure, deadlock,
+unique violation, connection failure, …). YDB SHOULD classify by status /
+issues without enabling hidden `RetryOperation` loops that bypass the budget.
+OceanBase SHOULD distinguish deadlock, lock wait timeout, serialization
+failure, killed transaction, disconnect, and ambiguous commit.
+
+### 4.6. `ICapabilities`
+
+Declarative feature flags consumed by runtime and preflight:
+
+- supported isolation levels;
+- whether `ExecuteBatch` / `ExecuteFinalAndCommit` are optimized or emulated;
+- cancel support;
+- max recommended inflight / sessions;
+- bulk-load mechanism (`copy`, `bulk_upsert`, `multi_insert`, …);
+- exact decimal type name;
+- optional physical features (foreign keys, partitioning style).
+
+Capabilities and physical options that affect the run MUST appear in the
+embedded result settings (specification §5 / §8), not only in logs.
+
+### 4.7. Configuration
+
+Adapters parse the `database` object from `run-config.json`:
+
+- `dbms`, `endpoint`, `database`, `path`, `password_env`, `options`;
+- passwords and tokens **only** via environment variables named in
+  `password_env` (and similar option keys), never in argv or stored configs.
+
+`options` is adapter-specific (e.g. YDB `tx_mode`, PostgreSQL schema/`search_path`
+policy, OceanBase FK enablement). Unknown options MUST be rejected at
+validate/preflight time.
+
+## 5. Logical vs physical schema
+
+Shared code defines logical tables, columns, and required access patterns.
+Adapters emit DDL.
+
+Adapters MAY:
+
+- reorder primary-key columns for locality (warehouse-leading keys on YDB);
+- add partitions, tablegroups, or store options;
+- add technical keys where the logical key is weak (e.g. `history`);
+- add indexes beyond the minimum if recorded in settings;
+- omit foreign keys when the DBMS makes them expensive, if that choice is
+  recorded (OceanBase optional FKs).
+
+Adapters MUST:
+
+- preserve logical column semantics and transactional visibility;
+- map exact domain decimals to exact SQL/YQL types;
+- keep technical columns invisible to shared checks or clearly filterable;
+- avoid duplicate equivalent indexes.
+
+### 5.1. PostgreSQL (reference implementation)
+
+- Tables in an explicit schema/`path`; prefer qualified names over relying on
+  `search_path`.
+- `DECIMAL` for money/tax; prepared `exec_params`; `COPY` for load.
+- Secondary indexes (`idx_customer_name`, `idx_order`) after bulk load, then
+  `ANALYZE`.
+- Blocking libpqxx: IO MUST run on a bounded pool (current `IExecutor` pattern).
+
+### 5.2. YDB
+
+- Warehouse-leading keys and range partitions for warehouse-local tables;
+  document split policy in `options` / settings.
+- Typed `BulkUpsert` (or equivalent) for `PutBatch`.
+- Prefer set-oriented YQL and **`ExecuteFinalAndCommit`** so the last
+  statement and commit are one round trip.
+- Do not store exact values as `Double`.
+- Do not hide retries inside SDK helpers; classify and bubble errors.
+- System tables, compaction, and index implementation details stay inside the
+  adapter.
+
+### 5.3. OceanBase
+
+- Partition / tablegroup by warehouse for local tables; separate placement for
+  DB-wide `item`.
+- Cached prepared statements with bound parameters.
+- Optional foreign keys as a recorded physical option.
+- Post-index `ANALYZE` (or OceanBase equivalent statistics gather).
+- MariaDB-compatible connectors are fine for transport; validation MUST run
+  against real OceanBase, not only MariaDB.
+
+## 6. Query text and semantic operations
+
+Shared workflows name **semantic operations**. Adapters bind each operation to
+DBMS-specific query text (or SDK calls).
+
+Examples:
+
+| Semantic op | PostgreSQL sketch | YDB sketch |
+| --- | --- | --- |
+| Get customer by id | `SELECT … FROM schema.customer WHERE c_w_id=$1 AND c_d_id=$2 AND c_id=$3` | YQL `SELECT … WHERE …` with typed params |
+| Update stock | single-row `UPDATE … RETURNING` or separate read/write | upsert / YQL update; MAY batch line items via `ExecuteBatch` |
+| Insert order lines | per-line `INSERT` or multi-row `INSERT` | `BulkUpsert` / multi-row upsert inside one tx |
+| Final New-Order step | last `INSERT` then `COMMIT` | `ExecuteFinalAndCommit(last_op)` |
+
+Rules:
+
+1. Changing query text MUST NOT change observable logical results for the same
+   seed and inputs.
+2. Locking hints (`FOR UPDATE`, …) are adapter-local but MUST provide the
+   isolation the workflow expects.
+3. `RETURNING` / multiple result sets are optional optimizations; shared code
+   consumes typed operation results, not raw cursors.
+4. Identifier quoting and schema qualification are adapter-local.
+
+## 7. Worker and loader binary roles
+
+Each `tpcc-<dbms>` binary exposes at least:
+
+| Role | Adapter use |
+| --- | --- |
+| `schema` | `EnsureSchema` (+ optional early indexes if required by the DBMS) |
+| `loader` | `PutBatch` over assigned ranges; then `EnsureIndexes` / `EnsureStatistics` as needed |
+| `worker` | sessions for terminals; phase schedule from run-config; write `ready.json` / `result.json` |
+| `check` | `ICheckAdapter` for `--after-import` / `--after-run` |
+
+Non-DBMS logic (assignment interpretation, phase timing, artifact layout)
+comes from shared libraries and the distributed `run-config.json`.
+
+## 8. Implementation status (informative)
+
+| Piece | Status |
+| --- | --- |
+| `tpcc/domain`, `runtime`, `metrics` | Present |
+| `tpcc/transactions/session.h` | Abstract skeleton |
+| `tpcc/dbms/pgsql` | Concrete admin/load/session/check; SQL workflows still in adapter |
+| `tpcc/dbms/ydb`, `tpcc/dbms/oceanbase` | Not started |
+| Shared generator / loader / checks packages | Not started (logic partially inside pgsql) |
+
+Adapter authors for YDB/OceanBase SHOULD implement against §4 even while the
+PostgreSQL port finishes migrating workflows onto `ITpccSession`.
+
+## 9. Related documents
+
+- [specification.md](specification.md) — product architecture, config, phases,
+  results, orchestrator commands.
+- [dependencies.md](dependencies.md) — third-party libraries and port status.
+- [examples/run-config.v1.json](examples/run-config.v1.json) — concrete settings
+  distributed to loaders and workers.
