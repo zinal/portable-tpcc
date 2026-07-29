@@ -89,10 +89,6 @@ Linked into every `tpcc-<dbms>` binary:
 - loader helpers;
 - integrity check catalog (not TPC-C edition compliance).
 
-Generator streams are keyed by
-`(run_seed, purpose, warehouse, district, terminal, sequence)`. Parallelism
-MUST NOT change logical contents for a given seed.
-
 ### 4.2. Adapter API
 
 Each `tpcc/dbms/<name>` implements admin, load (`PutBatch`), session/factory,
@@ -124,7 +120,7 @@ loaders and workers.
 `run-config.json` includes concrete values, not hash stand-ins for other
 documents:
 
-- `run_id`, DBMS settings (no passwords — only `password_env`);
+- `run_id`, DBMS settings (no passwords or tokens — only `password_env`);
 - scale, seed, workload (mix, think/keying times, terminals per warehouse);
 - loader/worker instance lists and computed warehouse ranges;
 - phase durations and runtime/retry/histogram settings;
@@ -291,7 +287,7 @@ docs/specification.md
 docs/examples/
 ```
 
-Build with existing `ya make` (C++ and Go). No alternate root build system.
+Build with existing `ya make` (C++). Use Go-native tools for Golang. No alternate root build system.
 
 ## 13. Done When
 
