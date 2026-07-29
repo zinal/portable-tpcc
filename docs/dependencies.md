@@ -15,7 +15,7 @@ to implement all adapters described in [specification.md](specification.md).
 | gflags | `contrib/libs/gflags` | CLI for `tpcc-pgsql` |
 | ftxui | `contrib/libs/ftxui` | Terminal UI (optional, enabled in `tpcc-pgsql`) |
 | googletest | `contrib/restricted/googletest` | Unit and integration tests (not yet ported) |
-| nlohmann_json | `contrib/restricted/nlohmann_json` | JSON for run-config, metrics, spec CLI |
+| nlohmann_json | `contrib/restricted/nlohmann_json` | JSON for run-config and metrics |
 | abseil-cpp | `contrib/restricted/abseil-cpp` | optional utilities |
 | tcmalloc | `contrib/libs/tcmalloc` | optional allocator |
 | util | `util/` | strings, threading, system, random |

@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "run_id": "20260728-lab-ydb-200-01",
+  "result_class": "engineering",
+  "settings": {
+    "profile_name": "lab-ydb-200",
+    "binary": "tpcc-ydb",
+    "database": {
+      "dbms": "ydb",
+      "endpoint": "grpcs://ydb.example.net:2135",
+      "database": "/Root/tpcc",
+      "path": "portable_tpcc",
+      "options": {
+        "compact_after_load": true,
+        "tx_mode": "serializable-rw"
+      }
+    },
+    "scale": {"warehouses": 200},
+    "data": {"seed": 731910246, "batch_rows": 10000},
+    "workload": {
+      "terminals_per_warehouse": 10,
+      "transaction_mix": {
+        "new_order": 45,
+        "payment": 43,
+        "order_status": 4,
+        "delivery": 4,
+        "stock_level": 4
+      }
+    },
+    "worker_assignment": [
+      {
+        "instance": "worker-a",
+        "host": "worker-a",
+        "warehouse_ranges": [[1, 101]]
+      },
+      {
+        "instance": "worker-b",
+        "host": "worker-b",
+        "warehouse_ranges": [[101, 201]]
+      }
+    ],
+    "phases": {
+      "ramp_up_ms": 300000,
+      "measurement_ms": 1800000
+    }
+  },
+  "status": {
+    "workers_complete": true,
+    "assignment_valid": true,
+    "clock_skew_ok": true,
+    "integrity_ok": true
+  },
+  "metrics": {
+    "measurement": {
+      "new_order_count": 0,
+      "throughput_new_order_per_min": 0,
+      "response_time_ms": {
+        "new_order": {"p50": 0, "p99": 0}
+      }
+    }
+  },
+  "workers": ["worker-a", "worker-b"]
+}

@@ -74,8 +74,6 @@ phases:
   transaction_drain: 30s
   stop_grace: 15s
   max_clock_skew_ms: 100
-  max_clock_uncertainty_ms: 25
-  max_clock_drift_ms: 25
 
 runtime:
   pacing: enabled
@@ -86,17 +84,3 @@ runtime:
     initial_backoff: 10ms
     max_backoff: 500ms
     jitter: full
-  histogram:
-    unit: us
-    lowest: 1
-    highest: 120000000
-    significant_figures: 3
-
-checks:
-  after_import: true
-  after_run: true
-  fail_fast: true
-
-collect:
-  include_events: true
-  include_logs: true
