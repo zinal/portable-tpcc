@@ -117,8 +117,8 @@ Goal: same `run-config` (scale, seed) → same logical rows; load retries safe.
 | --- | --- | --- | --- |
 | 2.1 | Finalize async `session.h` + `ops.h` (`std::variant` semantic ops) | A, C | Done (Phase 0/1) |
 | 2.2 | PG `IErrorClassifier` (SQLSTATE); honor `retry.*`; no blind retry on ambiguous commit | | Done |
-| 2.3 | PG `ISessionFactory` wrapping `PgSession` (`TFuture`) | 2.1 | Done (skeleton; workflows still use `PgSession&`) |
-| 2.4 | Lift five workflows to `tpcc/transactions` | 2.1, 1.2 | Pending |
+| 2.3 | PG `ISessionFactory` wrapping `PgSession` (`TFuture`) | 2.1 | Done |
+| 2.4 | Lift five workflows to `tpcc/transactions` | 2.1, 1.2 | Done |
 | 2.5 | Terminal retry loop + attempt metrics | 2.2 | Done |
 | 2.6 | `ICapabilities` including `async_delivery` **[F]** | | Done (`TPgCapabilities`) |
 
@@ -218,6 +218,6 @@ Phase 0 (headers/docs)
 
 ## 6. Immediate next step
 
-Phase 0–1 and Phase 2.2/2.3/2.5/2.6 are in tree. Next: **Phase 2.4** — lift
-the five TPC-C workflows off `PgSession&` onto `ITpccTransaction` /
-semantic ops, then Phase 3 (`--start-at`, raw histograms).
+Phase 0–2 complete (five workflows on `ITpccTransaction`; simulation remains
+PG-local on `PgSession`). Next: **Phase 3** — `--start-at`, phase controller,
+raw histogram buckets in worker results.

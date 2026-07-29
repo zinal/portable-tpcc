@@ -2,6 +2,7 @@
 #include <coro_traits.h>
 #include <log.h>
 #include "transactions.h"
+#include "tpcc_session.h"
 #include "pg_error_classifier.h"
 #include <domain_util.h>
 #include <constants.h>
@@ -16,7 +17,7 @@ namespace NTpcc {
 namespace {
 
 struct TTerminalTransaction {
-    using TTaskFunc = TFuture<bool> (*)(TTransactionContext&, std::chrono::microseconds&, PgSession&);
+    using TTaskFunc = TFuture<bool> (*)(TTransactionContext&, std::chrono::microseconds&, ITpccTransaction&);
 
     std::string Name;
     double Weight;
@@ -165,25 +166,77 @@ TFuture<void> TTerminal::Run() {
                 PgSession& session = guard ? **guard : dummySession;
 
                 latencyPure = std::chrono::microseconds{0};
-                TFuture<bool> future = simulationMode
-                    ? GetSimulationTask(Context, latencyPure, session)
-                    : Transactions[txIndex].TaskFunc(Context, latencyPure, session);
-                auto result = co_await TSuspendWithFuture(std::move(future), Context.TaskQueue, Context.TerminalID);
-
-                auto endTime = std::chrono::steady_clock::now();
-                auto latencyFull = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime);
-                auto latencyTransaction = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTimeTransaction);
-
-                if (result) {
-                    Stats->AddOK(txType, latencyTransaction, latencyFull, latencyPure);
-                    LOG_T("Terminal {} {} succeeded", Context.TerminalID, txName);
+                if (simulationMode) {
+                    auto future = GetSimulationTask(Context, latencyPure, session);
+                    auto result = co_await TSuspendWithFuture(
+                        std::move(future), Context.TaskQueue, Context.TerminalID);
+                    auto endTime = std::chrono::steady_clock::now();
+                    auto latencyFull = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime);
+                    auto latencyTransaction = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTimeTransaction);
+                    if (result) {
+                        Stats->AddOK(txType, latencyTransaction, latencyFull, latencyPure);
+                        LOG_T("Terminal {} {} succeeded", Context.TerminalID, txName);
+                    } else {
+                        Stats->IncFailed(txType);
+                        LOG_D("Terminal {} {} failed", Context.TerminalID, txName);
+                    }
                 } else {
-                    Stats->IncFailed(txType);
-                    LOG_D("Terminal {} {} failed (retryable)", Context.TerminalID, txName);
+                    TPgTpccSession tpccSession(session);
+                    auto beginFuture = tpccSession.Begin(EIsolationLevel::RepeatableRead);
+                    auto tx = co_await TSuspendWithFuture(
+                        std::move(beginFuture), Context.TaskQueue, Context.TerminalID);
+                    auto future = Transactions[txIndex].TaskFunc(Context, latencyPure, *tx);
+                    auto result = co_await TSuspendWithFuture(
+                        std::move(future), Context.TaskQueue, Context.TerminalID);
+                    auto endTime = std::chrono::steady_clock::now();
+                    auto latencyFull = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime);
+                    auto latencyTransaction = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTimeTransaction);
+                    if (result) {
+                        Stats->AddOK(txType, latencyTransaction, latencyFull, latencyPure);
+                        LOG_T("Terminal {} {} succeeded", Context.TerminalID, txName);
+                    } else {
+                        Stats->IncFailed(txType);
+                        LOG_D("Terminal {} {} failed", Context.TerminalID, txName);
+                    }
                 }
             } catch (const TUserAbortedException&) {
                 Stats->IncUserAborted(txType);
                 LOG_T("Terminal {} {} user aborted", Context.TerminalID, txName);
+            } catch (const TClassifiedError& ex) {
+                if (StopToken.stop_requested()) {
+                    LOG_D("Terminal {} {} interrupted during shutdown", Context.TerminalID, txName);
+                    break;
+                }
+
+                const EErrorClass cls = ex.Class;
+                const bool attemptsRemain = (attempt + 1) < RetryMaxAttempts;
+
+                if (cls == EErrorClass::Integrity) {
+                    LOG_E("Terminal {} integrity error in {}: {}", Context.TerminalID, txName, ex.what());
+                    Stats->IncFailed(txType);
+                    fatal = true;
+                } else if (cls == EErrorClass::Cancelled) {
+                    LOG_D("Terminal {} {} cancelled: {}", Context.TerminalID, txName, ex.what());
+                    break;
+                } else if (ShouldRetryClass(cls, RetryAmbiguousCommit) && attemptsRemain) {
+                    shouldRetry = true;
+                    Stats->IncRetried(txType);
+                    LOG_D("Terminal {} {} classified retry {}/{}: {}",
+                          Context.TerminalID, txName, attempt + 1, RetryMaxAttempts, ex.what());
+                } else {
+                    Stats->IncFailed(txType);
+                    if (cls == EErrorClass::AmbiguousCommit && !RetryAmbiguousCommit) {
+                        LOG_E("Terminal {} {} ambiguous commit (blind retry disabled): {}",
+                              Context.TerminalID, txName, ex.what());
+                    } else if (!attemptsRemain && ShouldRetryClass(cls, RetryAmbiguousCommit)) {
+                        LOG_D("Terminal {} {} retries exhausted: {}", Context.TerminalID, txName, ex.what());
+                    } else {
+                        LOG_E("Terminal {} classified error in {}: {}", Context.TerminalID, txName, ex.what());
+                        if (cls == EErrorClass::Permanent) {
+                            fatal = true;
+                        }
+                    }
+                }
             } catch (const std::exception& ex) {
                 if (StopToken.stop_requested()) {
                     LOG_D("Terminal {} {} interrupted during shutdown", Context.TerminalID, txName);
@@ -217,7 +270,6 @@ TFuture<void> TTerminal::Run() {
                         LOG_D("Terminal {} {} retries exhausted: {}", Context.TerminalID, txName, ex.what());
                     } else {
                         LOG_E("Terminal {} exception in {}: {}", Context.TerminalID, txName, ex.what());
-                        // Unexpected permanent/native errors stop the terminal.
                         if (cls == EErrorClass::Permanent) {
                             fatal = true;
                         }
