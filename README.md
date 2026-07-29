@@ -17,7 +17,7 @@ shared libraries are described in [docs/dependencies.md](docs/dependencies.md)
 and [docs/adapter-api.md](docs/adapter-api.md). A gap analysis versus the design
 documents is in
 [docs/implementation-gap-analysis.md](docs/implementation-gap-analysis.md);
-the proposed alignment plan is in
+the alignment plan (with accepted API decisions) is in
 [docs/alignment-plan.md](docs/alignment-plan.md).
 
 Results MUST NOT be called official TPC-C results without the required TPC
