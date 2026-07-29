@@ -52,7 +52,6 @@ required for the current port.
 | `tpcc/generator` | in progress | deterministic population; wired into PG `ImportSync` |
 | `tpcc/loader` | skeleton | `ILoadAdapter` / `PutBatch` header only |
 | `tpcc/checks` | not started | still inside `dbms/pgsql/check.*` |
-
 ### PostgreSQL adapter and executable
 
 | Module | Status | Notes |
