@@ -34,6 +34,9 @@ int RunLoaderFromRunConfig(const std::string& runConfigPath, const std::string& 
     importCfg.TotalWarehouses = doc.ScaleWarehouses;
     importCfg.LoadThreadCount = 0;
     importCfg.UseTui = false;
+    if (doc.HasSeed) {
+        importCfg.Seed = static_cast<uint64_t>(doc.Seed);
+    }
 
     int exitCode = 0;
     try {

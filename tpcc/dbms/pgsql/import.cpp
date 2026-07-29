@@ -1,12 +1,12 @@
 #include "import.h"
 #include "warehouse_range.h"
 #include "pqxx_compat.h"
-#include <rng.h>
 
 #include <constants.h>
 #include "init.h"
 #include <log.h>
 #include <domain_util.h>
+#include <populate.h>
 
 #ifdef TPCC_HAS_TUI
 #include "import_tui.h"
@@ -18,9 +18,10 @@
 
 #include <algorithm>
 #include <chrono>
+#include <ctime>
 #include <functional>
 #include <iomanip>
-#include <random>
+#include <optional>
 #include <sstream>
 #include <thread>
 #include <vector>
@@ -73,87 +74,30 @@ size_t EstimatePerWarehouseDataSize() {
 
 //-----------------------------------------------------------------------------
 
-// TPC-C §4.3.2.2: random a-string of the requested length (letters only here).
-std::string RandomString(int strLen, char baseChar = 'a') {
-    if (strLen <= 0) {
-        return "";
-    }
-    std::string result;
-    result.reserve(strLen);
-    for (int i = 0; i < strLen; ++i) {
-        result += static_cast<char>(baseChar + RandomNumber(0, 25));
-    }
-    return result;
-}
-
-std::string RandomAlphaString(int minLength, int maxLength) {
-    int length = RandomNumber(minLength, maxLength);
-    return RandomString(length, 'a');
-}
-
-std::string RandomUpperAlphaString(int minLength, int maxLength) {
-    int length = RandomNumber(minLength, maxLength);
-    return RandomString(length, 'A');
-}
-
-std::string RandomNumericString(int length) {
-    std::string result;
-    result.reserve(length);
-    for (int i = 0; i < length; ++i) {
-        result += static_cast<char>('0' + RandomNumber(0, 9));
-    }
-    return result;
-}
-
-size_t HashCustomer(int warehouseId, int districtId, int customerId) {
-    return std::hash<int>{}(warehouseId) ^
-           (std::hash<int>{}(districtId) << 1) ^
-           (std::hash<int>{}(customerId) << 2);
-}
-
-int GetRandomCount(int warehouseId, int customerId, int districtId) {
-    size_t seed = HashCustomer(warehouseId, districtId, customerId);
-    std::mt19937 rng(seed);
-    std::uniform_int_distribution<int> dist(5, 15);
-    return dist(rng);
-}
-
-std::string CurrentTimestamp() {
-    auto now = std::chrono::system_clock::now();
-    auto time_t_now = std::chrono::system_clock::to_time_t(now);
+std::string FormatUnixTimestamp(int64_t unixSeconds) {
+    time_t t = static_cast<time_t>(unixSeconds);
     struct tm tm_buf;
-    gmtime_r(&time_t_now, &tm_buf);
+    gmtime_r(&t, &tm_buf);
     std::ostringstream ss;
     ss << std::put_time(&tm_buf, "%Y-%m-%d %H:%M:%S");
     return ss.str();
 }
 
-//-----------------------------------------------------------------------------
-
-void LoadItems(pqxx::connection& conn) {
-    LOG_I("Loading {} items...", ITEM_COUNT);
+void LoadItems(pqxx::connection& conn, uint64_t seed) {
+    LOG_I("Loading {} items (seed={})...", ITEM_COUNT, seed);
 
     pqxx::work txn(conn);
     auto stream = MakeCopyStream(txn, "item",
         {"i_id", "i_name", "i_price", "i_data", "i_im_id"});
 
     for (int i = 1; i <= ITEM_COUNT; ++i) {
-        std::string data;
-        int randPct = RandomNumber(1, 100);
-        int len = RandomNumber(26, 50);
-        if (randPct > 10) {
-            data = RandomString(len);
-        } else {
-            int startOrig = RandomNumber(2, len - 8);
-            data = RandomString(startOrig) + "ORIGINAL" + RandomString(len - startOrig - 8);
-        }
-
+        auto row = NGenerator::GenerateItem(seed, i);
         stream.write_values(
-            i,
-            RandomAlphaString(14, 24),
-            RandomNumber(100, 10000) / 100.0,
-            data,
-            static_cast<int>(RandomNumber(1, 10000))
+            row.Id,
+            row.Name,
+            row.Price.ToString(),
+            row.Data,
+            row.ImageId
         );
     }
 
@@ -162,9 +106,7 @@ void LoadItems(pqxx::connection& conn) {
     LOG_I("Items loaded");
 }
 
-//-----------------------------------------------------------------------------
-
-void LoadWarehouses(pqxx::connection& conn, int startId, int lastId) {
+void LoadWarehouses(pqxx::connection& conn, uint64_t seed, int startId, int lastId) {
     LOG_I("Loading warehouses {} to {}", startId, lastId);
 
     pqxx::work txn(conn);
@@ -173,16 +115,17 @@ void LoadWarehouses(pqxx::connection& conn, int startId, int lastId) {
          "w_city", "w_state", "w_zip"});
 
     for (int wh = startId; wh <= lastId; ++wh) {
+        auto row = NGenerator::GenerateWarehouse(seed, wh);
         stream.write_values(
-            wh,
-            DISTRICT_INITIAL_YTD * DISTRICT_COUNT,
-            RandomNumber(0, 2000) / 10000.0,
-            RandomAlphaString(6, 10),
-            RandomAlphaString(10, 20),
-            RandomAlphaString(10, 20),
-            RandomAlphaString(10, 20),
-            RandomUpperAlphaString(2, 2),
-            RandomNumericString(4) + "11111"
+            row.Id,
+            row.Ytd.ToString(),
+            row.Tax.ToString(),
+            row.Name,
+            row.Street1,
+            row.Street2,
+            row.City,
+            row.State,
+            row.Zip
         );
     }
 
@@ -190,9 +133,7 @@ void LoadWarehouses(pqxx::connection& conn, int startId, int lastId) {
     txn.commit();
 }
 
-//-----------------------------------------------------------------------------
-
-void LoadDistricts(pqxx::connection& conn, int startId, int lastId) {
+void LoadDistricts(pqxx::connection& conn, uint64_t seed, int startId, int lastId) {
     LOG_I("Loading districts for warehouses {} to {}", startId, lastId);
 
     pqxx::work txn(conn);
@@ -202,18 +143,19 @@ void LoadDistricts(pqxx::connection& conn, int startId, int lastId) {
 
     for (int wh = startId; wh <= lastId; ++wh) {
         for (int d = DISTRICT_LOW_ID; d <= DISTRICT_HIGH_ID; ++d) {
+            auto row = NGenerator::GenerateDistrict(seed, wh, d);
             stream.write_values(
-                wh,
-                d,
-                DISTRICT_INITIAL_YTD,
-                RandomNumber(0, 2000) / 10000.0,
-                CUSTOMERS_PER_DISTRICT + 1,
-                RandomAlphaString(6, 10),
-                RandomAlphaString(10, 20),
-                RandomAlphaString(10, 20),
-                RandomAlphaString(10, 20),
-                RandomUpperAlphaString(2, 2),
-                RandomNumericString(4) + "11111"
+                row.WarehouseId,
+                row.Id,
+                row.Ytd.ToString(),
+                row.Tax.ToString(),
+                row.NextOrderId,
+                row.Name,
+                row.Street1,
+                row.Street2,
+                row.City,
+                row.State,
+                row.Zip
             );
         }
     }
@@ -222,9 +164,7 @@ void LoadDistricts(pqxx::connection& conn, int startId, int lastId) {
     txn.commit();
 }
 
-//-----------------------------------------------------------------------------
-
-void LoadStock(pqxx::connection& conn, int wh) {
+void LoadStock(pqxx::connection& conn, uint64_t seed, int wh) {
     LOG_D("Loading stock for warehouse {}", wh);
 
     pqxx::work txn(conn);
@@ -234,34 +174,25 @@ void LoadStock(pqxx::connection& conn, int wh) {
          "s_dist_06", "s_dist_07", "s_dist_08", "s_dist_09", "s_dist_10"});
 
     for (int itemId = 1; itemId <= ITEM_COUNT; ++itemId) {
-        std::string data;
-        int randPct = RandomNumber(1, 100);
-        int len = RandomNumber(26, 50);
-        if (randPct > 10) {
-            data = RandomString(len);
-        } else {
-            int startOrig = RandomNumber(2, len - 8);
-            data = RandomString(startOrig) + "ORIGINAL" + RandomString(len - startOrig - 8);
-        }
-
+        auto row = NGenerator::GenerateStock(seed, wh, itemId);
         stream.write_values(
-            wh,
-            itemId,
-            static_cast<int>(RandomNumber(10, 100)),
-            0.0,
-            0,
-            0,
-            data,
-            RandomString(24),
-            RandomString(24),
-            RandomString(24),
-            RandomString(24),
-            RandomString(24),
-            RandomString(24),
-            RandomString(24),
-            RandomString(24),
-            RandomString(24),
-            RandomString(24)
+            row.WarehouseId,
+            row.ItemId,
+            row.Quantity,
+            row.Ytd.ToString(),
+            row.OrderCount,
+            row.RemoteCount,
+            row.Data,
+            row.Dist[0],
+            row.Dist[1],
+            row.Dist[2],
+            row.Dist[3],
+            row.Dist[4],
+            row.Dist[5],
+            row.Dist[6],
+            row.Dist[7],
+            row.Dist[8],
+            row.Dist[9]
         );
     }
 
@@ -269,9 +200,7 @@ void LoadStock(pqxx::connection& conn, int wh) {
     txn.commit();
 }
 
-//-----------------------------------------------------------------------------
-
-void LoadCustomers(pqxx::connection& conn, int wh, int district) {
+void LoadCustomers(pqxx::connection& conn, uint64_t seed, int wh, int district) {
     LOG_D("Loading customers for warehouse {} district {}", wh, district);
 
     pqxx::work txn(conn);
@@ -281,40 +210,30 @@ void LoadCustomers(pqxx::connection& conn, int wh, int district) {
          "c_street_1", "c_street_2", "c_city", "c_state", "c_zip", "c_phone",
          "c_since", "c_middle", "c_data"});
 
-    auto ts = CurrentTimestamp();
-
     for (int cid = C_FIRST_CUSTOMER_ID; cid <= CUSTOMERS_PER_DISTRICT; ++cid) {
-        std::string last;
-        if (cid <= 1000) {
-            last = GetLastName(cid - 1);
-        } else {
-            last = GetNonUniformRandomLastNameForLoad();
-        }
-
-        std::string credit = RandomNumber(1, 100) <= 10 ? "BC" : "GC";
-
+        auto row = NGenerator::GenerateCustomer(seed, wh, district, cid);
         stream.write_values(
-            wh,
-            district,
-            cid,
-            RandomNumber(0, 5000) / 10000.0,
-            credit,
-            last,
-            RandomAlphaString(8, 16),
-            50000.00,
-            -10.00,
-            10.00,
-            1,
-            0,
-            RandomAlphaString(10, 20),
-            RandomAlphaString(10, 20),
-            RandomAlphaString(10, 20),
-            RandomUpperAlphaString(2, 2),
-            RandomNumericString(4) + "11111",
-            RandomNumericString(16),
-            ts,
-            std::string("OE"),
-            RandomAlphaString(300, 500)
+            row.WarehouseId,
+            row.DistrictId,
+            row.Id,
+            row.Discount.ToString(),
+            row.Credit,
+            row.Last,
+            row.First,
+            row.CreditLimit.ToString(),
+            row.Balance.ToString(),
+            row.YtdPayment.ToString(),
+            row.PaymentCount,
+            row.DeliveryCount,
+            row.Street1,
+            row.Street2,
+            row.City,
+            row.State,
+            row.Zip,
+            row.Phone,
+            FormatUnixTimestamp(row.SinceUnix),
+            row.Middle,
+            row.Data
         );
     }
 
@@ -322,27 +241,24 @@ void LoadCustomers(pqxx::connection& conn, int wh, int district) {
     txn.commit();
 }
 
-//-----------------------------------------------------------------------------
-
-void LoadHistory(pqxx::connection& conn, int wh, int district) {
+void LoadHistory(pqxx::connection& conn, uint64_t seed, int wh, int district) {
     LOG_D("Loading history for warehouse {} district {}", wh, district);
 
     pqxx::work txn(conn);
     auto stream = MakeCopyStream(txn, "history",
         {"h_c_id", "h_c_d_id", "h_c_w_id", "h_d_id", "h_w_id", "h_date", "h_amount", "h_data"});
 
-    auto ts = CurrentTimestamp();
-
     for (int cid = C_FIRST_CUSTOMER_ID; cid <= CUSTOMERS_PER_DISTRICT; ++cid) {
+        auto row = NGenerator::GenerateHistory(seed, wh, district, cid);
         stream.write_values(
-            cid,
-            district,
-            wh,
-            district,
-            wh,
-            ts,
-            10.00,
-            RandomAlphaString(12, 24)
+            row.CustomerId,
+            row.CustomerDistrictId,
+            row.CustomerWarehouseId,
+            row.DistrictId,
+            row.WarehouseId,
+            FormatUnixTimestamp(row.DateUnix),
+            row.Amount.ToString(),
+            row.Data
         );
     }
 
@@ -350,21 +266,10 @@ void LoadHistory(pqxx::connection& conn, int wh, int district) {
     txn.commit();
 }
 
-//-----------------------------------------------------------------------------
-
-void LoadOrders(pqxx::connection& conn, int wh, int district) {
+void LoadOrders(pqxx::connection& conn, uint64_t seed, int wh, int district) {
     LOG_D("Loading orders for warehouse {} district {}", wh, district);
 
-    // Generate shuffled customer IDs (TPC-C 4.3.3.1)
-    std::vector<int> customerIds;
-    customerIds.reserve(CUSTOMERS_PER_DISTRICT);
-    for (int i = 1; i <= CUSTOMERS_PER_DISTRICT; ++i) {
-        customerIds.push_back(i);
-    }
-    thread_local std::mt19937 rng(std::random_device{}());
-    std::shuffle(customerIds.begin(), customerIds.end(), rng);
-
-    auto ts = CurrentTimestamp();
+    const auto customerIds = NGenerator::InitialOrderCustomerPermutation(seed, wh, district);
 
     {
         pqxx::work txn(conn);
@@ -374,14 +279,16 @@ void LoadOrders(pqxx::connection& conn, int wh, int district) {
 
         for (int oid = 1; oid <= CUSTOMERS_PER_DISTRICT; ++oid) {
             int cid = customerIds[oid - 1];
-            std::optional<int> carrierId;
-            if (oid < FIRST_UNPROCESSED_O_ID) {
-                carrierId = static_cast<int>(RandomNumber(1, 10));
-            }
-            int olCnt = GetRandomCount(wh, oid, district);
-
+            auto row = NGenerator::GenerateOrder(seed, wh, district, oid, cid);
             stream.write_values(
-                wh, district, oid, cid, carrierId, olCnt, 1, ts
+                row.WarehouseId,
+                row.DistrictId,
+                row.Id,
+                row.CustomerId,
+                row.CarrierId,
+                row.OlCnt,
+                row.AllLocal,
+                FormatUnixTimestamp(row.EntryUnix)
             );
         }
 
@@ -389,21 +296,20 @@ void LoadOrders(pqxx::connection& conn, int wh, int district) {
         txn.commit();
     }
 
-    // New orders
     {
         pqxx::work txn(conn);
         auto stream = MakeCopyStream(txn, "new_order",
             {"no_w_id", "no_d_id", "no_o_id"});
 
         for (int oid = FIRST_UNPROCESSED_O_ID; oid <= CUSTOMERS_PER_DISTRICT; ++oid) {
-            stream.write_values(wh, district, oid);
+            auto row = NGenerator::GenerateNewOrder(wh, district, oid);
+            stream.write_values(row.WarehouseId, row.DistrictId, row.OrderId);
         }
 
         stream.complete();
         txn.commit();
     }
 
-    // Order lines
     {
         pqxx::work txn(conn);
         auto stream = MakeCopyStream(txn, "order_line",
@@ -411,22 +317,27 @@ void LoadOrders(pqxx::connection& conn, int wh, int district) {
              "ol_amount", "ol_supply_w_id", "ol_quantity", "ol_dist_info"});
 
         for (int oid = 1; oid <= CUSTOMERS_PER_DISTRICT; ++oid) {
-            int olCnt = GetRandomCount(wh, oid, district);
-            for (int lineNum = 1; lineNum <= olCnt; ++lineNum) {
-                int itemId = static_cast<int>(RandomNumber(1, ITEM_COUNT));
-
+            int cid = customerIds[oid - 1];
+            auto order = NGenerator::GenerateOrder(seed, wh, district, oid, cid);
+            const bool delivered = oid < FIRST_UNPROCESSED_O_ID;
+            auto lines = NGenerator::GenerateOrderLines(
+                seed, wh, district, oid, order.OlCnt, delivered);
+            for (const auto& line : lines) {
                 std::optional<std::string> deliveryDate;
-                double amount;
-                if (oid < FIRST_UNPROCESSED_O_ID) {
-                    deliveryDate = ts;
-                    amount = 0.0;
-                } else {
-                    amount = RandomNumber(1, 999999) / 100.0;
+                if (line.DeliveryUnix) {
+                    deliveryDate = FormatUnixTimestamp(*line.DeliveryUnix);
                 }
-
                 stream.write_values(
-                    wh, district, oid, lineNum, itemId, deliveryDate,
-                    amount, wh, 5.0, RandomString(24)
+                    line.WarehouseId,
+                    line.DistrictId,
+                    line.OrderId,
+                    line.Number,
+                    line.ItemId,
+                    deliveryDate,
+                    line.Amount.ToString(),
+                    line.SupplyWarehouseId,
+                    line.Quantity,
+                    line.DistInfo
                 );
             }
         }
@@ -436,21 +347,19 @@ void LoadOrders(pqxx::connection& conn, int wh, int district) {
     }
 }
 
-//-----------------------------------------------------------------------------
-
-void LoadWarehouse(pqxx::connection& conn, int wh, TImportState& state) {
+void LoadWarehouse(pqxx::connection& conn, uint64_t seed, int wh, TImportState& state) {
     if (state.StopToken.stop_requested()) return;
 
-    LoadStock(conn, wh);
+    LoadStock(conn, seed, wh);
     state.DataSizeLoaded.fetch_add(
         ITEM_COUNT * BYTES_PER_STOCK, std::memory_order_relaxed);
 
     for (int d = DISTRICT_LOW_ID; d <= DISTRICT_HIGH_ID; ++d) {
         if (state.StopToken.stop_requested()) return;
 
-        LoadCustomers(conn, wh, d);
-        LoadHistory(conn, wh, d);
-        LoadOrders(conn, wh, d);
+        LoadCustomers(conn, seed, wh, d);
+        LoadHistory(conn, seed, wh, d);
+        LoadOrders(conn, seed, wh, d);
 
         size_t districtBytes =
             CUSTOMERS_PER_DISTRICT * BYTES_PER_CUSTOMER +
@@ -490,8 +399,8 @@ void ImportSync(const TImportConfig& config) {
     threadCount = std::max(threadCount, size_t(1));
     threadCount = std::min(threadCount, assignedWarehouses);
 
-    LOG_I("Starting TPC-C data import for {} assigned warehouses (scale {}) using {} threads",
-          assignedWarehouses, scaleWarehouses, threadCount);
+    LOG_I("Starting TPC-C data import for {} assigned warehouses (scale {}) using {} threads (seed={})",
+          assignedWarehouses, scaleWarehouses, threadCount, config.Seed);
 
     auto startTime = Clock::now();
 
@@ -500,20 +409,22 @@ void ImportSync(const TImportConfig& config) {
         (config.OwnsGlobalData ? EstimateSharedDataSize() : 0) +
         assignedWarehouses * EstimatePerWarehouseDataSize();
 
+    const uint64_t seed = config.Seed;
+
     // Global tables and warehouse metadata for assigned ranges.
     {
         pqxx::connection conn(config.ConnectionString);
         SetSearchPath(conn, config.Path);
         DisableSynchronousCommit(conn);
         if (config.OwnsGlobalData) {
-            LoadItems(conn);
+            LoadItems(conn, seed);
             state.DataSizeLoaded.fetch_add(EstimateSharedDataSize(), std::memory_order_relaxed);
         }
         for (const auto& range : ranges) {
             const int start = RangeStartInclusive(range);
             const int end = RangeEndInclusive(range);
-            LoadWarehouses(conn, start, end);
-            LoadDistricts(conn, start, end);
+            LoadWarehouses(conn, seed, start, end);
+            LoadDistricts(conn, seed, start, end);
         }
     }
 
@@ -533,7 +444,7 @@ void ImportSync(const TImportConfig& config) {
         const size_t begin = tid * warehouseIds.size() / threadCount;
         const size_t end = (tid + 1) * warehouseIds.size() / threadCount;
 
-        threads.emplace_back([&config, &state, &warehouseIds, begin, end, assignedWarehouses]() {
+        threads.emplace_back([&config, &state, &warehouseIds, begin, end, assignedWarehouses, seed]() {
             try {
                 pqxx::connection conn(config.ConnectionString);
                 SetSearchPath(conn, config.Path);
@@ -541,7 +452,7 @@ void ImportSync(const TImportConfig& config) {
                 for (size_t i = begin; i < end; ++i) {
                     if (state.StopToken.stop_requested()) return;
                     const int wh = warehouseIds[i];
-                    LoadWarehouse(conn, wh, state);
+                    LoadWarehouse(conn, seed, wh, state);
 
                     LOG_I("Warehouse {} loaded ({}/{})",
                           wh, state.WarehousesLoaded.load(), assignedWarehouses);

@@ -5,6 +5,9 @@ from [tpcc-postgres-cpp](https://github.com/ydb-platform/tpcc-postgres-cpp) and
 to implement all adapters described in [specification.md](specification.md)
 and [adapter-api.md](adapter-api.md).
 
+Alignment sequencing: [alignment-plan.md](alignment-plan.md).
+Gap analysis: [implementation-gap-analysis.md](implementation-gap-analysis.md).
+
 ## Available in the repository
 
 | Component | Location | Used for |
@@ -15,7 +18,7 @@ and [adapter-api.md](adapter-api.md).
 | spdlog | `contrib/restricted/spdlog` | Structured logging |
 | gflags | `contrib/libs/gflags` | CLI for `tpcc-pgsql` |
 | ftxui | `contrib/libs/ftxui` | Terminal UI (optional, enabled in `tpcc-pgsql`) |
-| googletest | `contrib/restricted/googletest` | Unit and integration tests (not yet ported) |
+| googletest | `contrib/restricted/googletest` | Unit and integration tests |
 | nlohmann_json | `contrib/restricted/nlohmann_json` | JSON for run-config and metrics |
 | abseil-cpp | `contrib/restricted/abseil-cpp` | optional utilities |
 | tcmalloc | `contrib/libs/tcmalloc` | optional allocator |
@@ -42,28 +45,43 @@ required for the current port.
 
 | Module | Status | Source |
 | --- | --- | --- |
-| `tpcc/domain` | done | constants, NURand/RNG, utilities |
-| `tpcc/metrics` | done | mergeable latency histograms |
+| `tpcc/domain` | in progress | constants, `TMoney`/`TRate`, seeded + legacy RNG |
+| `tpcc/metrics` | done | mergeable latency histograms (serialization still missing) |
 | `tpcc/runtime` | done | coroutine scheduler, futures, logging, thread pool |
-| `tpcc/transactions` | skeleton → async `TFuture` + `TSemanticOp` variant | abstract session API (see alignment-plan decisions A/C) |
+| `tpcc/transactions` | in progress | async `ITpccSession` + `TSemanticOp` variant (`ops.h`) |
+| `tpcc/generator` | in progress | deterministic population; wired into PG `ImportSync` |
+| `tpcc/loader` | skeleton | `ILoadAdapter` / `PutBatch` header only |
+| `tpcc/checks` | not started | still inside `dbms/pgsql/check.*` |
 
 ### PostgreSQL adapter and executable
 
 | Module | Status | Notes |
 | --- | --- | --- |
-| `tpcc/dbms/pgsql` | done (initial port) | session, pool, transactions, init/import/run/check |
-| `tpcc/app/pgsql` (`tpcc-pgsql`) | orchestrated runtime | CLI: init, import, run, clean, check; `worker`/`loader` with run-config |
+| `tpcc/dbms/pgsql` | transitional | session, pool, SQL workflows, init/import/run/check |
+| `tpcc/app/pgsql` (`tpcc-pgsql`) | transitional | CLI aliases + `worker`/`loader`; not yet on abstract session API |
 
-### Not yet started
+### Not yet started / blocked
 
-| Module | Blocker |
+| Module | Notes |
 | --- | --- |
-| `tpcc/generator` | deterministic load and transaction inputs |
-| `tpcc/loader`, `tpcc/checks` | horizontal scaling |
-| `tpcc/runtime` (terminal phases) | phase barriers, retry loop |
-| `tpcc/dbms/ydb`, `tpcc/dbms/oceanbase` | external SDKs |
-| `tools/tpccctl` | in progress | Go orchestrator aligned with simplified profile/run-config |
-| unit/integration tests | port from `tpcc-postgres-cpp/src/ut` |
+| Idempotent PG `PutBatch` | generator exists; import still uses non-idempotent COPY |
+| Shared checks package | lift from pgsql |
+| Runtime `--start-at` phases | wall-clock sync per specification §7 |
+| `tpcc/dbms/ydb`, `oceanbase` | external SDKs |
+| `tools/tpccctl` remote drive | plan/assignment done; SSH/start-at incomplete |
+
+## Known defects (tracked)
+
+These are intentional interim gaps while Phases 1–5 of the alignment plan land:
+
+1. **Load not idempotent** — plain `COPY`; retries can PK-conflict.
+2. **Money path still uses `double` in PG transaction workflows** — `TMoney`
+   is used for load; New-Order/Payment/`query_result` still convert via
+   `double`.
+3. **Workers emit percentiles** — not raw histogram buckets (spec §8).
+4. **No `--start-at` handling** — workers start on local clocks.
+5. **SQLSTATE error classifier missing** — only `transaction_rollback` retries.
+6. **Run-config `workload.*` largely ignored** — mix/timings hardcoded.
 
 ## SDKs outside this repository
 

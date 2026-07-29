@@ -1,5 +1,7 @@
 #pragma once
 
+#include "money.h"
+
 #include <array>
 #include <chrono>
 #include <cstddef>
@@ -32,7 +34,11 @@ constexpr int C_LAST_RUN_C = 223; // in range [0, 255]
 
 constexpr int FIRST_UNPROCESSED_O_ID = 2101;
 
-constexpr double DISTRICT_INITIAL_YTD = 30000.00;
+constexpr TMoney DISTRICT_INITIAL_YTD = TMoney::FromMajorMinor(30000, 0);
+constexpr TMoney WAREHOUSE_INITIAL_YTD = TMoney::FromMajorMinor(300000, 0);
+constexpr TMoney CUSTOMER_INITIAL_CREDIT_LIMIT = TMoney::FromMajorMinor(50000, 0);
+constexpr TMoney CUSTOMER_INITIAL_BALANCE = TMoney::FromMajorMinor(-10, 0);
+constexpr TMoney CUSTOMER_INITIAL_YTD_PAYMENT = TMoney::FromMajorMinor(10, 0);
 
 // Transaction weights (percentage of mix)
 constexpr double NEW_ORDER_WEIGHT = 45.0;

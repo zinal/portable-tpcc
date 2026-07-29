@@ -3,6 +3,8 @@ RECURSE(
     metrics
     runtime
     transactions
+    generator
+    loader
     dbms
     app
 )
