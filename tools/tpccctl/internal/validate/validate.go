@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"portable-tpcc/tools/tpccctl/internal/assignment"
+	"portable-tpcc/tools/tpccctl/internal/config"
 	"portable-tpcc/tools/tpccctl/internal/profile"
 )
 
@@ -12,11 +13,6 @@ var allowedDBMS = map[string]bool{
 	"ydb":       true,
 	"pgsql":     true,
 	"oceanbase": true,
-}
-
-var allowedModes = map[string]bool{
-	"engineering":  true,
-	"conformance":    true,
 }
 
 // Result holds validation outcome.
@@ -30,7 +26,7 @@ func (r *Result) Add(err string) {
 	r.Errors = append(r.Errors, err)
 }
 
-// Profile validates a parsed profile per specification §12.
+// Profile validates a parsed profile (specification §10 — structural only).
 func Profile(p *profile.Profile) *Result {
 	res := &Result{Valid: true}
 
@@ -39,12 +35,6 @@ func Profile(p *profile.Profile) *Result {
 	}
 	if p.Kind != profile.Kind {
 		res.Add(fmt.Sprintf("unknown kind %q, want %s", p.Kind, profile.Kind))
-	}
-	if !allowedModes[p.Mode] {
-		res.Add(fmt.Sprintf("unknown mode %q", p.Mode))
-	}
-	if p.Spec.Edition == "" {
-		res.Add("spec.edition is required")
 	}
 	if p.Metadata.Name == "" {
 		res.Add("metadata.name is required")
@@ -81,22 +71,25 @@ func Profile(p *profile.Profile) *Result {
 	if len(p.Workers) > p.Scale.Warehouses {
 		res.Add("worker count exceeds warehouse count")
 	}
-	if p.Data.BatchRows <= 0 {
-		res.Add("data.batch_rows must be positive")
+	if p.Data.BatchRows < 0 {
+		res.Add("data.batch_rows must not be negative")
 	}
-	if p.Runtime.ThreadsPerWorker <= 0 {
-		res.Add("runtime.threads_per_worker must be positive")
+	if p.Runtime.ThreadsPerWorker < 0 {
+		res.Add("runtime.threads_per_worker must not be negative")
 	}
-	if p.Runtime.MaxInflightPerWorker <= 0 {
-		res.Add("runtime.max_inflight_per_worker must be positive")
+	if p.Runtime.MaxInflightPerWorker < 0 {
+		res.Add("runtime.max_inflight_per_worker must not be negative")
+	}
+	if p.Runtime.Retry.MaxAttempts < 0 {
+		res.Add("runtime.retry.max_attempts must not be negative")
 	}
 
-	if p.Data.Seed != nil && p.Mode != "engineering" {
-		res.Add("explicit data.seed is permitted only in engineering mode")
+	wl := config.ResolveWorkload(p.Workload)
+	if err := validateMix(wl.TransactionMix); err != nil {
+		res.Add(err.Error())
 	}
-
-	if p.SSH.InsecureIgnore && p.Mode != "engineering" {
-		res.Add("ssh.insecure_ignore_host_key is permitted only in engineering mode")
+	if wl.TerminalsPerWarehouse <= 0 {
+		res.Add("workload.terminals_per_warehouse must be positive")
 	}
 
 	seenNames := map[string]bool{}
@@ -120,38 +113,68 @@ func Profile(p *profile.Profile) *Result {
 	if _, err := profile.ParseDurationMs(p.Phases.StopGrace); err != nil {
 		res.Add("phases.stop_grace: " + err.Error())
 	}
-
-	if p.Runtime.Retry.MaxAttempts <= 0 {
-		res.Add("runtime.retry.max_attempts must be positive")
+	if p.Phases.AsyncWorkDrain != "" {
+		if _, err := profile.ParseDurationMs(p.Phases.AsyncWorkDrain); err != nil {
+			res.Add("phases.async_work_drain: " + err.Error())
+		}
+	}
+	if _, err := profile.ParseDurationMs(p.Phases.MaxClockSkew); err != nil {
+		res.Add("phases.max_clock_skew_ms: " + err.Error())
 	}
 
-	// Assignment sanity.
 	loadAssign, err := assignment.BuildLoaderAssignments(p.LoaderInstances(), p.Scale.Warehouses)
 	if err != nil {
 		res.Add("loader assignment: " + err.Error())
 	} else if err := assignment.ValidateAssignment(loadAssign, p.Scale.Warehouses); err != nil {
 		res.Add("loader assignment invalid: " + err.Error())
 	}
+	threads := p.Runtime.ThreadsPerWorker
+	if threads <= 0 {
+		threads = 1
+	}
+	maxInflight := p.Runtime.MaxInflightPerWorker
+	if maxInflight <= 0 {
+		maxInflight = 64
+	}
 	_, err = assignment.BuildWorkerAssignments(
 		p.WorkerInstances(),
 		p.Scale.Warehouses,
-		p.Runtime.ThreadsPerWorker,
-		p.Runtime.MaxInflightPerWorker,
+		threads,
+		maxInflight,
 	)
 	if err != nil {
 		res.Add("worker assignment: " + err.Error())
 	}
 
-	// Reject forbidden manual fields in raw YAML.
 	if p.Raw != nil {
 		for _, key := range []string{"warehouse_ranges", "assignment", "owns_global_data"} {
 			if hasNestedKey(p.Raw, key) {
 				res.Add(fmt.Sprintf("manual %q in profile is prohibited", key))
 			}
 		}
+		for _, key := range []string{"mode", "spec", "deviations"} {
+			if _, ok := p.Raw[key]; ok {
+				res.Add(fmt.Sprintf("obsolete profile field %q is not accepted", key))
+			}
+		}
 	}
 
 	return res
+}
+
+func validateMix(m config.TransactionMixJSON) error {
+	weights := []int{m.NewOrder, m.Payment, m.OrderStatus, m.Delivery, m.StockLevel}
+	sum := 0
+	for _, w := range weights {
+		if w <= 0 {
+			return fmt.Errorf("invalid mix: all transaction weights must be positive")
+		}
+		sum += w
+	}
+	if sum <= 0 {
+		return fmt.Errorf("invalid mix: weights must form a complete distribution")
+	}
+	return nil
 }
 
 func validateInstances(

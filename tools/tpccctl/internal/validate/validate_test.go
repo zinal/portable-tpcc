@@ -41,6 +41,20 @@ func TestValidate_rejectsManualAssignment(t *testing.T) {
 	}
 }
 
+func TestValidate_rejectsObsoleteFields(t *testing.T) {
+	path := filepath.Join("..", "..", "testdata", "profile.valid.yaml")
+	p, err := profile.ParseFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Raw["mode"] = "engineering"
+	p.Raw["spec"] = map[string]interface{}{"edition": "tpc-c-5.11.0"}
+	res := validate.Profile(p)
+	if res.Valid {
+		t.Fatal("expected invalid profile with obsolete mode/spec fields")
+	}
+}
+
 func TestValidate_rejectsBadInstanceName(t *testing.T) {
 	path := filepath.Join("..", "..", "testdata", "profile.valid.yaml")
 	p, err := profile.ParseFile(path)
@@ -53,3 +67,4 @@ func TestValidate_rejectsBadInstanceName(t *testing.T) {
 		t.Fatal("expected invalid instance name")
 	}
 }
+

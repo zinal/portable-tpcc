@@ -27,14 +27,10 @@ struct TWorkerAssignment {
 struct TRunConfigDocument {
     int SchemaVersion = 0;
     std::string RunId;
-    std::string Mode;
+    std::string ProfileName;
+    std::string Binary;
     std::string RunDir;
-    std::string SpecStatePath;
-    std::string ProfileSha256;
     std::string RunConfigSha256;
-    std::string SpecStateSha256;
-    std::string WorkerBinarySha256;
-    std::string Edition;
 
     std::string Dbms;
     std::string Endpoint;
@@ -43,8 +39,9 @@ struct TRunConfigDocument {
     std::string PasswordEnv;
 
     int ScaleWarehouses = 0;
-    std::string LoadId;
-    std::string LoadPlanPath;
+    int64_t Seed = 0;
+    bool HasSeed = false;
+    int BatchRows = 0;
 
     TPhasePolicy PhasePolicy;
     bool PacingEnabled = true;

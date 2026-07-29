@@ -5,7 +5,10 @@ import (
 	"sort"
 )
 
-const AlgorithmBalancedContiguousV1 = "balanced-contiguous-v1"
+const AlgorithmBalancedContiguous = "balanced-contiguous"
+
+// Deprecated alias kept for existing test names.
+const AlgorithmBalancedContiguousV1 = AlgorithmBalancedContiguous
 
 // Instance names a loader or worker instance.
 type Instance struct {
@@ -36,7 +39,7 @@ type WorkerAssignment struct {
 	MaxInflight      int
 }
 
-// BalancedContiguousV1 divides warehouses across instances per specification §5.1.
+// BalancedContiguous divides warehouses across instances (specification §5).
 func BalancedContiguousV1(instances []Instance, warehouses int) ([]WarehouseRange, error) {
 	if warehouses <= 0 {
 		return nil, fmt.Errorf("warehouses must be positive, got %d", warehouses)
@@ -70,7 +73,7 @@ func BalancedContiguousV1(instances []Instance, warehouses int) ([]WarehouseRang
 	return ranges, nil
 }
 
-// BuildLoaderAssignments applies balanced-contiguous-v1 to loaders.
+// BuildLoaderAssignments applies balanced-contiguous to loaders.
 func BuildLoaderAssignments(loaders []Instance, warehouses int) ([]LoaderAssignment, error) {
 	ranges, err := BalancedContiguousV1(loaders, warehouses)
 	if err != nil {
@@ -92,7 +95,7 @@ func BuildLoaderAssignments(loaders []Instance, warehouses int) ([]LoaderAssignm
 	return out, nil
 }
 
-// BuildWorkerAssignments applies balanced-contiguous-v1 to workers.
+// BuildWorkerAssignments applies balanced-contiguous to workers.
 func BuildWorkerAssignments(workers []Instance, warehouses, threads, maxInflight int) ([]WorkerAssignment, error) {
 	ranges, err := BalancedContiguousV1(workers, warehouses)
 	if err != nil {
@@ -113,14 +116,6 @@ func BuildWorkerAssignments(workers []Instance, warehouses, threads, maxInflight
 		}
 	}
 	return out, nil
-}
-
-// ExpectedWorkersSHA256 returns canonical hash of sorted worker instance names.
-func ExpectedWorkersSHA256(workerNames []string) (string, error) {
-	sorted := append([]string(nil), workerNames...)
-	sort.Strings(sorted)
-	// Use canonical package - import in callers or duplicate simple hash
-	return "", nil
 }
 
 // ToJSONRanges converts warehouse ranges to JSON-friendly [start, end] pairs.

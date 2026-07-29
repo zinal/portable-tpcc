@@ -6,26 +6,21 @@ import (
 	"os"
 	"path/filepath"
 
-	"portable-tpcc/tools/tpccctl/internal/assignment"
-	"portable-tpcc/tools/tpccctl/internal/canonical"
 	"portable-tpcc/tools/tpccctl/internal/config"
 	"portable-tpcc/tools/tpccctl/internal/consolidate"
 	"portable-tpcc/tools/tpccctl/internal/deploy"
 	"portable-tpcc/tools/tpccctl/internal/profile"
 	"portable-tpcc/tools/tpccctl/internal/redact"
-	"portable-tpcc/tools/tpccctl/internal/specclient"
 	"portable-tpcc/tools/tpccctl/internal/state"
 	"portable-tpcc/tools/tpccctl/internal/validate"
 )
 
 // Options configure the orchestrator runtime.
 type Options struct {
-	ProfilePath    string
-	RunID          string
-	SpecBinary     string
-	WorkerBinary   string
-	SourceRevision string
-	SkipSteps      []string
+	ProfilePath  string
+	RunID        string
+	WorkerBinary string
+	SkipSteps    []string
 }
 
 // Orchestrator coordinates tpccctl stages.
@@ -34,22 +29,13 @@ type Orchestrator struct {
 	Profile    *profile.Profile
 	Expanded   config.ExpandedPaths
 	StateStore *state.Store
-	SpecClient *specclient.Client
 }
 
 // Context holds materialized configuration for a run.
 type Context struct {
-	RunID           string
-	ProfileSHA      string
-	RunConfig       *config.RunConfig
-	RunConfigSHA    string
-	ControlConfig   *config.ControlConfig
-	LoadPlan        *config.LoadPlan
-	LoadPlanSHA     string
-	SpecStatePath   string
-	SpecStateSHA    string
-	RunDir          string
-	WorkerBinarySHA string
+	RunID     string
+	RunConfig *config.RunConfig
+	RunDir    string
 }
 
 // New creates an orchestrator from a profile path.
@@ -68,7 +54,6 @@ func New(opts Options) (*Orchestrator, error) {
 		Profile:    p,
 		Expanded:   ep,
 		StateStore: store,
-		SpecClient: specclient.New(opts.SpecBinary),
 	}, nil
 }
 
@@ -91,104 +76,22 @@ func (o *Orchestrator) Materialize() (*Context, error) {
 	if err != nil {
 		return nil, err
 	}
-	profileSHA := canonical.SHA256Bytes(profileBytes)
 
-	desc, err := o.SpecClient.Describe(o.Profile.Spec.Edition)
-	if err != nil {
-		return nil, err
-	}
-
-	runDir := filepath.Join(o.StateStore.RunDir(runID))
-	specStatePath := filepath.Join(runDir, "spec-state.json")
-	scale := map[string]interface{}{"warehouses": o.Profile.Scale.Warehouses}
-	seedSource := map[string]interface{}{"mode": o.Profile.Mode}
-	if o.Profile.Data.Seed != nil {
-		seedSource["seed"] = *o.Profile.Data.Seed
-	}
-	if err := o.SpecClient.Materialize(specclient.MaterializeInput{
-		Edition:    o.Profile.Spec.Edition,
-		Scale:      scale,
-		SeedSource: seedSource,
-	}, specStatePath); err != nil {
-		return nil, err
-	}
-	specStateSHA, err := canonical.SHA256File(specStatePath)
-	if err != nil {
-		return nil, err
-	}
-
-	workerSHA := ""
-	if o.Opts.WorkerBinary != "" {
-		workerSHA, err = canonical.SHA256File(o.Opts.WorkerBinary)
-		if err != nil {
-			return nil, err
-		}
-	}
-	specBinSHA := ""
-	if o.Opts.SpecBinary != "" {
-		specBinSHA, err = canonical.SHA256File(o.Opts.SpecBinary)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	buildIn := config.BuildInput{
-		Profile:         o.Profile,
-		ProfilePath:     o.Opts.ProfilePath,
-		ProfileSHA256:   profileSHA,
-		RunID:           runID,
-		SpecDescribe:    desc,
-		SpecStatePath:   specStatePath,
-		SpecStateSHA256: specStateSHA,
-		WorkerBinary:    o.Opts.WorkerBinary,
-		WorkerBinarySHA: workerSHA,
-		SpecBinary:      o.Opts.SpecBinary,
-		SpecBinarySHA:   specBinSHA,
-		SourceRevision:  o.Opts.SourceRevision,
-	}
-
-	loadAssign, err := assignment.BuildLoaderAssignments(o.Profile.LoaderInstances(), o.Profile.Scale.Warehouses)
-	if err != nil {
-		return nil, err
-	}
-	loadPlan, loadPlanSHA, err := config.BuildLoadPlan(runID, loadAssign, specStateSHA, workerSHA)
-	if err != nil {
-		return nil, err
-	}
-
-	rc, err := config.BuildRunConfig(buildIn, o.Expanded, loadPlanSHA, loadPlan.LoadID)
-	if err != nil {
-		return nil, err
-	}
-	rc.Load.PlanSHA256 = loadPlanSHA
-	rc.Load.LoadID = loadPlan.LoadID
-
-	runConfigSHA, err := canonical.SHA256Any(rc)
-	if err != nil {
-		return nil, err
-	}
-
-	cc, err := config.BuildControlConfig(buildIn, config.ExpandedPaths{
-		LocalArtifacts: o.Expanded.LocalArtifacts,
-		RemoteRoot:     o.Expanded.RemoteRoot,
-		ResultRoot:     o.Expanded.ResultRoot,
-		StateDir:       o.Expanded.StateDir,
-		KnownHosts:     o.Expanded.KnownHosts,
+	rc, err := config.BuildRunConfig(config.BuildInput{
+		Profile:      o.Profile,
+		ProfilePath:  o.Opts.ProfilePath,
+		RunID:        runID,
+		WorkerBinary: o.Opts.WorkerBinary,
 	})
 	if err != nil {
 		return nil, err
 	}
 
+	runDir := o.StateStore.RunDir(runID)
 	if err := os.MkdirAll(runDir, 0755); err != nil {
 		return nil, err
 	}
 	if err := state.WriteJSON(runDir, "run-config.json", rc); err != nil {
-		return nil, err
-	}
-	if err := state.WriteJSON(runDir, "control-config.json", cc); err != nil {
-		return nil, err
-	}
-	if err := state.WriteJSON(runDir, "load-plan.json", loadPlan); err != nil {
 		return nil, err
 	}
 	redacted, err := redact.RedactYAML(profileBytes)
@@ -199,18 +102,20 @@ func (o *Orchestrator) Materialize() (*Context, error) {
 		return nil, err
 	}
 
+	rs, err := o.StateStore.Load(runID)
+	if err != nil {
+		return nil, err
+	}
+	rs.State = state.StatePlanned
+	rs.InsecureHostKey = o.Profile.SSH.InsecureIgnore
+	if err := o.StateStore.Save(rs); err != nil {
+		return nil, err
+	}
+
 	return &Context{
-		RunID:           runID,
-		ProfileSHA:      profileSHA,
-		RunConfig:       rc,
-		RunConfigSHA:    runConfigSHA,
-		ControlConfig:   cc,
-		LoadPlan:        loadPlan,
-		LoadPlanSHA:     loadPlanSHA,
-		SpecStatePath:   specStatePath,
-		SpecStateSHA:    specStateSHA,
-		RunDir:          runDir,
-		WorkerBinarySHA: workerSHA,
+		RunID:     runID,
+		RunConfig: rc,
+		RunDir:    runDir,
 	}, nil
 }
 
@@ -220,7 +125,7 @@ func (o *Orchestrator) Plan() (*config.PlanSnapshot, error) {
 	if err != nil {
 		return nil, err
 	}
-	return config.BuildPlanSnapshot(ctx.RunConfig, ctx.RunConfigSHA, ctx.LoadPlanSHA), nil
+	return config.BuildPlanSnapshot(ctx.RunConfig), nil
 }
 
 // Deploy distributes local artifacts to target hosts (local mode).
@@ -240,7 +145,7 @@ func (o *Orchestrator) Deploy(ctx *Context) error {
 	return o.StateStore.Transition(ctx.RunID, state.StateSchema)
 }
 
-// Run executes the full pipeline per specification §8.2.
+// Run executes the full pipeline (specification §9).
 func (o *Orchestrator) Run() error {
 	ctx, err := o.Materialize()
 	if err != nil {
@@ -351,14 +256,8 @@ func (o *Orchestrator) consolidate(ctx *Context) error {
 	if err := o.StateStore.Transition(ctx.RunID, state.StateConsolidating); err != nil {
 		return err
 	}
-	specQual, err := o.SpecClient.Qualify(ctx.SpecStatePath, map[string]interface{}{
-		"run_id": ctx.RunID,
-	})
-	if err != nil {
-		return err
-	}
 	cons := &consolidate.Consolidator{ResultRoot: o.Expanded.ResultRoot}
-	agg, err := cons.Consolidate(ctx.RunID, ctx.RunConfig, ctx.RunConfigSHA, specQual)
+	agg, err := cons.Consolidate(ctx.RunID, ctx.RunConfig)
 	if err != nil {
 		return err
 	}

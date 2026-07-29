@@ -5,6 +5,7 @@
 #include <openssl/evp.h>
 
 #include <cstdio>
+#include <cstdlib>
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
@@ -57,6 +58,17 @@ std::string HexEncode(const unsigned char* data, size_t len) {
     return out;
 }
 
+std::string ParentDir(const std::string& path) {
+    const auto pos = path.find_last_of("/\\");
+    if (pos == std::string::npos) {
+        return ".";
+    }
+    if (pos == 0) {
+        return "/";
+    }
+    return path.substr(0, pos);
+}
+
 } // anonymous
 
 TRunConfigDocument LoadRunConfigDocument(const std::string& path) {
@@ -66,24 +78,11 @@ TRunConfigDocument LoadRunConfigDocument(const std::string& path) {
     doc.RunConfigSha256 = ComputeBytesSha256Hex(raw);
     doc.SchemaVersion = root.value("schema_version", 0);
     doc.RunId = root.value("run_id", "");
-    doc.Mode = root.value("mode", "");
-    if (root.contains("profile") && root["profile"].is_object()) {
-        doc.ProfileSha256 = root["profile"].value("sha256", "");
-    }
-    if (root.contains("spec") && root["spec"].is_object()) {
-        const auto& spec = root["spec"];
-        doc.Edition = spec.value("edition", "");
-        doc.SpecStateSha256 = spec.value("state_sha256", "");
-    }
-    if (root.contains("artifacts") && root["artifacts"].is_object()) {
-        doc.WorkerBinarySha256 = root["artifacts"].value("worker_binary_sha256", "");
-    }
-    if (root.contains("paths") && root["paths"].is_object()) {
-        const auto& paths = root["paths"];
-        doc.RunDir = paths.value("run_dir", "");
-        doc.SpecStatePath = paths.value("spec_state", "");
-        doc.LoadPlanPath = paths.value("load_plan", "");
-    }
+    doc.ProfileName = root.value("profile_name", "");
+    doc.Binary = root.value("binary", "");
+    // Work dir is the directory that contains the distributed run-config.json.
+    doc.RunDir = ParentDir(path);
+
     if (root.contains("database") && root["database"].is_object()) {
         const auto& db = root["database"];
         doc.Dbms = db.value("dbms", "");
@@ -95,16 +94,21 @@ TRunConfigDocument LoadRunConfigDocument(const std::string& path) {
     if (root.contains("scale") && root["scale"].is_object()) {
         doc.ScaleWarehouses = root["scale"].value("warehouses", 0);
     }
-    if (root.contains("load") && root["load"].is_object()) {
-        doc.LoadId = root["load"].value("load_id", "");
+    if (root.contains("data") && root["data"].is_object()) {
+        const auto& data = root["data"];
+        doc.BatchRows = data.value("batch_rows", 0);
+        if (data.contains("seed")) {
+            doc.HasSeed = true;
+            doc.Seed = data.value("seed", static_cast<int64_t>(0));
+        }
     }
-    if (root.contains("phase_policy") && root["phase_policy"].is_object()) {
-        const auto& pp = root["phase_policy"];
-        doc.PhasePolicy.StartLeadMs = pp.value("start_lead_ms", 0);
-        doc.PhasePolicy.RampUpMs = pp.value("ramp_up_ms", 0);
-        doc.PhasePolicy.MeasurementMs = pp.value("measurement_ms", 0);
-        doc.PhasePolicy.TransactionDrainMs = pp.value("transaction_drain_ms", 0);
-        doc.PhasePolicy.StopGraceMs = pp.value("stop_grace_ms", 0);
+    if (root.contains("phases") && root["phases"].is_object()) {
+        const auto& phases = root["phases"];
+        doc.PhasePolicy.StartLeadMs = phases.value("start_lead_ms", 0);
+        doc.PhasePolicy.RampUpMs = phases.value("ramp_up_ms", 0);
+        doc.PhasePolicy.MeasurementMs = phases.value("measurement_ms", 0);
+        doc.PhasePolicy.TransactionDrainMs = phases.value("transaction_drain_ms", 0);
+        doc.PhasePolicy.StopGraceMs = phases.value("stop_grace_ms", 0);
     }
     if (root.contains("runtime") && root["runtime"].is_object()) {
         const auto& rt = root["runtime"];
@@ -134,10 +138,10 @@ TRunConfigDocument LoadRunConfigDocument(const std::string& path) {
             doc.WorkerAssignments.push_back(std::move(a));
         }
     }
-    if (doc.RunId.empty() || doc.RunDir.empty()) {
-        throw std::runtime_error("run-config missing run_id or paths.run_dir");
+    if (doc.RunId.empty()) {
+        throw std::runtime_error("run-config missing run_id");
     }
-  if (doc.Dbms != "pgsql") {
+    if (doc.Dbms != "pgsql") {
         throw std::runtime_error("tpcc-pgsql run-config requires database.dbms=pgsql");
     }
     return doc;
