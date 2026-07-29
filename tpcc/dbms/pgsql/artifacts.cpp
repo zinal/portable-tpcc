@@ -149,20 +149,24 @@ void WriteWorkerResultJson(const TArtifactPaths& paths, const TRunConfigDocument
     Json counters = Json::object();
     Json histograms = Json::object();
     size_t totalFailed = 0;
-  size_t totalNewOrderOk = 0;
+    size_t totalRetried = 0;
+    size_t totalNewOrderOk = 0;
 
     for (size_t i = 0; i < TRANSACTION_TYPE_COUNT; ++i) {
         const auto type = static_cast<ETransactionType>(i);
         const auto& s = stats.GetStats(type);
         const auto ok = s.OK.load(std::memory_order_relaxed);
         const auto failed = s.Failed.load(std::memory_order_relaxed);
+        const auto retried = s.Retried.load(std::memory_order_relaxed);
         totalFailed += failed;
+        totalRetried += retried;
         if (type == ETransactionType::NewOrder) {
             totalNewOrderOk = ok;
         }
-        if (ok > 0 || failed > 0) {
+        if (ok > 0 || failed > 0 || retried > 0) {
             counters[std::string(TransactionTypeToString(type)) + "_ok"] = ok;
             counters[std::string(TransactionTypeToString(type)) + "_failed"] = failed;
+            counters[std::string(TransactionTypeToString(type)) + "_retried"] = retried;
             histograms[TransactionTypeToString(type)] = HistogramSummary(s);
         }
     }
@@ -195,6 +199,7 @@ void WriteWorkerResultJson(const TArtifactPaths& paths, const TRunConfigDocument
             {"measurement_seconds", measureSeconds},
             {"warehouses", whCount},
             {"total_failed", totalFailed},
+            {"total_retried", totalRetried},
             {"high_res_histogram", highResHistogram},
         }},
         {"exit_status", exitCode},

@@ -113,14 +113,14 @@ Goal: same `run-config` (scale, seed) → same logical rows; load retries safe.
 
 ### Phase 2 — Session / workflows / errors **[A][C]** (**B** kept in API)
 
-| # | Task | Depends |
-| --- | --- | --- |
-| 2.1 | Finalize async `session.h` + `ops.h` (`std::variant` semantic ops) | A, C |
-| 2.2 | PG `IErrorClassifier` (SQLSTATE); honor `retry.*`; no blind retry on ambiguous commit | |
-| 2.3 | PG `ISessionFactory` wrapping `PgSession` (`TFuture`) | 2.1 |
-| 2.4 | Lift five workflows to `tpcc/transactions` | 2.1, 1.2 |
-| 2.5 | Terminal retry loop + attempt metrics | 2.2 |
-| 2.6 | `ICapabilities` including `async_delivery` **[F]** | |
+| # | Task | Depends | Status |
+| --- | --- | --- | --- |
+| 2.1 | Finalize async `session.h` + `ops.h` (`std::variant` semantic ops) | A, C | Done (Phase 0/1) |
+| 2.2 | PG `IErrorClassifier` (SQLSTATE); honor `retry.*`; no blind retry on ambiguous commit | | Done |
+| 2.3 | PG `ISessionFactory` wrapping `PgSession` (`TFuture`) | 2.1 | Done (skeleton; workflows still use `PgSession&`) |
+| 2.4 | Lift five workflows to `tpcc/transactions` | 2.1, 1.2 | Pending |
+| 2.5 | Terminal retry loop + attempt metrics | 2.2 | Done |
+| 2.6 | `ICapabilities` including `async_delivery` **[F]** | | Done (`TPgCapabilities`) |
 
 **Exit:** workflows no longer take `PgSession&`.
 
@@ -218,6 +218,6 @@ Phase 0 (headers/docs)
 
 ## 6. Immediate next step
 
-1. Spec/API doc edits for A/C/D/F/G and §2.1 (this change set).
-2. Phase 0 header skeleton (`session.h` / `ops.h`).
-3. Phase 1 implementation PRs (generator, load idempotency, decimals).
+Phase 0–1 and Phase 2.2/2.3/2.5/2.6 are in tree. Next: **Phase 2.4** — lift
+the five TPC-C workflows off `PgSession&` onto `ITpccTransaction` /
+semantic ops, then Phase 3 (`--start-at`, raw histograms).

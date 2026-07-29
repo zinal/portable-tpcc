@@ -19,6 +19,9 @@ SRCS(
     init.cpp
     import.cpp
     load_batch.cpp
+    pg_error_classifier.cpp
+    pg_capabilities.cpp
+    tpcc_session.cpp
     clean.cpp
     check.cpp
     path_checker.cpp
@@ -39,6 +42,7 @@ PEERDIR(
     tpcc/domain
     tpcc/generator
     tpcc/loader
+    tpcc/transactions
     tpcc/metrics
     tpcc/runtime
     contrib/libs/libpqxx

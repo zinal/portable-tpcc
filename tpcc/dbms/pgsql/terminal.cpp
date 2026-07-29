@@ -2,11 +2,14 @@
 #include <coro_traits.h>
 #include <log.h>
 #include "transactions.h"
+#include "pg_error_classifier.h"
 #include <domain_util.h>
 #include <constants.h>
 #include <rng.h>
 
 #include <array>
+#include <optional>
+#include <pqxx/pqxx>
 
 namespace NTpcc {
 
@@ -60,6 +63,18 @@ static size_t ChooseRandomTransactionIndex() {
     return Transactions.size() - 1;
 }
 
+size_t EffectiveRetryMaxAttempts(size_t configured) {
+    // run-config uses 0 as "unset" → default 4 total attempts.
+    return configured == 0 ? 4 : configured;
+}
+
+bool ShouldRetryClass(EErrorClass cls, bool retryAmbiguousCommit) {
+    if (MayBlindRetry(cls)) {
+        return true;
+    }
+    return cls == EErrorClass::AmbiguousCommit && retryAmbiguousCommit;
+}
+
 } // anonymous
 
 TTerminal::TTerminal(size_t terminalID,
@@ -72,7 +87,9 @@ TTerminal::TTerminal(size_t terminalID,
                      std::atomic<bool>& stopWarmup,
                      std::shared_ptr<TTerminalStats>& stats,
                      int simulateTransactionMs,
-                     int simulateTransactionSelect1)
+                     int simulateTransactionSelect1,
+                     size_t retryMaxAttempts,
+                     bool retryAmbiguousCommit)
     : TaskQueue(taskQueue)
     , ConnectionPool(connectionPool)
     , Context{terminalID, warehouseID, warehouseCount, taskQueue,
@@ -81,6 +98,8 @@ TTerminal::TTerminal(size_t terminalID,
     , StopToken(stopToken)
     , StopWarmup(stopWarmup)
     , Stats(stats)
+    , RetryMaxAttempts(EffectiveRetryMaxAttempts(retryMaxAttempts))
+    , RetryAmbiguousCommit(retryAmbiguousCommit)
 {}
 
 void TTerminal::Start() {
@@ -95,6 +114,8 @@ TFuture<void> TTerminal::Run() {
 
     LOG_D("Terminal {} started", Context.TerminalID);
 
+    TPgErrorClassifier classifier;
+
     while (!StopToken.stop_requested()) {
         if (!WarmupWasStopped && StopWarmup.load(std::memory_order::relaxed)) {
             Stats->ClearOnce();
@@ -106,6 +127,7 @@ TFuture<void> TTerminal::Run() {
 
         size_t txIndex = simulationMode ? 0 : ChooseRandomTransactionIndex();
         const char* txName = simulationMode ? "Simulation" : Transactions[txIndex].Name.c_str();
+        const auto txType = static_cast<ETransactionType>(txIndex);
 
         if (!NoDelays && !simulationMode) {
             auto& transaction = Transactions[txIndex];
@@ -131,8 +153,7 @@ TFuture<void> TTerminal::Run() {
         // Reset so each business transaction gets fresh inputs; retries reuse FixedInputs.
         Context.FixedInputs.reset();
 
-        constexpr int MaxRetries = 3;
-        for (int attempt = 0; attempt <= MaxRetries; ++attempt) {
+        for (size_t attempt = 0; attempt < RetryMaxAttempts; ++attempt) {
             bool shouldRetry = false;
             try {
                 std::optional<PgConnectionPool::SessionGuard> guard;
@@ -154,30 +175,53 @@ TFuture<void> TTerminal::Run() {
                 auto latencyTransaction = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTimeTransaction);
 
                 if (result) {
-                    Stats->AddOK(static_cast<ETransactionType>(txIndex), latencyTransaction, latencyFull, latencyPure);
+                    Stats->AddOK(txType, latencyTransaction, latencyFull, latencyPure);
                     LOG_T("Terminal {} {} succeeded", Context.TerminalID, txName);
                 } else {
-                    Stats->IncFailed(static_cast<ETransactionType>(txIndex));
+                    Stats->IncFailed(txType);
                     LOG_D("Terminal {} {} failed (retryable)", Context.TerminalID, txName);
                 }
             } catch (const TUserAbortedException&) {
-                Stats->IncUserAborted(static_cast<ETransactionType>(txIndex));
+                Stats->IncUserAborted(txType);
                 LOG_T("Terminal {} {} user aborted", Context.TerminalID, txName);
-            } catch (const pqxx::transaction_rollback&) {
-                if (attempt < MaxRetries) {
-                    shouldRetry = true;
-                    LOG_D("Terminal {} {} transaction rollback, retry {}/{}",
-                          Context.TerminalID, txName, attempt + 1, MaxRetries);
-                } else {
-                    Stats->IncFailed(static_cast<ETransactionType>(txIndex));
-                    LOG_D("Terminal {} {} transaction rollback, retries exhausted", Context.TerminalID, txName);
-                }
             } catch (const std::exception& ex) {
                 if (StopToken.stop_requested()) {
                     LOG_D("Terminal {} {} interrupted during shutdown", Context.TerminalID, txName);
-                } else {
-                    LOG_E("Terminal {} exception in {}: {}", Context.TerminalID, txName, ex.what());
+                    break;
+                }
+
+                const EErrorClass cls = classifier.ClassifyException(ex);
+                const bool attemptsRemain = (attempt + 1) < RetryMaxAttempts;
+
+                if (cls == EErrorClass::Integrity) {
+                    LOG_E("Terminal {} integrity error in {}: {}", Context.TerminalID, txName, ex.what());
+                    Stats->IncFailed(txType);
                     fatal = true;
+                } else if (cls == EErrorClass::Cancelled) {
+                    LOG_D("Terminal {} {} cancelled: {}", Context.TerminalID, txName, ex.what());
+                    break;
+                } else if (ShouldRetryClass(cls, RetryAmbiguousCommit) && attemptsRemain) {
+                    shouldRetry = true;
+                    Stats->IncRetried(txType);
+                    LOG_D("Terminal {} {} classified {} ({})",
+                          Context.TerminalID, txName,
+                          static_cast<int>(cls), ex.what());
+                    LOG_D("Terminal {} {} retry {}/{}",
+                          Context.TerminalID, txName, attempt + 1, RetryMaxAttempts);
+                } else {
+                    Stats->IncFailed(txType);
+                    if (cls == EErrorClass::AmbiguousCommit && !RetryAmbiguousCommit) {
+                        LOG_E("Terminal {} {} ambiguous commit (blind retry disabled): {}",
+                              Context.TerminalID, txName, ex.what());
+                    } else if (!attemptsRemain && ShouldRetryClass(cls, RetryAmbiguousCommit)) {
+                        LOG_D("Terminal {} {} retries exhausted: {}", Context.TerminalID, txName, ex.what());
+                    } else {
+                        LOG_E("Terminal {} exception in {}: {}", Context.TerminalID, txName, ex.what());
+                        // Unexpected permanent/native errors stop the terminal.
+                        if (cls == EErrorClass::Permanent) {
+                            fatal = true;
+                        }
+                    }
                 }
             }
 
