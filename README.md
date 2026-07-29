@@ -14,7 +14,9 @@ Architecture draft:
 
 Implementation has started. The initial PostgreSQL port (`tpcc-pgsql`) and
 shared libraries are described in [docs/dependencies.md](docs/dependencies.md)
-and [docs/adapter-api.md](docs/adapter-api.md).
+and [docs/adapter-api.md](docs/adapter-api.md). A gap analysis versus the design
+documents is in
+[docs/implementation-gap-analysis.md](docs/implementation-gap-analysis.md).
 
 Results MUST NOT be called official TPC-C results without the required TPC
 verification.
