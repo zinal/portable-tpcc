@@ -46,6 +46,7 @@ struct TRunConfigDocument {
     TPhasePolicy PhasePolicy;
     bool PacingEnabled = true;
     size_t RetryMaxAttempts = 0;
+    bool RetryAmbiguousCommit = false;
 
     std::vector<TLoaderAssignment> LoadAssignments;
     std::vector<TWorkerAssignment> WorkerAssignments;

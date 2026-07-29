@@ -35,6 +35,7 @@ public:
             dst.OK.fetch_add(OK.load(std::memory_order_relaxed), std::memory_order_relaxed);
             dst.Failed.fetch_add(Failed.load(std::memory_order_relaxed), std::memory_order_relaxed);
             dst.UserAborted.fetch_add(UserAborted.load(std::memory_order_relaxed), std::memory_order_relaxed);
+            dst.Retried.fetch_add(Retried.load(std::memory_order_relaxed), std::memory_order_relaxed);
 
             std::lock_guard guard(HistLock);
             dst.LatencyHistogramMs.Add(LatencyHistogramMs);
@@ -46,6 +47,7 @@ public:
             OK.store(0, std::memory_order_relaxed);
             Failed.store(0, std::memory_order_relaxed);
             UserAborted.store(0, std::memory_order_relaxed);
+            Retried.store(0, std::memory_order_relaxed);
 
             std::lock_guard guard(HistLock);
             LatencyHistogramMs.Reset();
@@ -56,6 +58,7 @@ public:
         std::atomic<size_t> OK = 0;
         std::atomic<size_t> Failed = 0;
         std::atomic<size_t> UserAborted = 0;
+        std::atomic<size_t> Retried = 0;
 
         mutable TSpinLock HistLock;
         THistogram LatencyHistogramMs;
@@ -104,6 +107,10 @@ public:
         PerTransactionTypeStats[static_cast<size_t>(type)].UserAborted.fetch_add(1, std::memory_order_relaxed);
     }
 
+    void IncRetried(ETransactionType type) {
+        PerTransactionTypeStats[static_cast<size_t>(type)].Retried.fetch_add(1, std::memory_order_relaxed);
+    }
+
     void Collect(TTerminalStats& dst) const {
         for (size_t i = 0; i < PerTransactionTypeStats.size(); ++i) {
             PerTransactionTypeStats[i].Collect(dst.PerTransactionTypeStats[i]);
@@ -143,7 +150,9 @@ public:
         std::atomic<bool>& stopWarmup,
         std::shared_ptr<TTerminalStats>& stats,
         int simulateTransactionMs = 0,
-        int simulateTransactionSelect1 = 0);
+        int simulateTransactionSelect1 = 0,
+        size_t retryMaxAttempts = 4,
+        bool retryAmbiguousCommit = false);
 
     TTerminal(const TTerminal&) = delete;
     TTerminal& operator=(TTerminal&) = delete;
@@ -166,6 +175,8 @@ private:
     std::stop_token StopToken;
     std::atomic<bool>& StopWarmup;
     std::shared_ptr<TTerminalStats> Stats;
+    size_t RetryMaxAttempts = 4;
+    bool RetryAmbiguousCommit = false;
 
     std::atomic<bool> Done{false};
     bool Started = false;

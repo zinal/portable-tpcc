@@ -80,6 +80,8 @@ int RunWorkerFromRunConfig(const std::string& runConfigPath, const std::string& 
     runCfg.Instance = instance;
     runCfg.InstanceDir = instanceDir;
     runCfg.UseTui = false;
+    runCfg.RetryMaxAttempts = doc.RetryMaxAttempts;
+    runCfg.RetryAmbiguousCommit = doc.RetryAmbiguousCommit;
 
     TTerminalStats aggregated(false);
     TRunOutcome outcome;

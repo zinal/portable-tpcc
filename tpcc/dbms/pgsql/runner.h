@@ -43,6 +43,11 @@ struct TRunConfig {
     std::string Instance;
     std::string InstanceDir;
 
+    // Total attempts per business transaction (including the first). 0 → default 4.
+    size_t RetryMaxAttempts = 0;
+    // When false (default), AmbiguousCommit MUST NOT be blind-retried.
+    bool RetryAmbiguousCommit = false;
+
     bool IsSimulationMode() const {
         return SimulateTransactionMs > 0 || SimulateTransactionSelect1 > 0;
     }

@@ -6,6 +6,10 @@ ADDINCL(
     GLOBAL tpcc/transactions
 )
 
+SRCS(
+    error_classifier.cpp
+)
+
 PEERDIR(
     tpcc/domain
     tpcc/runtime

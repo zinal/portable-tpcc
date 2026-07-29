@@ -115,6 +115,7 @@ TRunConfigDocument LoadRunConfigDocument(const std::string& path) {
         doc.PacingEnabled = rt.value("pacing", "enabled") == std::string("enabled");
         if (rt.contains("retry") && rt["retry"].is_object()) {
             doc.RetryMaxAttempts = rt["retry"].value("max_attempts", 0);
+            doc.RetryAmbiguousCommit = rt["retry"].value("retry_ambiguous_commit", false);
         }
     }
     if (root.contains("load_assignment") && root["load_assignment"].is_array()) {
