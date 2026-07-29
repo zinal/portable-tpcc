@@ -57,7 +57,7 @@ required for the current port.
 
 | Module | Blocker |
 | --- | --- |
-| `tpcc/spec` | fixed TPC-C rules module and `tpcc-spec` CLI |
+| `tpcc/spec` | fixed workload-model helpers and `tpcc-spec` CLI |
 | `tpcc/generator` | deterministic load and transaction inputs (spec) |
 | `tpcc/loader`, `tpcc/checks` | horizontal scaling (spec) |
 | `tpcc/runtime` (terminal phases) | phase barriers, retry loop per spec |
