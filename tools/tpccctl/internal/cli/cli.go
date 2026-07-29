@@ -11,17 +11,15 @@ import (
 
 // Config holds global CLI flags.
 type Config struct {
-	ProfilePath    string
-	RunID          string
-	SpecBinary     string
-	WorkerBinary   string
-	SourceRevision string
-	SkipSteps      []string
-	Yes            bool
-	CheckPhase     string
+	ProfilePath  string
+	RunID        string
+	WorkerBinary string
+	SkipSteps    []string
+	Yes          bool
+	CheckPhase   string
 }
 
-// Run dispatches tpccctl subcommands per specification §8.2.
+// Run dispatches tpccctl subcommands (specification §9).
 func Run(args []string) int {
 	if len(args) == 0 {
 		printUsage()
@@ -46,26 +44,12 @@ func Run(args []string) int {
 			}
 			cfg.RunID = rest[i+1]
 			i++
-		case "--spec-binary":
-			if i+1 >= len(rest) {
-				fmt.Fprintln(os.Stderr, "--spec-binary requires a value")
-				return 2
-			}
-			cfg.SpecBinary = rest[i+1]
-			i++
 		case "--worker-binary":
 			if i+1 >= len(rest) {
 				fmt.Fprintln(os.Stderr, "--worker-binary requires a value")
 				return 2
 			}
 			cfg.WorkerBinary = rest[i+1]
-			i++
-		case "--source-revision":
-			if i+1 >= len(rest) {
-				fmt.Fprintln(os.Stderr, "--source-revision requires a value")
-				return 2
-			}
-			cfg.SourceRevision = rest[i+1]
 			i++
 		case "--skip":
 			if i+1 >= len(rest) {
@@ -89,12 +73,10 @@ func Run(args []string) int {
 	}
 
 	opts := orchestrator.Options{
-		ProfilePath:    cfg.ProfilePath,
-		RunID:          cfg.RunID,
-		SpecBinary:     cfg.SpecBinary,
-		WorkerBinary:   cfg.WorkerBinary,
-		SourceRevision: cfg.SourceRevision,
-		SkipSteps:      cfg.SkipSteps,
+		ProfilePath:  cfg.ProfilePath,
+		RunID:        cfg.RunID,
+		WorkerBinary: cfg.WorkerBinary,
+		SkipSteps:    cfg.SkipSteps,
 	}
 
 	switch cmd {
@@ -335,10 +317,8 @@ Commands:
 Options:
   --profile <path>         Profile YAML path
   --run-id <id>            Run identifier
-  --spec-binary <path>     tpcc-spec binary path
   --worker-binary <path>   Worker binary path
-  --source-revision <rev>  Source git revision
-  --skip <step>            Skip pipeline step (engineering)
+  --skip <step>            Skip pipeline step
   --yes                    Non-interactive confirmation
 `)
 	fmt.Println(usage)

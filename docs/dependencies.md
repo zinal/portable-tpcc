@@ -19,7 +19,7 @@ to implement all adapters described in [specification.md](specification.md).
 | abseil-cpp | `contrib/restricted/abseil-cpp` | optional utilities |
 | tcmalloc | `contrib/libs/tcmalloc` | optional allocator |
 | util | `util/` | strings, threading, system, random |
-| ya make / Go toolchain | `devtools/`, `ya` | build and future `tpccctl` |
+| ya make / Go toolchain | `devtools/`, `ya`; Go-native tools for `tpccctl` | C++ build; Go modules for orchestrator |
 
 ## libpqxx version note
 
@@ -61,7 +61,7 @@ required for the current port.
 | `tpcc/loader`, `tpcc/checks` | horizontal scaling |
 | `tpcc/runtime` (terminal phases) | phase barriers, retry loop |
 | `tpcc/dbms/ydb`, `tpcc/dbms/oceanbase` | external SDKs |
-| `tools/tpccctl` | Go orchestrator (`validate`, `plan`, `deploy`, `run`, etc.) |
+| `tools/tpccctl` | in progress | Go orchestrator aligned with simplified profile/run-config |
 | unit/integration tests | port from `tpcc-postgres-cpp/src/ut` |
 
 ## SDKs outside this repository

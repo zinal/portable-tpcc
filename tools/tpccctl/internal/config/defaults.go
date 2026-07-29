@@ -1,0 +1,98 @@
+package config
+
+import "portable-tpcc/tools/tpccctl/internal/profile"
+
+// Default workload parameters embedded in tpccctl (specification §1, §5).
+func DefaultWorkload() WorkloadBlock {
+	return WorkloadBlock{
+		TerminalsPerWarehouse: 10,
+		TransactionMix: TransactionMixJSON{
+			NewOrder:    45,
+			Payment:     43,
+			OrderStatus: 4,
+			Delivery:    4,
+			StockLevel:  4,
+		},
+		KeyingTimeMs: TxTimingJSON{
+			NewOrder:    18000,
+			Payment:     3000,
+			OrderStatus: 2000,
+			Delivery:    2000,
+			StockLevel:  2000,
+		},
+		ThinkTimeMs: TxTimingJSON{
+			NewOrder:    12000,
+			Payment:     12000,
+			OrderStatus: 10000,
+			Delivery:    5000,
+			StockLevel:  5000,
+		},
+	}
+}
+
+func DefaultHistogram() HistogramJSON {
+	return HistogramJSON{
+		Unit:               "us",
+		Lowest:             1,
+		Highest:            120000000,
+		SignificantFigures: 3,
+	}
+}
+
+func DefaultRetry() RetryJSON {
+	return RetryJSON{
+		MaxAttempts:          4,
+		InitialBackoffMs:     10,
+		MaxBackoffMs:         500,
+		Jitter:               "full",
+		RetryAmbiguousCommit: false,
+	}
+}
+
+// ResolveWorkload merges profile overrides onto built-in defaults.
+func ResolveWorkload(w profile.Workload) WorkloadBlock {
+	out := DefaultWorkload()
+	if w.TerminalsPerWarehouse > 0 {
+		out.TerminalsPerWarehouse = w.TerminalsPerWarehouse
+	}
+	applyMixOverride(&out.TransactionMix, w.TransactionMix)
+	applyTimingOverride(&out.KeyingTimeMs, w.KeyingTimeMs)
+	applyTimingOverride(&out.ThinkTimeMs, w.ThinkTimeMs)
+	return out
+}
+
+func applyMixOverride(dst *TransactionMixJSON, src profile.TransactionMix) {
+	if src.NewOrder > 0 {
+		dst.NewOrder = src.NewOrder
+	}
+	if src.Payment > 0 {
+		dst.Payment = src.Payment
+	}
+	if src.OrderStatus > 0 {
+		dst.OrderStatus = src.OrderStatus
+	}
+	if src.Delivery > 0 {
+		dst.Delivery = src.Delivery
+	}
+	if src.StockLevel > 0 {
+		dst.StockLevel = src.StockLevel
+	}
+}
+
+func applyTimingOverride(dst *TxTimingJSON, src profile.TxTiming) {
+	if src.NewOrder > 0 {
+		dst.NewOrder = src.NewOrder
+	}
+	if src.Payment > 0 {
+		dst.Payment = src.Payment
+	}
+	if src.OrderStatus > 0 {
+		dst.OrderStatus = src.OrderStatus
+	}
+	if src.Delivery > 0 {
+		dst.Delivery = src.Delivery
+	}
+	if src.StockLevel > 0 {
+		dst.StockLevel = src.StockLevel
+	}
+}

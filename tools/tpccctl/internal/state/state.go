@@ -30,13 +30,13 @@ const (
 
 // RunState is mutable control-host state for a run.
 type RunState struct {
-	SchemaVersion int               `json:"schema_version"`
-	RunID         string            `json:"run_id"`
-	State         string            `json:"state"`
-	UpdatedAt     string            `json:"updated_at"`
-	Error         string            `json:"error,omitempty"`
-	Processes     map[string]Process `json:"processes,omitempty"`
-	Deviations    []Deviation       `json:"deviations,omitempty"`
+	SchemaVersion    int                 `json:"schema_version"`
+	RunID            string              `json:"run_id"`
+	State            string              `json:"state"`
+	UpdatedAt        string              `json:"updated_at"`
+	Error            string              `json:"error,omitempty"`
+	InsecureHostKey  bool                `json:"insecure_ignore_host_key,omitempty"`
+	Processes        map[string]Process  `json:"processes,omitempty"`
 }
 
 type Process struct {
@@ -46,11 +46,6 @@ type Process struct {
 	PID       int    `json:"pid,omitempty"`
 	State     string `json:"state"`
 	UpdatedAt string `json:"updated_at"`
-}
-
-type Deviation struct {
-	Code   string `json:"code"`
-	Reason string `json:"reason"`
 }
 
 // Store manages run-state on the control host.

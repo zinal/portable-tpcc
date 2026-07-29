@@ -16,7 +16,6 @@ func TestPlan_snapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Rewrite paths to temp dir.
 	content := string(data)
 	content = replaceAll(content, "./dist", filepath.Join(dir, "dist"))
 	content = replaceAll(content, "./remote", filepath.Join(dir, "remote"))
@@ -40,6 +39,9 @@ func TestPlan_snapshot(t *testing.T) {
 	if plan.RunID == "" {
 		t.Fatal("empty run_id")
 	}
+	if plan.Binary != "tpcc-pgsql" {
+		t.Fatalf("binary %q, want tpcc-pgsql", plan.Binary)
+	}
 	if len(plan.WorkerArgv) != 1 {
 		t.Fatalf("worker argv count %d", len(plan.WorkerArgv))
 	}
@@ -47,8 +49,8 @@ func TestPlan_snapshot(t *testing.T) {
 	if len(argv) != 5 || argv[0] != "worker" {
 		t.Fatalf("unexpected argv: %v", argv)
 	}
-	if plan.RunConfigSHA256 == "" || plan.LoadPlanSHA256 == "" {
-		t.Fatal("missing plan hashes")
+	if plan.WorkerAssignment[0].Threads != 2 {
+		t.Fatalf("threads %d, want 2", plan.WorkerAssignment[0].Threads)
 	}
 }
 

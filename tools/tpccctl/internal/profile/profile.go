@@ -19,24 +19,22 @@ var instanceNameRE = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 
 // Profile is the portable-tpcc/v1 run profile.
 type Profile struct {
-	APIVersion string       `yaml:"apiVersion"`
-	Kind       string       `yaml:"kind"`
-	Metadata   Metadata     `yaml:"metadata"`
-	Mode       string       `yaml:"mode"`
-	Spec       SpecRef      `yaml:"spec"`
-	Deviations []Deviation  `yaml:"deviations"`
-	SSH        SSHConfig    `yaml:"ssh"`
-	Hosts      Hosts        `yaml:"hosts"`
-	Paths      Paths        `yaml:"paths"`
-	Database   Database     `yaml:"database"`
-	Scale      Scale        `yaml:"scale"`
-	Data       Data         `yaml:"data"`
-	Loaders    []NamedHost  `yaml:"loaders"`
-	Workers    []NamedHost  `yaml:"workers"`
-	Phases     Phases       `yaml:"phases"`
-	Runtime    Runtime      `yaml:"runtime"`
-	Checks     Checks       `yaml:"checks"`
-	Collect    Collect      `yaml:"collect"`
+	APIVersion string      `yaml:"apiVersion"`
+	Kind       string      `yaml:"kind"`
+	Metadata   Metadata    `yaml:"metadata"`
+	SSH        SSHConfig   `yaml:"ssh"`
+	Hosts      Hosts       `yaml:"hosts"`
+	Paths      Paths       `yaml:"paths"`
+	Database   Database    `yaml:"database"`
+	Scale      Scale       `yaml:"scale"`
+	Data       Data        `yaml:"data"`
+	Workload   Workload    `yaml:"workload"`
+	Loaders    []NamedHost `yaml:"loaders"`
+	Workers    []NamedHost `yaml:"workers"`
+	Phases     Phases      `yaml:"phases"`
+	Runtime    Runtime     `yaml:"runtime"`
+	Checks     Checks      `yaml:"checks"`
+	Collect    Collect     `yaml:"collect"`
 
 	// Reject unknown fields at parse time via strict decoding.
 	Raw map[string]interface{} `yaml:"-"`
@@ -46,21 +44,12 @@ type Metadata struct {
 	Name string `yaml:"name"`
 }
 
-type SpecRef struct {
-	Edition string `yaml:"edition"`
-}
-
-type Deviation struct {
-	Code   string `yaml:"code"`
-	Reason string `yaml:"reason"`
-}
-
 type SSHConfig struct {
-	User            string `yaml:"user"`
-	UseAgent        bool   `yaml:"use_agent"`
-	KnownHosts      string `yaml:"known_hosts"`
-	ConnectTimeout  string `yaml:"connect_timeout"`
-	InsecureIgnore  bool   `yaml:"insecure_ignore_host_key"`
+	User           string `yaml:"user"`
+	UseAgent       bool   `yaml:"use_agent"`
+	KnownHosts     string `yaml:"known_hosts"`
+	ConnectTimeout string `yaml:"connect_timeout"`
+	InsecureIgnore bool   `yaml:"insecure_ignore_host_key"`
 }
 
 type Hosts map[string]HostEntry
@@ -94,42 +83,65 @@ type Data struct {
 	BatchRows int    `yaml:"batch_rows"`
 }
 
+// Workload holds optional overrides; omitted fields use tpccctl defaults.
+type Workload struct {
+	TerminalsPerWarehouse int            `yaml:"terminals_per_warehouse"`
+	TransactionMix        TransactionMix `yaml:"transaction_mix"`
+	KeyingTimeMs          TxTiming       `yaml:"keying_time_ms"`
+	ThinkTimeMs           TxTiming       `yaml:"think_time_ms"`
+}
+
+type TransactionMix struct {
+	NewOrder    int `yaml:"new_order"`
+	Payment     int `yaml:"payment"`
+	OrderStatus int `yaml:"order_status"`
+	Delivery    int `yaml:"delivery"`
+	StockLevel  int `yaml:"stock_level"`
+}
+
+type TxTiming struct {
+	NewOrder    int `yaml:"new_order"`
+	Payment     int `yaml:"payment"`
+	OrderStatus int `yaml:"order_status"`
+	Delivery    int `yaml:"delivery"`
+	StockLevel  int `yaml:"stock_level"`
+}
+
 type NamedHost struct {
 	Name string `yaml:"name"`
 	Host string `yaml:"host"`
 }
 
 type Phases struct {
-	StartLead            string `yaml:"start_lead"`
-	RampUp               string `yaml:"ramp_up"`
-	Measurement          string `yaml:"measurement"`
-	TransactionDrain     string `yaml:"transaction_drain"`
-	StopGrace            string `yaml:"stop_grace"`
-	MaxClockSkew         string `yaml:"max_clock_skew_ms"`
-	MaxClockUncertainty  string `yaml:"max_clock_uncertainty_ms"`
-	MaxClockDrift        string `yaml:"max_clock_drift_ms"`
+	StartLead        string `yaml:"start_lead"`
+	RampUp           string `yaml:"ramp_up"`
+	Measurement      string `yaml:"measurement"`
+	TransactionDrain string `yaml:"transaction_drain"`
+	AsyncWorkDrain   string `yaml:"async_work_drain"`
+	StopGrace        string `yaml:"stop_grace"`
+	MaxClockSkew     string `yaml:"max_clock_skew_ms"`
 }
 
 type Runtime struct {
-	Pacing              string      `yaml:"pacing"`
-	ThreadsPerWorker    int         `yaml:"threads_per_worker"`
-	MaxInflightPerWorker int        `yaml:"max_inflight_per_worker"`
-	Retry               RetryPolicy `yaml:"retry"`
-	Histogram           Histogram   `yaml:"histogram"`
+	Pacing               string      `yaml:"pacing"`
+	ThreadsPerWorker     int         `yaml:"threads_per_worker"`
+	MaxInflightPerWorker int         `yaml:"max_inflight_per_worker"`
+	Retry                RetryPolicy `yaml:"retry"`
+	Histogram            Histogram   `yaml:"histogram"`
 }
 
 type RetryPolicy struct {
-	MaxAttempts     int    `yaml:"max_attempts"`
-	InitialBackoff  string `yaml:"initial_backoff"`
-	MaxBackoff      string `yaml:"max_backoff"`
-	Jitter          string `yaml:"jitter"`
+	MaxAttempts    int    `yaml:"max_attempts"`
+	InitialBackoff string `yaml:"initial_backoff"`
+	MaxBackoff     string `yaml:"max_backoff"`
+	Jitter         string `yaml:"jitter"`
 }
 
 type Histogram struct {
-	Unit                string `yaml:"unit"`
-	Lowest              int64  `yaml:"lowest"`
-	Highest             int64  `yaml:"highest"`
-	SignificantFigures  int    `yaml:"significant_figures"`
+	Unit               string `yaml:"unit"`
+	Lowest             int64  `yaml:"lowest"`
+	Highest            int64  `yaml:"highest"`
+	SignificantFigures int    `yaml:"significant_figures"`
 }
 
 type Checks struct {
@@ -152,7 +164,7 @@ func ParseFile(path string) (*Profile, error) {
 	return Parse(data)
 }
 
-// Parse decodes profile YAML with strict field checking.
+// Parse decodes profile YAML.
 func Parse(data []byte) (*Profile, error) {
 	var raw map[string]interface{}
 	if err := yaml.Unmarshal(data, &raw); err != nil {
@@ -197,7 +209,6 @@ func ParseDurationMs(s string) (int64, error) {
 	if s == "" {
 		return 0, fmt.Errorf("empty duration")
 	}
-	// Support plain milliseconds suffix for clock fields.
 	if isDigits(s) {
 		v, err := parseInt64(s)
 		if err != nil {

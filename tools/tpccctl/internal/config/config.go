@@ -3,191 +3,109 @@ package config
 import (
 	"fmt"
 	"path/filepath"
-	"sort"
 	"time"
 
 	"portable-tpcc/tools/tpccctl/internal/assignment"
-	"portable-tpcc/tools/tpccctl/internal/canonical"
 	"portable-tpcc/tools/tpccctl/internal/paths"
 	"portable-tpcc/tools/tpccctl/internal/profile"
-	"portable-tpcc/tools/tpccctl/internal/specclient"
 )
 
 // BuildInput holds artifacts needed to materialize run configuration.
 type BuildInput struct {
-	Profile           *profile.Profile
-	ProfilePath       string
-	ProfileSHA256     string
-	RunID             string
-	SpecDescribe      *specclient.DescribeResult
-	SpecStatePath     string
-	SpecStateSHA256   string
-	WorkerBinary      string
-	WorkerBinarySHA   string
-	SpecBinary        string
-	SpecBinarySHA     string
-	SourceRevision    string
-	CanonicalIdentity map[string]interface{}
+	Profile      *profile.Profile
+	ProfilePath  string
+	RunID        string
+	WorkerBinary string
 }
 
-// ControlConfig is the immutable control-plane configuration.
-type ControlConfig struct {
-	SchemaVersion int                    `json:"schema_version"`
-	RunID         string                 `json:"run_id"`
-	Profile       ProfileRef             `json:"profile"`
-	SSH           ControlSSH             `json:"ssh"`
-	Hosts         map[string]HostAddress `json:"hosts"`
-	Paths         ControlPaths           `json:"paths"`
-	Deploy        DeployPolicy           `json:"deploy"`
-	Secrets       Secrets                `json:"secrets"`
-}
-
-type ProfileRef struct {
-	Name   string `json:"name"`
-	SHA256 string `json:"sha256"`
-}
-
-type ControlSSH struct {
-	User             string `json:"user"`
-	UseAgent         bool   `json:"use_agent"`
-	KnownHosts       string `json:"known_hosts"`
-	ConnectTimeoutMs int64  `json:"connect_timeout_ms"`
-}
-
-type HostAddress struct {
-	Address string `json:"address"`
-}
-
-type ControlPaths struct {
-	LocalArtifacts string `json:"local_artifacts"`
-	RemoteRoot     string `json:"remote_root"`
-	ResultRoot     string `json:"result_root"`
-	StateDir       string `json:"state_dir"`
-}
-
-type DeployPolicy struct {
-	Transport    string `json:"transport"`
-	VerifySHA256 bool   `json:"verify_sha256"`
-}
-
-type Secrets struct {
-	DatabasePasswordEnv string `json:"database_password_env"`
-}
-
-// RunConfig is the immutable runtime configuration distributed to workers.
+// RunConfig is the immutable runtime configuration distributed to loaders and workers.
+// It carries concrete settings (specification §5), not hash stand-ins.
 type RunConfig struct {
 	SchemaVersion    int                    `json:"schema_version"`
 	RunID            string                 `json:"run_id"`
-	Mode             string                 `json:"mode"`
 	CreatedAt        string                 `json:"created_at"`
-	Profile          ProfileRef             `json:"profile"`
-	Spec             SpecBlock              `json:"spec"`
-	Artifacts        Artifacts              `json:"artifacts"`
-	Paths            RunPaths               `json:"paths"`
+	ProfileName      string                 `json:"profile_name"`
+	Binary           string                 `json:"binary"`
 	Database         RunDatabase            `json:"database"`
 	Scale            ScaleBlock             `json:"scale"`
-	Load             LoadBlock              `json:"load"`
-	ExpectedInstances ExpectedInstances      `json:"expected_instances"`
-	Assignment       AssignmentMeta         `json:"assignment"`
+	Data             DataBlock              `json:"data"`
+	Workload         WorkloadBlock          `json:"workload"`
 	LoadAssignment   []LoadAssignmentJSON   `json:"load_assignment"`
 	WorkerAssignment []WorkerAssignmentJSON `json:"worker_assignment"`
-	PhasePolicy      PhasePolicy            `json:"phase_policy"`
+	Phases           PhasesJSON             `json:"phases"`
 	Runtime          RunRuntime             `json:"runtime"`
-	Checks           profile.Checks         `json:"checks"`
-	Collect          RunCollect             `json:"collect"`
-	FailurePolicy    FailurePolicy          `json:"failure_policy"`
-	Deviations       []profile.Deviation    `json:"deviations"`
-}
-
-type SpecBlock struct {
-	Edition         string `json:"edition"`
-	DocumentURL     string `json:"document_url"`
-	DocumentSHA256  string `json:"document_sha256"`
-	ModuleABI       int    `json:"module_abi"`
-	ModuleSHA256    string `json:"module_sha256"`
-	StateSHA256     string `json:"state_sha256"`
-}
-
-type Artifacts struct {
-	WorkerBinary       string `json:"worker_binary"`
-	WorkerBinarySHA256 string `json:"worker_binary_sha256"`
-	SpecBinary         string `json:"spec_binary"`
-	SpecBinarySHA256   string `json:"spec_binary_sha256"`
-	SourceRevision     string `json:"source_revision"`
-}
-
-type RunPaths struct {
-	RemoteRoot string `json:"remote_root"`
-	RunDir     string `json:"run_dir"`
-	SpecState  string `json:"spec_state"`
-	LoadPlan   string `json:"load_plan"`
 }
 
 type RunDatabase struct {
-	DBMS              string                 `json:"dbms"`
-	Endpoint          string                 `json:"endpoint"`
-	Database          string                 `json:"database"`
-	Path              string                 `json:"path"`
-	CanonicalIdentity map[string]interface{} `json:"canonical_identity"`
-	PasswordEnv       string                 `json:"password_env"`
-	Options           map[string]interface{} `json:"options"`
+	DBMS        string                 `json:"dbms"`
+	Endpoint    string                 `json:"endpoint"`
+	Database    string                 `json:"database"`
+	Path        string                 `json:"path"`
+	PasswordEnv string                 `json:"password_env"`
+	Options     map[string]interface{} `json:"options,omitempty"`
 }
 
 type ScaleBlock struct {
 	Warehouses int `json:"warehouses"`
 }
 
-type LoadBlock struct {
-	LoadID         string `json:"load_id"`
-	PlanSHA256     string `json:"plan_sha256"`
-	BatchRows      int    `json:"batch_rows"`
-	WriteContract  string `json:"write_contract"`
+type DataBlock struct {
+	Seed      int64 `json:"seed,omitempty"`
+	BatchRows int   `json:"batch_rows"`
 }
 
-type ExpectedInstances struct {
-	Loaders          []string `json:"loaders"`
-	Workers          []string `json:"workers"`
-	WorkersSHA256    string   `json:"workers_sha256"`
+type WorkloadBlock struct {
+	TerminalsPerWarehouse int                `json:"terminals_per_warehouse"`
+	TransactionMix        TransactionMixJSON `json:"transaction_mix"`
+	KeyingTimeMs          TxTimingJSON       `json:"keying_time_ms"`
+	ThinkTimeMs           TxTimingJSON       `json:"think_time_ms"`
 }
 
-type AssignmentMeta struct {
-	Algorithm      string `json:"algorithm"`
-	Source         string `json:"source"`
-	SortKey        string `json:"sort_key"`
-	ManualOverride bool   `json:"manual_override"`
+type TransactionMixJSON struct {
+	NewOrder    int `json:"new_order"`
+	Payment     int `json:"payment"`
+	OrderStatus int `json:"order_status"`
+	Delivery    int `json:"delivery"`
+	StockLevel  int `json:"stock_level"`
+}
+
+type TxTimingJSON struct {
+	NewOrder    int `json:"new_order"`
+	Payment     int `json:"payment"`
+	OrderStatus int `json:"order_status"`
+	Delivery    int `json:"delivery"`
+	StockLevel  int `json:"stock_level"`
 }
 
 type LoadAssignmentJSON struct {
-	Instance         string  `json:"instance"`
-	Host             string  `json:"host"`
-	WarehouseRanges  [][]int `json:"warehouse_ranges"`
-	OwnsGlobalData   bool    `json:"owns_global_data"`
+	Instance        string  `json:"instance"`
+	Host            string  `json:"host"`
+	WarehouseRanges [][]int `json:"warehouse_ranges"`
+	OwnsGlobalData  bool    `json:"owns_global_data"`
 }
 
 type WorkerAssignmentJSON struct {
-	Instance         string  `json:"instance"`
-	Host             string  `json:"host"`
-	WarehouseRanges  [][]int `json:"warehouse_ranges"`
-	Threads          int     `json:"threads"`
-	MaxInflight      int     `json:"max_inflight"`
+	Instance        string  `json:"instance"`
+	Host            string  `json:"host"`
+	WarehouseRanges [][]int `json:"warehouse_ranges"`
+	Threads         int     `json:"threads"`
+	MaxInflight     int     `json:"max_inflight"`
 }
 
-type PhasePolicy struct {
-	StartLeadMs            int64  `json:"start_lead_ms"`
-	RampUpMs               int64  `json:"ramp_up_ms"`
-	MeasurementMs          int64  `json:"measurement_ms"`
-	TransactionDrainMs     int64  `json:"transaction_drain_ms"`
-	AsyncWorkDrain         string `json:"async_work_drain"`
-	StopGraceMs            int64  `json:"stop_grace_ms"`
-	MaxClockSkewMs         int64  `json:"max_clock_skew_ms"`
-	MaxClockUncertaintyMs  int64  `json:"max_clock_uncertainty_ms"`
-	MaxClockDriftMs        int64  `json:"max_clock_drift_ms"`
+type PhasesJSON struct {
+	StartLeadMs        int64 `json:"start_lead_ms"`
+	RampUpMs           int64 `json:"ramp_up_ms"`
+	MeasurementMs      int64 `json:"measurement_ms"`
+	TransactionDrainMs int64 `json:"transaction_drain_ms"`
+	AsyncWorkDrainMs   int64 `json:"async_work_drain_ms"`
+	StopGraceMs        int64 `json:"stop_grace_ms"`
+	MaxClockSkewMs     int64 `json:"max_clock_skew_ms"`
 }
 
 type RunRuntime struct {
-	Pacing    string         `json:"pacing"`
-	Retry     RetryJSON      `json:"retry"`
-	Histogram HistogramJSON  `json:"histogram"`
+	Pacing    string        `json:"pacing"`
+	Retry     RetryJSON     `json:"retry"`
+	Histogram HistogramJSON `json:"histogram"`
 }
 
 type RetryJSON struct {
@@ -199,58 +117,10 @@ type RetryJSON struct {
 }
 
 type HistogramJSON struct {
-	Encoding           string `json:"encoding"`
 	Unit               string `json:"unit"`
 	Lowest             int64  `json:"lowest"`
 	Highest            int64  `json:"highest"`
 	SignificantFigures int    `json:"significant_figures"`
-}
-
-type RunCollect struct {
-	IncludeEvents          bool `json:"include_events"`
-	IncludeLogs            bool `json:"include_logs"`
-	RequireSealedArtifacts bool `json:"require_sealed_artifacts"`
-}
-
-type FailurePolicy struct {
-	MissingWorker      string `json:"missing_worker"`
-	LostDatabaseFence  string `json:"lost_database_fence"`
-	UnsealedArtifact   string `json:"unsealed_artifact"`
-}
-
-// BuildControlConfig materializes control-config.json from profile and paths.
-func BuildControlConfig(in BuildInput, expandedPaths ExpandedPaths) (*ControlConfig, error) {
-	connectMs, err := profile.ParseDurationMs(in.Profile.SSH.ConnectTimeout)
-	if err != nil {
-		return nil, err
-	}
-	hosts := make(map[string]HostAddress)
-	for name, h := range in.Profile.Hosts {
-		if name == "control" {
-			continue
-		}
-		hosts[name] = HostAddress{Address: h.Address}
-	}
-	return &ControlConfig{
-		SchemaVersion: 1,
-		RunID:         in.RunID,
-		Profile:       ProfileRef{Name: in.Profile.Metadata.Name, SHA256: in.ProfileSHA256},
-		SSH: ControlSSH{
-			User:             in.Profile.SSH.User,
-			UseAgent:         in.Profile.SSH.UseAgent,
-			KnownHosts:       expandedPaths.KnownHostsResolved(in.Profile.SSH.KnownHosts),
-			ConnectTimeoutMs: connectMs,
-		},
-		Hosts: hosts,
-		Paths: ControlPaths{
-			LocalArtifacts: expandedPaths.LocalArtifacts,
-			RemoteRoot:     expandedPaths.RemoteRoot,
-			ResultRoot:     expandedPaths.ResultRoot,
-			StateDir:       expandedPaths.StateDir,
-		},
-		Deploy: DeployPolicy{Transport: "tar-over-ssh", VerifySHA256: true},
-		Secrets: Secrets{DatabasePasswordEnv: in.Profile.Database.PasswordEnv},
-	}, nil
 }
 
 // ExpandedPaths holds resolved filesystem paths from profile.
@@ -289,25 +159,26 @@ func ExpandProfilePaths(p *profile.Profile) (ExpandedPaths, error) {
 	}, nil
 }
 
-func (e ExpandedPaths) KnownHostsResolved(fallback string) string {
-	if e.KnownHosts != "" {
-		return e.KnownHosts
-	}
-	return fallback
-}
-
-// BuildRunConfig materializes run-config.json.
-func BuildRunConfig(in BuildInput, ep ExpandedPaths, loadPlanSHA string, loadID string) (*RunConfig, error) {
+// BuildRunConfig materializes run-config.json from the profile and defaults.
+func BuildRunConfig(in BuildInput) (*RunConfig, error) {
 	p := in.Profile
 	loadAssign, err := assignment.BuildLoaderAssignments(p.LoaderInstances(), p.Scale.Warehouses)
 	if err != nil {
 		return nil, err
 	}
+	threads := p.Runtime.ThreadsPerWorker
+	if threads <= 0 {
+		threads = 1
+	}
+	maxInflight := p.Runtime.MaxInflightPerWorker
+	if maxInflight <= 0 {
+		maxInflight = 64
+	}
 	workerAssign, err := assignment.BuildWorkerAssignments(
 		p.WorkerInstances(),
 		p.Scale.Warehouses,
-		p.Runtime.ThreadsPerWorker,
-		p.Runtime.MaxInflightPerWorker,
+		threads,
+		maxInflight,
 	)
 	if err != nil {
 		return nil, err
@@ -329,6 +200,13 @@ func BuildRunConfig(in BuildInput, ep ExpandedPaths, loadPlanSHA string, loadID 
 	if err != nil {
 		return nil, err
 	}
+	asyncDrain := drain
+	if p.Phases.AsyncWorkDrain != "" {
+		asyncDrain, err = profile.ParseDurationMs(p.Phases.AsyncWorkDrain)
+		if err != nil {
+			return nil, err
+		}
+	}
 	stopGrace, err := profile.ParseDurationMs(p.Phases.StopGrace)
 	if err != nil {
 		return nil, err
@@ -337,177 +215,109 @@ func BuildRunConfig(in BuildInput, ep ExpandedPaths, loadPlanSHA string, loadID 
 	if err != nil {
 		return nil, err
 	}
-	uncertainty, err := profile.ParseDurationMs(p.Phases.MaxClockUncertainty)
-	if err != nil {
-		return nil, err
-	}
-	drift, err := profile.ParseDurationMs(p.Phases.MaxClockDrift)
-	if err != nil {
-		return nil, err
-	}
-	initBackoff, err := profile.ParseDurationMs(p.Runtime.Retry.InitialBackoff)
-	if err != nil {
-		return nil, err
-	}
-	maxBackoff, err := profile.ParseDurationMs(p.Runtime.Retry.MaxBackoff)
-	if err != nil {
-		return nil, err
-	}
 
-	runDir := filepath.Join(p.Paths.RemoteRoot, "runs", in.RunID)
-	specStatePath := filepath.Join(runDir, "spec-state.json")
-	loadPlanPath := filepath.Join(runDir, "load-plan.json")
-
-	loaderNames := make([]string, len(p.Loaders))
-	for i, l := range p.Loaders {
-		loaderNames[i] = l.Name
+	retry := DefaultRetry()
+	if p.Runtime.Retry.MaxAttempts > 0 {
+		retry.MaxAttempts = p.Runtime.Retry.MaxAttempts
 	}
-	workerNames := make([]string, len(p.Workers))
-	for i, w := range p.Workers {
-		workerNames[i] = w.Name
-	}
-	sort.Strings(workerNames)
-	workersSHA, err := canonical.SHA256(map[string]interface{}{
-		"workers": workerNames,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	desc := in.SpecDescribe
-	if desc == nil {
-		desc = &specclient.DescribeResult{
-			Edition:        p.Spec.Edition,
-			DocumentURL:    "",
-			DocumentSHA256: "",
-			ModuleABI:      1,
-			ModuleSHA256:   "",
+	if p.Runtime.Retry.InitialBackoff != "" {
+		initBackoff, err := profile.ParseDurationMs(p.Runtime.Retry.InitialBackoff)
+		if err != nil {
+			return nil, err
 		}
+		retry.InitialBackoffMs = initBackoff
 	}
-
-	identity := in.CanonicalIdentity
-	if identity == nil {
-		identity = map[string]interface{}{
-			"dbms":     p.Database.DBMS,
-			"endpoint": p.Database.Endpoint,
-			"database": p.Database.Database,
-			"path":     p.Database.Path,
+	if p.Runtime.Retry.MaxBackoff != "" {
+		maxBackoff, err := profile.ParseDurationMs(p.Runtime.Retry.MaxBackoff)
+		if err != nil {
+			return nil, err
 		}
+		retry.MaxBackoffMs = maxBackoff
+	}
+	if p.Runtime.Retry.Jitter != "" {
+		retry.Jitter = p.Runtime.Retry.Jitter
 	}
 
-	workerBinaryName := in.WorkerBinary
-	if workerBinaryName == "" {
-		workerBinaryName = fmt.Sprintf("tpcc-%s", p.Database.DBMS)
+	hist := DefaultHistogram()
+	if p.Runtime.Histogram.Unit != "" {
+		hist.Unit = p.Runtime.Histogram.Unit
+	}
+	if p.Runtime.Histogram.Lowest > 0 {
+		hist.Lowest = p.Runtime.Histogram.Lowest
+	}
+	if p.Runtime.Histogram.Highest > 0 {
+		hist.Highest = p.Runtime.Histogram.Highest
+	}
+	if p.Runtime.Histogram.SignificantFigures > 0 {
+		hist.SignificantFigures = p.Runtime.Histogram.SignificantFigures
 	}
 
-	rc := &RunConfig{
+	pacing := p.Runtime.Pacing
+	if pacing == "" {
+		pacing = "enabled"
+	}
+
+	binary := in.WorkerBinary
+	if binary == "" {
+		binary = fmt.Sprintf("tpcc-%s", p.Database.DBMS)
+	} else {
+		binary = filepath.Base(binary)
+	}
+
+	batchRows := p.Data.BatchRows
+	if batchRows <= 0 {
+		batchRows = 10000
+	}
+
+	data := DataBlock{BatchRows: batchRows}
+	if p.Data.Seed != nil {
+		data.Seed = *p.Data.Seed
+	}
+
+	return &RunConfig{
 		SchemaVersion: 1,
 		RunID:         in.RunID,
-		Mode:          p.Mode,
 		CreatedAt:     time.Now().UTC().Format(time.RFC3339),
-		Profile:       ProfileRef{Name: p.Metadata.Name, SHA256: in.ProfileSHA256},
-		Spec: SpecBlock{
-			Edition:        desc.Edition,
-			DocumentURL:    desc.DocumentURL,
-			DocumentSHA256: desc.DocumentSHA256,
-			ModuleABI:      desc.ModuleABI,
-			ModuleSHA256:   desc.ModuleSHA256,
-			StateSHA256:    in.SpecStateSHA256,
-		},
-		Artifacts: Artifacts{
-			WorkerBinary:       workerBinaryName,
-			WorkerBinarySHA256: in.WorkerBinarySHA,
-			SpecBinary:         in.SpecBinary,
-			SpecBinarySHA256:   in.SpecBinarySHA,
-			SourceRevision:     in.SourceRevision,
-		},
-		Paths: RunPaths{
-			RemoteRoot: p.Paths.RemoteRoot,
-			RunDir:     runDir,
-			SpecState:  specStatePath,
-			LoadPlan:   loadPlanPath,
-		},
+		ProfileName:   p.Metadata.Name,
+		Binary:        binary,
 		Database: RunDatabase{
-			DBMS:              p.Database.DBMS,
-			Endpoint:          p.Database.Endpoint,
-			Database:          p.Database.Database,
-			Path:              p.Database.Path,
-			CanonicalIdentity: identity,
-			PasswordEnv:       p.Database.PasswordEnv,
-			Options:           p.Database.Options,
+			DBMS:        p.Database.DBMS,
+			Endpoint:    p.Database.Endpoint,
+			Database:    p.Database.Database,
+			Path:        p.Database.Path,
+			PasswordEnv: p.Database.PasswordEnv,
+			Options:     p.Database.Options,
 		},
-		Scale: ScaleBlock{Warehouses: p.Scale.Warehouses},
-		Load: LoadBlock{
-			LoadID:        loadID,
-			PlanSHA256:    loadPlanSHA,
-			BatchRows:     p.Data.BatchRows,
-			WriteContract: "idempotent-put-batch-v1",
-		},
-		ExpectedInstances: ExpectedInstances{
-			Loaders:       loaderNames,
-			Workers:       workerNames,
-			WorkersSHA256: workersSHA,
-		},
-		Assignment: AssignmentMeta{
-			Algorithm:      assignment.AlgorithmBalancedContiguousV1,
-			Source:         "generated",
-			SortKey:        "instance_name",
-			ManualOverride: false,
-		},
+		Scale:            ScaleBlock{Warehouses: p.Scale.Warehouses},
+		Data:             data,
+		Workload:         ResolveWorkload(p.Workload),
 		LoadAssignment:   toLoadJSON(loadAssign),
 		WorkerAssignment: toWorkerJSON(workerAssign),
-		PhasePolicy: PhasePolicy{
-			StartLeadMs:           startLead,
-			RampUpMs:              rampUp,
-			MeasurementMs:         measurement,
-			TransactionDrainMs:    drain,
-			AsyncWorkDrain:        "from_spec_state",
-			StopGraceMs:           stopGrace,
-			MaxClockSkewMs:        skew,
-			MaxClockUncertaintyMs: uncertainty,
-			MaxClockDriftMs:       drift,
+		Phases: PhasesJSON{
+			StartLeadMs:        startLead,
+			RampUpMs:           rampUp,
+			MeasurementMs:      measurement,
+			TransactionDrainMs: drain,
+			AsyncWorkDrainMs:   asyncDrain,
+			StopGraceMs:        stopGrace,
+			MaxClockSkewMs:     skew,
 		},
 		Runtime: RunRuntime{
-			Pacing: p.Runtime.Pacing,
-			Retry: RetryJSON{
-				MaxAttempts:          p.Runtime.Retry.MaxAttempts,
-				InitialBackoffMs:     initBackoff,
-				MaxBackoffMs:         maxBackoff,
-				Jitter:               p.Runtime.Retry.Jitter,
-				RetryAmbiguousCommit: false,
-			},
-			Histogram: HistogramJSON{
-				Encoding:           "hdr-v1",
-				Unit:               p.Runtime.Histogram.Unit,
-				Lowest:             p.Runtime.Histogram.Lowest,
-				Highest:            p.Runtime.Histogram.Highest,
-				SignificantFigures: p.Runtime.Histogram.SignificantFigures,
-			},
+			Pacing:    pacing,
+			Retry:     retry,
+			Histogram: hist,
 		},
-		Checks:  p.Checks,
-		Collect: RunCollect{
-			IncludeEvents:          p.Collect.IncludeEvents,
-			IncludeLogs:            p.Collect.IncludeLogs,
-			RequireSealedArtifacts: true,
-		},
-		FailurePolicy: FailurePolicy{
-			MissingWorker:     "fail",
-			LostDatabaseFence: "fail",
-			UnsealedArtifact:  "fail",
-		},
-		Deviations: p.Deviations,
-	}
-	return rc, nil
+	}, nil
 }
 
 func toLoadJSON(assign []assignment.LoaderAssignment) []LoadAssignmentJSON {
 	out := make([]LoadAssignmentJSON, len(assign))
 	for i, a := range assign {
 		out[i] = LoadAssignmentJSON{
-			Instance:         a.Instance,
-			Host:             a.Host,
-			WarehouseRanges:  assignment.ToJSONRanges(a.WarehouseRanges),
-			OwnsGlobalData:   a.OwnsGlobalData,
+			Instance:        a.Instance,
+			Host:            a.Host,
+			WarehouseRanges: assignment.ToJSONRanges(a.WarehouseRanges),
+			OwnsGlobalData:  a.OwnsGlobalData,
 		}
 	}
 	return out
@@ -517,11 +327,11 @@ func toWorkerJSON(assign []assignment.WorkerAssignment) []WorkerAssignmentJSON {
 	out := make([]WorkerAssignmentJSON, len(assign))
 	for i, a := range assign {
 		out[i] = WorkerAssignmentJSON{
-			Instance:         a.Instance,
-			Host:             a.Host,
-			WarehouseRanges:  assignment.ToJSONRanges(a.WarehouseRanges),
-			Threads:          a.Threads,
-			MaxInflight:      a.MaxInflight,
+			Instance:        a.Instance,
+			Host:            a.Host,
+			WarehouseRanges: assignment.ToJSONRanges(a.WarehouseRanges),
+			Threads:         a.Threads,
+			MaxInflight:     a.MaxInflight,
 		}
 	}
 	return out
@@ -531,4 +341,27 @@ func toWorkerJSON(assign []assignment.WorkerAssignment) []WorkerAssignmentJSON {
 func GenerateRunID(profileName string) string {
 	now := time.Now().UTC()
 	return fmt.Sprintf("%s-%s-01", now.Format("20060102"), profileName)
+}
+
+// SettingsForAggregate returns a redacted settings object for aggregate.json.
+func SettingsForAggregate(rc *RunConfig) map[string]interface{} {
+	return map[string]interface{}{
+		"profile_name": rc.ProfileName,
+		"binary":       rc.Binary,
+		"database": map[string]interface{}{
+			"dbms":     rc.Database.DBMS,
+			"endpoint": rc.Database.Endpoint,
+			"database": rc.Database.Database,
+			"path":     rc.Database.Path,
+			"options":  rc.Database.Options,
+		},
+		"scale":             rc.Scale,
+		"data":              rc.Data,
+		"workload":          rc.Workload,
+		"worker_assignment": rc.WorkerAssignment,
+		"phases": map[string]interface{}{
+			"ramp_up_ms":      rc.Phases.RampUpMs,
+			"measurement_ms":  rc.Phases.MeasurementMs,
+		},
+	}
 }
