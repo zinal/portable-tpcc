@@ -61,7 +61,7 @@ required for the current port.
 | `tpcc/loader`, `tpcc/checks` | horizontal scaling |
 | `tpcc/runtime` (terminal phases) | phase barriers, retry loop |
 | `tpcc/dbms/ydb`, `tpcc/dbms/oceanbase` | external SDKs |
-| `tools/tpccctl` | initial | Go orchestrator (`validate`, `plan`, `deploy`, `run`, etc.) |
+| `tools/tpccctl` | Go orchestrator (`validate`, `plan`, `deploy`, `run`, etc.) |
 | unit/integration tests | port from `tpcc-postgres-cpp/src/ut` |
 
 ## SDKs outside this repository
