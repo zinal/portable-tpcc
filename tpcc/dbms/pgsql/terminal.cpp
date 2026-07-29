@@ -22,46 +22,52 @@ struct TTerminalTransaction {
     std::string Name;
     double Weight;
     TTaskFunc TaskFunc;
-    std::chrono::seconds KeyingTime;
-    std::chrono::seconds ThinkTime;
+    std::chrono::milliseconds KeyingTime{0};
+    std::chrono::milliseconds ThinkTime{0};
 };
 
-static std::array<TTerminalTransaction, TRANSACTION_TYPE_COUNT> CreateTransactions() {
+std::array<TTerminalTransaction, TRANSACTION_TYPE_COUNT> BuildTransactions(const TWorkloadConfig& workload) {
     std::array<TTerminalTransaction, TRANSACTION_TYPE_COUNT> transactions{};
 
-    transactions[static_cast<size_t>(ETransactionType::NewOrder)] =
-        {"NewOrder", NEW_ORDER_WEIGHT, &GetNewOrderTask, NEW_ORDER_KEYING_TIME, NEW_ORDER_THINK_TIME};
-    transactions[static_cast<size_t>(ETransactionType::Delivery)] =
-        {"Delivery", DELIVERY_WEIGHT, &GetDeliveryTask, DELIVERY_KEYING_TIME, DELIVERY_THINK_TIME};
-    transactions[static_cast<size_t>(ETransactionType::OrderStatus)] =
-        {"OrderStatus", ORDER_STATUS_WEIGHT, &GetOrderStatusTask, ORDER_STATUS_KEYING_TIME, ORDER_STATUS_THINK_TIME};
-    transactions[static_cast<size_t>(ETransactionType::Payment)] =
-        {"Payment", PAYMENT_WEIGHT, &GetPaymentTask, PAYMENT_KEYING_TIME, PAYMENT_THINK_TIME};
-    transactions[static_cast<size_t>(ETransactionType::StockLevel)] =
-        {"StockLevel", STOCK_LEVEL_WEIGHT, &GetStockLevelTask, STOCK_LEVEL_KEYING_TIME, STOCK_LEVEL_THINK_TIME};
+    auto fill = [&](ETransactionType type, const char* name, TTerminalTransaction::TTaskFunc fn) {
+        const auto& w = workload.PerTx[static_cast<size_t>(type)];
+        transactions[static_cast<size_t>(type)] = {
+            name,
+            w.Weight,
+            fn,
+            std::chrono::milliseconds(w.KeyingTimeMs),
+            std::chrono::milliseconds(w.ThinkTimeMs),
+        };
+    };
 
+    fill(ETransactionType::NewOrder, "NewOrder", &GetNewOrderTask);
+    fill(ETransactionType::Delivery, "Delivery", &GetDeliveryTask);
+    fill(ETransactionType::OrderStatus, "OrderStatus", &GetOrderStatusTask);
+    fill(ETransactionType::Payment, "Payment", &GetPaymentTask);
+    fill(ETransactionType::StockLevel, "StockLevel", &GetStockLevelTask);
     return transactions;
 }
 
-static std::array<TTerminalTransaction, TRANSACTION_TYPE_COUNT> Transactions = CreateTransactions();
-
-static size_t ChooseRandomTransactionIndex() {
+size_t ChooseRandomTransactionIndex(const std::array<TTerminalTransaction, TRANSACTION_TYPE_COUNT>& transactions) {
     double totalWeight = 0.0;
-    for (const auto& tx : Transactions) {
+    for (const auto& tx : transactions) {
         totalWeight += tx.Weight;
+    }
+    if (totalWeight <= 0.0) {
+        return 0;
     }
 
     double randomValue = RandomNumber(0, static_cast<size_t>(totalWeight * 100)) / 100.0;
     double cumulativeWeight = 0.0;
 
-    for (size_t i = 0; i < Transactions.size(); ++i) {
-        cumulativeWeight += Transactions[i].Weight;
+    for (size_t i = 0; i < transactions.size(); ++i) {
+        cumulativeWeight += transactions[i].Weight;
         if (randomValue <= cumulativeWeight) {
             return i;
         }
     }
 
-    return Transactions.size() - 1;
+    return transactions.size() - 1;
 }
 
 size_t EffectiveRetryMaxAttempts(size_t configured) {
@@ -87,6 +93,7 @@ TTerminal::TTerminal(size_t terminalID,
                      std::stop_token stopToken,
                      TPhaseController& phaseController,
                      std::shared_ptr<TTerminalStats>& stats,
+                     const TWorkloadConfig& workload,
                      int simulateTransactionMs,
                      int simulateTransactionSelect1,
                      size_t retryMaxAttempts,
@@ -99,6 +106,7 @@ TTerminal::TTerminal(size_t terminalID,
     , StopToken(stopToken)
     , PhaseController(phaseController)
     , Stats(stats)
+    , Workload(workload)
     , RetryMaxAttempts(EffectiveRetryMaxAttempts(retryMaxAttempts))
     , RetryAmbiguousCommit(retryAmbiguousCommit)
 {}
@@ -116,6 +124,7 @@ TFuture<void> TTerminal::Run() {
     LOG_D("Terminal {} started", Context.TerminalID);
 
     TPgErrorClassifier classifier;
+    const auto transactions = BuildTransactions(Workload);
 
     while (!StopToken.stop_requested()) {
         if (!PhaseController.MayAdmit()) {
@@ -133,13 +142,13 @@ TFuture<void> TTerminal::Run() {
         const bool simulationMode =
             Context.SimulateTransactionMs > 0 || Context.SimulateTransactionSelect1 > 0;
 
-        size_t txIndex = simulationMode ? 0 : ChooseRandomTransactionIndex();
-        const char* txName = simulationMode ? "Simulation" : Transactions[txIndex].Name.c_str();
+        size_t txIndex = simulationMode ? 0 : ChooseRandomTransactionIndex(transactions);
+        const char* txName = simulationMode ? "Simulation" : transactions[txIndex].Name.c_str();
         const auto txType = static_cast<ETransactionType>(txIndex);
 
         if (!NoDelays && !simulationMode) {
-            auto& transaction = Transactions[txIndex];
-            LOG_T("Terminal {} keying time for {}: {}s",
+            auto& transaction = transactions[txIndex];
+            LOG_T("Terminal {} keying time for {}: {}ms",
                 Context.TerminalID, transaction.Name, transaction.KeyingTime.count());
             co_await TSuspend(TaskQueue, Context.TerminalID, transaction.KeyingTime);
             if (StopToken.stop_requested()) break;
@@ -216,7 +225,7 @@ TFuture<void> TTerminal::Run() {
                     auto beginFuture = tpccSession.Begin(EIsolationLevel::RepeatableRead);
                     auto tx = co_await TSuspendWithFuture(
                         std::move(beginFuture), Context.TaskQueue, Context.TerminalID);
-                    auto future = Transactions[txIndex].TaskFunc(Context, latencyPure, *tx);
+                    auto future = transactions[txIndex].TaskFunc(Context, latencyPure, *tx);
                     auto result = co_await TSuspendWithFuture(
                         std::move(future), Context.TaskQueue, Context.TerminalID);
                     auto endTime = std::chrono::steady_clock::now();
@@ -320,8 +329,8 @@ TFuture<void> TTerminal::Run() {
         }
 
         if (!NoDelays && !simulationMode && PhaseController.MayAdmit()) {
-            auto& transaction = Transactions[txIndex];
-            LOG_T("Terminal {} think time: {}s", Context.TerminalID, transaction.ThinkTime.count());
+            auto& transaction = transactions[txIndex];
+            LOG_T("Terminal {} think time: {}ms", Context.TerminalID, transaction.ThinkTime.count());
             co_await TSuspend(TaskQueue, Context.TerminalID, transaction.ThinkTime);
         }
     }

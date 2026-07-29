@@ -136,7 +136,7 @@ Goal: same `run-config` (scale, seed) → same logical rows; load retries safe.
 | 3.4 | Fix warmup exclusion; measurement ends at `measurement_end` | | Done |
 | 3.5 | Drain = in-flight only when `async_delivery=false` **[F]** | | Done |
 | 3.6 | `result.json`: raw histogram buckets, retries, versions; no final percentiles | | Done |
-| 3.7 | Apply full `workload.*` / histogram / pacing from run-config | | Partial (`terminals_per_warehouse` + pacing) |
+| 3.7 | Apply full `workload.*` / histogram / pacing from run-config | | Done |
 | 3.8 | Stable process nonce; prepare artifacts for diagnostics | | Done |
 
 **Exit:** workers sharing the same `--start-at` share phase boundaries;
@@ -218,7 +218,6 @@ Phase 0 (headers/docs)
 
 ## 6. Immediate next step
 
-Phase 0–3 largely complete (`--start-at`, phase controller, raw histograms,
-stable nonce). Remaining Phase 3.7: full `workload.transaction_mix` /
-keying/think / histogram layout from run-config. Next major: **Phase 4**
-(checks + admin) and **Phase 5** (`tpccctl` orchestration).
+Phase 0–3 complete (including full `workload.*` mix/keying/think and
+`runtime.histogram` mapping onto `THistogram`). Next: **Phase 4** (checks +
+admin surface) and **Phase 5** (`tpccctl` orchestration).

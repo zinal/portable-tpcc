@@ -116,7 +116,14 @@ void PrintConsoleStats(
     size_t totalOK = 0;
     size_t totalFailed = 0;
     size_t totalNewOrderOK = 0;
-    TTerminalStats aggregated(config.HighResHistogram);
+    const uint64_t aggHdr = config.Histogram.Configured
+        ? config.Histogram.HdrTill()
+        : (config.HighResHistogram ? 16384ull : 4096ull);
+    const uint64_t aggMax = config.Histogram.Configured
+        ? config.Histogram.MaxValue()
+        : 32768ull;
+    const bool aggUs = config.Histogram.Configured && config.Histogram.Unit == "us";
+    TTerminalStats aggregated(aggHdr, aggMax, aggUs);
 
     for (auto& stats : perThreadStats) {
         stats->Collect(aggregated);
@@ -164,7 +171,14 @@ void PrintFinalResults(
     const std::vector<std::shared_ptr<TTerminalStats>>& perThreadStats,
     std::chrono::duration<double> measureElapsed)
 {
-    TTerminalStats aggregated(config.HighResHistogram);
+    const uint64_t aggHdr = config.Histogram.Configured
+        ? config.Histogram.HdrTill()
+        : (config.HighResHistogram ? 16384ull : 4096ull);
+    const uint64_t aggMax = config.Histogram.Configured
+        ? config.Histogram.MaxValue()
+        : 32768ull;
+    const bool aggUs = config.Histogram.Configured && config.Histogram.Unit == "us";
+    TTerminalStats aggregated(aggHdr, aggMax, aggUs);
     size_t totalFailed = 0;
 
     for (auto& stats : perThreadStats) {
@@ -217,8 +231,8 @@ TRunOutcome RunSync(const TRunConfig& config, TTerminalStats* aggregatedStats) {
     }
     const size_t warehouseCount = CountWarehouses(ranges);
     const size_t scaleWarehouses = config.ScaleWarehouses > 0 ? config.ScaleWarehouses : warehouseCount;
-    const size_t terminalsPerWh = config.TerminalsPerWarehouse > 0
-        ? config.TerminalsPerWarehouse
+    const size_t terminalsPerWh = config.Workload.TerminalsPerWarehouse > 0
+        ? config.Workload.TerminalsPerWarehouse
         : TERMINALS_PER_WAREHOUSE;
     const size_t terminalCount = warehouseCount * terminalsPerWh;
 
@@ -295,10 +309,18 @@ TRunOutcome RunSync(const TRunConfig& config, TTerminalStats* aggregatedStats) {
     auto stopToken = GetGlobalInterruptSource().get_token();
     TPhaseController phaseController;
 
+    const bool recordUs = config.Histogram.Configured && config.Histogram.Unit == "us";
+    const uint64_t histHdr = config.Histogram.Configured
+        ? config.Histogram.HdrTill()
+        : (config.HighResHistogram ? 16384ull : 4096ull);
+    const uint64_t histMax = config.Histogram.Configured
+        ? config.Histogram.MaxValue()
+        : 32768ull;
+
     std::vector<std::shared_ptr<TTerminalStats>> perThreadStats;
     perThreadStats.reserve(threadCount);
     for (size_t i = 0; i < threadCount; ++i) {
-        perThreadStats.push_back(std::make_shared<TTerminalStats>(config.HighResHistogram));
+        perThreadStats.push_back(std::make_shared<TTerminalStats>(histHdr, histMax, recordUs));
     }
 
     std::vector<std::unique_ptr<TTerminal>> terminals;
@@ -320,6 +342,7 @@ TRunOutcome RunSync(const TRunConfig& config, TTerminalStats* aggregatedStats) {
                     stopToken,
                     phaseController,
                     perThreadStats[threadIndex],
+                    config.Workload,
                     config.SimulateTransactionMs,
                     config.SimulateTransactionSelect1,
                     config.RetryMaxAttempts,

@@ -57,10 +57,10 @@ std::string FormatTime(SysClock::time_point tp) {
     return ss.str();
 }
 
-Json HistogramRaw(const THistogram& hist) {
+Json HistogramRaw(const THistogram& hist, const std::string& unit) {
     Json h = Json::object();
     h["layout"] = "linear_exp";
-    h["unit"] = "ms";
+    h["unit"] = unit;
     h["hdr_till"] = hist.HdrTill();
     h["max_value"] = hist.MaxValue();
     h["total_count"] = hist.TotalCount();
@@ -69,9 +69,8 @@ Json HistogramRaw(const THistogram& hist) {
     return h;
 }
 
-Json HistogramPayload(const TTerminalStats::TTransactionStats& stats) {
-    // Workers emit raw buckets for consolidate; no final percentiles.
-    return HistogramRaw(stats.LatencyHistogramFullMs);
+Json HistogramPayload(const TTerminalStats::TTransactionStats& stats, const std::string& unit) {
+    return HistogramRaw(stats.LatencyHistogramFullMs, unit);
 }
 
 } // anonymous
@@ -164,6 +163,7 @@ void WriteWorkerResultJson(const TArtifactPaths& paths, const TRunConfigDocument
     size_t totalFailed = 0;
     size_t totalRetried = 0;
     size_t totalNewOrderOk = 0;
+    const std::string histUnit = doc.Histogram.Configured ? doc.Histogram.Unit : "ms";
 
     for (size_t i = 0; i < TRANSACTION_TYPE_COUNT; ++i) {
         const auto type = static_cast<ETransactionType>(i);
@@ -180,12 +180,22 @@ void WriteWorkerResultJson(const TArtifactPaths& paths, const TRunConfigDocument
             counters[std::string(TransactionTypeToString(type)) + "_ok"] = ok;
             counters[std::string(TransactionTypeToString(type)) + "_failed"] = failed;
             counters[std::string(TransactionTypeToString(type)) + "_retried"] = retried;
-            histograms[TransactionTypeToString(type)] = HistogramPayload(s);
+            histograms[TransactionTypeToString(type)] = HistogramPayload(s, histUnit);
         }
     }
 
     const double tpmc = measureSeconds > 0 ? (totalNewOrderOk / measureSeconds * 60.0) : 0.0;
     const size_t whCount = CountWarehouses(assign.WarehouseRanges);
+
+    Json mix = Json::object();
+    Json keying = Json::object();
+    Json think = Json::object();
+    const char* keys[] = {"new_order", "delivery", "order_status", "payment", "stock_level"};
+    for (size_t i = 0; i < TRANSACTION_TYPE_COUNT; ++i) {
+        mix[keys[i]] = doc.Workload.PerTx[i].Weight;
+        keying[keys[i]] = doc.Workload.PerTx[i].KeyingTimeMs;
+        think[keys[i]] = doc.Workload.PerTx[i].ThinkTimeMs;
+    }
 
     Json j = {
         {"schema_version", 1},
@@ -206,6 +216,24 @@ void WriteWorkerResultJson(const TArtifactPaths& paths, const TRunConfigDocument
             {"measurement_start", FormatTime(measurementStart)},
             {"measurement_end", FormatTime(measurementEnd)},
             {"drain_deadline", FormatTime(drainDeadline)},
+        }},
+        {"settings", {
+            {"workload", {
+                {"terminals_per_warehouse", doc.Workload.TerminalsPerWarehouse},
+                {"transaction_mix", mix},
+                {"keying_time_ms", keying},
+                {"think_time_ms", think},
+                {"pacing", doc.PacingEnabled ? "enabled" : "disabled"},
+            }},
+            {"histogram", {
+                {"unit", histUnit},
+                {"lowest", doc.Histogram.Configured ? doc.Histogram.Lowest : 1},
+                {"highest", doc.Histogram.Configured ? doc.Histogram.Highest : 32768},
+                {"significant_figures", doc.Histogram.Configured ? doc.Histogram.SignificantFigures : 3},
+                {"layout", "linear_exp"},
+                {"hdr_till", stats.HdrTill()},
+                {"max_value", stats.MaxValue()},
+            }},
         }},
         {"counters", counters},
         {"histograms", histograms},

@@ -117,10 +117,66 @@ TRunConfigDocument LoadRunConfigDocument(const std::string& path) {
             doc.RetryMaxAttempts = rt["retry"].value("max_attempts", 0);
             doc.RetryAmbiguousCommit = rt["retry"].value("retry_ambiguous_commit", false);
         }
+        if (rt.contains("histogram") && rt["histogram"].is_object()) {
+            const auto& h = rt["histogram"];
+            doc.Histogram.Configured = true;
+            doc.Histogram.Unit = h.value("unit", "ms");
+            doc.Histogram.Lowest = h.value("lowest", static_cast<uint64_t>(1));
+            doc.Histogram.Highest = h.value("highest", static_cast<uint64_t>(32768));
+            doc.Histogram.SignificantFigures = h.value("significant_figures", 3);
+            if (doc.Histogram.Unit != "ms" && doc.Histogram.Unit != "us") {
+                throw std::runtime_error("runtime.histogram.unit must be \"ms\" or \"us\"");
+            }
+        }
     }
     if (root.contains("workload") && root["workload"].is_object()) {
         const auto& wl = root["workload"];
-        doc.TerminalsPerWarehouse = wl.value("terminals_per_warehouse", 0);
+        doc.Workload = MakeDefaultWorkloadConfig();
+        if (wl.contains("terminals_per_warehouse")) {
+            doc.Workload.TerminalsPerWarehouse = wl.value("terminals_per_warehouse", 0);
+        }
+        if (wl.contains("transaction_mix") && wl["transaction_mix"].is_object()) {
+            const auto& mix = wl["transaction_mix"];
+            doc.Workload.HasCustomMix = true;
+            doc.Workload.PerTx[static_cast<size_t>(ETransactionType::NewOrder)].Weight =
+                mix.value("new_order", NEW_ORDER_WEIGHT);
+            doc.Workload.PerTx[static_cast<size_t>(ETransactionType::Payment)].Weight =
+                mix.value("payment", PAYMENT_WEIGHT);
+            doc.Workload.PerTx[static_cast<size_t>(ETransactionType::OrderStatus)].Weight =
+                mix.value("order_status", ORDER_STATUS_WEIGHT);
+            doc.Workload.PerTx[static_cast<size_t>(ETransactionType::Delivery)].Weight =
+                mix.value("delivery", DELIVERY_WEIGHT);
+            doc.Workload.PerTx[static_cast<size_t>(ETransactionType::StockLevel)].Weight =
+                mix.value("stock_level", STOCK_LEVEL_WEIGHT);
+        }
+        if (wl.contains("keying_time_ms") && wl["keying_time_ms"].is_object()) {
+            const auto& k = wl["keying_time_ms"];
+            doc.Workload.HasCustomKeying = true;
+            doc.Workload.PerTx[static_cast<size_t>(ETransactionType::NewOrder)].KeyingTimeMs =
+                k.value("new_order", NEW_ORDER_KEYING_TIME.count() * 1000);
+            doc.Workload.PerTx[static_cast<size_t>(ETransactionType::Payment)].KeyingTimeMs =
+                k.value("payment", PAYMENT_KEYING_TIME.count() * 1000);
+            doc.Workload.PerTx[static_cast<size_t>(ETransactionType::OrderStatus)].KeyingTimeMs =
+                k.value("order_status", ORDER_STATUS_KEYING_TIME.count() * 1000);
+            doc.Workload.PerTx[static_cast<size_t>(ETransactionType::Delivery)].KeyingTimeMs =
+                k.value("delivery", DELIVERY_KEYING_TIME.count() * 1000);
+            doc.Workload.PerTx[static_cast<size_t>(ETransactionType::StockLevel)].KeyingTimeMs =
+                k.value("stock_level", STOCK_LEVEL_KEYING_TIME.count() * 1000);
+        }
+        if (wl.contains("think_time_ms") && wl["think_time_ms"].is_object()) {
+            const auto& t = wl["think_time_ms"];
+            doc.Workload.HasCustomThink = true;
+            doc.Workload.PerTx[static_cast<size_t>(ETransactionType::NewOrder)].ThinkTimeMs =
+                t.value("new_order", NEW_ORDER_THINK_TIME.count() * 1000);
+            doc.Workload.PerTx[static_cast<size_t>(ETransactionType::Payment)].ThinkTimeMs =
+                t.value("payment", PAYMENT_THINK_TIME.count() * 1000);
+            doc.Workload.PerTx[static_cast<size_t>(ETransactionType::OrderStatus)].ThinkTimeMs =
+                t.value("order_status", ORDER_STATUS_THINK_TIME.count() * 1000);
+            doc.Workload.PerTx[static_cast<size_t>(ETransactionType::Delivery)].ThinkTimeMs =
+                t.value("delivery", DELIVERY_THINK_TIME.count() * 1000);
+            doc.Workload.PerTx[static_cast<size_t>(ETransactionType::StockLevel)].ThinkTimeMs =
+                t.value("stock_level", STOCK_LEVEL_THINK_TIME.count() * 1000);
+        }
     }
     if (root.contains("load_assignment") && root["load_assignment"].is_array()) {
         for (const auto& item : root["load_assignment"]) {

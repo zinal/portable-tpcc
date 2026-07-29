@@ -2,8 +2,9 @@
 
 #include "phase_policy.h"
 #include "warehouse_range.h"
-
 #include "terminal.h"
+
+#include <workload_config.h>
 
 #include <phase_controller.h>
 
@@ -50,8 +51,8 @@ struct TRunConfig {
     // StartAt + PhasePolicy; prepare must finish before StartAt or the run fails.
     std::optional<std::chrono::system_clock::time_point> StartAt;
 
-    // 0 → use TERMINALS_PER_WAREHOUSE from constants.
-    size_t TerminalsPerWarehouse = 0;
+    TWorkloadConfig Workload = MakeDefaultWorkloadConfig();
+    THistogramConfig Histogram;
 
     // Total attempts per business transaction (including the first). 0 → default 4.
     size_t RetryMaxAttempts = 0;
