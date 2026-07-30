@@ -3,6 +3,8 @@
 #include "phase_policy.h"
 #include "warehouse_range.h"
 
+#include <workload_config.h>
+
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -47,7 +49,9 @@ struct TRunConfigDocument {
     bool PacingEnabled = true;
     size_t RetryMaxAttempts = 0;
     bool RetryAmbiguousCommit = false;
-    size_t TerminalsPerWarehouse = 0;
+
+    TWorkloadConfig Workload = MakeDefaultWorkloadConfig();
+    THistogramConfig Histogram;
 
     std::vector<TLoaderAssignment> LoadAssignments;
     std::vector<TWorkerAssignment> WorkerAssignments;

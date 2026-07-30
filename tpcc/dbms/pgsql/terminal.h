@@ -4,6 +4,7 @@
 #include <constants.h>
 #include <histogram.h>
 #include <phase_controller.h>
+#include <workload_config.h>
 #include "transactions.h"
 #include "pg_connection_pool.h"
 
@@ -11,6 +12,7 @@
 #include <spinlock.h>
 
 #include <atomic>
+#include <chrono>
 #include <stop_token>
 #include <memory>
 #include <array>
@@ -20,17 +22,20 @@ namespace NTpcc {
 //-----------------------------------------------------------------------------
 
 class TTerminalStats {
-    static constexpr uint64_t DefaultResolution = 4096;
-    static constexpr uint64_t HighResolution = 16384;
-    static constexpr uint64_t MaxResolution = 32768;
-
 public:
     struct TTransactionStats {
-        explicit TTransactionStats(uint64_t histogramResolution = DefaultResolution)
-            : LatencyHistogramMs(histogramResolution, MaxResolution)
-            , LatencyHistogramFullMs(histogramResolution, MaxResolution)
-            , LatencyHistogramPure(histogramResolution, MaxResolution)
+        explicit TTransactionStats(uint64_t hdrTill = 4096, uint64_t maxValue = 32768)
+            : LatencyHistogramMs(hdrTill, maxValue)
+            , LatencyHistogramFullMs(hdrTill, maxValue)
+            , LatencyHistogramPure(hdrTill, maxValue)
         {}
+
+        void ResetHistograms(uint64_t hdrTill, uint64_t maxValue) {
+            std::lock_guard guard(HistLock);
+            LatencyHistogramMs = THistogram(hdrTill, maxValue);
+            LatencyHistogramFullMs = THistogram(hdrTill, maxValue);
+            LatencyHistogramPure = THistogram(hdrTill, maxValue);
+        }
 
         void Collect(TTransactionStats& dst) const {
             dst.OK.fetch_add(OK.load(std::memory_order_relaxed), std::memory_order_relaxed);
@@ -68,16 +73,22 @@ public:
     };
 
 public:
-    TTerminalStats(bool highResHistogram = false) {
-        if (highResHistogram) {
-            uint64_t histogramResolution = HighResolution;
-            for (auto& stats : PerTransactionTypeStats) {
-                stats.LatencyHistogramMs = THistogram(histogramResolution, MaxResolution);
-                stats.LatencyHistogramFullMs = THistogram(histogramResolution, MaxResolution);
-                stats.LatencyHistogramPure = THistogram(histogramResolution, MaxResolution);
-            }
+    explicit TTerminalStats(
+        uint64_t hdrTill = 4096,
+        uint64_t maxValue = 32768,
+        bool recordMicroseconds = false)
+        : RecordMicroseconds(recordMicroseconds)
+        , HdrTill_(hdrTill)
+        , MaxValue_(maxValue)
+    {
+        for (auto& stats : PerTransactionTypeStats) {
+            stats.ResetHistograms(hdrTill, maxValue);
         }
     }
+
+    bool RecordsMicroseconds() const { return RecordMicroseconds; }
+    uint64_t HdrTill() const { return HdrTill_; }
+    uint64_t MaxValue() const { return MaxValue_; }
 
     const TTransactionStats& GetStats(ETransactionType type) const {
         return PerTransactionTypeStats[static_cast<size_t>(type)];
@@ -91,12 +102,26 @@ public:
     {
         auto& stats = PerTransactionTypeStats[static_cast<size_t>(type)];
         stats.OK.fetch_add(1, std::memory_order_relaxed);
-        auto latencyPureMs = std::chrono::duration_cast<std::chrono::milliseconds>(latencyPure).count();
+        uint64_t vTxn = 0;
+        uint64_t vFull = 0;
+        uint64_t vPure = 0;
+        if (RecordMicroseconds) {
+            vTxn = static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::microseconds>(latency).count());
+            vFull = static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::microseconds>(latencyFull).count());
+            vPure = static_cast<uint64_t>(latencyPure.count());
+        } else {
+            vTxn = static_cast<uint64_t>(latency.count());
+            vFull = static_cast<uint64_t>(latencyFull.count());
+            vPure = static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(latencyPure).count());
+        }
         {
             std::lock_guard guard(stats.HistLock);
-            stats.LatencyHistogramMs.RecordValue(latency.count());
-            stats.LatencyHistogramFullMs.RecordValue(latencyFull.count());
-            stats.LatencyHistogramPure.RecordValue(latencyPureMs);
+            stats.LatencyHistogramMs.RecordValue(vTxn);
+            stats.LatencyHistogramFullMs.RecordValue(vFull);
+            stats.LatencyHistogramPure.RecordValue(vPure);
         }
     }
 
@@ -134,6 +159,9 @@ public:
 private:
     std::array<TTransactionStats, TRANSACTION_TYPE_COUNT> PerTransactionTypeStats;
     std::atomic<bool> WasCleared{false};
+    bool RecordMicroseconds = false;
+    uint64_t HdrTill_ = 4096;
+    uint64_t MaxValue_ = 32768;
 };
 
 //-----------------------------------------------------------------------------
@@ -150,6 +178,7 @@ public:
         std::stop_token stopToken,
         TPhaseController& phaseController,
         std::shared_ptr<TTerminalStats>& stats,
+        const TWorkloadConfig& workload,
         int simulateTransactionMs = 0,
         int simulateTransactionSelect1 = 0,
         size_t retryMaxAttempts = 4,
@@ -176,6 +205,7 @@ private:
     std::stop_token StopToken;
     TPhaseController& PhaseController;
     std::shared_ptr<TTerminalStats> Stats;
+    TWorkloadConfig Workload;
     size_t RetryMaxAttempts = 4;
     bool RetryAmbiguousCommit = false;
 

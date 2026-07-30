@@ -89,7 +89,8 @@ int RunWorkerFromRunConfig(
     runCfg.UseTui = false;
     runCfg.RetryMaxAttempts = doc.RetryMaxAttempts;
     runCfg.RetryAmbiguousCommit = doc.RetryAmbiguousCommit;
-    runCfg.TerminalsPerWarehouse = doc.TerminalsPerWarehouse;
+    runCfg.Workload = doc.Workload;
+    runCfg.Histogram = doc.Histogram;
 
     if (startAtRfc3339.has_value()) {
         runCfg.StartAt = ParseRfc3339Utc(*startAtRfc3339);
@@ -97,7 +98,14 @@ int RunWorkerFromRunConfig(
         throw std::runtime_error("orchestrated worker requires --start-at=<RFC3339-UTC>");
     }
 
-    TTerminalStats aggregated(false);
+    const bool recordUs = doc.Histogram.Configured && doc.Histogram.Unit == "us";
+    const uint64_t histHdr = doc.Histogram.Configured
+        ? doc.Histogram.HdrTill()
+        : 4096ull;
+    const uint64_t histMax = doc.Histogram.Configured
+        ? doc.Histogram.MaxValue()
+        : 32768ull;
+    TTerminalStats aggregated(histHdr, histMax, recordUs);
     TRunOutcome outcome;
     int exitCode = 0;
     try {
