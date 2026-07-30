@@ -3,8 +3,10 @@
 #include "runner.h"
 #include "clean.h"
 #include "check.h"
+#include "pg_admin_adapter.h"
 #include "path_checker.h"
 #include "worker_loader.h"
+#include "run_config.h"
 
 #include <log.h>
 #include <domain_util.h>
@@ -34,6 +36,7 @@ DEFINE_int32(simulate_select1, 0, "Simulation mode: run N SELECT 1 queries per t
 DEFINE_string(log_level, "info", "Log level: trace, debug, info, warn, error");
 DEFINE_bool(no_tui, false, "Disable terminal UI");
 DEFINE_bool(after_import, false, "Check mode: verify freshly loaded data (stricter invariants)");
+DEFINE_bool(after_run, false, "Check mode: verify data after a measurement run");
 
 namespace {
 
@@ -43,14 +46,17 @@ void PrintHelp() {
         "\n"
         "Usage: tpcc <command> [options]\n"
         "\n"
-        "Commands:\n"
-        "  init      Create TPC-C schema (tables, indexes)\n"
-        "  import    Load TPC-C data into the database\n"
-        "  run       Run the TPC-C benchmark\n"
-        "  worker    Run orchestrated worker from run-config.json\n"
+        "Commands (normative roles):\n"
+        "  schema    Create TPC-C schema (tables); alias: init\n"
         "  loader    Run orchestrated loader from run-config.json\n"
-        "  clean     Drop all TPC-C tables\n"
+        "  worker    Run orchestrated worker from run-config.json\n"
         "  check     Run TPC-C consistency checks\n"
+        "\n"
+        "Legacy / local aliases:\n"
+        "  init      ≡ schema\n"
+        "  import    Load TPC-C data (standalone)\n"
+        "  run       Run the TPC-C benchmark (standalone)\n"
+        "  clean     Drop all TPC-C tables (local admin)\n"
         "\n"
         "Options:\n"
         "  --connection          PostgreSQL connection string\n"
@@ -67,21 +73,24 @@ void PrintHelp() {
         "  --high-res-histogram  Use high resolution histograms (default: false)\n"
         "  --log-level           Log level: trace, debug, info, warn, error (default: \"info\")\n"
         "  --no-tui              Disable terminal UI (default: false)\n"
-        "  --after-import        check: verify freshly loaded data (default: false)\n"
+        "  --after-import        check: verify freshly loaded data\n"
+        "  --after-run           check: verify data after a measurement run\n"
         "\n"
         "Orchestrated mode (tpccctl):\n"
-        "  worker --run-config <path> --instance <name> --start-at=<RFC3339-UTC>\n"
+        "  schema --run-config <path> --instance <name>\n"
         "  loader --run-config <path> --instance <name>\n"
+        "  worker --run-config <path> --instance <name> --start-at=<RFC3339-UTC>\n"
+        "  check  --run-config <path> --instance <name> --after-import|--after-run\n"
         "\n"
         "Simulation (for testing without real TPC-C transactions):\n"
         "  --simulate-ms         Sleep N ms per transaction (default: 0 = disabled)\n"
         "  --simulate-select1    Run N SELECT 1 queries per transaction (default: 0 = disabled)\n"
         "\n"
         "Examples:\n"
-        "  tpcc init --connection=\"host=localhost dbname=tpcc\"\n"
+        "  tpcc schema --connection=\"host=localhost dbname=tpcc\"\n"
         "  tpcc import -w 10 -t 8\n"
         "  tpcc run -w 10 --duration=5 -t 4\n"
-        "  tpcc check -w 10\n"
+        "  tpcc check -w 10 --after-run\n"
         "  tpcc check -w 10 --after-import\n";
 }
 
@@ -95,8 +104,12 @@ spdlog::level::level_enum ParseLogLevel(const std::string& level) {
 }
 
 bool IsValidCommand(const std::string& cmd) {
-    return cmd == "init" || cmd == "import" || cmd == "run" || cmd == "worker" ||
-           cmd == "loader" || cmd == "clean" || cmd == "check";
+    return cmd == "schema" || cmd == "init" || cmd == "import" || cmd == "run" ||
+           cmd == "worker" || cmd == "loader" || cmd == "clean" || cmd == "check";
+}
+
+bool IsOrchestratedRole(const std::string& cmd) {
+    return cmd == "worker" || cmd == "loader" || cmd == "schema" || cmd == "check";
 }
 
 bool ParseOrchestratedArgs(
@@ -104,8 +117,12 @@ bool ParseOrchestratedArgs(
     char** argv,
     std::string& runConfig,
     std::string& instance,
-    std::optional<std::string>& startAt)
+    std::optional<std::string>& startAt,
+    bool& afterImport,
+    bool& afterRun)
 {
+    afterImport = false;
+    afterRun = false;
     for (int i = 2; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "--run-config" && i + 1 < argc) {
@@ -116,16 +133,34 @@ bool ParseOrchestratedArgs(
             startAt = arg.substr(std::string("--start-at=").size());
         } else if (arg == "--start-at" && i + 1 < argc) {
             startAt = argv[++i];
+        } else if (arg == "--after-import" || arg == "--after_import") {
+            afterImport = true;
+        } else if (arg == "--after-run" || arg == "--after_run") {
+            afterRun = true;
         }
     }
     return !runConfig.empty() && !instance.empty();
+}
+
+int RunOrchestratedSchema(const std::string& runConfig, const std::string& instance) {
+    const auto doc = NTpcc::LoadRunConfigDocument(runConfig);
+    const std::string connection = NTpcc::BuildPgConnectionString(doc);
+    NTpcc::CheckDbForInit(connection, doc.Path);
+    NTpcc::TPgAdminAdapter admin(connection, doc.Path);
+    admin.EnsureSchema();
+    auto desc = admin.Describe();
+    LOG_I("Schema ready (server={}, client={}, instance={})",
+          desc.ServerVersion, desc.ClientVersion, instance);
+    return 0;
 }
 
 int RunOrchestrated(
     const std::string& command,
     const std::string& runConfig,
     const std::string& instance,
-    const std::optional<std::string>& startAt)
+    const std::optional<std::string>& startAt,
+    bool afterImport,
+    bool afterRun)
 {
     if (command == "worker") {
         LOG_I("Starting orchestrated worker {}...", instance);
@@ -134,6 +169,14 @@ int RunOrchestrated(
     if (command == "loader") {
         LOG_I("Starting orchestrated loader {}...", instance);
         return NTpcc::RunLoaderFromRunConfig(runConfig, instance);
+    }
+    if (command == "schema") {
+        LOG_I("Starting orchestrated schema {}...", instance);
+        return RunOrchestratedSchema(runConfig, instance);
+    }
+    if (command == "check") {
+        LOG_I("Starting orchestrated check {}...", instance);
+        return NTpcc::RunCheckFromRunConfig(runConfig, instance, afterImport, afterRun);
     }
     return 1;
 }
@@ -216,9 +259,10 @@ std::string PreprocessArgs(
     return subcommand;
 }
 
-void RunInit() {
+void RunSchema() {
     NTpcc::CheckDbForInit(FLAGS_connection, FLAGS_path);
-    NTpcc::InitSync(FLAGS_connection, FLAGS_path);
+    NTpcc::TPgAdminAdapter admin(FLAGS_connection, FLAGS_path);
+    admin.EnsureSchema();
 }
 
 void RunImport() {
@@ -257,12 +301,18 @@ void RunBenchmark() {
 }
 
 void RunClean() {
-    NTpcc::CleanSync(FLAGS_connection, FLAGS_path);
+    NTpcc::TPgAdminAdapter admin(FLAGS_connection, FLAGS_path);
+    admin.Clean();
 }
 
 void RunCheck() {
+    if (FLAGS_after_import && FLAGS_after_run) {
+        throw std::runtime_error("specify only one of --after-import or --after-run");
+    }
+    // Default standalone check is after-run semantics (cardinality relaxed).
+    const bool afterImport = FLAGS_after_import;
     NTpcc::CheckDbForRun(FLAGS_connection, FLAGS_warehouses, FLAGS_path);
-    NTpcc::CheckSync(FLAGS_connection, FLAGS_warehouses, FLAGS_after_import, FLAGS_path);
+    NTpcc::CheckSync(FLAGS_connection, FLAGS_warehouses, afterImport, FLAGS_path);
 }
 
 } // anonymous
@@ -278,24 +328,37 @@ int main(int argc, char* argv[]) {
 
     if (argc >= 2) {
         const std::string earlyCommand = argv[1];
-        if (earlyCommand == "worker" || earlyCommand == "loader") {
+        if (IsOrchestratedRole(earlyCommand)) {
             std::string runConfig;
             std::string instance;
             std::optional<std::string> startAt;
-            if (!ParseOrchestratedArgs(argc, argv, runConfig, instance, startAt)) {
+            bool afterImport = false;
+            bool afterRun = false;
+            const bool hasOrchestrated = ParseOrchestratedArgs(
+                argc, argv, runConfig, instance, startAt, afterImport, afterRun);
+            // schema/check/loader/worker with --run-config take the orchestrated path.
+            // schema/check without run-config fall through to standalone gflags parsing.
+            if (hasOrchestrated) {
+                if (earlyCommand == "worker" && !startAt.has_value()) {
+                    std::cerr << "Error: worker requires --start-at=<RFC3339-UTC>\n";
+                    return 1;
+                }
+                if (earlyCommand == "check" && afterImport == afterRun) {
+                    std::cerr << "Error: check requires exactly one of --after-import or --after-run\n";
+                    return 1;
+                }
+                NTpcc::InitLogging();
+                spdlog::set_level(spdlog::level::info);
+                try {
+                    return RunOrchestrated(
+                        earlyCommand, runConfig, instance, startAt, afterImport, afterRun);
+                } catch (const std::exception& ex) {
+                    LOG_E("Fatal error: {}", ex.what());
+                    return 1;
+                }
+            }
+            if (earlyCommand == "worker" || earlyCommand == "loader") {
                 std::cerr << "Error: worker/loader require --run-config and --instance\n";
-                return 1;
-            }
-            if (earlyCommand == "worker" && !startAt.has_value()) {
-                std::cerr << "Error: worker requires --start-at=<RFC3339-UTC>\n";
-                return 1;
-            }
-            NTpcc::InitLogging();
-            spdlog::set_level(spdlog::level::info);
-            try {
-                return RunOrchestrated(earlyCommand, runConfig, instance, startAt);
-            } catch (const std::exception& ex) {
-                LOG_E("Fatal error: {}", ex.what());
                 return 1;
             }
         }
@@ -313,7 +376,7 @@ int main(int argc, char* argv[]) {
 
     if (!IsValidCommand(command)) {
         std::cerr << "Unknown command: " << command << "\n";
-        std::cerr << "Valid commands: init, import, run, worker, loader, clean, check\n";
+        std::cerr << "Valid commands: schema, init, import, run, worker, loader, clean, check\n";
         return 1;
     }
 
@@ -324,9 +387,9 @@ int main(int argc, char* argv[]) {
     spdlog::set_level(ParseLogLevel(FLAGS_log_level));
 
     try {
-        if (command == "init") {
+        if (command == "schema" || command == "init") {
             LOG_I("Initializing TPC-C schema...");
-            RunInit();
+            RunSchema();
             LOG_I("Schema initialization complete");
         } else if (command == "import") {
             LOG_I("Importing TPC-C data ({} warehouses)...", FLAGS_warehouses);
@@ -347,7 +410,9 @@ int main(int argc, char* argv[]) {
             std::string runConfig;
             std::string instance;
             std::optional<std::string> startAt;
-            if (!ParseOrchestratedArgs(argc, argv, runConfig, instance, startAt)) {
+            bool afterImport = false;
+            bool afterRun = false;
+            if (!ParseOrchestratedArgs(argc, argv, runConfig, instance, startAt, afterImport, afterRun)) {
                 std::cerr << "Error: worker/loader require --run-config and --instance\n";
                 return 1;
             }
@@ -355,7 +420,7 @@ int main(int argc, char* argv[]) {
                 std::cerr << "Error: worker requires --start-at=<RFC3339-UTC>\n";
                 return 1;
             }
-            return RunOrchestrated(command, runConfig, instance, startAt);
+            return RunOrchestrated(command, runConfig, instance, startAt, afterImport, afterRun);
         }
     } catch (const std::exception& ex) {
         LOG_E("Fatal error: {}", ex.what());

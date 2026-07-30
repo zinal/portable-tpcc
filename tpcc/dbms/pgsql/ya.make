@@ -18,6 +18,7 @@ SRCS(
     tpcc_session.cpp
     clean.cpp
     check.cpp
+    pg_admin_adapter.cpp
     path_checker.cpp
     terminal.cpp
     runner.cpp
@@ -36,6 +37,7 @@ PEERDIR(
     tpcc/domain
     tpcc/generator
     tpcc/loader
+    tpcc/checks
     tpcc/transactions
     tpcc/metrics
     tpcc/runtime

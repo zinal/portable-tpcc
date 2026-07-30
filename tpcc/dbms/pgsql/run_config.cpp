@@ -90,6 +90,16 @@ TRunConfigDocument LoadRunConfigDocument(const std::string& path) {
         doc.Database = db.value("database", "");
         doc.Path = db.value("path", "");
         doc.PasswordEnv = db.value("password_env", "");
+        if (db.contains("options")) {
+            if (!db["options"].is_object()) {
+                throw std::runtime_error("database.options must be an object");
+            }
+            // PostgreSQL currently accepts no adapter options; reject unknowns.
+            for (const auto& item : db["options"].items()) {
+                throw std::runtime_error(
+                    "unknown database.options." + item.key() + " for dbms=pgsql");
+            }
+        }
     }
     if (root.contains("scale") && root["scale"].is_object()) {
         doc.ScaleWarehouses = root["scale"].value("warehouses", 0);
@@ -217,12 +227,19 @@ std::string BuildPgConnectionString(const TRunConfigDocument& doc) {
         throw std::runtime_error("environment variable not set: " + doc.PasswordEnv);
     }
 
+    const auto& ep = doc.Endpoint;
+    if (ep.empty()) {
+        throw std::runtime_error("database.endpoint is required");
+    }
+    // Reject libpq keyword strings so secrets cannot bypass password_env.
+    if (ep.find('=') != std::string::npos) {
+        throw std::runtime_error(
+            "database.endpoint must be host or host:port; "
+            "libpq keyword strings are not accepted (use password_env for secrets)");
+    }
+
     std::string host;
     std::string port;
-    const auto& ep = doc.Endpoint;
-    if (ep.find('=') != std::string::npos) {
-        return ep;
-    }
     auto colon = ep.find(':');
     if (colon == std::string::npos) {
         host = ep;
@@ -230,6 +247,9 @@ std::string BuildPgConnectionString(const TRunConfigDocument& doc) {
     } else {
         host = ep.substr(0, colon);
         port = ep.substr(colon + 1);
+    }
+    if (host.empty() || port.empty()) {
+        throw std::runtime_error("database.endpoint must be host or host:port");
     }
 
     std::string user = "postgres";
