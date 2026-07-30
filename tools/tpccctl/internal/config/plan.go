@@ -6,12 +6,17 @@ import (
 )
 
 // WorkerArgv returns argv for launching a worker.
-func WorkerArgv(runConfigPath, instance string) []string {
-	return []string{
+// When startAt is non-empty it appends --start-at=<RFC3339-UTC>.
+func WorkerArgv(runConfigPath, instance, startAt string) []string {
+	args := []string{
 		"worker",
 		"--run-config", runConfigPath,
 		"--instance", instance,
 	}
+	if startAt != "" {
+		args = append(args, "--start-at="+startAt)
+	}
+	return args
 }
 
 // LoaderArgv returns argv for launching a loader.
@@ -20,6 +25,29 @@ func LoaderArgv(runConfigPath, instance string) []string {
 		"loader",
 		"--run-config", runConfigPath,
 		"--instance", instance,
+	}
+}
+
+// SchemaArgv returns argv for the schema role.
+func SchemaArgv(runConfigPath, instance string) []string {
+	return []string{
+		"schema",
+		"--run-config", runConfigPath,
+		"--instance", instance,
+	}
+}
+
+// CheckArgv returns argv for the check role.
+func CheckArgv(runConfigPath, instance, phase string) []string {
+	flag := "--after-run"
+	if phase == "after-import" {
+		flag = "--after-import"
+	}
+	return []string{
+		"check",
+		"--run-config", runConfigPath,
+		"--instance", instance,
+		flag,
 	}
 }
 
@@ -32,17 +60,25 @@ type PlanSnapshot struct {
 	WorkerAssignment []WorkerAssignmentJSON `json:"worker_assignment"`
 	WorkerArgv       map[string][]string    `json:"worker_argv"`
 	LoaderArgv       map[string][]string    `json:"loader_argv"`
+	SchemaArgv       []string               `json:"schema_argv,omitempty"`
+	CheckArgvImport  []string               `json:"check_argv_after_import,omitempty"`
+	CheckArgvRun     []string               `json:"check_argv_after_run,omitempty"`
 }
 
 // BuildPlanSnapshot creates a plan output from run config.
+// Worker argv omit --start-at; that value is computed at start time.
 func BuildPlanSnapshot(rc *RunConfig) *PlanSnapshot {
 	workerArgv := make(map[string][]string)
 	for _, w := range rc.WorkerAssignment {
-		workerArgv[w.Instance] = WorkerArgv("run-config.json", w.Instance)
+		workerArgv[w.Instance] = WorkerArgv("run-config.json", w.Instance, "")
 	}
 	loaderArgv := make(map[string][]string)
 	for _, l := range rc.LoadAssignment {
 		loaderArgv[l.Instance] = LoaderArgv("run-config.json", l.Instance)
+	}
+	schemaInstance := "schema-0"
+	if len(rc.LoadAssignment) > 0 {
+		schemaInstance = rc.LoadAssignment[0].Instance + "-schema"
 	}
 	return &PlanSnapshot{
 		RunID:            rc.RunID,
@@ -52,6 +88,9 @@ func BuildPlanSnapshot(rc *RunConfig) *PlanSnapshot {
 		WorkerAssignment: rc.WorkerAssignment,
 		WorkerArgv:       workerArgv,
 		LoaderArgv:       loaderArgv,
+		SchemaArgv:       SchemaArgv("run-config.json", schemaInstance),
+		CheckArgvImport:  CheckArgv("run-config.json", "check-0", "after-import"),
+		CheckArgvRun:     CheckArgv("run-config.json", "check-0", "after-run"),
 	}
 }
 

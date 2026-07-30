@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"portable-tpcc/tools/tpccctl/internal/config"
 	"portable-tpcc/tools/tpccctl/internal/consolidate"
 	"portable-tpcc/tools/tpccctl/internal/deploy"
 	"portable-tpcc/tools/tpccctl/internal/profile"
 	"portable-tpcc/tools/tpccctl/internal/redact"
+	"portable-tpcc/tools/tpccctl/internal/schedule"
 	"portable-tpcc/tools/tpccctl/internal/state"
 	"portable-tpcc/tools/tpccctl/internal/validate"
 )
@@ -128,19 +130,29 @@ func (o *Orchestrator) Plan() (*config.PlanSnapshot, error) {
 	return config.BuildPlanSnapshot(ctx.RunConfig), nil
 }
 
-// Deploy distributes local artifacts to target hosts (local mode).
+// Deploy distributes binary + run-config.json to runtime hosts.
 func (o *Orchestrator) Deploy(ctx *Context) error {
 	if err := o.StateStore.Transition(ctx.RunID, state.StateDeploying); err != nil {
 		return err
 	}
-	ld := &deploy.LocalDeploy{
-		SourceRoot: o.Expanded.LocalArtifacts,
-		TargetRoot: o.Expanded.RemoteRoot,
-	}
-	_, err := ld.Deploy(o.Expanded.LocalArtifacts, true)
+	sessions, err := o.openSessions()
 	if err != nil {
 		o.StateStore.Fail(ctx.RunID, err)
 		return err
+	}
+	defer closeSessions(sessions)
+
+	if err := o.deployToHosts(ctx, sessions); err != nil {
+		o.StateStore.Fail(ctx.RunID, err)
+		return err
+	}
+	// Keep local-mode deploy manifest for cleanup of shared artifact trees when used.
+	if abs, err := filepath.Abs(o.Expanded.RemoteRoot); err == nil {
+		ld := &deploy.LocalDeploy{
+			SourceRoot: o.Expanded.LocalArtifacts,
+			TargetRoot: abs,
+		}
+		_, _ = ld.Deploy(o.Expanded.LocalArtifacts, false)
 	}
 	return o.StateStore.Transition(ctx.RunID, state.StateSchema)
 }
@@ -165,11 +177,13 @@ func (o *Orchestrator) Run() error {
 		{"load", func() error { return o.load(ctx) }},
 		{"check_after_import", func() error { return o.check(ctx, "after-import") }},
 		{"start", func() error { return o.start(ctx) }},
+		{"check_after_run", func() error { return o.check(ctx, "after-run") }},
 		{"collect", func() error { return o.collect(ctx) }},
 		{"consolidate", func() error { return o.consolidate(ctx) }},
 	}
 	for _, step := range steps {
 		if o.shouldSkip(step.name) {
+			_ = o.StateStore.RecordSkip(ctx.RunID, step.name)
 			continue
 		}
 		if err := step.fn(); err != nil {
@@ -190,10 +204,27 @@ func (o *Orchestrator) shouldSkip(name string) bool {
 }
 
 func (o *Orchestrator) schema(ctx *Context) error {
-	return o.StateStore.Transition(ctx.RunID, state.StateSchema)
+	if err := o.StateStore.Transition(ctx.RunID, state.StateSchema); err != nil {
+		return err
+	}
+	sessions, err := o.openSessions()
+	if err != nil {
+		return err
+	}
+	defer closeSessions(sessions)
+
+	hostKey := ctx.RunConfig.LoadAssignment[0].Host
+	instance := "schema-0"
+	argv := config.SchemaArgv("run-config.json", instance)
+	proc, err := o.launchRole(ctx, sessions, "schema", hostKey, instance, argv)
+	if err != nil {
+		return err
+	}
+	// Schema is synchronous enough: wait up to 30m for completion.
+	return o.waitProcesses(ctx, []*launchedProc{proc}, 30*time.Minute, true)
 }
 
-// RunSchema transitions to schema state.
+// RunSchema applies database schema via the remote schema role.
 func (o *Orchestrator) RunSchema(ctx *Context) error {
 	return o.schema(ctx)
 }
@@ -202,22 +233,79 @@ func (o *Orchestrator) load(ctx *Context) error {
 	if err := o.StateStore.Transition(ctx.RunID, state.StateLoading); err != nil {
 		return err
 	}
+	sessions, err := o.openSessions()
+	if err != nil {
+		return err
+	}
+	defer closeSessions(sessions)
+
+	var procs []*launchedProc
+	for _, l := range ctx.RunConfig.LoadAssignment {
+		argv := config.LoaderArgv("run-config.json", l.Instance)
+		proc, err := o.launchRole(ctx, sessions, "loader", l.Host, l.Instance, argv)
+		if err != nil {
+			_ = o.stopPeers(ctx, sessions)
+			return err
+		}
+		procs = append(procs, proc)
+	}
+	if err := o.waitProcesses(ctx, procs, 12*time.Hour, true); err != nil {
+		_ = o.stopPeers(ctx, sessions)
+		return err
+	}
 	return o.StateStore.Transition(ctx.RunID, state.StateCheckingImport)
 }
 
-// RunLoad transitions through loading states.
+// RunLoad runs horizontal loaders.
 func (o *Orchestrator) RunLoad(ctx *Context) error {
 	return o.load(ctx)
 }
 
 func (o *Orchestrator) check(ctx *Context, phase string) error {
 	if phase == "after-import" {
-		return o.StateStore.Transition(ctx.RunID, state.StateCheckingImport)
+		if err := o.StateStore.Transition(ctx.RunID, state.StateCheckingImport); err != nil {
+			return err
+		}
+		if !o.Profile.Checks.AfterImport && !containsSkipOverride(o.Opts.SkipSteps, "check_after_import") {
+			// Profile may disable; still allow explicit check command.
+		}
+	} else {
+		if err := o.StateStore.Transition(ctx.RunID, state.StateCheckingResult); err != nil {
+			return err
+		}
 	}
-	return o.StateStore.Transition(ctx.RunID, state.StateCheckingResult)
+	sessions, err := o.openSessions()
+	if err != nil {
+		return err
+	}
+	defer closeSessions(sessions)
+
+	hostKey := ctx.RunConfig.LoadAssignment[0].Host
+	instance := "check-0"
+	argv := config.CheckArgv("run-config.json", instance, phase)
+	proc, err := o.launchRole(ctx, sessions, "check", hostKey, instance, argv)
+	if err != nil {
+		return err
+	}
+	if err := o.waitProcesses(ctx, []*launchedProc{proc}, 2*time.Hour, true); err != nil {
+		if o.Profile.Checks.FailFast {
+			return err
+		}
+		return err
+	}
+	return nil
 }
 
-// RunCheck records check phase in run state.
+func containsSkipOverride(steps []string, name string) bool {
+	for _, s := range steps {
+		if s == name {
+			return true
+		}
+	}
+	return false
+}
+
+// RunCheck records check phase and executes the check role.
 func (o *Orchestrator) RunCheck(ctx *Context, phase string) error {
 	return o.check(ctx, phase)
 }
@@ -226,28 +314,56 @@ func (o *Orchestrator) start(ctx *Context) error {
 	if err := o.StateStore.Transition(ctx.RunID, state.StatePreparing); err != nil {
 		return err
 	}
-	if err := o.StateStore.Transition(ctx.RunID, state.StateArming); err != nil {
+	sessions, err := o.openSessions()
+	if err != nil {
 		return err
 	}
-	if err := o.StateStore.Transition(ctx.RunID, state.StateRamping); err != nil {
+	defer closeSessions(sessions)
+
+	token := schedule.Compute(ctx.RunConfig, time.Now().UTC())
+	if err := state.WriteJSON(ctx.RunDir, "start-token.json", token); err != nil {
 		return err
 	}
-	if err := o.StateStore.Transition(ctx.RunID, state.StateMeasuring); err != nil {
+	rs, err := o.StateStore.Load(ctx.RunID)
+	if err != nil {
 		return err
 	}
-	return o.StateStore.Transition(ctx.RunID, state.StateDraining)
+	rs.StartAt = token.StartAt
+	if err := o.StateStore.Save(rs); err != nil {
+		return err
+	}
+
+	var workers []*launchedProc
+	for _, w := range ctx.RunConfig.WorkerAssignment {
+		argv := config.WorkerArgv("run-config.json", w.Instance, token.StartAt)
+		proc, err := o.launchRole(ctx, sessions, "worker", w.Host, w.Instance, argv)
+		if err != nil {
+			_ = o.stopPeers(ctx, sessions)
+			return err
+		}
+		workers = append(workers, proc)
+	}
+	return o.superviseWorkers(ctx, workers, token, sessions)
 }
 
-// RunStart executes prepare/arm/ramp/measure/drain state transitions.
+// RunStart arms workers with a shared --start-at and supervises phases.
 func (o *Orchestrator) RunStart(ctx *Context) error {
 	return o.start(ctx)
 }
 
 func (o *Orchestrator) collect(ctx *Context) error {
-	return o.StateStore.Transition(ctx.RunID, state.StateCollecting)
+	if err := o.StateStore.Transition(ctx.RunID, state.StateCollecting); err != nil {
+		return err
+	}
+	sessions, err := o.openSessions()
+	if err != nil {
+		return err
+	}
+	defer closeSessions(sessions)
+	return o.collectArtifacts(ctx, sessions)
 }
 
-// RunCollect transitions to collecting state.
+// RunCollect pulls artifacts into results/<run_id>/.
 func (o *Orchestrator) RunCollect(ctx *Context) error {
 	return o.collect(ctx)
 }
@@ -256,8 +372,15 @@ func (o *Orchestrator) consolidate(ctx *Context) error {
 	if err := o.StateStore.Transition(ctx.RunID, state.StateConsolidating); err != nil {
 		return err
 	}
+	rs, err := o.StateStore.Load(ctx.RunID)
+	if err != nil {
+		return err
+	}
 	cons := &consolidate.Consolidator{ResultRoot: o.Expanded.ResultRoot}
-	agg, err := cons.Consolidate(ctx.RunID, ctx.RunConfig)
+	agg, err := cons.ConsolidateWithOptions(ctx.RunID, ctx.RunConfig, consolidate.Options{
+		SkippedSteps:   rs.SkippedSteps,
+		MaxClockSkewMs: ctx.RunConfig.Phases.MaxClockSkewMs,
+	})
 	if err != nil {
 		return err
 	}
@@ -271,7 +394,30 @@ func (o *Orchestrator) RunConsolidate(ctx *Context) error {
 
 // Status returns current run state.
 func (o *Orchestrator) Status(runID string) (*state.RunState, error) {
+	if runID == "" || runID == "latest" {
+		latest, err := o.StateStore.LatestRunID()
+		if err != nil {
+			return nil, err
+		}
+		if latest == "" {
+			return nil, fmt.Errorf("no runs found under %s", o.StateStore.StateDir)
+		}
+		runID = latest
+	}
 	return o.StateStore.Load(runID)
+}
+
+// Stop terminates running processes for a run.
+func (o *Orchestrator) Stop(ctx *Context) error {
+	if err := o.StateStore.Transition(ctx.RunID, state.StateStopping); err != nil {
+		return err
+	}
+	sessions, err := o.openSessions()
+	if err != nil {
+		return err
+	}
+	defer closeSessions(sessions)
+	return o.stopPeers(ctx, sessions)
 }
 
 // Cleanup deploy artifacts.

@@ -3,6 +3,7 @@ package validate
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"portable-tpcc/tools/tpccctl/internal/assignment"
 	"portable-tpcc/tools/tpccctl/internal/config"
@@ -42,8 +43,21 @@ func Profile(p *profile.Profile) *Result {
 	if p.SSH.User == "" {
 		res.Add("ssh.user is required")
 	}
+	if !p.SSH.InsecureIgnore && p.SSH.KnownHosts == "" {
+		res.Add("ssh.known_hosts is required unless ssh.insecure_ignore_host_key is true")
+	}
+	if p.SSH.ConnectTimeout != "" {
+		if _, err := time.ParseDuration(p.SSH.ConnectTimeout); err != nil {
+			res.Add("ssh.connect_timeout: " + err.Error())
+		}
+	}
 	if !allowedDBMS[p.Database.DBMS] {
 		res.Add(fmt.Sprintf("unknown database.dbms %q", p.Database.DBMS))
+	}
+	if p.Database.DBMS == "pgsql" {
+		for key := range p.Database.Options {
+			res.Add(fmt.Sprintf("unknown database.options.%s for dbms=pgsql", key))
+		}
 	}
 	if p.Database.Endpoint == "" {
 		res.Add("database.endpoint is required")

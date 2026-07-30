@@ -126,4 +126,31 @@ int RunWorkerFromRunConfig(
     return exitCode;
 }
 
+int RunSchemaFromRunConfig(const std::string& runConfigPath, const std::string& instance) {
+    const auto doc = LoadRunConfigDocument(runConfigPath);
+    const std::string instanceDir = InstanceWorkDir(doc, "schema", instance);
+    EnsureInstanceDir(instanceDir);
+    const auto paths = MakeArtifactPaths(instanceDir);
+    const std::string nonce = GenerateInstanceNonce();
+
+    WriteProcessJson(paths, doc, instance, "schema", static_cast<int>(::getpid()), nonce);
+
+    const std::string connection = BuildPgConnectionString(doc);
+    int exitCode = 0;
+    try {
+        CheckDbForInit(connection, doc.Path);
+        TPgAdminAdapter admin(connection, doc.Path);
+        admin.EnsureSchema();
+        auto desc = admin.Describe();
+        LOG_I("Schema ready (server={}, client={}, instance={})",
+              desc.ServerVersion, desc.ClientVersion, instance);
+    } catch (const std::exception& ex) {
+        LOG_E("Schema failed: {}", ex.what());
+        exitCode = 1;
+    }
+
+    WriteArtifactManifest(paths, instance, nonce, exitCode);
+    return exitCode;
+}
+
 } // namespace NTpcc

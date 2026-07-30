@@ -159,17 +159,17 @@ missed deadline fails the process; consolidate can merge raw histograms.
 
 ---
 
-### Phase 5 — `tpccctl` orchestration **[§2.1]**
+### Phase 5 — `tpccctl` orchestration **[§2.1]** ✅
 
 | # | Task | Notes |
 | --- | --- | --- |
-| 5.1 | SSH deploy of binary + `run-config.json`; host-key policy | |
-| 5.2 | Launch/supervise via `process.json` | |
-| 5.3 | Compute `--start-at = now + start_lead`; pass to all workers; record schedule in results | No ready-barrier wait |
-| 5.4 | On any required process fatal before measurement → abort run / stop peers | |
-| 5.5 | `collect` + layout per §8 | |
-| 5.6 | `consolidate`: merge buckets then percentiles; embed settings; real status | |
-| 5.7 | Full `run` pipeline + skip recording; strict validate | |
+| 5.1 | SSH deploy of binary + `run-config.json`; host-key policy | Done (`internal/remote`; local loopback + SSH/known_hosts) |
+| 5.2 | Launch/supervise via `process.json` | Done (detached start + artifact-manifest wait) |
+| 5.3 | Compute `--start-at = now + start_lead`; pass to all workers; record schedule | Done (`start-token.json`; no ready-barrier) |
+| 5.4 | On any required process fatal before measurement → abort run / stop peers | Done |
+| 5.5 | `collect` + layout per §8 | Done (`raw/`, `checks/`, `orchestrator/`) |
+| 5.6 | `consolidate`: merge buckets then percentiles; embed settings; real status | Done |
+| 5.7 | Full `run` pipeline + skip recording; strict validate | Done (`check_after_run`, skipped_steps, pgsql options/known_hosts) |
 
 **Exit:** multi-host PG run via `tpccctl run` yields valid `aggregate.json`.
 
@@ -218,5 +218,7 @@ Phase 0 (headers/docs)
 
 ## 6. Immediate next step
 
-Phase 0–4 complete. Next: **Phase 5** (`tpccctl` orchestration: SSH deploy,
-`--start-at` scheduling, collect/consolidate).
+Phase 0–5 scaffolding complete for `tpccctl` (SSH/local remote drive,
+`--start-at`, collect/consolidate with histogram merge). Next: harden
+multi-host SSH runs in the field and **Phase 6** (open decisions, tests,
+other DBMS).

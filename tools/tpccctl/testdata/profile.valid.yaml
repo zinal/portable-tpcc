@@ -30,8 +30,7 @@ database:
   database: tpcc
   path: portable_tpcc
   password_env: TPCC_PASSWORD
-  options:
-    tx_mode: serializable
+  options: {}
 
 scale:
   warehouses: 10
