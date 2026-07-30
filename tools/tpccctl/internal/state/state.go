@@ -30,22 +30,25 @@ const (
 
 // RunState is mutable control-host state for a run.
 type RunState struct {
-	SchemaVersion    int                 `json:"schema_version"`
-	RunID            string              `json:"run_id"`
-	State            string              `json:"state"`
-	UpdatedAt        string              `json:"updated_at"`
-	Error            string              `json:"error,omitempty"`
-	InsecureHostKey  bool                `json:"insecure_ignore_host_key,omitempty"`
-	Processes        map[string]Process  `json:"processes,omitempty"`
+	SchemaVersion   int                `json:"schema_version"`
+	RunID           string             `json:"run_id"`
+	State           string             `json:"state"`
+	UpdatedAt       string             `json:"updated_at"`
+	Error           string             `json:"error,omitempty"`
+	InsecureHostKey bool               `json:"insecure_ignore_host_key,omitempty"`
+	Processes       map[string]Process `json:"processes,omitempty"`
+	SkippedSteps    []string           `json:"skipped_steps,omitempty"`
+	StartAt         string             `json:"start_at,omitempty"`
 }
 
 type Process struct {
-	Role      string `json:"role"`
-	Host      string `json:"host"`
-	Instance  string `json:"instance"`
-	PID       int    `json:"pid,omitempty"`
-	State     string `json:"state"`
-	UpdatedAt string `json:"updated_at"`
+	Role          string `json:"role"`
+	Host          string `json:"host"`
+	Instance      string `json:"instance"`
+	PID           int    `json:"pid,omitempty"`
+	InstanceNonce string `json:"instance_nonce,omitempty"`
+	State         string `json:"state"`
+	UpdatedAt     string `json:"updated_at"`
 }
 
 // Store manages run-state on the control host.
@@ -158,6 +161,72 @@ func (s *Store) ReleaseProfileLock(profileID, runID string) error {
 		return fmt.Errorf("profile lock held by another run")
 	}
 	return os.Remove(lockPath)
+}
+
+// LatestRunID returns the most recently updated run under state/runs, or "".
+func (s *Store) LatestRunID() (string, error) {
+	root := filepath.Join(s.StateDir, "runs")
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", err
+	}
+	var bestID string
+	var bestTime time.Time
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		rs, err := s.Load(e.Name())
+		if err != nil {
+			continue
+		}
+		t, err := time.Parse(time.RFC3339, rs.UpdatedAt)
+		if err != nil {
+			info, ierr := e.Info()
+			if ierr != nil {
+				continue
+			}
+			t = info.ModTime()
+		}
+		if bestID == "" || t.After(bestTime) {
+			bestID = e.Name()
+			bestTime = t
+		}
+	}
+	return bestID, nil
+}
+
+// RecordSkip appends a skipped pipeline step name.
+func (s *Store) RecordSkip(runID, step string) error {
+	rs, err := s.Load(runID)
+	if err != nil {
+		return err
+	}
+	for _, existing := range rs.SkippedSteps {
+		if existing == step {
+			return s.Save(rs)
+		}
+	}
+	rs.SkippedSteps = append(rs.SkippedSteps, step)
+	return s.Save(rs)
+}
+
+// UpsertProcess stores process supervision metadata.
+func (s *Store) UpsertProcess(runID string, proc Process) error {
+	rs, err := s.Load(runID)
+	if err != nil {
+		return err
+	}
+	if rs.Processes == nil {
+		rs.Processes = map[string]Process{}
+	}
+	proc.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	key := proc.Role + "/" + proc.Instance
+	rs.Processes[key] = proc
+	return s.Save(rs)
 }
 
 // WriteJSON atomically writes a JSON file in the run directory.

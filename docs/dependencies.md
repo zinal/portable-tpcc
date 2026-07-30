@@ -64,7 +64,7 @@ required for the current port.
 | Module | Notes |
 | --- | --- |
 | `tpcc/dbms/ydb`, `oceanbase` | external SDKs |
-| `tools/tpccctl` remote drive | plan/assignment done; SSH/start-at incomplete |
+| `tools/tpccctl` remote drive | Phase 5: SSH/local sessions, start-at, collect/consolidate |
 
 ## Known defects (tracked)
 

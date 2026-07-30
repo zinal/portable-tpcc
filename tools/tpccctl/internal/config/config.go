@@ -150,9 +150,16 @@ func ExpandProfilePaths(p *profile.Profile) (ExpandedPaths, error) {
 	if err != nil {
 		return ExpandedPaths{}, err
 	}
+	remoteRoot, err := paths.ExpandHome(p.Paths.RemoteRoot)
+	if err != nil {
+		return ExpandedPaths{}, err
+	}
+	if abs, err := filepath.Abs(remoteRoot); err == nil {
+		remoteRoot = abs
+	}
 	return ExpandedPaths{
 		LocalArtifacts: local,
-		RemoteRoot:     p.Paths.RemoteRoot,
+		RemoteRoot:     remoteRoot,
 		ResultRoot:     result,
 		StateDir:       state,
 		KnownHosts:     known,
@@ -343,7 +350,7 @@ func GenerateRunID(profileName string) string {
 	return fmt.Sprintf("%s-%s-01", now.Format("20060102"), profileName)
 }
 
-// SettingsForAggregate returns a redacted settings object for aggregate.json.
+// SettingsForAggregate returns concrete settings for aggregate.json (no secrets).
 func SettingsForAggregate(rc *RunConfig) map[string]interface{} {
 	return map[string]interface{}{
 		"profile_name": rc.ProfileName,
@@ -358,10 +365,9 @@ func SettingsForAggregate(rc *RunConfig) map[string]interface{} {
 		"scale":             rc.Scale,
 		"data":              rc.Data,
 		"workload":          rc.Workload,
+		"load_assignment":   rc.LoadAssignment,
 		"worker_assignment": rc.WorkerAssignment,
-		"phases": map[string]interface{}{
-			"ramp_up_ms":      rc.Phases.RampUpMs,
-			"measurement_ms":  rc.Phases.MeasurementMs,
-		},
+		"phases":            rc.Phases,
+		"runtime":           rc.Runtime,
 	}
 }

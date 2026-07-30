@@ -259,7 +259,7 @@ func runStop(opts orchestrator.Options) int {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-	if err := o.StateStore.Transition(ctx.RunID, "stopping"); err != nil {
+	if err := o.Stop(ctx); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}

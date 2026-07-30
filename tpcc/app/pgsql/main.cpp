@@ -6,7 +6,6 @@
 #include "pg_admin_adapter.h"
 #include "path_checker.h"
 #include "worker_loader.h"
-#include "run_config.h"
 
 #include <log.h>
 #include <domain_util.h>
@@ -143,15 +142,7 @@ bool ParseOrchestratedArgs(
 }
 
 int RunOrchestratedSchema(const std::string& runConfig, const std::string& instance) {
-    const auto doc = NTpcc::LoadRunConfigDocument(runConfig);
-    const std::string connection = NTpcc::BuildPgConnectionString(doc);
-    NTpcc::CheckDbForInit(connection, doc.Path);
-    NTpcc::TPgAdminAdapter admin(connection, doc.Path);
-    admin.EnsureSchema();
-    auto desc = admin.Describe();
-    LOG_I("Schema ready (server={}, client={}, instance={})",
-          desc.ServerVersion, desc.ClientVersion, instance);
-    return 0;
+    return NTpcc::RunSchemaFromRunConfig(runConfig, instance);
 }
 
 int RunOrchestrated(
