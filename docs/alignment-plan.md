@@ -144,16 +144,16 @@ missed deadline fails the process; consolidate can merge raw histograms.
 
 ---
 
-### Phase 4 — Checks & admin surface **[D]**
+### Phase 4 — Checks & admin surface **[D]** ✅
 
 | # | Task | Notes |
 | --- | --- | --- |
-| 4.1 | Shared check catalog in `tpcc/checks` | |
-| 4.2 | PG `ICheckAdapter` → structured `checks/` JSON | |
-| 4.3 | Fix check SQL blind spots | Gap analysis |
-| 4.4 | Normative roles + legacy aliases **[D]** | |
-| 4.5 | `EnsureSchema` / indexes / stats / `Clean` / `Describe` | No fence APIs |
-| 4.6 | Reject unknown `database.options`; close password/`endpoint` bypass | |
+| 4.1 | Shared check catalog in `tpcc/checks` | Done |
+| 4.2 | PG `ICheckAdapter` → structured `checks/` JSON | Done |
+| 4.3 | Fix check SQL blind spots | Done (OUTER JOIN / NULL-safe / carrier 0 / mixed delivery) |
+| 4.4 | Normative roles + legacy aliases **[D]** | Done (`schema\|loader\|worker\|check`; `init`≡`schema`) |
+| 4.5 | `EnsureSchema` / indexes / stats / `Clean` / `Describe` | Done (`TPgAdminAdapter`; no fence APIs) |
+| 4.6 | Reject unknown `database.options`; close password/`endpoint` bypass | Done |
 
 **Exit:** orchestrated after-import / after-run checks are machine-readable.
 
@@ -218,6 +218,5 @@ Phase 0 (headers/docs)
 
 ## 6. Immediate next step
 
-Phase 0–3 complete (including full `workload.*` mix/keying/think and
-`runtime.histogram` mapping onto `THistogram`). Next: **Phase 4** (checks +
-admin surface) and **Phase 5** (`tpccctl` orchestration).
+Phase 0–4 complete. Next: **Phase 5** (`tpccctl` orchestration: SSH deploy,
+`--start-at` scheduling, collect/consolidate).

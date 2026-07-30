@@ -5,6 +5,7 @@ RECURSE(
     transactions
     generator
     loader
+    checks
     dbms
     app
 )

@@ -1,8 +1,8 @@
 #include "worker_loader.h"
 
+#include "pg_admin_adapter.h"
 #include "artifacts.h"
 #include "import.h"
-#include "init.h"
 #include "path_checker.h"
 #include "run_config.h"
 #include "runner.h"
@@ -44,7 +44,9 @@ int RunLoaderFromRunConfig(const std::string& runConfigPath, const std::string& 
     int exitCode = 0;
     try {
         ImportSync(importCfg);
-        CreateIndexes(connection, doc.Path);
+        TPgAdminAdapter admin(connection, doc.Path);
+        admin.EnsureIndexes();
+        // ImportSync already runs ANALYZE; EnsureStatistics remains available for schema role.
     } catch (const std::exception& ex) {
         LOG_E("Loader failed: {}", ex.what());
         exitCode = 1;

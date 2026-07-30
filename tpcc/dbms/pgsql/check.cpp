@@ -1,5 +1,11 @@
 #include "check.h"
 
+#include "artifacts.h"
+#include "path_checker.h"
+#include "run_config.h"
+
+#include <report.h>
+
 #include <constants.h>
 #include <log.h>
 
@@ -8,6 +14,7 @@
 #include <fmt/format.h>
 #include <iostream>
 #include <string>
+#include <unistd.h>
 #include <vector>
 
 namespace NTpcc {
@@ -19,17 +26,6 @@ void CheckNoRows(pqxx::nontransaction& txn, const std::string& sql, const std::s
     if (!result.empty()) {
         throw std::runtime_error(
             description.empty() ? "Unexpected rows returned" : description);
-    }
-}
-
-void WaitCheck(const std::string& description, auto checkFn) {
-    std::cout << "Checking " << description << " " << std::flush;
-    try {
-        checkFn();
-        std::cout << "[OK]" << std::endl;
-    } catch (const std::exception& ex) {
-        std::cout << "[Failed]: " << ex.what() << std::endl;
-        throw;
     }
 }
 
@@ -194,19 +190,20 @@ void BaseCheckHistoryTable(pqxx::nontransaction& txn, int expectedWhNumber) {
 //-----------------------------------------------------------------------------
 
 void ConsistencyCheck3321(pqxx::nontransaction& txn) {
-    // W_YTD = sum(D_YTD) for each warehouse
+    // W_YTD = sum(D_YTD) for each warehouse (LEFT JOIN catches empty districts)
     std::string sql = fmt::format(
         "SELECT w.W_ID, w.W_YTD, d.sum_d_ytd "
         "FROM {} AS w "
-        "JOIN (SELECT D_W_ID, SUM(D_YTD) AS sum_d_ytd FROM {} GROUP BY D_W_ID) AS d "
+        "LEFT JOIN (SELECT D_W_ID, SUM(D_YTD) AS sum_d_ytd FROM {} GROUP BY D_W_ID) AS d "
         "ON w.W_ID = d.D_W_ID "
-        "WHERE ABS(w.W_YTD - d.sum_d_ytd) > 1e-3 LIMIT 1",
+        "WHERE ABS(w.W_YTD - COALESCE(d.sum_d_ytd, 0)) > 1e-3 LIMIT 1",
         TABLE_WAREHOUSE, TABLE_DISTRICT);
     CheckNoRows(txn, sql);
 }
 
 void ConsistencyCheck3322(pqxx::nontransaction& txn) {
-    // D_NEXT_O_ID - 1 = max(O_ID) = max(NO_O_ID)
+    // D_NEXT_O_ID - 1 = max(O_ID); when new-orders exist, also = max(NO_O_ID).
+    // IS DISTINCT FROM so NULL aggregates do not fail open.
     std::string sql = fmt::format(
         "SELECT d.D_W_ID, d.D_ID, d.D_NEXT_O_ID, o.max_o_id, n.max_no_o_id "
         "FROM {} AS d "
@@ -214,7 +211,9 @@ void ConsistencyCheck3322(pqxx::nontransaction& txn) {
         "  ON d.D_W_ID = o.O_W_ID AND d.D_ID = o.O_D_ID "
         "LEFT JOIN (SELECT NO_W_ID, NO_D_ID, MAX(NO_O_ID) AS max_no_o_id FROM {} GROUP BY NO_W_ID, NO_D_ID) AS n "
         "  ON d.D_W_ID = n.NO_W_ID AND d.D_ID = n.NO_D_ID "
-        "WHERE (d.D_NEXT_O_ID - 1) != o.max_o_id OR o.max_o_id != n.max_no_o_id "
+        "WHERE o.max_o_id IS NULL "
+        "   OR (d.D_NEXT_O_ID - 1) IS DISTINCT FROM o.max_o_id "
+        "   OR (n.max_no_o_id IS NOT NULL AND n.max_no_o_id IS DISTINCT FROM o.max_o_id) "
         "LIMIT 1",
         TABLE_DISTRICT, TABLE_OORDER, TABLE_NEW_ORDER);
     CheckNoRows(txn, sql);
@@ -242,14 +241,14 @@ void ConsistencyCheck3324(pqxx::nontransaction& txn, int warehouseCount) {
             "FULL JOIN (SELECT OL_W_ID, OL_D_ID, COUNT(*) AS ol_count "
             "           FROM {} WHERE OL_W_ID >= {} AND OL_W_ID <= {} GROUP BY OL_W_ID, OL_D_ID) AS ol "
             "  ON o.O_W_ID = ol.OL_W_ID AND o.O_D_ID = ol.OL_D_ID "
-            "WHERE o.sum_ol_cnt != ol.ol_count LIMIT 1",
+            "WHERE o.sum_ol_cnt IS DISTINCT FROM ol.ol_count LIMIT 1",
             TABLE_OORDER, startWh, endWh, TABLE_ORDER_LINE, startWh, endWh);
         CheckNoRows(txn, sql, fmt::format("3.3.2.4 w_id [{},{}]", startWh, endWh));
     }
 }
 
 void ConsistencyCheck3325(pqxx::nontransaction& txn, int warehouseCount) {
-    // For every new_order row, the order must exist and have no carrier (O_CARRIER_ID IS NULL or 0).
+    // For every new_order row, the order must exist and have no carrier (NULL or 0).
     // For every order with no carrier, a new_order row must exist.
     const int RANGE_SIZE = 50;
     for (int startWh = 1; startWh <= warehouseCount; startWh += RANGE_SIZE) {
@@ -305,7 +304,8 @@ void ConsistencyCheck3326(pqxx::nontransaction& txn, int warehouseCount) {
 }
 
 void ConsistencyCheck3327(pqxx::nontransaction& txn, int warehouseCount) {
-    // O_CARRIER_ID set => all OL_DELIVERY_D set; O_CARRIER_ID null => all OL_DELIVERY_D null
+    // Carrier set (non-null, non-zero) <=> all OL_DELIVERY_D set;
+    // carrier null/0 <=> all OL_DELIVERY_D null; mixed delivery dates always fail.
     const int RANGE_SIZE = 10;
     for (int startWh = 1; startWh <= warehouseCount; startWh += RANGE_SIZE) {
         int endWh = std::min(startWh + RANGE_SIZE - 1, warehouseCount);
@@ -313,14 +313,15 @@ void ConsistencyCheck3327(pqxx::nontransaction& txn, int warehouseCount) {
             "SELECT l.OL_W_ID, l.OL_D_ID, l.OL_O_ID "
             "FROM ("
             "  SELECT OL_W_ID, OL_D_ID, OL_O_ID, "
-            "    BOOL_AND(OL_DELIVERY_D IS NOT NULL) AS all_delivered, "
-            "    BOOL_OR(OL_DELIVERY_D IS NULL) AS some_null "
+            "    BOOL_OR(OL_DELIVERY_D IS NULL) AS some_null, "
+            "    BOOL_OR(OL_DELIVERY_D IS NOT NULL) AS some_delivered "
             "  FROM {} WHERE OL_W_ID >= {} AND OL_W_ID <= {} "
             "  GROUP BY OL_W_ID, OL_D_ID, OL_O_ID"
             ") AS l "
             "JOIN {} AS o ON l.OL_W_ID = o.O_W_ID AND l.OL_D_ID = o.O_D_ID AND l.OL_O_ID = o.O_ID "
-            "WHERE (o.O_CARRIER_ID IS NULL AND l.all_delivered = true) "
-            "   OR (o.O_CARRIER_ID IS NOT NULL AND l.some_null = true) "
+            "WHERE (l.some_null AND l.some_delivered) "
+            "   OR ((o.O_CARRIER_ID IS NULL OR o.O_CARRIER_ID = 0) AND l.some_delivered) "
+            "   OR (o.O_CARRIER_ID IS NOT NULL AND o.O_CARRIER_ID != 0 AND l.some_null) "
             "LIMIT 1",
             TABLE_ORDER_LINE, startWh, endWh, TABLE_OORDER);
         CheckNoRows(txn, sql, fmt::format("3.3.2.7 w_id [{},{}]", startWh, endWh));
@@ -332,9 +333,9 @@ void ConsistencyCheck3328(pqxx::nontransaction& txn) {
     std::string sql = fmt::format(
         "SELECT w.W_ID, w.W_YTD, h.sum_h "
         "FROM {} AS w "
-        "JOIN (SELECT H_W_ID, SUM(H_AMOUNT) AS sum_h FROM {} GROUP BY H_W_ID) AS h "
+        "LEFT JOIN (SELECT H_W_ID, SUM(H_AMOUNT) AS sum_h FROM {} GROUP BY H_W_ID) AS h "
         "  ON w.W_ID = h.H_W_ID "
-        "WHERE ABS(w.W_YTD - h.sum_h) > 1e-3 LIMIT 1",
+        "WHERE ABS(w.W_YTD - COALESCE(h.sum_h, 0)) > 1e-3 LIMIT 1",
         TABLE_WAREHOUSE, TABLE_HISTORY);
     CheckNoRows(txn, sql);
 }
@@ -344,9 +345,9 @@ void ConsistencyCheck3329(pqxx::nontransaction& txn) {
     std::string sql = fmt::format(
         "SELECT d.D_W_ID, d.D_ID, d.D_YTD, h.sum_h "
         "FROM {} AS d "
-        "JOIN (SELECT H_W_ID, H_D_ID, SUM(H_AMOUNT) AS sum_h FROM {} GROUP BY H_W_ID, H_D_ID) AS h "
+        "LEFT JOIN (SELECT H_W_ID, H_D_ID, SUM(H_AMOUNT) AS sum_h FROM {} GROUP BY H_W_ID, H_D_ID) AS h "
         "  ON d.D_W_ID = h.H_W_ID AND d.D_ID = h.H_D_ID "
-        "WHERE ABS(d.D_YTD - h.sum_h) > 1e-3 LIMIT 1",
+        "WHERE ABS(d.D_YTD - COALESCE(h.sum_h, 0)) > 1e-3 LIMIT 1",
         TABLE_DISTRICT, TABLE_HISTORY);
     CheckNoRows(txn, sql);
 }
@@ -387,13 +388,15 @@ void ConsistencyCheck33211(pqxx::nontransaction& txn, int warehouseCount) {
     for (int startWh = 1; startWh <= warehouseCount; startWh += RANGE_SIZE) {
         int endWh = std::min(startWh + RANGE_SIZE - 1, warehouseCount);
         std::string sql = fmt::format(
-            "SELECT o.O_W_ID, o.O_D_ID, (o.order_cnt - n.new_order_cnt) AS delta "
+            "SELECT COALESCE(o.O_W_ID, n.NO_W_ID) AS w_id, "
+            "       COALESCE(o.O_D_ID, n.NO_D_ID) AS d_id, "
+            "       (COALESCE(o.order_cnt, 0) - COALESCE(n.new_order_cnt, 0)) AS delta "
             "FROM (SELECT O_W_ID, O_D_ID, COUNT(*) AS order_cnt FROM {} "
             "      WHERE O_W_ID >= {} AND O_W_ID <= {} GROUP BY O_W_ID, O_D_ID) AS o "
-            "JOIN (SELECT NO_W_ID, NO_D_ID, COUNT(*) AS new_order_cnt FROM {} "
+            "FULL JOIN (SELECT NO_W_ID, NO_D_ID, COUNT(*) AS new_order_cnt FROM {} "
             "      WHERE NO_W_ID >= {} AND NO_W_ID <= {} GROUP BY NO_W_ID, NO_D_ID) AS n "
             "  ON o.O_W_ID = n.NO_W_ID AND o.O_D_ID = n.NO_D_ID "
-            "WHERE (o.order_cnt - n.new_order_cnt) != {} LIMIT 1",
+            "WHERE (COALESCE(o.order_cnt, 0) - COALESCE(n.new_order_cnt, 0)) != {} LIMIT 1",
             TABLE_OORDER, startWh, endWh,
             TABLE_NEW_ORDER, startWh, endWh,
             FIRST_UNPROCESSED_O_ID - 1);
@@ -403,13 +406,14 @@ void ConsistencyCheck33211(pqxx::nontransaction& txn, int warehouseCount) {
 
 void ConsistencyCheck33212(pqxx::nontransaction& txn, int warehouseCount) {
     // C_BALANCE + C_YTD_PAYMENT = sum(delivered OL_AMOUNTs) for each customer
+    // LEFT JOIN so never-delivered customers are still checked (expect 0).
     const int RANGE_SIZE = 10;
     for (int startWh = 1; startWh <= warehouseCount; startWh += RANGE_SIZE) {
         int endWh = std::min(startWh + RANGE_SIZE - 1, warehouseCount);
         std::string sql = fmt::format(
             "SELECT c.C_W_ID, c.C_D_ID, c.C_ID "
             "FROM {} AS c "
-            "JOIN ("
+            "LEFT JOIN ("
             "  SELECT o.O_W_ID AS W_ID, o.O_D_ID AS D_ID, o.O_C_ID AS C_ID, SUM(ol.OL_AMOUNT) AS ol_sum "
             "  FROM {} AS o "
             "  JOIN {} AS ol ON ol.OL_W_ID = o.O_W_ID AND ol.OL_D_ID = o.O_D_ID AND ol.OL_O_ID = o.O_ID "
@@ -417,7 +421,7 @@ void ConsistencyCheck33212(pqxx::nontransaction& txn, int warehouseCount) {
             "  GROUP BY o.O_W_ID, o.O_D_ID, o.O_C_ID"
             ") AS l ON c.C_W_ID = l.W_ID AND c.C_D_ID = l.D_ID AND c.C_ID = l.C_ID "
             "WHERE c.C_W_ID >= {} AND c.C_W_ID <= {} "
-            "  AND ABS(c.C_BALANCE + c.C_YTD_PAYMENT - l.ol_sum) > 1e-3 "
+            "  AND ABS(c.C_BALANCE + c.C_YTD_PAYMENT - COALESCE(l.ol_sum, 0)) > 1e-3 "
             "LIMIT 1",
             TABLE_CUSTOMER,
             TABLE_OORDER, TABLE_ORDER_LINE, startWh, endWh,
@@ -471,88 +475,218 @@ void PostImportCheckNoDeliveryDates(pqxx::nontransaction& txn) {
     CheckNoRows(txn, sql, "Unprocessed order lines must have NULL OL_DELIVERY_D after import");
 }
 
-//-----------------------------------------------------------------------------
+void RecordResult(TCheckReport& report, const std::string& id, ECheckStatus status,
+                  const std::string& detail, bool print) {
+    TCheckResult r;
+    r.Id = id;
+    if (const auto* entry = FindCheckCatalogEntry(id)) {
+        r.Title = std::string(entry->Title);
+    } else {
+        r.Title = id;
+    }
+    r.Status = status;
+    r.Detail = detail;
+    switch (status) {
+        case ECheckStatus::Passed: ++report.PassedCount; break;
+        case ECheckStatus::Failed: ++report.FailedCount; break;
+        case ECheckStatus::Skipped: ++report.SkippedCount; break;
+        case ECheckStatus::Error: ++report.ErrorCount; break;
+    }
+    if (print) {
+        const char* tag = "[OK]";
+        if (status == ECheckStatus::Failed || status == ECheckStatus::Error) {
+            tag = "[Failed]";
+        } else if (status == ECheckStatus::Skipped) {
+            tag = "[Skipped]";
+        }
+        std::cout << "Checking " << r.Title << " " << tag;
+        if (!detail.empty() && status != ECheckStatus::Passed) {
+            std::cout << ": " << detail;
+        }
+        std::cout << std::endl;
+    }
+    report.Results.push_back(std::move(r));
+}
+
+void RunOne(TCheckReport& report, const std::string& id, bool print, auto&& fn) {
+    try {
+        fn();
+        RecordResult(report, id, ECheckStatus::Passed, {}, print);
+    } catch (const std::exception& ex) {
+        RecordResult(report, id, ECheckStatus::Failed, ex.what(), print);
+    }
+}
 
 } // anonymous
 
+TCheckReport RunPgChecks(const std::string& connectionString, const TCheckRequest& request) {
+    TCheckReport report;
+    report.RunId = request.RunId;
+    report.Instance = request.Instance;
+    report.Phase = request.Phase == ECheckPhase::AfterImport ? "after-import" : "after-run";
+    report.WarehouseCount = request.WarehouseCount;
+
+    const bool print = true;
+    const bool afterImport = request.Phase == ECheckPhase::AfterImport;
+
+    if (request.WarehouseCount <= 0) {
+        RecordResult(report, "cardinality.warehouse", ECheckStatus::Error,
+                     "Zero warehouses specified", print);
+        return report;
+    }
+
+    try {
+        pqxx::connection conn(connectionString);
+
+        if (!request.Path.empty()) {
+            pqxx::nontransaction ntx(conn);
+            ntx.exec(fmt::format("SET search_path TO {}", conn.quote_name(request.Path)));
+        }
+
+        pqxx::nontransaction txn(conn);
+
+        RunOne(report, "cardinality.warehouse", print,
+               [&] { BaseCheckWarehouseTable(txn, request.WarehouseCount); });
+        RunOne(report, "cardinality.district", print,
+               [&] { BaseCheckDistrictTable(txn, request.WarehouseCount); });
+        RunOne(report, "cardinality.customer", print,
+               [&] { BaseCheckCustomerTable(txn, request.WarehouseCount); });
+        RunOne(report, "cardinality.item", print,
+               [&] { BaseCheckItemTable(txn); });
+        RunOne(report, "cardinality.stock", print,
+               [&] { BaseCheckStockTable(txn, request.WarehouseCount); });
+
+        if (afterImport) {
+            RunOne(report, "cardinality.oorder", print,
+                   [&] { BaseCheckOorderTable(txn, request.WarehouseCount); });
+            RunOne(report, "cardinality.new_order", print,
+                   [&] { BaseCheckNewOrderTable(txn, request.WarehouseCount); });
+            RunOne(report, "cardinality.order_line", print,
+                   [&] { BaseCheckOrderLineTable(txn, request.WarehouseCount); });
+            RunOne(report, "cardinality.history", print,
+                   [&] { BaseCheckHistoryTable(txn, request.WarehouseCount); });
+        }
+
+        // Abort consistency suite if base cardinality already failed.
+        bool baseFailed = false;
+        for (const auto& r : report.Results) {
+            if (r.Id.rfind("cardinality.", 0) == 0 &&
+                (r.Status == ECheckStatus::Failed || r.Status == ECheckStatus::Error)) {
+                baseFailed = true;
+                break;
+            }
+        }
+        if (baseFailed) {
+            std::cout << "Base checks failed, aborting consistency checks!" << std::endl;
+            for (const auto& entry : CheckCatalog()) {
+                if (std::string(entry.Id).rfind("cardinality.", 0) == 0) {
+                    continue;
+                }
+                if (!CheckAppliesToPhase(entry.Phase, request.Phase)) {
+                    continue;
+                }
+                RecordResult(report, std::string(entry.Id), ECheckStatus::Skipped,
+                             "skipped: base cardinality failed", print);
+            }
+            return report;
+        }
+
+        RunOne(report, "consistency.3.3.2.1", print, [&] { ConsistencyCheck3321(txn); });
+        RunOne(report, "consistency.3.3.2.2", print, [&] { ConsistencyCheck3322(txn); });
+        RunOne(report, "consistency.3.3.2.3", print, [&] { ConsistencyCheck3323(txn); });
+        RunOne(report, "consistency.3.3.2.4", print,
+               [&] { ConsistencyCheck3324(txn, request.WarehouseCount); });
+        RunOne(report, "consistency.3.3.2.5", print,
+               [&] { ConsistencyCheck3325(txn, request.WarehouseCount); });
+        RunOne(report, "consistency.3.3.2.6", print,
+               [&] { ConsistencyCheck3326(txn, request.WarehouseCount); });
+        RunOne(report, "consistency.3.3.2.7", print,
+               [&] { ConsistencyCheck3327(txn, request.WarehouseCount); });
+        RunOne(report, "consistency.3.3.2.8", print, [&] { ConsistencyCheck3328(txn); });
+        RunOne(report, "consistency.3.3.2.9", print, [&] { ConsistencyCheck3329(txn); });
+        RunOne(report, "consistency.3.3.2.10", print,
+               [&] { ConsistencyCheck33210(txn, request.WarehouseCount); });
+        RunOne(report, "consistency.3.3.2.12", print,
+               [&] { ConsistencyCheck33212(txn, request.WarehouseCount); });
+
+        if (afterImport) {
+            RunOne(report, "consistency.3.3.2.11", print,
+                   [&] { ConsistencyCheck33211(txn, request.WarehouseCount); });
+            RunOne(report, "post_import.d_next_o_id", print,
+                   [&] { PostImportCheckNextOrderId(txn); });
+            RunOne(report, "post_import.w_ytd", print,
+                   [&] { PostImportCheckWarehouseYtd(txn); });
+            RunOne(report, "post_import.d_ytd", print,
+                   [&] { PostImportCheckDistrictYtd(txn); });
+            RunOne(report, "post_import.o_carrier_id", print,
+                   [&] { PostImportCheckNoCarriers(txn); });
+            RunOne(report, "post_import.ol_delivery_d", print,
+                   [&] { PostImportCheckNoDeliveryDates(txn); });
+        }
+    } catch (const std::exception& ex) {
+        RecordResult(report, "connection", ECheckStatus::Error, ex.what(), print);
+    }
+
+    if (report.Ok()) {
+        std::cout << "Everything is good!" << std::endl;
+    }
+    return report;
+}
+
 void CheckSync(const std::string& connectionString, int warehouseCount, bool afterImport,
                const std::string& path) {
-    if (warehouseCount <= 0) {
-        std::cerr << "Zero warehouses specified, nothing to check" << std::endl;
-        return;
+    TCheckRequest req;
+    req.WarehouseCount = warehouseCount;
+    req.Phase = afterImport ? ECheckPhase::AfterImport : ECheckPhase::AfterRun;
+    req.Path = path;
+    auto report = RunPgChecks(connectionString, req);
+    if (!report.Ok()) {
+        throw std::runtime_error(fmt::format("{} checks failed", report.FailedCount + report.ErrorCount));
+    }
+}
+
+TPgCheckAdapter::TPgCheckAdapter(std::string connectionString)
+    : ConnectionString_(std::move(connectionString))
+{
+}
+
+TCheckReport TPgCheckAdapter::Run(const TCheckRequest& request) {
+    return RunPgChecks(ConnectionString_, request);
+}
+
+int RunCheckFromRunConfig(const std::string& runConfigPath, const std::string& instance,
+                          bool afterImport, bool afterRun) {
+    if (afterImport == afterRun) {
+        throw std::runtime_error("check requires exactly one of --after-import or --after-run");
     }
 
-    pqxx::connection conn(connectionString);
+    const auto doc = LoadRunConfigDocument(runConfigPath);
+    const std::string connection = BuildPgConnectionString(doc);
+    CheckDbForRun(connection, doc.ScaleWarehouses, doc.Path);
 
-    if (!path.empty()) {
-        pqxx::nontransaction ntx(conn);
-        ntx.exec(fmt::format("SET search_path TO {}", conn.quote_name(path)));
-    }
+    TCheckRequest req;
+    req.WarehouseCount = doc.ScaleWarehouses;
+    req.Phase = afterImport ? ECheckPhase::AfterImport : ECheckPhase::AfterRun;
+    req.Path = doc.Path;
+    req.RunId = doc.RunId;
+    req.Instance = instance;
 
-    pqxx::nontransaction txn(conn);
+    TPgCheckAdapter adapter(connection);
+    const auto report = adapter.Run(req);
 
-    int failedCount = 0;
+    const std::string checksDir = doc.RunDir + "/checks";
+    const std::string reportPath = checksDir + "/" + report.Phase + ".json";
+    WriteCheckReportJson(reportPath, report);
 
-    auto runCheck = [&](const std::string& name, auto fn) {
-        std::cout << "Checking " << name << " " << std::flush;
-        try {
-            fn(txn);
-            std::cout << "[OK]" << std::endl;
-        } catch (const std::exception& ex) {
-            std::cout << "[Failed]: " << ex.what() << std::endl;
-            ++failedCount;
-        }
-    };
+    const std::string instanceDir = InstanceWorkDir(doc, "check", instance);
+    EnsureInstanceDir(instanceDir);
+    const auto paths = MakeArtifactPaths(instanceDir);
+    const std::string nonce = GenerateInstanceNonce();
+    WriteProcessJson(paths, doc, instance, "check", static_cast<int>(::getpid()), nonce);
+    WriteArtifactManifest(paths, instance, nonce, report.Ok() ? 0 : 1);
 
-    // Static tables: row counts never change during benchmark
-    runCheck(TABLE_WAREHOUSE, [&](auto& t) { BaseCheckWarehouseTable(t, warehouseCount); });
-    runCheck(TABLE_DISTRICT, [&](auto& t) { BaseCheckDistrictTable(t, warehouseCount); });
-    runCheck(TABLE_CUSTOMER, [&](auto& t) { BaseCheckCustomerTable(t, warehouseCount); });
-    runCheck(TABLE_ITEM, [&](auto& t) { BaseCheckItemTable(t); });
-    runCheck(TABLE_STOCK, [&](auto& t) { BaseCheckStockTable(t, warehouseCount); });
-
-    // Dynamic tables: row counts change during benchmark (NewOrder adds orders/order_lines,
-    // Delivery removes new_orders, Payment adds history). Exact count checks are only
-    // valid right after import.
-    if (afterImport) {
-        runCheck(TABLE_OORDER, [&](auto& t) { BaseCheckOorderTable(t, warehouseCount); });
-        runCheck(TABLE_NEW_ORDER, [&](auto& t) { BaseCheckNewOrderTable(t, warehouseCount); });
-        runCheck(TABLE_ORDER_LINE, [&](auto& t) { BaseCheckOrderLineTable(t, warehouseCount); });
-        runCheck(TABLE_HISTORY, [&](auto& t) { BaseCheckHistoryTable(t, warehouseCount); });
-    }
-
-    if (failedCount > 0) {
-        std::cout << "Base checks failed, aborting consistency checks!" << std::endl;
-        throw std::runtime_error("Base checks failed");
-    }
-
-    // Consistency checks
-    runCheck("3.3.2.1", [&](auto& t) { ConsistencyCheck3321(t); });
-    runCheck("3.3.2.2", [&](auto& t) { ConsistencyCheck3322(t); });
-    runCheck("3.3.2.3", [&](auto& t) { ConsistencyCheck3323(t); });
-    runCheck("3.3.2.4", [&](auto& t) { ConsistencyCheck3324(t, warehouseCount); });
-    runCheck("3.3.2.5", [&](auto& t) { ConsistencyCheck3325(t, warehouseCount); });
-    runCheck("3.3.2.6", [&](auto& t) { ConsistencyCheck3326(t, warehouseCount); });
-    runCheck("3.3.2.7", [&](auto& t) { ConsistencyCheck3327(t, warehouseCount); });
-    runCheck("3.3.2.8", [&](auto& t) { ConsistencyCheck3328(t); });
-    runCheck("3.3.2.9", [&](auto& t) { ConsistencyCheck3329(t); });
-    runCheck("3.3.2.10", [&](auto& t) { ConsistencyCheck33210(t, warehouseCount); });
-    runCheck("3.3.2.12", [&](auto& t) { ConsistencyCheck33212(t, warehouseCount); });
-
-    if (afterImport) {
-        runCheck("3.3.2.11", [&](auto& t) { ConsistencyCheck33211(t, warehouseCount); });
-        runCheck("post-import: D_NEXT_O_ID", [&](auto& t) { PostImportCheckNextOrderId(t); });
-        runCheck("post-import: W_YTD", [&](auto& t) { PostImportCheckWarehouseYtd(t); });
-        runCheck("post-import: D_YTD", [&](auto& t) { PostImportCheckDistrictYtd(t); });
-        runCheck("post-import: O_CARRIER_ID", [&](auto& t) { PostImportCheckNoCarriers(t); });
-        runCheck("post-import: OL_DELIVERY_D", [&](auto& t) { PostImportCheckNoDeliveryDates(t); });
-    }
-
-    if (failedCount == 0) {
-        std::cout << "Everything is good!" << std::endl;
-    } else {
-        throw std::runtime_error(fmt::format("{} checks failed", failedCount));
-    }
+    LOG_I("Check report written to {}", reportPath);
+    return report.Ok() ? 0 : 1;
 }
 
 } // namespace NTpcc

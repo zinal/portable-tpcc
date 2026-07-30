@@ -51,20 +51,18 @@ required for the current port.
 | `tpcc/transactions` | in progress | async `ITpccSession` + `TSemanticOp` variant (`ops.h`) |
 | `tpcc/generator` | in progress | deterministic population; wired into PG `ImportSync` |
 | `tpcc/loader` | in progress | `ILoadAdapter`; PG idempotent PutBatch helpers |
-| `tpcc/checks` | not started | still inside `dbms/pgsql/check.*` |
+| `tpcc/checks` | done | catalog, `ICheckAdapter`, JSON report writer |
 ### PostgreSQL adapter and executable
 
 | Module | Status | Notes |
 | --- | --- | --- |
-| `tpcc/dbms/pgsql` | transitional | session, pool, SQL workflows, init/import/run/check |
-| `tpcc/app/pgsql` (`tpcc-pgsql`) | transitional | CLI aliases + `worker`/`loader`; not yet on abstract session API |
+| `tpcc/dbms/pgsql` | transitional | session, pool, SQL workflows, `TPgCheckAdapter`, `TPgAdminAdapter` |
+| `tpcc/app/pgsql` (`tpcc-pgsql`) | transitional | normative roles + legacy aliases; orchestrated `check`/`schema` |
 
 ### Not yet started / blocked
 
 | Module | Notes |
 | --- | --- |
-| Shared checks package | lift from pgsql |
-| Runtime `--start-at` phases | wall-clock sync per specification §7 |
 | `tpcc/dbms/ydb`, `oceanbase` | external SDKs |
 | `tools/tpccctl` remote drive | plan/assignment done; SSH/start-at incomplete |
 
