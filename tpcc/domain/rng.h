@@ -120,6 +120,16 @@ inline size_t RandomNumber(size_t from, size_t to) {
     return RandomNumber(NDetail::ThreadLocalFastRng(), from, to);
 }
 
+// Uniform open-closed unit interval (0, 1]. Avoids log(0) for exponential sampling.
+inline double RandomUnitInterval(NDetail::TFastRng& rng) {
+    // Map uint64 → (0, 1]: (x + 1) / 2^64.
+    return (static_cast<double>(rng.Next()) + 1.0) * 0x1p-64;
+}
+
+inline double RandomUnitInterval() {
+    return RandomUnitInterval(NDetail::ThreadLocalFastRng());
+}
+
 inline int NonUniformRandom(NDetail::TFastRng& rng, int A, int C, int min, int max) {
     int randomNum = static_cast<int>(RandomNumber(rng, 0, A));
     int randomNum2 = static_cast<int>(RandomNumber(rng, min, max));

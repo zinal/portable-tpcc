@@ -4,6 +4,7 @@ SUBSCRIBER(g:tpcc)
 
 SRCS(
     money_ut.cpp
+    think_time_ut.cpp
     workload_config_ut.cpp
 )
 

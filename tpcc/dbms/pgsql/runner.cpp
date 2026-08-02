@@ -346,7 +346,8 @@ TRunOutcome RunSync(const TRunConfig& config, TTerminalStats* aggregatedStats) {
                     config.SimulateTransactionMs,
                     config.SimulateTransactionSelect1,
                     config.RetryMaxAttempts,
-                    config.RetryAmbiguousCommit));
+                    config.RetryAmbiguousCommit,
+                    config.ThinkTimeDistribution));
                 ++terminalIndex;
             }
         }

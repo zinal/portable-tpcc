@@ -28,7 +28,7 @@ fail-closed integrity. Денежная часть consistency checks также
 
 1. неверный учёт штатных rollback New-Order в throughput и response time;
 2. сокращённый профиль rollback New-Order;
-3. несоответствующая спецификации модель think time и Stock-Level terminals;
+3. несоответствующая спецификации модель Stock-Level terminals;
 4. нарушения initial population, кроме принятого решения о синтетических
    начальных датах;
 5. неполная проверка валидности measurement interval и отчётность.
@@ -210,7 +210,7 @@ portable-tpcc.
 
 ### 3.6. Think time не имеет требуемого распределения
 
-**Статус: присутствует на момент анализа.**
+**Статус: устранено (default); опциональный режим совместимости сохранён.**
 
 TPC-C §5.2.5.4 требует независимо выбирать think time из
 отрицательно-экспоненциального распределения:
@@ -219,11 +219,14 @@ TPC-C §5.2.5.4 требует независимо выбирать think time 
 Tt = -log(r) * mean
 ```
 
-Код всегда ждёт ровно настроенное среднее:
-[terminal.cpp:331-334](../tpcc/dbms/pgsql/terminal.cpp#L331-L334).
+По умолчанию runtime сэмплирует think time по этой формуле с truncation на
+`10 * mean` ([think_time.h](../tpcc/domain/think_time.h),
+[terminal.cpp](../tpcc/dbms/pgsql/terminal.cpp)).
 
-Это меняет распределение нагрузки, конкуренцию и достигаемый throughput.
-Постоянный keying time допустим, но постоянный think time — нет.
+Опциональный режим `runtime.think_time_distribution: benchbase` (alias
+`constant`) сохраняет прежнее поведение portable-tpcc: фиксированное ожидание,
+равное настроенному среднему. Для соответствия TPC-C 5.11 этот режим включать
+не следует.
 
 ### 3.7. Stock-Level не закреплён за district терминала
 
@@ -524,7 +527,8 @@ carrier `0` как эквивалент `NULL`:
 
 - девять основных таблиц и правильные базовые cardinalities;
 - все пять типов транзакций и большая часть их DB-изменений;
-- default mix `45/43/4/4/4` и корректные минимальные keying times;
+- default mix `45/43/4/4/4`, корректные минимальные keying times и
+  экспоненциальный think time по умолчанию;
 - NURand с допустимой разностью текущих C-Load/C-Run;
 - 5-15 order lines, 1% remote lines и 1% rollback inputs;
 - 85/15 Payment и 60/40 выбор customer;
@@ -565,10 +569,10 @@ workflow, а также внешнее подтверждение RTE/ACID/check
 
 | Статус | Замечания |
 | --- | --- |
-| Устранено | 4.6 `O_ALL_LOCAL`; 4.9 clock calibration; 4.10 integrity fail-open; 5.1 exact-decimal reads; 5.2 Delivery race; 5.3 legacy index |
+| Устранено | 3.6 think time exponential (default); 4.6 `O_ALL_LOCAL`; 4.9 clock calibration; 4.10 integrity fail-open; 5.1 exact-decimal reads; 5.2 Delivery race; 5.3 legacy index |
 | Частично устранено | 5.4 exact money checks исправлены, carrier `0` как `NULL` остался |
 | Принятое отклонение | 3.3 synchronous Delivery; 3.4 отсутствие полного RTE; 3.5 отсутствие встроенных ACID tests; 4.1 synthetic initial dates; checkpoint-часть 4.11 |
-| Остаётся | 3.1, 3.2, 3.6, 3.7, 4.2-4.5, 4.7, 4.8, sustained-часть 4.11, 4.12 |
+| Остаётся | 3.1, 3.2, 3.7, 4.2-4.5, 4.7, 4.8, sustained-часть 4.11, 4.12 |
 
 Повторный аудит изменений до commit `4d44f21` не выявил новых регрессий,
 внесённых исправлениями. Дополнительно уточнено, что clock-skew enforcement

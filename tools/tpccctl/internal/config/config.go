@@ -103,9 +103,10 @@ type PhasesJSON struct {
 }
 
 type RunRuntime struct {
-	Pacing    string        `json:"pacing"`
-	Retry     RetryJSON     `json:"retry"`
-	Histogram HistogramJSON `json:"histogram"`
+	Pacing                string        `json:"pacing"`
+	ThinkTimeDistribution string        `json:"think_time_distribution"`
+	Retry                 RetryJSON     `json:"retry"`
+	Histogram             HistogramJSON `json:"histogram"`
 }
 
 type RetryJSON struct {
@@ -263,6 +264,7 @@ func BuildRunConfig(in BuildInput) (*RunConfig, error) {
 	if pacing == "" {
 		pacing = "enabled"
 	}
+	thinkDist := ResolveThinkTimeDistribution(p.Runtime.ThinkTimeDistribution)
 
 	binary := in.WorkerBinary
 	if binary == "" {
@@ -310,9 +312,10 @@ func BuildRunConfig(in BuildInput) (*RunConfig, error) {
 			MaxClockSkewMs:     skew,
 		},
 		Runtime: RunRuntime{
-			Pacing:    pacing,
-			Retry:     retry,
-			Histogram: hist,
+			Pacing:                pacing,
+			ThinkTimeDistribution: thinkDist,
+			Retry:                 retry,
+			Histogram:             hist,
 		},
 	}, nil
 }

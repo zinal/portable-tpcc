@@ -53,6 +53,7 @@ struct TRunConfig {
 
     TWorkloadConfig Workload = MakeDefaultWorkloadConfig();
     THistogramConfig Histogram;
+    EThinkTimeDistribution ThinkTimeDistribution = EThinkTimeDistribution::Exponential;
 
     // Total attempts per business transaction (including the first). 0 → default 4.
     size_t RetryMaxAttempts = 0;

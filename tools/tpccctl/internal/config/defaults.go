@@ -49,6 +49,33 @@ func DefaultRetry() RetryJSON {
 	}
 }
 
+// DefaultThinkTimeDistribution is TPC-C §5.2.5.4 negative exponential.
+const DefaultThinkTimeDistribution = "exponential"
+
+// ResolveThinkTimeDistribution returns a canonical distribution name.
+// Empty input yields the TPC-C default. "constant" is accepted as an alias
+// for the optional benchbase compatibility mode (fixed mean think time).
+func ResolveThinkTimeDistribution(value string) string {
+	switch value {
+	case "", "exponential":
+		return DefaultThinkTimeDistribution
+	case "benchbase", "constant":
+		return "benchbase"
+	default:
+		return value
+	}
+}
+
+// ValidThinkTimeDistribution reports whether value is a known distribution.
+func ValidThinkTimeDistribution(value string) bool {
+	switch value {
+	case "", "exponential", "benchbase", "constant":
+		return true
+	default:
+		return false
+	}
+}
+
 // ResolveWorkload merges profile overrides onto built-in defaults.
 func ResolveWorkload(w profile.Workload) WorkloadBlock {
 	out := DefaultWorkload()

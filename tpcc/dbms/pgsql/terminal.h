@@ -182,7 +182,8 @@ public:
         int simulateTransactionMs = 0,
         int simulateTransactionSelect1 = 0,
         size_t retryMaxAttempts = 4,
-        bool retryAmbiguousCommit = false);
+        bool retryAmbiguousCommit = false,
+        EThinkTimeDistribution thinkTimeDistribution = EThinkTimeDistribution::Exponential);
 
     TTerminal(const TTerminal&) = delete;
     TTerminal& operator=(TTerminal&) = delete;
@@ -208,6 +209,7 @@ private:
     TWorkloadConfig Workload;
     size_t RetryMaxAttempts = 4;
     bool RetryAmbiguousCommit = false;
+    EThinkTimeDistribution ThinkTimeDistribution = EThinkTimeDistribution::Exponential;
 
     std::atomic<bool> Done{false};
     bool Started = false;
