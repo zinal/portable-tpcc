@@ -301,7 +301,7 @@ TFuture<TOperationResult> TPgTpccTransaction::Execute(const TSemanticOp& op) {
         if (const auto* p = std::get_if<TGetOldestNewOrder>(&op)) {
             auto result = Session_.ExecuteQuery(
                 "SELECT no_o_id FROM new_order WHERE no_w_id=$1 AND no_d_id=$2 "
-                "ORDER BY no_o_id ASC LIMIT 1",
+                "ORDER BY no_o_id ASC LIMIT 1 FOR UPDATE",
                 p->WarehouseID, p->DistrictID).Get();
             if (!NextRow(result)) {
                 return ReadyOp(OkOp(0, 0, 0));
@@ -502,9 +502,14 @@ TFuture<TOperationResult> TPgTpccTransaction::Execute(const TSemanticOp& op) {
             return ReadyOp(OkOp(1, 1, std::move(info)));
         }
         if (const auto* p = std::get_if<TCompleteOrderDelivery>(&op)) {
-            Session_.ExecuteModify(
+            const uint64_t deleted = Session_.ExecuteModify(
                 "DELETE FROM new_order WHERE no_w_id = $1 AND no_d_id = $2 AND no_o_id = $3",
                 p->WarehouseID, p->DistrictID, p->OrderID).Get();
+            if (deleted == 0) {
+                return ReadyOp(FailOp(
+                    EErrorClass::RetryableAbort,
+                    "new_order row already claimed by concurrent delivery"));
+            }
             Session_.ExecuteModify(
                 "UPDATE oorder SET o_carrier_id = $1 WHERE o_w_id = $2 AND o_d_id = $3 AND o_id = $4",
                 p->CarrierID, p->WarehouseID, p->DistrictID, p->OrderID).Get();
