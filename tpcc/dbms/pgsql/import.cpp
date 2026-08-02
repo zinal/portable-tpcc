@@ -98,9 +98,9 @@ void ImportSync(const TImportConfig& config) {
     threadCount = std::min(threadCount, assignedWarehouses);
 
     LOG_I("Starting idempotent TPC-C import for {} assigned warehouses (scale {}) "
-          "using {} threads (seed={}, run_id={})",
+          "using {} threads (seed={}, run_id={}, batch_rows={})",
           assignedWarehouses, scaleWarehouses, threadCount, config.Seed,
-          config.RunId.empty() ? "-" : config.RunId);
+          config.RunId.empty() ? "-" : config.RunId, config.BatchRows);
 
     auto startTime = Clock::now();
 

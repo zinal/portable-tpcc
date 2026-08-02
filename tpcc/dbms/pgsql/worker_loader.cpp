@@ -38,6 +38,7 @@ int RunLoaderFromRunConfig(const std::string& runConfigPath, const std::string& 
     importCfg.TotalWarehouses = doc.ScaleWarehouses;
     importCfg.LoadThreadCount = 0;
     importCfg.UseTui = false;
+    importCfg.BatchRows = doc.BatchRows;
     if (doc.HasSeed) {
         importCfg.Seed = static_cast<uint64_t>(doc.Seed);
     }
@@ -108,6 +109,9 @@ int RunWorkerFromRunConfig(
     runCfg.InstanceDir = instanceDir;
     runCfg.UseTui = false;
     runCfg.RetryMaxAttempts = doc.RetryMaxAttempts;
+    runCfg.RetryInitialBackoffMs = doc.RetryInitialBackoffMs;
+    runCfg.RetryMaxBackoffMs = doc.RetryMaxBackoffMs;
+    runCfg.RetryJitter = doc.RetryJitter;
     runCfg.RetryAmbiguousCommit = doc.RetryAmbiguousCommit;
     runCfg.Workload = doc.Workload;
     runCfg.Histogram = doc.Histogram;

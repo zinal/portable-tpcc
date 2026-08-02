@@ -10,8 +10,10 @@
 #include <think_time.h>
 
 #include <array>
+#include <algorithm>
 #include <optional>
 #include <pqxx/pqxx>
+#include <utility>
 
 namespace NTpcc {
 
@@ -76,6 +78,38 @@ size_t EffectiveRetryMaxAttempts(size_t configured) {
     return configured == 0 ? 4 : configured;
 }
 
+int64_t RetryDelayCapMs(size_t retryIndex, int64_t initialBackoffMs, int64_t maxBackoffMs) {
+    if (initialBackoffMs <= 0 || maxBackoffMs <= 0) {
+        return 0;
+    }
+    int64_t delay = initialBackoffMs;
+    for (size_t i = 0; i < retryIndex && delay < maxBackoffMs; ++i) {
+        if (delay > maxBackoffMs / 2) {
+            delay = maxBackoffMs;
+        } else {
+            delay *= 2;
+        }
+    }
+    return std::min(delay, maxBackoffMs);
+}
+
+std::chrono::milliseconds RetryDelay(
+    size_t retryIndex,
+    int64_t initialBackoffMs,
+    int64_t maxBackoffMs,
+    const std::string& jitter)
+{
+    const int64_t cap = RetryDelayCapMs(retryIndex, initialBackoffMs, maxBackoffMs);
+    if (cap <= 0) {
+        return std::chrono::milliseconds(0);
+    }
+    if (jitter == "full") {
+        return std::chrono::milliseconds(static_cast<int64_t>(
+            RandomNumber(0, static_cast<size_t>(cap))));
+    }
+    return std::chrono::milliseconds(cap);
+}
+
 bool ShouldRetryClass(EErrorClass cls, bool retryAmbiguousCommit) {
     if (MayBlindRetry(cls)) {
         return true;
@@ -99,6 +133,9 @@ TTerminal::TTerminal(size_t terminalID,
                      int simulateTransactionMs,
                      int simulateTransactionSelect1,
                      size_t retryMaxAttempts,
+                     int64_t retryInitialBackoffMs,
+                     int64_t retryMaxBackoffMs,
+                     std::string retryJitter,
                      bool retryAmbiguousCommit,
                      EThinkTimeDistribution thinkTimeDistribution)
     : TaskQueue(taskQueue)
@@ -111,6 +148,9 @@ TTerminal::TTerminal(size_t terminalID,
     , Stats(stats)
     , Workload(workload)
     , RetryMaxAttempts(EffectiveRetryMaxAttempts(retryMaxAttempts))
+    , RetryInitialBackoffMs(retryInitialBackoffMs)
+    , RetryMaxBackoffMs(retryMaxBackoffMs)
+    , RetryJitter(std::move(retryJitter))
     , RetryAmbiguousCommit(retryAmbiguousCommit)
     , ThinkTimeDistribution(thinkTimeDistribution)
 {}
@@ -338,6 +378,16 @@ TFuture<void> TTerminal::Run() {
             }
 
             if (!shouldRetry) break;
+            const auto delay = RetryDelay(
+                attempt, RetryInitialBackoffMs, RetryMaxBackoffMs, RetryJitter);
+            if (delay.count() > 0) {
+                LOG_D("Terminal {} {} retry backoff {}ms",
+                      Context.TerminalID, txName, delay.count());
+                co_await TSuspend(TaskQueue, Context.TerminalID, delay);
+                if (StopToken.stop_requested()) {
+                    break;
+                }
+            }
         }
 
         TaskQueue.DecInflight();

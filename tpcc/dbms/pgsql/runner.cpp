@@ -26,6 +26,7 @@
 #include <iomanip>
 #include <memory>
 #include <sstream>
+#include <stdexcept>
 #include <thread>
 #include <vector>
 
@@ -245,6 +246,9 @@ TRunOutcome RunSync(const TRunConfig& config, TTerminalStats* aggregatedStats) {
     const size_t terminalCount = warehouseCount * terminalsPerWh;
 
     const size_t maxInflight = config.MaxInflight;
+    if (maxInflight == 0) {
+        throw std::runtime_error("MaxInflight must be greater than zero");
+    }
     const size_t poolSize = std::min(terminalCount, maxInflight);
 
     // Resolve ioThreads early so we can reserve CPU for them when sizing the
@@ -356,6 +360,9 @@ TRunOutcome RunSync(const TRunConfig& config, TTerminalStats* aggregatedStats) {
                     config.SimulateTransactionMs,
                     config.SimulateTransactionSelect1,
                     config.RetryMaxAttempts,
+                    config.RetryInitialBackoffMs,
+                    config.RetryMaxBackoffMs,
+                    config.RetryJitter,
                     config.RetryAmbiguousCommit,
                     config.ThinkTimeDistribution));
                 ++terminalIndex;

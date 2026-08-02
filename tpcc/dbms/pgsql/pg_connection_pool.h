@@ -10,6 +10,7 @@
 #include <mutex>
 #include <queue>
 #include <string>
+#include <vector>
 
 namespace NTpcc {
 
@@ -65,7 +66,10 @@ public:
     size_t GetPoolSize() const { return poolSize_; }
 
 private:
+    std::unique_ptr<pqxx::connection> CreateConnection() const;
+
     std::string connectionString_;
+    std::string path_;
     size_t poolSize_;
     std::unique_ptr<TThreadPool> executor_;
 

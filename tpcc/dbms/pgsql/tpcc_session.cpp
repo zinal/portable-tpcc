@@ -32,6 +32,16 @@ TOperationResult OkOp(size_t expected, size_t actual, TOperationPayload payload 
     return r;
 }
 
+TOperationResult CheckAffected(uint64_t actual, uint64_t expected, const std::string& what) {
+    if (actual != expected) {
+        return FailOp(
+            EErrorClass::Integrity,
+            what + ": affected " + std::to_string(actual) +
+                " rows, expected " + std::to_string(expected));
+    }
+    return OkOp(expected, actual);
+}
+
 bool NextRow(QueryResult& result) {
     return result.TryNextRow();
 }
@@ -183,9 +193,13 @@ TFuture<TOperationResult> TPgTpccTransaction::Execute(const TSemanticOp& op) {
             }
             const int nextId = result.GetInt32(0);
             const auto tax = result.GetRate(1);
-            Session_.ExecuteModify(
+            auto affected = Session_.ExecuteModify(
                 "UPDATE district SET d_next_o_id = $1 WHERE d_w_id = $2 AND d_id = $3",
                 nextId + 1, p->WarehouseID, p->DistrictID).Get();
+            auto check = CheckAffected(affected, 1, "district next order update");
+            if (!check.Ok) {
+                return ReadyOp(std::move(check));
+            }
             TDistrictOrderReservation res;
             res.NextOrderID = nextId;
             res.DistrictTax = tax;
@@ -252,11 +266,15 @@ TFuture<TOperationResult> TPgTpccTransaction::Execute(const TSemanticOp& op) {
             return ReadyOp(OkOp(2, 2));
         }
         if (const auto* p = std::get_if<TUpdateStock>(&op)) {
-            Session_.ExecuteModify(
+            auto affected = Session_.ExecuteModify(
                 "UPDATE stock SET s_quantity=$1, s_ytd=s_ytd+$2, s_order_cnt=s_order_cnt+1, "
                 "s_remote_cnt=s_remote_cnt+$3 WHERE s_w_id=$4 AND s_i_id=$5",
                 p->NewQuantity, p->OrderedQuantity, p->RemoteIncrement,
                 p->WarehouseID, p->ItemID).Get();
+            auto check = CheckAffected(affected, 1, "stock update");
+            if (!check.Ok) {
+                return ReadyOp(std::move(check));
+            }
             return ReadyOp(OkOp(1, 1));
         }
         if (const auto* p = std::get_if<TInsertOrderLine>(&op)) {
@@ -299,12 +317,20 @@ TFuture<TOperationResult> TPgTpccTransaction::Execute(const TSemanticOp& op) {
             return ReadyOp(OkOp(1, 1, result.GetInt32(0)));
         }
         if (const auto* p = std::get_if<TApplyPaymentToLocation>(&op)) {
-            Session_.ExecuteModify(
+            auto whAffected = Session_.ExecuteModify(
                 "UPDATE warehouse SET w_ytd = w_ytd + $1 WHERE w_id = $2",
                 p->Amount.ToString(), p->WarehouseID).Get();
-            Session_.ExecuteModify(
+            auto check = CheckAffected(whAffected, 1, "warehouse payment update");
+            if (!check.Ok) {
+                return ReadyOp(std::move(check));
+            }
+            auto distAffected = Session_.ExecuteModify(
                 "UPDATE district SET d_ytd = d_ytd + $1 WHERE d_w_id = $2 AND d_id = $3",
                 p->Amount.ToString(), p->WarehouseID, p->DistrictID).Get();
+            check = CheckAffected(distAffected, 1, "district payment update");
+            if (!check.Ok) {
+                return ReadyOp(std::move(check));
+            }
             auto wh = Session_.ExecuteQuery(
                 "SELECT w_name, w_street_1, w_street_2, w_city, w_state, w_zip "
                 "FROM warehouse WHERE w_id=$1", p->WarehouseID).Get();
@@ -414,17 +440,25 @@ TFuture<TOperationResult> TPgTpccTransaction::Execute(const TSemanticOp& op) {
         }
         if (const auto* p = std::get_if<TUpdateCustomerPayment>(&op)) {
             if (p->UpdateData) {
-                Session_.ExecuteModify(
+                auto affected = Session_.ExecuteModify(
                     "UPDATE customer SET c_balance = $1, c_ytd_payment = $2, c_payment_cnt = $3, c_data = $4 "
                     "WHERE c_w_id = $5 AND c_d_id = $6 AND c_id = $7",
                     p->NewBalance.ToString(), p->NewYtdPayment.ToString(), p->NewPaymentCount,
                     p->NewData, p->WarehouseID, p->DistrictID, p->CustomerID).Get();
+                auto check = CheckAffected(affected, 1, "customer payment update");
+                if (!check.Ok) {
+                    return ReadyOp(std::move(check));
+                }
             } else {
-                Session_.ExecuteModify(
+                auto affected = Session_.ExecuteModify(
                     "UPDATE customer SET c_balance = $1, c_ytd_payment = $2, c_payment_cnt = $3 "
                     "WHERE c_w_id = $4 AND c_d_id = $5 AND c_id = $6",
                     p->NewBalance.ToString(), p->NewYtdPayment.ToString(), p->NewPaymentCount,
                     p->WarehouseID, p->DistrictID, p->CustomerID).Get();
+                auto check = CheckAffected(affected, 1, "customer payment update");
+                if (!check.Ok) {
+                    return ReadyOp(std::move(check));
+                }
             }
             return ReadyOp(OkOp(1, 1));
         }
@@ -500,20 +534,35 @@ TFuture<TOperationResult> TPgTpccTransaction::Execute(const TSemanticOp& op) {
                     EErrorClass::RetryableAbort,
                     "new_order row already claimed by concurrent delivery"));
             }
-            Session_.ExecuteModify(
+            if (deleted != 1) {
+                auto check = CheckAffected(deleted, 1, "new_order delivery delete");
+                return ReadyOp(std::move(check));
+            }
+            auto orderAffected = Session_.ExecuteModify(
                 "UPDATE oorder SET o_carrier_id = $1 WHERE o_w_id = $2 AND o_d_id = $3 AND o_id = $4",
                 p->CarrierID, p->WarehouseID, p->DistrictID, p->OrderID).Get();
-            Session_.ExecuteModify(
+            auto check = CheckAffected(orderAffected, 1, "order carrier update");
+            if (!check.Ok) {
+                return ReadyOp(std::move(check));
+            }
+            auto linesAffected = Session_.ExecuteModify(
                 "UPDATE order_line SET ol_delivery_d = CURRENT_TIMESTAMP "
                 "WHERE ol_w_id = $1 AND ol_d_id = $2 AND ol_o_id = $3",
                 p->WarehouseID, p->DistrictID, p->OrderID).Get();
+            if (linesAffected == 0) {
+                return ReadyOp(FailOp(EErrorClass::Integrity, "order_line delivery update affected no rows"));
+            }
             return ReadyOp(OkOp(3, 3));
         }
         if (const auto* p = std::get_if<TApplyDeliveryToCustomer>(&op)) {
-            Session_.ExecuteModify(
+            auto affected = Session_.ExecuteModify(
                 "UPDATE customer SET c_balance = c_balance + $1, c_delivery_cnt = c_delivery_cnt + 1 "
                 "WHERE c_w_id = $2 AND c_d_id = $3 AND c_id = $4",
                 p->Amount.ToString(), p->WarehouseID, p->DistrictID, p->CustomerID).Get();
+            auto check = CheckAffected(affected, 1, "customer delivery update");
+            if (!check.Ok) {
+                return ReadyOp(std::move(check));
+            }
             return ReadyOp(OkOp(1, 1));
         }
 

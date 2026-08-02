@@ -3,6 +3,21 @@
 
 namespace NTpcc {
 
+namespace {
+
+bool IsBrokenConnectionException(const std::exception& ex) {
+    if (dynamic_cast<const pqxx::broken_connection*>(&ex) != nullptr) {
+        return true;
+    }
+    if (const auto* sql = dynamic_cast<const pqxx::sql_error*>(&ex)) {
+        const std::string state = sql->sqlstate();
+        return state.size() >= 2 && state.substr(0, 2) == "08";
+    }
+    return false;
+}
+
+} // anonymous
+
 PgSession::PgSession(std::unique_ptr<pqxx::connection> conn, IExecutor* executor,
                      std::shared_ptr<std::atomic<bool>> shutdownFlag)
     : conn_(std::move(conn))
@@ -15,8 +30,10 @@ PgSession::PgSession(PgSession&& other) noexcept
     , txn_(std::move(other.txn_))
     , executor_(other.executor_)
     , shutdownFlag_(std::move(other.shutdownFlag_))
+    , broken_(other.broken_)
 {
     other.executor_ = nullptr;
+    other.broken_ = true;
 }
 
 PgSession& PgSession::operator=(PgSession&& other) noexcept {
@@ -25,7 +42,9 @@ PgSession& PgSession::operator=(PgSession&& other) noexcept {
         txn_ = std::move(other.txn_);
         executor_ = other.executor_;
         shutdownFlag_ = std::move(other.shutdownFlag_);
+        broken_ = other.broken_;
         other.executor_ = nullptr;
+        other.broken_ = true;
     }
     return *this;
 }
@@ -33,6 +52,12 @@ PgSession& PgSession::operator=(PgSession&& other) noexcept {
 void PgSession::CheckShutdown() const {
     if (shutdownFlag_ && shutdownFlag_->load(std::memory_order_relaxed)) {
         throw std::runtime_error("session shutdown");
+    }
+}
+
+void PgSession::MarkException(const std::exception& ex) {
+    if (IsBrokenConnectionException(ex)) {
+        broken_ = true;
     }
 }
 
@@ -44,6 +69,10 @@ PgSession::~PgSession() {
         }
         txn_.reset();
     }
+}
+
+bool PgSession::IsReusable() const {
+    return conn_ && !broken_ && conn_->is_open();
 }
 
 TFuture<QueryResult> PgSession::ExecuteQuery(std::string_view sql) {
@@ -60,6 +89,9 @@ TFuture<QueryResult> PgSession::ExecuteQuery(std::string_view sql) {
             }
             auto result = txn_->exec(sqlCopy);
             p.SetValue(QueryResult(std::move(result)));
+        } catch (const std::exception& ex) {
+            MarkException(ex);
+            p.SetException(std::current_exception());
         } catch (...) {
             p.SetException(std::current_exception());
         }
@@ -82,6 +114,9 @@ TFuture<uint64_t> PgSession::ExecuteModify(std::string_view sql) {
             }
             auto result = txn_->exec(sqlCopy);
             p.SetValue(result.affected_rows());
+        } catch (const std::exception& ex) {
+            MarkException(ex);
+            p.SetException(std::current_exception());
         } catch (...) {
             p.SetException(std::current_exception());
         }
@@ -102,6 +137,10 @@ TFuture<void> PgSession::Commit() {
                 txn_.reset();
             }
             p.SetValue();
+        } catch (const std::exception& ex) {
+            txn_.reset();
+            MarkException(ex);
+            p.SetException(std::current_exception());
         } catch (...) {
             txn_.reset();
             p.SetException(std::current_exception());
@@ -122,6 +161,10 @@ TFuture<void> PgSession::Rollback() {
                 txn_.reset();
             }
             p.SetValue();
+        } catch (const std::exception& ex) {
+            txn_.reset();
+            MarkException(ex);
+            p.SetException(std::current_exception());
         } catch (...) {
             txn_.reset();
             p.SetException(std::current_exception());
@@ -139,9 +182,13 @@ TFuture<QueryResult> PgSession::ExecuteNonTx(std::string_view sql) {
     executor_->Submit([this, sqlCopy = std::move(sqlCopy),
                        p = std::move(promise)]() mutable {
         try {
+            CheckShutdown();
             pqxx::nontransaction ntx(*conn_);
             auto result = ntx.exec(sqlCopy);
             p.SetValue(QueryResult(std::move(result)));
+        } catch (const std::exception& ex) {
+            MarkException(ex);
+            p.SetException(std::current_exception());
         } catch (...) {
             p.SetException(std::current_exception());
         }
@@ -161,6 +208,7 @@ TFuture<void> PgSession::ExecuteCopy(
     executor_->Submit([this, tableName, columns, writer = std::move(writer),
                        p = std::move(promise)]() mutable {
         try {
+            CheckShutdown();
             if (!txn_) {
                 txn_ = std::make_unique<SnapshotTxn>(*conn_);
             }
@@ -168,6 +216,9 @@ TFuture<void> PgSession::ExecuteCopy(
             writer(stream);
             stream.complete();
             p.SetValue();
+        } catch (const std::exception& ex) {
+            MarkException(ex);
+            p.SetException(std::current_exception());
         } catch (...) {
             p.SetException(std::current_exception());
         }
@@ -176,10 +227,18 @@ TFuture<void> PgSession::ExecuteCopy(
     return future;
 }
 
-std::unique_ptr<pqxx::connection> PgSession::ReleaseConnection() {
+std::unique_ptr<pqxx::connection> PgSession::ReleaseConnection(bool* reusable) {
     if (txn_) {
-        try { txn_->abort(); } catch (...) {}
+        try {
+            txn_->abort();
+        } catch (const std::exception& ex) {
+            MarkException(ex);
+        } catch (...) {
+        }
         txn_.reset();
+    }
+    if (reusable) {
+        *reusable = IsReusable();
     }
     return std::move(conn_);
 }

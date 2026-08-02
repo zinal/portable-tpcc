@@ -115,6 +115,32 @@ bool IsOrchestratedRole(const std::string& cmd) {
     return cmd == "worker" || cmd == "loader" || cmd == "schema" || cmd == "check";
 }
 
+void ValidateWarehouseFlag() {
+    if (FLAGS_warehouses <= 0) {
+        throw std::runtime_error("--warehouses must be greater than zero");
+    }
+}
+
+void ValidateThreadsFlag() {
+    if (FLAGS_threads < 0) {
+        throw std::runtime_error("--threads must not be negative");
+    }
+}
+
+void ValidateRunFlags() {
+    ValidateWarehouseFlag();
+    ValidateThreadsFlag();
+    if (FLAGS_max_inflight <= 0) {
+        throw std::runtime_error("--max-inflight must be greater than zero");
+    }
+    if (FLAGS_duration <= 0) {
+        throw std::runtime_error("--duration must be greater than zero");
+    }
+    if (FLAGS_warmup < 0) {
+        throw std::runtime_error("--warmup must not be negative");
+    }
+}
+
 bool ParseOrchestratedArgs(
     int argc,
     char** argv,
@@ -261,6 +287,8 @@ void RunSchema() {
 }
 
 void RunImport() {
+    ValidateWarehouseFlag();
+    ValidateThreadsFlag();
     NTpcc::CheckDbForImport(FLAGS_connection, FLAGS_path);
     NTpcc::TImportConfig config;
     config.ConnectionString = FLAGS_connection;
@@ -273,6 +301,7 @@ void RunImport() {
 }
 
 void RunBenchmark() {
+    ValidateRunFlags();
     NTpcc::TRunConfig config;
     config.ConnectionString = FLAGS_connection;
     config.Path = FLAGS_path;
@@ -305,6 +334,7 @@ void RunClean() {
 }
 
 void RunCheck() {
+    ValidateWarehouseFlag();
     if (FLAGS_after_import && FLAGS_after_run) {
         throw std::runtime_error("specify only one of --after-import or --after-run");
     }

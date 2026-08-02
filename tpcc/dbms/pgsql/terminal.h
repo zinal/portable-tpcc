@@ -16,6 +16,7 @@
 #include <stop_token>
 #include <memory>
 #include <array>
+#include <string>
 
 namespace NTpcc {
 
@@ -201,6 +202,9 @@ public:
         int simulateTransactionMs = 0,
         int simulateTransactionSelect1 = 0,
         size_t retryMaxAttempts = 4,
+        int64_t retryInitialBackoffMs = 10,
+        int64_t retryMaxBackoffMs = 500,
+        std::string retryJitter = "full",
         bool retryAmbiguousCommit = false,
         EThinkTimeDistribution thinkTimeDistribution = EThinkTimeDistribution::Exponential);
 
@@ -227,6 +231,9 @@ private:
     std::shared_ptr<TTerminalStats> Stats;
     TWorkloadConfig Workload;
     size_t RetryMaxAttempts = 4;
+    int64_t RetryInitialBackoffMs = 10;
+    int64_t RetryMaxBackoffMs = 500;
+    std::string RetryJitter = "full";
     bool RetryAmbiguousCommit = false;
     EThinkTimeDistribution ThinkTimeDistribution = EThinkTimeDistribution::Exponential;
 
