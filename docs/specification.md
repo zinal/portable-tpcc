@@ -55,6 +55,9 @@ verification. By default the report uses `result_class: engineering`.
   DBMS mechanisms that provide the consistency guarantees defined below.
 - Issuing, scheduling, or verifying DBMS checkpoints. Checkpoint mechanisms
   differ between DBMSs and remain an operator/DBMS responsibility.
+- Version negotiation or compatibility between worker artifacts produced by
+  different portable-tpcc versions. A run uses one operator-deployed,
+  homogeneous artifact set.
 - Continuing measurement after a worker is lost.
 - Dynamic terminal rebalancing during measurement.
 - Multi-edition TPC-C support or conformance-to-edition checks.
@@ -313,6 +316,15 @@ tpccctl run | cleanup --yes
 
 `run` = validate → deploy → schema → load → check(after-import) → start
 phases → check(after-run) → collect → consolidate.
+
+Worker artifact semantics are not independently version-negotiated. The
+operator **MUST** invoke `deploy` after selecting, building, or updating the
+portable-tpcc version and before starting a run. `deploy` **MUST** install on
+every assigned host the current set of binary artifacts from that selected
+version and **MUST NOT** intentionally reuse binaries from an earlier version.
+All workers in one run are therefore assumed to execute a homogeneous artifact
+set. Mixed worker versions are unsupported and are an operator/deployment
+error, not a compatibility mode that `consolidate` is required to reconcile.
 
 Skipped steps are recorded in the run-state and aggregate.
 
