@@ -74,8 +74,9 @@ Architecture / product (see [alignment-plan.md](alignment-plan.md) Phase 6):
 
 1. **PutBatch row payloads** — PG adapter regenerates from seed; shared-loader
    serialized rows are not yet consumed.
-2. Open decisions from specification §14 (histogram layout, ambiguous-commit
-   policy, canonical row bytes, minimum PG version).
+2. Open decisions from specification §14 (ambiguous-commit policy, canonical
+   row bytes, minimum PG version). Histogram layout resolved as `linear_exp`
+   (`unit` + `highest`).
 3. Broader unit/integration test coverage.
 4. YDB / OceanBase adapters (blocked on SDK packaging below).
 

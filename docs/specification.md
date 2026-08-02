@@ -400,7 +400,11 @@ Build with existing `ya make` (C++). Use Go-native tools for Golang. No alternat
 
 1. ~~C++ coroutine/future ABI for shared libraries.~~ **Resolved:** shared
    libraries use `TFuture` (see [adapter-api.md](adapter-api.md) §4.3).
-2. Histogram bucket layout and max latency.
+2. ~~Histogram bucket layout and max latency.~~ **Resolved for engineering
+   artifacts:** `linear_exp` with profile knobs `unit` + `highest`; worker
+   derives `hdr_till` (default 4096, capped by `highest`) and publishes
+   effective `{unit, highest, layout, hdr_till, max_value}`. HDR-style
+   `lowest` / `significant_figures` are rejected.
 3. Per-DBMS ambiguous-commit handling.
 4. Canonical row bytes for cross-DB sample checks.
 5. Minimum supported YDB / PostgreSQL / OceanBase versions.

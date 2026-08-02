@@ -139,11 +139,12 @@ type RetryPolicy struct {
 	Jitter         string `yaml:"jitter"`
 }
 
+// Histogram configures the worker linear_exp latency histogram.
+// Only unit and highest affect layout; buckets are [0, hdr_till) linear
+// then exponential up to highest (hdr_till is an implementation default).
 type Histogram struct {
-	Unit               string `yaml:"unit"`
-	Lowest             int64  `yaml:"lowest"`
-	Highest            int64  `yaml:"highest"`
-	SignificantFigures int    `yaml:"significant_figures"`
+	Unit    string `yaml:"unit"`
+	Highest int64  `yaml:"highest"`
 }
 
 type Checks struct {

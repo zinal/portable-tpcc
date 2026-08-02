@@ -103,20 +103,7 @@ business-input counters для проверки фактической выбо�
 Reported throughput также не truncates до нуля decimal places, как требует
 TPC-C §5.4.4; для engineering metric сохранение дробной части допустимо.
 
-### 3.3. Histogram settings частично игнорируются
-
-**Критичность: средняя. Ранее не зафиксированный internal defect.**
-
-`runtime.histogram.lowest` и `significant_figures` читаются и публикуются как
-effective settings, но фактический `THistogram` layout их не использует:
-
-- [workload_config.h](../tpcc/domain/workload_config.h);
-- [artifacts.cpp:237-245](../tpcc/dbms/pgsql/artifacts.cpp#L237-L245).
-
-Два профиля с разными значениями могут создавать одинаковые buckets, но
-aggregate будет утверждать, что применялись разные настройки.
-
-### 3.4. Initial population остаётся частично несовместимым с §4.3
+### 3.3. Initial population остаётся частично несовместимым с §4.3
 
 **Критичность: высокая для официального TPC-C.**
 
@@ -132,7 +119,7 @@ aggregate будет утверждать, что применялись раз�
 Post-import проверки delivered `OL_AMOUNT = 0.00` и carrier `[1..10]` добавлены
 в 5.18; generator создаёт эти значения корректно.
 
-### 3.5. Нет доказательства sustained operation и полного disclosure
+### 3.4. Нет доказательства sustained operation и полного disclosure
 
 **Критичность: высокая для официального TPC-C.**
 
@@ -357,9 +344,27 @@ delivered orders)
 
 Generator уже создавал корректные значения; это был defensive coverage gap.
 Оставшиеся замечания initial population (a-string alphabet и C-Load/C-Run)
-описаны в активном пункте 3.4.
+описаны в активном пункте 3.3.
 
-### 5.19. Нет TPC-C conformance validation параметров запуска
+### 5.19. Histogram settings частично игнорировались
+
+**Устранено:** `runtime.histogram.lowest` и `significant_figures` удалены из
+profile/run-config schema. Они читались и публиковались как effective
+settings, но `THistogram` layout `linear_exp` использует только `unit` и
+`highest` (`max_value`); `hdr_till` — implementation default (4096, capped by
+`highest`), публикуемый в worker artifacts.
+
+- profile YAML с этими полями отклоняется через `KnownFields`;
+- worker run-config с этими полями отклоняется при parse;
+- `settings.histogram` в `result.json` содержит только
+  `unit` / `highest` / `layout` / `hdr_till` / `max_value`
+  ([workload_config.h](../tpcc/domain/workload_config.h),
+  [run_config.cpp](../tpcc/dbms/pgsql/run_config.cpp),
+  [artifacts.cpp](../tpcc/dbms/pgsql/artifacts.cpp),
+  [profile.go](../tools/tpccctl/internal/profile/profile.go),
+  [config.go](../tools/tpccctl/internal/config/config.go)).
+
+### 5.20. Нет TPC-C conformance validation параметров запуска
 
 **Устранено:** soft-проверка effective launch parameters против фиксированных
 требований TPC-C 5.11, зеркалируемых built-in defaults. Engineering-профили по
@@ -394,7 +399,7 @@ Generator уже создавал корректные значения; это 
 [specification.md](specification.md) §10).
 
 Это не официальный TPC-C verdict и не закрывает пробелы variability inputs
-(3.1), оставшиеся пробелы response-time reporting (3.2) и disclosure (3.5).
+(3.1), оставшиеся пробелы response-time reporting (3.2) и disclosure (3.4).
 
 ## 6. Итоговая оценка
 
@@ -406,7 +411,7 @@ Generator уже создавал корректные значения; это 
 | Consolidation | Unexpected/stale workers отвергаются; identity/config валидируются до merge; повреждённые histogram/counter payloads отклоняются fail-closed |
 | Delivery | Синхронная модель — принятое отклонение; конкурентная обработка исправлена |
 | RTE / ACID / checkpoints | Внешние или вне области по принятому решению |
-| Launch-parameter checks | Soft TPC-C 5.11 settings deviations в validate/start/aggregate (5.19); не официальный verdict |
+| Launch-parameter checks | Soft TPC-C 5.11 settings deviations в validate/start/aggregate (5.20); не официальный verdict |
 | Reporting | Engineering artifacts с min/max/avg и percentiles; не официальный TPC-C FDR |
 | DBMS adapters | Практически реализован только PostgreSQL |
 
@@ -416,8 +421,9 @@ population и carrier checks. Fail-open classification intentional rollback
 устранён (5.13); measurement-boundary учёт §5.4.2 исправлен (5.14);
 слияние лишних/stale worker artifacts устранено (5.15); fail-open counters/
 histograms устранены (5.16); unknown YAML fields отклоняются (5.17);
-post-import amount/carrier checks добавлены (5.18); soft TPC-C settings
-conformance для параметров запуска добавлена (5.19). Сравнение результатов до
+post-import amount/carrier checks добавлены (5.18); мёртвые histogram knobs
+`lowest`/`significant_figures` удалены (5.19); soft TPC-C settings
+conformance для параметров запуска добавлена (5.20). Сравнение результатов до
 и после `884230e`/`a997ab8` требует учитывать ожидаемые изменения workload:
 tpmC увеличивается примерно на долю intentional rollback, rollback New-Order
 создаёт полную DB-нагрузку, а default think-time distribution теперь

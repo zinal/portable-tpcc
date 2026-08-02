@@ -62,3 +62,52 @@ func TestParse_acceptsKnownThinkTimeDistribution(t *testing.T) {
 		t.Fatalf("think_time_distribution=%q", p.Runtime.ThinkTimeDistribution)
 	}
 }
+
+func TestParse_rejectsUnsupportedHistogramKnobs(t *testing.T) {
+	path := filepath.Join("..", "..", "testdata", "profile.valid.yaml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// HDR-style knobs are not part of linear_exp; KnownFields must reject them.
+	patched := strings.Replace(
+		string(data),
+		"runtime:\n  pacing: enabled\n",
+		"runtime:\n  pacing: enabled\n  histogram:\n    unit: us\n    highest: 1000\n    lowest: 1\n    significant_figures: 3\n",
+		1,
+	)
+	if patched == string(data) {
+		t.Fatal("failed to inject histogram knobs into test fixture")
+	}
+	_, err = profile.Parse([]byte(patched))
+	if err == nil {
+		t.Fatal("expected unknown-field error for lowest/significant_figures")
+	}
+	if !strings.Contains(err.Error(), "lowest") && !strings.Contains(err.Error(), "significant_figures") {
+		t.Fatalf("expected error mentioning removed histogram fields, got %v", err)
+	}
+}
+
+func TestParse_acceptsHistogramUnitHighest(t *testing.T) {
+	path := filepath.Join("..", "..", "testdata", "profile.valid.yaml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	patched := strings.Replace(
+		string(data),
+		"runtime:\n  pacing: enabled\n",
+		"runtime:\n  pacing: enabled\n  histogram:\n    unit: ms\n    highest: 60000\n",
+		1,
+	)
+	p, err := profile.Parse([]byte(patched))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Runtime.Histogram.Unit != "ms" {
+		t.Fatalf("unit=%q", p.Runtime.Histogram.Unit)
+	}
+	if p.Runtime.Histogram.Highest != 60000 {
+		t.Fatalf("highest=%d", p.Runtime.Histogram.Highest)
+	}
+}
