@@ -70,14 +70,11 @@ required for the current port.
 
 These are intentional interim gaps while Phases 1–5 of the alignment plan land:
 
-1. **Money path still uses `double` in PG transaction workflows** — `TMoney`
-   is used for load; New-Order/Payment/`query_result` still convert via
-   `double`.
-2. **Workers emit percentiles** — not raw histogram buckets (spec §8).
-3. **No `--start-at` handling** — workers start on local clocks.
-4. **SQLSTATE error classifier missing** — only `transaction_rollback` retries.
-5. **Run-config `workload.*` largely ignored** — mix/timings hardcoded.
-6. **PutBatch row payloads** — PG adapter regenerates from seed; shared-loader
+1. **Workers emit percentiles** — not raw histogram buckets (spec §8).
+2. **No `--start-at` handling** — workers start on local clocks.
+3. **SQLSTATE error classifier missing** — only `transaction_rollback` retries.
+4. **Run-config `workload.*` largely ignored** — mix/timings hardcoded.
+5. **PutBatch row payloads** — PG adapter regenerates from seed; shared-loader
    serialized rows not yet consumed.
 
 ## SDKs outside this repository

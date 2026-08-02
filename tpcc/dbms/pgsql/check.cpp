@@ -196,7 +196,7 @@ void ConsistencyCheck3321(pqxx::nontransaction& txn) {
         "FROM {} AS w "
         "LEFT JOIN (SELECT D_W_ID, SUM(D_YTD) AS sum_d_ytd FROM {} GROUP BY D_W_ID) AS d "
         "ON w.W_ID = d.D_W_ID "
-        "WHERE ABS(w.W_YTD - COALESCE(d.sum_d_ytd, 0)) > 1e-3 LIMIT 1",
+        "WHERE w.W_YTD IS DISTINCT FROM COALESCE(d.sum_d_ytd, 0) LIMIT 1",
         TABLE_WAREHOUSE, TABLE_DISTRICT);
     CheckNoRows(txn, sql);
 }
@@ -335,7 +335,7 @@ void ConsistencyCheck3328(pqxx::nontransaction& txn) {
         "FROM {} AS w "
         "LEFT JOIN (SELECT H_W_ID, SUM(H_AMOUNT) AS sum_h FROM {} GROUP BY H_W_ID) AS h "
         "  ON w.W_ID = h.H_W_ID "
-        "WHERE ABS(w.W_YTD - COALESCE(h.sum_h, 0)) > 1e-3 LIMIT 1",
+        "WHERE w.W_YTD IS DISTINCT FROM COALESCE(h.sum_h, 0) LIMIT 1",
         TABLE_WAREHOUSE, TABLE_HISTORY);
     CheckNoRows(txn, sql);
 }
@@ -347,7 +347,7 @@ void ConsistencyCheck3329(pqxx::nontransaction& txn) {
         "FROM {} AS d "
         "LEFT JOIN (SELECT H_W_ID, H_D_ID, SUM(H_AMOUNT) AS sum_h FROM {} GROUP BY H_W_ID, H_D_ID) AS h "
         "  ON d.D_W_ID = h.H_W_ID AND d.D_ID = h.H_D_ID "
-        "WHERE ABS(d.D_YTD - COALESCE(h.sum_h, 0)) > 1e-3 LIMIT 1",
+        "WHERE d.D_YTD IS DISTINCT FROM COALESCE(h.sum_h, 0) LIMIT 1",
         TABLE_DISTRICT, TABLE_HISTORY);
     CheckNoRows(txn, sql);
 }
@@ -373,7 +373,7 @@ void ConsistencyCheck33210(pqxx::nontransaction& txn, int warehouseCount) {
             "  GROUP BY H_C_W_ID, H_C_D_ID, H_C_ID"
             ") AS hs ON c.C_W_ID = hs.H_C_W_ID AND c.C_D_ID = hs.H_C_D_ID AND c.C_ID = hs.H_C_ID "
             "WHERE c.C_W_ID >= {} AND c.C_W_ID <= {} "
-            "  AND ABS(c.C_BALANCE - (COALESCE(ols.ol_sum, 0) - COALESCE(hs.h_sum, 0))) > 1e-3 "
+            "  AND c.C_BALANCE IS DISTINCT FROM (COALESCE(ols.ol_sum, 0) - COALESCE(hs.h_sum, 0)) "
             "LIMIT 1",
             TABLE_CUSTOMER,
             TABLE_OORDER, TABLE_ORDER_LINE, startWh, endWh,
@@ -421,7 +421,7 @@ void ConsistencyCheck33212(pqxx::nontransaction& txn, int warehouseCount) {
             "  GROUP BY o.O_W_ID, o.O_D_ID, o.O_C_ID"
             ") AS l ON c.C_W_ID = l.W_ID AND c.C_D_ID = l.D_ID AND c.C_ID = l.C_ID "
             "WHERE c.C_W_ID >= {} AND c.C_W_ID <= {} "
-            "  AND ABS(c.C_BALANCE + c.C_YTD_PAYMENT - COALESCE(l.ol_sum, 0)) > 1e-3 "
+            "  AND (c.C_BALANCE + c.C_YTD_PAYMENT) IS DISTINCT FROM COALESCE(l.ol_sum, 0) "
             "LIMIT 1",
             TABLE_CUSTOMER,
             TABLE_OORDER, TABLE_ORDER_LINE, startWh, endWh,

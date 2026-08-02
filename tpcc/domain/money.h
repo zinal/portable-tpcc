@@ -168,6 +168,50 @@ public:
         return TRate(permille * 10);
     }
 
+    static TRate Parse(const std::string& text) {
+        if (text.empty()) {
+            throw std::invalid_argument("empty rate string");
+        }
+        size_t i = 0;
+        bool negative = false;
+        if (text[i] == '-') {
+            negative = true;
+            ++i;
+        } else if (text[i] == '+') {
+            ++i;
+        }
+        int64_t major = 0;
+        while (i < text.size() && text[i] >= '0' && text[i] <= '9') {
+            major = major * 10 + (text[i] - '0');
+            ++i;
+        }
+        int64_t minor = 0;
+        int digits = 0;
+        if (i < text.size() && text[i] == '.') {
+            ++i;
+            while (i < text.size() && text[i] >= '0' && text[i] <= '9' && digits < 4) {
+                minor = minor * 10 + (text[i] - '0');
+                ++digits;
+                ++i;
+            }
+            while (i < text.size() && text[i] >= '0' && text[i] <= '9') {
+                ++i;
+            }
+            while (digits < 4) {
+                minor *= 10;
+                ++digits;
+            }
+        }
+        if (i != text.size()) {
+            throw std::invalid_argument("invalid rate string: " + text);
+        }
+        int64_t units = major * Scale + minor;
+        if (negative) {
+            units = -units;
+        }
+        return TRate(units);
+    }
+
     constexpr int64_t Units() const {
         return Units_;
     }

@@ -32,17 +32,6 @@ TOperationResult OkOp(size_t expected, size_t actual, TOperationPayload payload 
     return r;
 }
 
-TMoney MoneyFromDouble(double v) {
-    // Transitional: PG query path still surfaces doubles; convert to cents.
-    auto cents = static_cast<int64_t>(v * 100.0 + (v >= 0 ? 0.5 : -0.5));
-    return TMoney::FromCents(cents);
-}
-
-TRate RateFromDouble(double v) {
-    auto units = static_cast<int64_t>(v * 10000.0 + (v >= 0 ? 0.5 : -0.5));
-    return TRate::FromUnits(units);
-}
-
 bool NextRow(QueryResult& result) {
     return result.TryNextRow();
 }
@@ -181,7 +170,7 @@ TFuture<TOperationResult> TPgTpccTransaction::Execute(const TSemanticOp& op) {
             if (!NextRow(result)) {
                 return ReadyOp(FailOp(EErrorClass::Integrity, "warehouse not found", {}));
             }
-            return ReadyOp(OkOp(1, 1, RateFromDouble(result.GetDouble(0))));
+            return ReadyOp(OkOp(1, 1, result.GetRate(0)));
         }
         if (const auto* p = std::get_if<TReserveDistrictOrderId>(&op)) {
             auto result = Session_.ExecuteQuery(
@@ -192,7 +181,7 @@ TFuture<TOperationResult> TPgTpccTransaction::Execute(const TSemanticOp& op) {
                 return ReadyOp(FailOp(EErrorClass::Integrity, "district not found"));
             }
             const int nextId = result.GetInt32(0);
-            const auto tax = RateFromDouble(result.GetDouble(1));
+            const auto tax = result.GetRate(1);
             Session_.ExecuteModify(
                 "UPDATE district SET d_next_o_id = $1 WHERE d_w_id = $2 AND d_id = $3",
                 nextId + 1, p->WarehouseID, p->DistrictID).Get();
@@ -223,10 +212,10 @@ TFuture<TOperationResult> TPgTpccTransaction::Execute(const TSemanticOp& op) {
             cust.Zip = result.GetString(8);
             cust.Phone = result.GetString(9);
             cust.Credit = result.GetString(10);
-            cust.CreditLimit = MoneyFromDouble(result.GetDouble(11));
-            cust.Discount = RateFromDouble(result.GetDouble(12));
-            cust.Balance = MoneyFromDouble(result.GetDouble(13));
-            cust.YtdPayment = MoneyFromDouble(result.GetDouble(14));
+            cust.CreditLimit = result.GetMoney(11);
+            cust.Discount = result.GetRate(12);
+            cust.Balance = result.GetMoney(13);
+            cust.YtdPayment = result.GetMoney(14);
             cust.PaymentCount = result.GetInt32(15);
             cust.DeliveryCount = result.GetInt32(16);
             cust.Data = result.GetString(17);
@@ -244,7 +233,7 @@ TFuture<TOperationResult> TPgTpccTransaction::Execute(const TSemanticOp& op) {
                 }
                 TItemRow item;
                 item.ItemID = result.GetInt32(0);
-                item.Price = MoneyFromDouble(result.GetDouble(1));
+                item.Price = result.GetMoney(1);
                 item.Name = result.GetString(2);
                 item.Data = result.GetString(3);
                 items.push_back(std::move(item));
@@ -372,10 +361,10 @@ TFuture<TOperationResult> TPgTpccTransaction::Execute(const TSemanticOp& op) {
                 cust.Zip = result.GetString(8);
                 cust.Phone = result.GetString(9);
                 cust.Credit = result.GetString(10);
-                cust.CreditLimit = MoneyFromDouble(result.GetDouble(11));
-                cust.Discount = RateFromDouble(result.GetDouble(12));
-                cust.Balance = MoneyFromDouble(result.GetDouble(13));
-                cust.YtdPayment = MoneyFromDouble(result.GetDouble(14));
+                cust.CreditLimit = result.GetMoney(11);
+                cust.Discount = result.GetRate(12);
+                cust.Balance = result.GetMoney(13);
+                cust.YtdPayment = result.GetMoney(14);
                 cust.PaymentCount = result.GetInt32(15);
                 cust.DeliveryCount = result.GetInt32(16);
                 cust.Data = result.GetString(17);
@@ -401,7 +390,7 @@ TFuture<TOperationResult> TPgTpccTransaction::Execute(const TSemanticOp& op) {
                 row.WarehouseID = key.WarehouseID;
                 row.ItemID = key.ItemID;
                 row.Quantity = result.GetInt32(0);
-                row.Ytd = MoneyFromDouble(result.GetDouble(1));
+                row.Ytd = result.GetMoney(1);
                 row.OrderCount = result.GetInt32(2);
                 row.RemoteCount = result.GetInt32(3);
                 row.Data = result.GetString(4);
@@ -470,7 +459,7 @@ TFuture<TOperationResult> TPgTpccTransaction::Execute(const TSemanticOp& op) {
                 line.ItemID = result.GetInt32(0);
                 line.SupplyWarehouseID = result.GetInt32(1);
                 line.Quantity = result.GetInt32(2);
-                line.Amount = MoneyFromDouble(result.GetDouble(3));
+                line.Amount = result.GetMoney(3);
                 auto deliv = result.GetRawResult()[rowIdx][4];
                 if (!deliv.is_null()) {
                     line.DeliveryDate = deliv.as<std::string>();
@@ -495,7 +484,7 @@ TFuture<TOperationResult> TPgTpccTransaction::Execute(const TSemanticOp& op) {
                 p->WarehouseID, p->DistrictID, p->OrderID).Get();
             int64_t totalCents = 0;
             while (NextRow(ol)) {
-                totalCents += MoneyFromDouble(ol.GetDouble(0)).Cents();
+                totalCents += ol.GetMoney(0).Cents();
                 ++info.LineCount;
             }
             info.TotalAmount = TMoney::FromCents(totalCents);
