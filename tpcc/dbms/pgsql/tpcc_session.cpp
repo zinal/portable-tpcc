@@ -256,13 +256,21 @@ TFuture<TOperationResult> TPgTpccTransaction::Execute(const TSemanticOp& op) {
             return ReadyOp(OkOp(p->ItemIDs.size(), items.size(), std::move(items)));
         }
         if (const auto* p = std::get_if<TCreateOrder>(&op)) {
-            Session_.ExecuteModify(
+            auto orderAffected = Session_.ExecuteModify(
                 "INSERT INTO oorder (o_id, o_d_id, o_w_id, o_c_id, o_entry_d, o_ol_cnt, o_all_local) "
                 "VALUES ($1,$2,$3,$4,CURRENT_TIMESTAMP,$5,$6)",
                 p->OrderID, p->DistrictID, p->WarehouseID, p->CustomerID, p->LineCount, p->AllLocal).Get();
-            Session_.ExecuteModify(
+            auto orderCheck = CheckAffected(orderAffected, 1, "oorder insert");
+            if (!orderCheck.Ok) {
+                return ReadyOp(std::move(orderCheck));
+            }
+            auto newOrderAffected = Session_.ExecuteModify(
                 "INSERT INTO new_order (no_o_id, no_d_id, no_w_id) VALUES ($1,$2,$3)",
                 p->OrderID, p->DistrictID, p->WarehouseID).Get();
+            auto newOrderCheck = CheckAffected(newOrderAffected, 1, "new_order insert");
+            if (!newOrderCheck.Ok) {
+                return ReadyOp(std::move(newOrderCheck));
+            }
             return ReadyOp(OkOp(2, 2));
         }
         if (const auto* p = std::get_if<TUpdateStock>(&op)) {
@@ -278,12 +286,16 @@ TFuture<TOperationResult> TPgTpccTransaction::Execute(const TSemanticOp& op) {
             return ReadyOp(OkOp(1, 1));
         }
         if (const auto* p = std::get_if<TInsertOrderLine>(&op)) {
-            Session_.ExecuteModify(
+            auto affected = Session_.ExecuteModify(
                 "INSERT INTO order_line (ol_o_id, ol_d_id, ol_w_id, ol_number, ol_i_id, "
                 "ol_supply_w_id, ol_quantity, ol_amount, ol_dist_info) "
                 "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
                 p->OrderID, p->DistrictID, p->WarehouseID, p->LineNumber, p->ItemID,
                 p->SupplyWarehouseID, p->Quantity, p->Amount.ToString(), p->DistInfo).Get();
+            auto check = CheckAffected(affected, 1, "order_line insert");
+            if (!check.Ok) {
+                return ReadyOp(std::move(check));
+            }
             return ReadyOp(OkOp(1, 1));
         }
         if (const auto* p = std::get_if<TCountRecentLowStock>(&op)) {
@@ -358,12 +370,16 @@ TFuture<TOperationResult> TPgTpccTransaction::Execute(const TSemanticOp& op) {
             return ReadyOp(OkOp(2, 2, std::move(info)));
         }
         if (const auto* p = std::get_if<TInsertPaymentHistory>(&op)) {
-            Session_.ExecuteModify(
+            auto affected = Session_.ExecuteModify(
                 "INSERT INTO history (h_c_id, h_c_d_id, h_c_w_id, h_d_id, h_w_id, h_date, h_amount, h_data) "
                 "VALUES ($1,$2,$3,$4,$5,CURRENT_TIMESTAMP,$6,$7)",
                 p->CustomerID, p->CustomerDistrictID, p->CustomerWarehouseID,
                 p->PaymentDistrictID, p->PaymentWarehouseID,
                 p->Amount.ToString(), p->Data).Get();
+            auto check = CheckAffected(affected, 1, "history insert");
+            if (!check.Ok) {
+                return ReadyOp(std::move(check));
+            }
             return ReadyOp(OkOp(1, 1));
         }
         if (const auto* p = std::get_if<TGetCustomersByLastName>(&op)) {

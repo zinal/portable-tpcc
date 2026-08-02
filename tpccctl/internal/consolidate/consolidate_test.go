@@ -48,6 +48,7 @@ func writeWorkerArtifacts(t *testing.T, root, runID, workerName, sha string, rc 
 	result := map[string]interface{}{
 		"run_id":            runID,
 		"instance":          workerName,
+		"instance_nonce":    "nonce-" + workerName,
 		"run_config_sha256": sha,
 		"assignment": map[string]interface{}{
 			"instance":         assign.Instance,
@@ -68,7 +69,9 @@ func writeWorkerArtifacts(t *testing.T, root, runID, workerName, sha string, rc 
 	if err := os.WriteFile(filepath.Join(workerDir, "result.json"), resultData, 0644); err != nil {
 		t.Fatal(err)
 	}
+	nonce, _ := result["instance_nonce"].(string)
 	ready := map[string]interface{}{
+		"instance_nonce": nonce,
 		"clock_calibration": map[string]interface{}{
 			"measured_at":    "2026-07-28T12:00:00Z",
 			"offset_ms":      5.0,
@@ -232,6 +235,7 @@ func TestConsolidate_clockSkewExceeded(t *testing.T) {
 	sha := writeRunConfig(t, root, runID, rc)
 	writeWorkerArtifacts(t, root, runID, "worker-a", sha, rc, nil)
 	ready := map[string]interface{}{
+		"instance_nonce": "nonce-worker-a",
 		"clock_calibration": map[string]interface{}{
 			"measured_at":    "2026-07-28T12:00:00Z",
 			"offset_ms":      250.0,
@@ -280,6 +284,7 @@ func TestConsolidate_clockSkewSpreadExceeded(t *testing.T) {
 	} {
 		writeWorkerArtifacts(t, root, runID, spec.name, sha, rc, nil)
 		ready := map[string]interface{}{
+			"instance_nonce": "nonce-" + spec.name,
 			"clock_calibration": map[string]interface{}{
 				"measured_at":    "2026-07-28T12:00:00Z",
 				"offset_ms":      spec.offset,
@@ -529,6 +534,34 @@ func TestConsolidateAllowIncompleteReturnsAggregate(t *testing.T) {
 	}
 	if agg.Status.WorkersComplete {
 		t.Fatalf("expected workers_complete=false, got %+v", agg.Status)
+	}
+}
+
+func TestConsolidate_rejectsMismatchedInstanceNonce(t *testing.T) {
+	root := t.TempDir()
+	runID := "run-nonce-mismatch"
+	rc := minimalRunConfig(runID)
+	sha := writeRunConfig(t, root, runID, rc)
+	writeWorkerArtifacts(t, root, runID, "worker-a", sha, rc, nil)
+	readyPath := filepath.Join(root, runID, "raw", "worker", "worker-a", "ready.json")
+	ready := map[string]interface{}{
+		"instance_nonce": "stale-nonce",
+		"clock_calibration": map[string]interface{}{
+			"measured_at":    "2026-07-28T12:00:00Z",
+			"offset_ms":      5.0,
+			"uncertainty_ms": 2.0,
+			"rtt_ms":         4.0,
+		},
+	}
+	readyData, _ := json.MarshalIndent(ready, "", "  ")
+	if err := os.WriteFile(readyPath, readyData, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cons := &consolidate.Consolidator{ResultRoot: root}
+	_, err := cons.Consolidate(runID, rc)
+	if err == nil || !strings.Contains(err.Error(), "instance_nonce") {
+		t.Fatalf("expected instance_nonce mismatch error, got %v", err)
 	}
 }
 

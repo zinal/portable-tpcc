@@ -24,9 +24,7 @@ struct TImportConfig {
     int TotalWarehouses = 0;
     // Deterministic population seed (run-config data.seed). Default 1 for standalone CLI.
     uint64_t Seed = 1;
-    // Current PG COPY loader streams one logical table/warehouse at a time; this
-    // run-config value is reserved as an advisory row chunk hint for adapters
-    // that support pre-serialized PutBatch rows.
+    // When > 0, large COPY streams (item/stock/customer) flush every BatchRows rows.
     int BatchRows = 0;
     // Optional run identity for PutBatch logging / future checkpoints.
     std::string RunId;
