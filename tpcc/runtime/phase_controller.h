@@ -68,15 +68,37 @@ public:
         return static_cast<ERunPhase>(Phase_.load(std::memory_order_acquire));
     }
 
-    // New business transactions may start only in Ramp or Measure.
-    bool MayAdmit() const {
-        const auto p = Phase();
-        return p == ERunPhase::Ramp || p == ERunPhase::Measure;
+    // Wall-clock point inside the half-open measurement interval
+    // [MeasurementStart, MeasurementEnd).
+    bool InMeasurementInterval(std::chrono::system_clock::time_point t) const {
+        return t >= Schedule_.MeasurementStart && t < Schedule_.MeasurementEnd;
     }
 
-    // Measurement metrics are recorded only in Measure.
+    // TPC-C §5.4.2: count only when response-time start and end both lie
+    // within the closed measurement interval [MeasurementStart, MeasurementEnd].
+    bool CompletelyWithinMeasurement(
+        std::chrono::system_clock::time_point start,
+        std::chrono::system_clock::time_point end) const
+    {
+        return start >= Schedule_.MeasurementStart
+            && end <= Schedule_.MeasurementEnd
+            && end >= start;
+    }
+
+    // New business transactions may start only in Ramp or Measure, with an
+    // absolute cutoff at MeasurementEnd so Tick() lag cannot admit late work.
+    bool MayAdmit() const {
+        const auto p = Phase();
+        if (p != ERunPhase::Ramp && p != ERunPhase::Measure) {
+            return false;
+        }
+        return std::chrono::system_clock::now() < Schedule_.MeasurementEnd;
+    }
+
+    // Measurement metrics are recorded only inside the measurement interval.
+    // Uses absolute schedule timestamps (not the Tick()-published phase enum).
     bool MayRecord() const {
-        return Phase() == ERunPhase::Measure;
+        return InMeasurementInterval(std::chrono::system_clock::now());
     }
 
     // Advance phase from wall-clock now (monotonic transitions only).

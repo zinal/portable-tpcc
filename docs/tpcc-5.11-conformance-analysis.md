@@ -21,9 +21,9 @@
 - NULL-only семантика carrier в consistency checks.
 
 Эти исправления проходят unit tests и в основном корректны. После повторного
-аудита устранена fail-open ошибка классификации intentional rollback; остаются
-неполное исправление measurement boundaries и ранее не зафиксированные проблемы
-консолидации worker artifacts.
+аудита устранены fail-open классификация intentional rollback и неполный учёт
+measurement boundaries; остаются ранее не зафиксированные проблемы консолидации
+worker artifacts.
 
 Документ разделён на:
 
@@ -64,37 +64,7 @@ go test ./...
 
 ## 3. Активные замечания
 
-### 3.1. Response time может пересекать measurement boundary
-
-**Критичность: высокая. Неполное исправление учёта §5.4.2.**
-
-Экспортируемый `LatencyHistogramFullMs` начинается до ожидания inflight slot:
-
-- `startTime` устанавливается в
-  [terminal.cpp:163](../tpcc/dbms/pgsql/terminal.cpp#L163);
-- затем выполняется `TTaskHasInflight`;
-- `rtStartedInMeasure` фиксируется только после получения slot в
-  [terminal.cpp:172-175](../tpcc/dbms/pgsql/terminal.cpp#L172-L175).
-
-Если ожидание началось в Ramp, а slot получен уже в Measure, транзакция
-учитывается, хотя экспортируемый latency начался до measurement interval.
-
-Дополнительно phase enum обновляется вызовом `Tick()` из main loop с периодом до
-50 ms. На границах возможны:
-
-- пропуск транзакций из начала measurement;
-- admission и запись транзакций после фактического `MeasurementEnd`.
-
-Связанный код:
-
-- [phase_controller.h](../tpcc/runtime/phase_controller.h);
-- [runner.cpp:545-567](../tpcc/dbms/pgsql/runner.cpp#L545-L567);
-- [runner.h](../tpcc/dbms/pgsql/runner.h).
-
-Начало и завершение response time следует сравнивать с абсолютными timestamps
-schedule, а начало `latencyFull` и проверяемая граница должны совпадать.
-
-### 3.2. Consolidator объединяет лишние или stale worker artifacts
+### 3.1. Consolidator объединяет лишние или stale worker artifacts
 
 **Критичность: высокая. Ранее не зафиксированный дефект.**
 
@@ -118,7 +88,7 @@ expected workers и status остаётся положительным.
 Consolidator должен отвергать unexpected workers и валидировать identity/config
 каждого result до слияния.
 
-### 3.3. Повреждённые counters и histograms обрабатываются fail-open
+### 3.2. Повреждённые counters и histograms обрабатываются fail-open
 
 **Критичность: высокая. Ранее не зафиксированный дефект.**
 
@@ -147,7 +117,7 @@ Histogram merge не проверяет:
 artifact должна делать consolidation неуспешной, а не давать частичный
 aggregate.
 
-### 3.4. Нет TPC-C conformance validation параметров запуска
+### 3.3. Нет TPC-C conformance validation параметров запуска
 
 **Критичность: высокая для официального TPC-C; допустимо для engineering
 profiles.**
@@ -171,7 +141,7 @@ profiles.**
 повторяет districts, и уникальность `(W_ID, D_ID)` Stock-Level из §2.8.1.1
 нарушается.
 
-### 3.5. Unknown YAML fields не отклоняются
+### 3.4. Unknown YAML fields не отклоняются
 
 **Критичность: средняя. Ранее не зафиксированный дефект internal validation.**
 
@@ -184,7 +154,7 @@ Profile parser использует обычный `yaml.Unmarshal`, а не dec
 чего бесшумно применяется default `exponential`. Это противоречит требованию
 internal specification отклонять unknown fields.
 
-### 3.6. Не проверяются фактические пределы variability inputs
+### 3.5. Не проверяются фактические пределы variability inputs
 
 **Критичность: высокая для официального TPC-C.**
 
@@ -199,7 +169,7 @@ TPC-C §5.5.1.5 требует проверять на measurement interval:
 Generator использует требуемые вероятности, но worker artifacts не содержат
 business-input counters для проверки фактической выборки.
 
-### 3.7. Response-time reporting остаётся неполным
+### 3.6. Response-time reporting остаётся неполным
 
 **Критичность: высокая для официального TPC-C.**
 
@@ -215,7 +185,7 @@ Raw histogram не хранит сумму значений, поэтому exac
 невозможно. Reported throughput также не truncates до нуля decimal places, как
 требует TPC-C §5.4.4; для engineering metric сохранение дробной части допустимо.
 
-### 3.8. Histogram settings частично игнорируются
+### 3.7. Histogram settings частично игнорируются
 
 **Критичность: средняя. Ранее не зафиксированный internal defect.**
 
@@ -228,7 +198,7 @@ effective settings, но фактический `THistogram` layout их не и
 Два профиля с разными значениями могут создавать одинаковые buckets, но
 aggregate будет утверждать, что применялись разные настройки.
 
-### 3.9. Initial population остаётся частично несовместимым с §4.3
+### 3.8. Initial population остаётся частично несовместимым с §4.3
 
 **Критичность: высокая для официального TPC-C.**
 
@@ -246,7 +216,7 @@ Post-import suite также не проверяет некоторые корр
 `[1..10]` у delivered orders. Generator создаёт их правильно; это defensive
 coverage gap, а не обнаруженная ошибка normal path.
 
-### 3.10. Нет доказательства sustained operation и полного disclosure
+### 3.9. Нет доказательства sustained operation и полного disclosure
 
 **Критичность: высокая для официального TPC-C.**
 
@@ -329,7 +299,7 @@ commit `884230e`.
 [artifacts.cpp](../tpcc/dbms/pgsql/artifacts.cpp),
 [consolidate.go](../tools/tpccctl/internal/consolidate/consolidate.go)).
 
-Fail-open classification устранён в 5.13; measurement boundaries остаются в 3.1.
+Fail-open classification устранён в 5.13; measurement boundaries устранены в 5.14.
 
 ### 5.2. Валидные строки rollback New-Order не выполняли DB-профиль
 
@@ -414,13 +384,27 @@ affected rows и возвращает retryable abort при конфликте
 [workflow_util.h](../tpcc/transactions/workflow_util.h),
 [tpcc_session.cpp](../tpcc/dbms/pgsql/tpcc_session.cpp)).
 
+### 5.14. Response time мог пересекать measurement boundary
+
+**Устранено:** учёт §5.4.2 опирается на абсолютные timestamps phase schedule:
+
+- `startWall` фиксируется в тот же момент, что и начало `latencyFull`
+  (до inflight-slot wait);
+- метрики записываются только если
+  `CompletelyWithinMeasurement(startWall, endWall)`;
+- `MayAdmit`/`MayRecord` используют schedule, а не только Tick()-published
+  phase enum, поэтому lag main loop до 50 ms не допускает late admission и не
+  пропускает начало measurement
+  ([phase_controller.h](../tpcc/runtime/phase_controller.h),
+  [terminal.cpp](../tpcc/dbms/pgsql/terminal.cpp)).
+
 ## 6. Итоговая оценка
 
 | Область | Оценка |
 | --- | --- |
 | DB workload core | Основные пять транзакций реализованы; intentional rollback fail-closed по ITEM not-found и подтверждённому rollback |
 | Initial population | Cardinalities и delivery timestamps корректны; synthetic dates приняты; a-string и C constants остаются |
-| Runtime | Think time и Stock-Level исправлены для default; measurement boundaries требуют доработки |
+| Runtime | Think time, Stock-Level и measurement boundaries исправлены для default |
 | Consolidation | Histogram merge работает для корректных однородных artifacts; identity/schema/integrity raw data валидируются недостаточно |
 | Delivery | Синхронная модель — принятое отклонение; конкурентная обработка исправлена |
 | RTE / ACID / checkpoints | Внешние или вне области по принятому решению |
@@ -430,7 +414,7 @@ affected rows и возвращает retryable abort при конфликте
 Повторный аудит не обнаружил deadlock или data-corruption регрессий в новых
 ITEM/STOCK locking, Stock-Level binding, think-time sampling, timestamp
 population и carrier checks. Fail-open classification intentional rollback
-устранён (5.13); measurement-boundary риски остаются в 3.1. Сравнение
+устранён (5.13); measurement-boundary учёт §5.4.2 исправлен (5.14). Сравнение
 результатов до и после `884230e` требует учитывать ожидаемые изменения
 workload: tpmC увеличивается примерно на долю intentional rollback, rollback
 New-Order создаёт полную DB-нагрузку, а default think-time distribution теперь
