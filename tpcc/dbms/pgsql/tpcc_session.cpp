@@ -565,8 +565,9 @@ TFuture<TOperationResult> TPgTpccTransaction::Execute(const TSemanticOp& op) {
                 "UPDATE order_line SET ol_delivery_d = CURRENT_TIMESTAMP "
                 "WHERE ol_w_id = $1 AND ol_d_id = $2 AND ol_o_id = $3",
                 p->WarehouseID, p->DistrictID, p->OrderID).Get();
-            if (linesAffected == 0) {
-                return ReadyOp(FailOp(EErrorClass::Integrity, "order_line delivery update affected no rows"));
+            check = CheckAffected(linesAffected, p->LineCount, "order_line delivery update");
+            if (!check.Ok) {
+                return ReadyOp(std::move(check));
             }
             return ReadyOp(OkOp(3, 3));
         }

@@ -52,7 +52,7 @@ PgSession PgConnectionPool::AcquireSession() {
     std::unique_lock lock(mutex_);
     cv_.wait(lock, [this] { return !connections_.empty() || shutdown_; });
 
-    if (shutdown_ && connections_.empty()) {
+    if (shutdown_) {
         throw std::runtime_error("Connection pool is shutting down");
     }
 
@@ -83,6 +83,11 @@ void PgConnectionPool::ReleaseSession(PgSession session) {
             replacement = CreateConnection();
         } catch (const std::exception& ex) {
             LOG_E("Failed to recreate PostgreSQL connection: {}", ex.what());
+            sessionShutdownFlag_->store(true, std::memory_order_release);
+            {
+                std::lock_guard lock(mutex_);
+                shutdown_ = true;
+            }
             RequestStopWithError();
             cv_.notify_all();
             return;
