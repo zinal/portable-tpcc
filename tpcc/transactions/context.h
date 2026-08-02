@@ -31,6 +31,9 @@ struct TTransactionInflightGuard {
 struct TTransactionContext {
     size_t TerminalID = 0;
     size_t WarehouseID = 0;
+    // Home district for this terminal (TPC-C §2.8.1.1 Stock-Level binding).
+    // New-Order / Payment / Order-Status still sample D_ID randomly in [1..10].
+    size_t DistrictID = 0;
     size_t WarehouseCount = 0;
     ITaskQueue& TaskQueue;
 
