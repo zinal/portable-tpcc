@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"portable-tpcc/tools/tpccctl/internal/canonical"
@@ -333,6 +334,7 @@ func (o *Orchestrator) start(ctx *Context) error {
 	if err := o.StateStore.Transition(ctx.RunID, state.StatePreparing); err != nil {
 		return err
 	}
+	warnTPCSettingsDeviations(ctx)
 	sessions, err := o.openSessions()
 	if err != nil {
 		return err
@@ -452,4 +454,23 @@ func (o *Orchestrator) Cleanup(yes bool) error {
 // WritePlanJSON encodes plan snapshot to JSON.
 func WritePlanJSON(plan *config.PlanSnapshot) ([]byte, error) {
 	return json.MarshalIndent(plan, "", "  ")
+}
+
+func warnTPCSettingsDeviations(ctx *Context) {
+	devs := config.TPCSettingsDeviations(ctx.RunConfig)
+	if len(devs) == 0 {
+		return
+	}
+	msg := "WARNING: effective run settings deviate from TPC-C 5.11 launch-parameter requirements; result_class remains engineering"
+	fmt.Fprintln(os.Stderr, msg)
+	var b strings.Builder
+	b.WriteString(msg)
+	b.WriteByte('\n')
+	for _, d := range devs {
+		line := "WARNING: tpcc_settings_deviation: " + d
+		fmt.Fprintln(os.Stderr, line)
+		b.WriteString(line)
+		b.WriteByte('\n')
+	}
+	_ = os.WriteFile(filepath.Join(ctx.RunDir, "orchestrator.log"), []byte(b.String()), 0644)
 }

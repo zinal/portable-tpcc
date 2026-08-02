@@ -412,7 +412,7 @@ func (o *Orchestrator) collectArtifacts(ctx *Context, sessions map[string]remote
 	if err := os.MkdirAll(orchDir, 0755); err != nil {
 		return err
 	}
-	for _, name := range []string{"run-config.json", "profile.redacted.yaml", "run-state.json", "start-token.json"} {
+	for _, name := range []string{"run-config.json", "profile.redacted.yaml", "run-state.json", "start-token.json", "orchestrator.log"} {
 		src := filepath.Join(ctx.RunDir, name)
 		if _, err := os.Stat(src); err != nil {
 			continue

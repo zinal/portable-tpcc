@@ -66,31 +66,7 @@ go test ./...
 
 ## 3. Активные замечания
 
-### 3.1. Нет TPC-C conformance validation параметров запуска
-
-**Критичность: высокая для официального TPC-C; допустимо для engineering
-profiles.**
-
-Конфигурация допускает:
-
-- не 10 terminals/warehouse;
-- mix, не обеспечивающий минимальные доли TPC-C;
-- отключённый pacing;
-- compatibility/constant think time;
-- произвольные keying/think means;
-- measurement interval менее 120 минут.
-
-Ссылки:
-
-- [validate.go](../tools/tpccctl/internal/validate/validate.go);
-- [defaults.go](../tools/tpccctl/internal/config/defaults.go);
-- [specification.md](specification.md).
-
-В частности, при `terminals_per_warehouse > 10` `HomeDistrictId` циклически
-повторяет districts, и уникальность `(W_ID, D_ID)` Stock-Level из §2.8.1.1
-нарушается.
-
-### 3.2. Не проверяются фактические пределы variability inputs
+### 3.1. Не проверяются фактические пределы variability inputs
 
 **Критичность: высокая для официального TPC-C.**
 
@@ -105,7 +81,7 @@ TPC-C §5.5.1.5 требует проверять на measurement interval:
 Generator использует требуемые вероятности, но worker artifacts не содержат
 business-input counters для проверки фактической выборки.
 
-### 3.3. Response-time reporting остаётся неполным
+### 3.2. Response-time reporting остаётся неполным
 
 **Критичность: высокая для официального TPC-C.**
 
@@ -121,7 +97,7 @@ Raw histogram не хранит сумму значений, поэтому exac
 невозможно. Reported throughput также не truncates до нуля decimal places, как
 требует TPC-C §5.4.4; для engineering metric сохранение дробной части допустимо.
 
-### 3.4. Histogram settings частично игнорируются
+### 3.3. Histogram settings частично игнорируются
 
 **Критичность: средняя. Ранее не зафиксированный internal defect.**
 
@@ -134,7 +110,7 @@ effective settings, но фактический `THistogram` layout их не и
 Два профиля с разными значениями могут создавать одинаковые buckets, но
 aggregate будет утверждать, что применялись разные настройки.
 
-### 3.5. Initial population остаётся частично несовместимым с §4.3
+### 3.4. Initial population остаётся частично несовместимым с §4.3
 
 **Критичность: высокая для официального TPC-C.**
 
@@ -150,7 +126,7 @@ aggregate будет утверждать, что применялись раз�
 Post-import проверки delivered `OL_AMOUNT = 0.00` и carrier `[1..10]` добавлены
 в 5.18; generator создаёт эти значения корректно.
 
-### 3.6. Нет доказательства sustained operation и полного disclosure
+### 3.5. Нет доказательства sustained operation и полного disclosure
 
 **Критичность: высокая для официального TPC-C.**
 
@@ -375,7 +351,44 @@ delivered orders)
 
 Generator уже создавал корректные значения; это был defensive coverage gap.
 Оставшиеся замечания initial population (a-string alphabet и C-Load/C-Run)
-описаны в активном пункте 3.5.
+описаны в активном пункте 3.4.
+
+### 5.19. Нет TPC-C conformance validation параметров запуска
+
+**Устранено:** soft-проверка effective launch parameters против фиксированных
+требований TPC-C 5.11, зеркалируемых built-in defaults. Engineering-профили по
+прежнему МОГУТ отклоняться; отклонения не делают structural validate
+неуспешным и не меняют `result_class: engineering`.
+
+Проверяются:
+
+- `terminals_per_warehouse == 10` (при `>10` дополнительно фиксируется, что
+  уникальность Stock-Level home `(W_ID, D_ID)` из §2.8.1.1 не выполняется из-за
+  wrap в `HomeDistrictId`);
+- минимальные доли mix ≥ 45/43/4/4/4 %;
+- `runtime.pacing == enabled`;
+- `runtime.think_time_distribution == exponential`;
+- keying/think means равны значениям TPC-C / defaults;
+- `phases.measurement >= 120m`.
+
+Поверхности отчёта:
+
+1. `tpccctl validate` — поля `tpcc_settings_conformant` и
+   `tpcc_settings_deviations` (рядом со structural `Valid`/`Errors`);
+2. `start` — warning в stderr и в `orchestrator.log` control-host run dir
+   (файл продвигается в `results/<run_id>/orchestrator/` при collect);
+3. `aggregate.json` / `summary.txt` — `status.tpcc_settings_conformant` и
+   список `status.tpcc_settings_deviations`.
+
+Сравнение выполняется по resolved settings после merge defaults
+([conformance.go](../tools/tpccctl/internal/config/conformance.go),
+[validate.go](../tools/tpccctl/internal/validate/validate.go),
+[consolidate.go](../tools/tpccctl/internal/consolidate/consolidate.go),
+[orchestrator.go](../tools/tpccctl/internal/orchestrator/orchestrator.go),
+[specification.md](specification.md) §10).
+
+Это не официальный TPC-C verdict и не закрывает пробелы variability inputs
+(3.1), response-time reporting (3.2) и disclosure (3.5).
 
 ## 6. Итоговая оценка
 
@@ -387,6 +400,7 @@ Generator уже создавал корректные значения; это 
 | Consolidation | Unexpected/stale workers отвергаются; identity/config валидируются до merge; повреждённые histogram/counter payloads отклоняются fail-closed |
 | Delivery | Синхронная модель — принятое отклонение; конкурентная обработка исправлена |
 | RTE / ACID / checkpoints | Внешние или вне области по принятому решению |
+| Launch-parameter checks | Soft TPC-C 5.11 settings deviations в validate/start/aggregate (5.19); не официальный verdict |
 | Reporting | Engineering artifacts, не официальный TPC-C FDR |
 | DBMS adapters | Практически реализован только PostgreSQL |
 
@@ -396,7 +410,8 @@ population и carrier checks. Fail-open classification intentional rollback
 устранён (5.13); measurement-boundary учёт §5.4.2 исправлен (5.14);
 слияние лишних/stale worker artifacts устранено (5.15); fail-open counters/
 histograms устранены (5.16); unknown YAML fields отклоняются (5.17);
-post-import amount/carrier checks добавлены (5.18). Сравнение результатов до
+post-import amount/carrier checks добавлены (5.18); soft TPC-C settings
+conformance для параметров запуска добавлена (5.19). Сравнение результатов до
 и после `884230e`/`a997ab8` требует учитывать ожидаемые изменения workload:
 tpmC увеличивается примерно на долю intentional rollback, rollback New-Order
 создаёт полную DB-нагрузку, а default think-time distribution теперь

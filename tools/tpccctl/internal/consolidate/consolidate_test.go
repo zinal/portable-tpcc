@@ -311,6 +311,48 @@ func TestConsolidate_includesUserAbortedInThroughput(t *testing.T) {
 	}
 }
 
+func TestConsolidate_tpccSettingsDeviationsInAggregate(t *testing.T) {
+	root := t.TempDir()
+	runID := "run-tpcc-settings"
+	writeMinimalWorkerArtifacts(t, root, runID, "worker-a")
+	writePassingChecks(t, root, runID)
+
+	rc := minimalRunConfig(runID)
+	rc.Workload = config.DefaultWorkload()
+	rc.Workload.TerminalsPerWarehouse = 20
+	rc.Runtime.Pacing = "disabled"
+	rc.Runtime.ThinkTimeDistribution = "exponential"
+	rc.Phases.MeasurementMs = 30 * 60 * 1000
+
+	cons := &consolidate.Consolidator{ResultRoot: root}
+	agg, err := cons.Consolidate(runID, rc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agg.Status.TPCCSettingsConformant {
+		t.Fatalf("expected tpcc_settings_conformant=false, status=%+v", agg.Status)
+	}
+	joined := strings.Join(agg.Status.TPCCSettingsDeviations, "\n")
+	if !strings.Contains(joined, "terminals_per_warehouse=20") || !strings.Contains(joined, `pacing="disabled"`) {
+		t.Fatalf("unexpected deviations: %#v", agg.Status.TPCCSettingsDeviations)
+	}
+
+	if err := consolidate.WriteAggregate(root, runID, agg); err != nil {
+		t.Fatal(err)
+	}
+	summary, err := os.ReadFile(filepath.Join(root, runID, "summary.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(summary)
+	if !strings.Contains(text, "tpcc_settings_conformant=false") {
+		t.Fatalf("summary missing conformant flag:\n%s", text)
+	}
+	if !strings.Contains(text, "tpcc_settings_deviation=") {
+		t.Fatalf("summary missing deviation lines:\n%s", text)
+	}
+}
+
 func TestConsolidate_integrityMissingChecks(t *testing.T) {
 	root := t.TempDir()
 	runID := "run-no-checks"
