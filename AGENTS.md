@@ -19,12 +19,23 @@ If a task affects multiple subsystems, follow the style of **each specific direc
 1. **Understand the task** — determine which directories and components are affected and whether the proposed solution fits the repository architecture.
 2. **Study the context** — read the files to be modified and their immediate consumers/dependencies; inspect `ya.make` and related modules.
 3. **Assess the scope** — minimize the diff; do not refactor or “improve” code outside the task’s scope.
-4. **Check the restrictions** — make sure the plan does not violate the prohibitions in sections 3 and 4 below.
-5. **Verify the changes** — whenever possible, build the affected targets (`ya make …`) and/or run the relevant tests.
+4. **Check the restrictions** — make sure the plan does not violate the prohibitions in sections 4 and 5 below.
+5. **Verify the changes** — whenever possible, build the affected targets (`./ya make …`) and/or run the relevant tests.
 
 If the task is ambiguous or requires changes in protected areas, **stop and ask the user for explicit confirmation** instead of assuming permission.
 
-## 3. Do not modify infrastructure directories
+## 3. Building with ya make
+
+The build system is invoked via the **`./ya` launcher script in the repository root** (not a system-wide `ya` binary). Run all `ya make` commands from the repo root, for example:
+
+```bash
+./ya make tpcc/dbms/pgsql
+./ya make -t tpcc/runtime/ut
+```
+
+On first use the script may download the ya binary; subsequent builds reuse it. Do not assume `ya` is on `PATH` — always use `./ya`.
+
+## 4. Do not modify infrastructure directories
 
 **Do not modify or add files** in the following directories:
 
@@ -40,10 +51,10 @@ If the task is ambiguous or requires changes in protected areas, **stop and ask 
 
 Files in these directories may be **read** to understand the build and dependencies.
 
-## 4. Recommended workflow
+## 5. Recommended workflow
 
 1. Read this document and [`README.md`](README.md).
-2. Determine which directories are affected and check the restrictions (sections 3–4).
+2. Determine which directories are affected and check the restrictions (sections 4–5).
 3. Study the style and dependencies of the target files.
 4. Plan a minimal diff and obtain the user’s approval if exceptions to the prohibitions are required.
 5. Make the changes, then build and test the affected components.
