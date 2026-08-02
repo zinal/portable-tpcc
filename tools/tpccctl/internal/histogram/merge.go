@@ -5,6 +5,8 @@ import (
 	"math"
 )
 
+const LayoutLinearExp = "linear_exp"
+
 // Raw is the portable linear_exp histogram payload from worker result.json.
 type Raw struct {
 	Layout      string   `json:"layout"`
@@ -16,31 +18,82 @@ type Raw struct {
 	Buckets     []uint64 `json:"buckets"`
 }
 
-// Merge sums compatible histograms (same hdr_till / max_value / layout).
-func Merge(dst *Raw, src Raw) error {
-	if dst.HdrTill == 0 && dst.MaxValue == 0 && len(dst.Buckets) == 0 {
-		*dst = src
-		if dst.Buckets != nil {
-			cp := make([]uint64, len(src.Buckets))
-			copy(cp, src.Buckets)
-			dst.Buckets = cp
+// ExpectedBucketCount mirrors THistogram::GetTotalBuckets for linear_exp.
+// Layout is hdrTill linear buckets, then exponential buckets up to maxValue,
+// then one overflow bucket for values >= maxValue.
+func ExpectedBucketCount(hdrTill, maxValue uint64) (int, error) {
+	if hdrTill == 0 || maxValue == 0 || hdrTill > maxValue {
+		return 0, fmt.Errorf("invalid histogram parameters: hdr_till=%d max_value=%d", hdrTill, maxValue)
+	}
+	exp := 0
+	if hdrTill <= math.MaxUint64/2 {
+		for r := hdrTill * 2; r <= maxValue; {
+			exp++
+			if r > math.MaxUint64/2 {
+				break
+			}
+			r *= 2
 		}
+	}
+	return int(hdrTill) + exp + 1, nil
+}
+
+// Validate checks that a raw histogram payload is self-consistent and mergeable.
+func Validate(h Raw) error {
+	if h.Layout == "" {
+		return fmt.Errorf("histogram missing layout")
+	}
+	if h.Layout != LayoutLinearExp {
+		return fmt.Errorf("unsupported histogram layout %q", h.Layout)
+	}
+	if h.Unit == "" {
+		return fmt.Errorf("histogram missing unit")
+	}
+	want, err := ExpectedBucketCount(h.HdrTill, h.MaxValue)
+	if err != nil {
+		return err
+	}
+	if len(h.Buckets) != want {
+		return fmt.Errorf("histogram bucket length %d != expected %d for hdr_till=%d max_value=%d",
+			len(h.Buckets), want, h.HdrTill, h.MaxValue)
+	}
+	var sum uint64
+	for _, c := range h.Buckets {
+		sum += c
+	}
+	if sum != h.TotalCount {
+		return fmt.Errorf("histogram total_count %d != sum(buckets) %d", h.TotalCount, sum)
+	}
+	return nil
+}
+
+// Merge sums compatible histograms (same layout / unit / hdr_till / max_value / buckets).
+func Merge(dst *Raw, src Raw) error {
+	if err := Validate(src); err != nil {
+		return err
+	}
+	if dst.HdrTill == 0 && dst.MaxValue == 0 && len(dst.Buckets) == 0 && dst.Layout == "" {
+		*dst = src
+		cp := make([]uint64, len(src.Buckets))
+		copy(cp, src.Buckets)
+		dst.Buckets = cp
 		return nil
+	}
+	if err := Validate(*dst); err != nil {
+		return fmt.Errorf("destination histogram: %w", err)
 	}
 	if dst.HdrTill != src.HdrTill || dst.MaxValue != src.MaxValue {
 		return fmt.Errorf("histogram parameter mismatch: dst(%d,%d) vs src(%d,%d)",
 			dst.HdrTill, dst.MaxValue, src.HdrTill, src.MaxValue)
 	}
-	if dst.Layout != "" && src.Layout != "" && dst.Layout != src.Layout {
+	if dst.Layout != src.Layout {
 		return fmt.Errorf("histogram layout mismatch: %s vs %s", dst.Layout, src.Layout)
 	}
-	if dst.Unit != "" && src.Unit != "" && dst.Unit != src.Unit {
+	if dst.Unit != src.Unit {
 		return fmt.Errorf("histogram unit mismatch: %s vs %s", dst.Unit, src.Unit)
 	}
-	if len(dst.Buckets) < len(src.Buckets) {
-		grown := make([]uint64, len(src.Buckets))
-		copy(grown, dst.Buckets)
-		dst.Buckets = grown
+	if len(dst.Buckets) != len(src.Buckets) {
+		return fmt.Errorf("histogram bucket length mismatch: %d vs %d", len(dst.Buckets), len(src.Buckets))
 	}
 	for i := range src.Buckets {
 		dst.Buckets[i] += src.Buckets[i]

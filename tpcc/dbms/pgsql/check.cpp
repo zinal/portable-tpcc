@@ -468,6 +468,17 @@ void PostImportCheckNoCarriers(pqxx::nontransaction& txn) {
     CheckNoRows(txn, sql, "Unprocessed orders must have NULL O_CARRIER_ID after import");
 }
 
+void PostImportCheckCarrierRange(pqxx::nontransaction& txn) {
+    // TPC-C §4.3.3.1: initially delivered orders have O_CARRIER_ID randomly selected
+    // unique within [1 .. 10].
+    std::string sql = fmt::format(
+        "SELECT O_W_ID, O_D_ID, O_ID, O_CARRIER_ID FROM {} "
+        "WHERE O_ID < {} AND (O_CARRIER_ID IS NULL OR O_CARRIER_ID < 1 OR O_CARRIER_ID > 10) "
+        "LIMIT 1",
+        TABLE_OORDER, FIRST_UNPROCESSED_O_ID);
+    CheckNoRows(txn, sql, "Delivered orders must have O_CARRIER_ID in [1..10] after import");
+}
+
 void PostImportCheckNoDeliveryDates(pqxx::nontransaction& txn) {
     std::string sql = fmt::format(
         "SELECT ol.OL_W_ID, ol.OL_D_ID, ol.OL_O_ID FROM {} AS ol "
@@ -487,6 +498,16 @@ void PostImportCheckDeliveryEqualsEntry(pqxx::nontransaction& txn) {
         "LIMIT 1",
         TABLE_ORDER_LINE, TABLE_OORDER, FIRST_UNPROCESSED_O_ID);
     CheckNoRows(txn, sql, "Delivered order lines must have OL_DELIVERY_D = O_ENTRY_D after import");
+}
+
+void PostImportCheckDeliveredAmountZero(pqxx::nontransaction& txn) {
+    // TPC-C §4.3.3.1: for initially delivered order lines, OL_AMOUNT = 0.00.
+    std::string sql = fmt::format(
+        "SELECT OL_W_ID, OL_D_ID, OL_O_ID, OL_NUMBER, OL_AMOUNT FROM {} "
+        "WHERE OL_O_ID < {} AND OL_AMOUNT IS DISTINCT FROM 0.00 "
+        "LIMIT 1",
+        TABLE_ORDER_LINE, FIRST_UNPROCESSED_O_ID);
+    CheckNoRows(txn, sql, "Delivered order lines must have OL_AMOUNT = 0.00 after import");
 }
 
 void RecordResult(TCheckReport& report, const std::string& id, ECheckStatus status,
@@ -634,10 +655,14 @@ TCheckReport RunPgChecks(const std::string& connectionString, const TCheckReques
                    [&] { PostImportCheckDistrictYtd(txn); });
             RunOne(report, "post_import.o_carrier_id", print,
                    [&] { PostImportCheckNoCarriers(txn); });
+            RunOne(report, "post_import.o_carrier_id_range", print,
+                   [&] { PostImportCheckCarrierRange(txn); });
             RunOne(report, "post_import.ol_delivery_d", print,
                    [&] { PostImportCheckNoDeliveryDates(txn); });
             RunOne(report, "post_import.ol_delivery_eq_entry", print,
                    [&] { PostImportCheckDeliveryEqualsEntry(txn); });
+            RunOne(report, "post_import.ol_amount_delivered", print,
+                   [&] { PostImportCheckDeliveredAmountZero(txn); });
         }
     } catch (const std::exception& ex) {
         RecordResult(report, "connection", ECheckStatus::Error, ex.what(), print);

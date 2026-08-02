@@ -12,6 +12,8 @@ TEST(CheckCatalog, ContainsCoreConsistencyIds) {
     EXPECT_NE(FindCheckCatalogEntry("consistency.3.3.2.12"), nullptr);
     EXPECT_NE(FindCheckCatalogEntry("post_import.w_ytd"), nullptr);
     EXPECT_NE(FindCheckCatalogEntry("post_import.ol_delivery_eq_entry"), nullptr);
+    EXPECT_NE(FindCheckCatalogEntry("post_import.o_carrier_id_range"), nullptr);
+    EXPECT_NE(FindCheckCatalogEntry("post_import.ol_amount_delivered"), nullptr);
     EXPECT_EQ(FindCheckCatalogEntry("does.not.exist"), nullptr);
 }
 

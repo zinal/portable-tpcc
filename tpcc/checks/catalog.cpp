@@ -31,8 +31,10 @@ const std::vector<TCheckCatalogEntry>& Catalog() {
         {"post_import.w_ytd", "W_YTD initial value", ECheckPhase::AfterImport},
         {"post_import.d_ytd", "D_YTD initial value", ECheckPhase::AfterImport},
         {"post_import.o_carrier_id", "Unprocessed orders have NULL carrier", ECheckPhase::AfterImport},
+        {"post_import.o_carrier_id_range", "Delivered orders have carrier in [1..10]", ECheckPhase::AfterImport},
         {"post_import.ol_delivery_d", "Unprocessed lines have NULL delivery date", ECheckPhase::AfterImport},
         {"post_import.ol_delivery_eq_entry", "Delivered lines have OL_DELIVERY_D = O_ENTRY_D", ECheckPhase::AfterImport},
+        {"post_import.ol_amount_delivered", "Delivered lines have OL_AMOUNT = 0.00", ECheckPhase::AfterImport},
     };
     return kCatalog;
 }

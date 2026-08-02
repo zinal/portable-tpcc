@@ -1,6 +1,7 @@
 package profile
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"regexp"
@@ -166,13 +167,16 @@ func ParseFile(path string) (*Profile, error) {
 }
 
 // Parse decodes profile YAML.
+// Unknown fields are rejected (specification §10).
 func Parse(data []byte) (*Profile, error) {
 	var raw map[string]interface{}
 	if err := yaml.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("yaml decode: %w", err)
 	}
 	var p Profile
-	if err := yaml.Unmarshal(data, &p); err != nil {
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	if err := dec.Decode(&p); err != nil {
 		return nil, fmt.Errorf("profile decode: %w", err)
 	}
 	p.Raw = raw
