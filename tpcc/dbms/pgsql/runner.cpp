@@ -89,13 +89,15 @@ std::shared_ptr<TRunDisplayData> CollectDisplayData(
     status.RunningTerminals = terminalCount;
     status.RunningTransactions = TransactionsInflight.load(std::memory_order_relaxed);
 
-    size_t totalNewOrderOK = 0;
+    size_t totalNewOrderCompleted = 0;
     for (auto& stats : perThreadStats) {
-        totalNewOrderOK += stats->GetStats(ETransactionType::NewOrder).OK.load(std::memory_order_relaxed);
+        const auto& no = stats->GetStats(ETransactionType::NewOrder);
+        totalNewOrderCompleted += no.OK.load(std::memory_order_relaxed)
+            + no.UserAborted.load(std::memory_order_relaxed);
     }
 
     double measureSeconds = warmupDone ? std::chrono::duration<double>(now - warmupEnd).count() : 0.0;
-    status.Tpmc = measureSeconds > 0 ? (totalNewOrderOK / measureSeconds * 60.0) : 0.0;
+    status.Tpmc = measureSeconds > 0 ? (totalNewOrderCompleted / measureSeconds * 60.0) : 0.0;
     status.Efficiency = config.WarehouseCount > 0
         ? (status.Tpmc / (MAX_TPMC_PER_WAREHOUSE * config.WarehouseCount) * 100.0) : 0.0;
 
@@ -115,7 +117,7 @@ void PrintConsoleStats(
 
     size_t totalOK = 0;
     size_t totalFailed = 0;
-    size_t totalNewOrderOK = 0;
+    size_t totalNewOrderCompleted = 0;
     const uint64_t aggHdr = config.Histogram.Configured
         ? config.Histogram.HdrTill()
         : (config.HighResHistogram ? 16384ull : 4096ull);
@@ -131,10 +133,12 @@ void PrintConsoleStats(
             totalOK += stats->GetStats(static_cast<ETransactionType>(i)).OK.load(std::memory_order_relaxed);
             totalFailed += stats->GetStats(static_cast<ETransactionType>(i)).Failed.load(std::memory_order_relaxed);
         }
-        totalNewOrderOK += stats->GetStats(ETransactionType::NewOrder).OK.load(std::memory_order_relaxed);
+        const auto& no = stats->GetStats(ETransactionType::NewOrder);
+        totalNewOrderCompleted += no.OK.load(std::memory_order_relaxed)
+            + no.UserAborted.load(std::memory_order_relaxed);
     }
 
-    double tpmc = elapsed > 0 ? (totalNewOrderOK / elapsed * 60.0) : 0.0;
+    double tpmc = elapsed > 0 ? (totalNewOrderCompleted / elapsed * 60.0) : 0.0;
     double efficiency = config.WarehouseCount > 0
         ? (tpmc / (MAX_TPMC_PER_WAREHOUSE * config.WarehouseCount) * 100.0) : 0.0;
 
@@ -144,10 +148,11 @@ void PrintConsoleStats(
         const auto& s = aggregated.GetStats(type);
         auto p50 = s.LatencyHistogramFullMs.GetValueAtPercentile(50);
         auto p99 = s.LatencyHistogramFullMs.GetValueAtPercentile(99);
-        auto ok = s.OK.load(std::memory_order_relaxed);
-        if (ok > 0) {
+        auto completed = s.OK.load(std::memory_order_relaxed)
+            + s.UserAborted.load(std::memory_order_relaxed);
+        if (completed > 0) {
             latencies += fmt::format("  {}:{}(p50={} p99={})",
-                TransactionTypeName(type), ok, p50, p99);
+                TransactionTypeName(type), completed, p50, p99);
         }
     }
 
@@ -188,9 +193,11 @@ void PrintFinalResults(
         }
     }
 
-    size_t totalNewOrderOK = aggregated.GetStats(ETransactionType::NewOrder).OK.load(std::memory_order_relaxed);
+    const auto& newOrderStats = aggregated.GetStats(ETransactionType::NewOrder);
+    size_t totalNewOrderCompleted = newOrderStats.OK.load(std::memory_order_relaxed)
+        + newOrderStats.UserAborted.load(std::memory_order_relaxed);
     double measureDuration = measureElapsed.count();
-    double tpmc = measureDuration > 0 ? (totalNewOrderOK / measureDuration * 60.0) : 0.0;
+    double tpmc = measureDuration > 0 ? (totalNewOrderCompleted / measureDuration * 60.0) : 0.0;
     double efficiency = config.WarehouseCount > 0
         ? (tpmc / (MAX_TPMC_PER_WAREHOUSE * config.WarehouseCount) * 100.0) : 0.0;
 
@@ -208,10 +215,11 @@ void PrintFinalResults(
         const auto& s = aggregated.GetStats(type);
         auto ok = s.OK.load(std::memory_order_relaxed);
         auto failed = s.Failed.load(std::memory_order_relaxed);
-        if (ok == 0 && failed == 0) continue;
+        auto userAborted = s.UserAborted.load(std::memory_order_relaxed);
+        if (ok == 0 && failed == 0 && userAborted == 0) continue;
 
-        LOG_I("  {}: OK={} Failed={} p50={}ms p90={}ms p99={}ms",
-              TransactionTypeName(type), ok, failed,
+        LOG_I("  {}: OK={} UserAborted={} Failed={} p50={}ms p90={}ms p99={}ms",
+              TransactionTypeName(type), ok, userAborted, failed,
               s.LatencyHistogramFullMs.GetValueAtPercentile(50),
               s.LatencyHistogramFullMs.GetValueAtPercentile(90),
               s.LatencyHistogramFullMs.GetValueAtPercentile(99));

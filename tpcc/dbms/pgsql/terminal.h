@@ -102,35 +102,24 @@ public:
     {
         auto& stats = PerTransactionTypeStats[static_cast<size_t>(type)];
         stats.OK.fetch_add(1, std::memory_order_relaxed);
-        uint64_t vTxn = 0;
-        uint64_t vFull = 0;
-        uint64_t vPure = 0;
-        if (RecordMicroseconds) {
-            vTxn = static_cast<uint64_t>(
-                std::chrono::duration_cast<std::chrono::microseconds>(latency).count());
-            vFull = static_cast<uint64_t>(
-                std::chrono::duration_cast<std::chrono::microseconds>(latencyFull).count());
-            vPure = static_cast<uint64_t>(latencyPure.count());
-        } else {
-            vTxn = static_cast<uint64_t>(latency.count());
-            vFull = static_cast<uint64_t>(latencyFull.count());
-            vPure = static_cast<uint64_t>(
-                std::chrono::duration_cast<std::chrono::milliseconds>(latencyPure).count());
-        }
-        {
-            std::lock_guard guard(stats.HistLock);
-            stats.LatencyHistogramMs.RecordValue(vTxn);
-            stats.LatencyHistogramFullMs.RecordValue(vFull);
-            stats.LatencyHistogramPure.RecordValue(vPure);
-        }
+        RecordLatency(stats, latency, latencyFull, latencyPure);
     }
 
     void IncFailed(ETransactionType type) {
         PerTransactionTypeStats[static_cast<size_t>(type)].Failed.fetch_add(1, std::memory_order_relaxed);
     }
 
-    void IncUserAborted(ETransactionType type) {
-        PerTransactionTypeStats[static_cast<size_t>(type)].UserAborted.fetch_add(1, std::memory_order_relaxed);
+    // Intentional profile rollback (unused New-Order item). Counts toward MQTh/tpmC
+    // and New-Order response-time statistics (TPC-C §5.1.2, §5.4.2).
+    void AddUserAborted(
+        ETransactionType type,
+        std::chrono::milliseconds latency,
+        std::chrono::milliseconds latencyFull,
+        std::chrono::microseconds latencyPure)
+    {
+        auto& stats = PerTransactionTypeStats[static_cast<size_t>(type)];
+        stats.UserAborted.fetch_add(1, std::memory_order_relaxed);
+        RecordLatency(stats, latency, latencyFull, latencyPure);
     }
 
     void IncRetried(ETransactionType type) {
@@ -157,6 +146,35 @@ public:
     }
 
 private:
+    void RecordLatency(
+        TTransactionStats& stats,
+        std::chrono::milliseconds latency,
+        std::chrono::milliseconds latencyFull,
+        std::chrono::microseconds latencyPure)
+    {
+        uint64_t vTxn = 0;
+        uint64_t vFull = 0;
+        uint64_t vPure = 0;
+        if (RecordMicroseconds) {
+            vTxn = static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::microseconds>(latency).count());
+            vFull = static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::microseconds>(latencyFull).count());
+            vPure = static_cast<uint64_t>(latencyPure.count());
+        } else {
+            vTxn = static_cast<uint64_t>(latency.count());
+            vFull = static_cast<uint64_t>(latencyFull.count());
+            vPure = static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(latencyPure).count());
+        }
+        {
+            std::lock_guard guard(stats.HistLock);
+            stats.LatencyHistogramMs.RecordValue(vTxn);
+            stats.LatencyHistogramFullMs.RecordValue(vFull);
+            stats.LatencyHistogramPure.RecordValue(vPure);
+        }
+    }
+
     std::array<TTransactionStats, TRANSACTION_TYPE_COUNT> PerTransactionTypeStats;
     std::atomic<bool> WasCleared{false};
     bool RecordMicroseconds = false;

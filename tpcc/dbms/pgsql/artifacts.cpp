@@ -164,7 +164,7 @@ void WriteWorkerResultJson(const TArtifactPaths& paths, const TRunConfigDocument
     Json histograms = Json::object();
     size_t totalFailed = 0;
     size_t totalRetried = 0;
-    size_t totalNewOrderOk = 0;
+    size_t totalNewOrderCompleted = 0;
     const std::string histUnit = doc.Histogram.Configured ? doc.Histogram.Unit : "ms";
 
     for (size_t i = 0; i < TRANSACTION_TYPE_COUNT; ++i) {
@@ -172,21 +172,27 @@ void WriteWorkerResultJson(const TArtifactPaths& paths, const TRunConfigDocument
         const auto& s = stats.GetStats(type);
         const auto ok = s.OK.load(std::memory_order_relaxed);
         const auto failed = s.Failed.load(std::memory_order_relaxed);
+        const auto userAborted = s.UserAborted.load(std::memory_order_relaxed);
         const auto retried = s.Retried.load(std::memory_order_relaxed);
         totalFailed += failed;
         totalRetried += retried;
         if (type == ETransactionType::NewOrder) {
-            totalNewOrderOk = ok;
+            // TPC-C §5.1.2 / §5.4.2: intentional unused-item rollbacks count in MQTh.
+            totalNewOrderCompleted = ok + userAborted;
         }
-        if (ok > 0 || failed > 0 || retried > 0 || s.LatencyHistogramFullMs.TotalCount() > 0) {
+        if (ok > 0 || failed > 0 || userAborted > 0 || retried > 0 ||
+            s.LatencyHistogramFullMs.TotalCount() > 0)
+        {
             counters[std::string(TransactionTypeToString(type)) + "_ok"] = ok;
             counters[std::string(TransactionTypeToString(type)) + "_failed"] = failed;
+            counters[std::string(TransactionTypeToString(type)) + "_user_aborted"] = userAborted;
             counters[std::string(TransactionTypeToString(type)) + "_retried"] = retried;
             histograms[TransactionTypeToString(type)] = HistogramPayload(s, histUnit);
         }
     }
 
-    const double tpmc = measureSeconds > 0 ? (totalNewOrderOk / measureSeconds * 60.0) : 0.0;
+    const double tpmc = measureSeconds > 0
+        ? (totalNewOrderCompleted / measureSeconds * 60.0) : 0.0;
     const size_t whCount = CountWarehouses(assign.WarehouseRanges);
 
     Json mix = Json::object();

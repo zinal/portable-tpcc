@@ -241,6 +241,65 @@ func minimalRunConfig(runID string) *config.RunConfig {
 	}
 }
 
+func TestConsolidate_includesUserAbortedInThroughput(t *testing.T) {
+	root := t.TempDir()
+	runID := "run-tpmc-abort"
+	workerDir := filepath.Join(root, runID, "raw", "worker", "worker-a")
+	if err := os.MkdirAll(workerDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	result := map[string]interface{}{
+		"exit_status": 0,
+		"counters": map[string]interface{}{
+			"new_order_ok":           99,
+			"new_order_user_aborted": 1,
+		},
+	}
+	resultData, _ := json.MarshalIndent(result, "", "  ")
+	if err := os.WriteFile(filepath.Join(workerDir, "result.json"), resultData, 0644); err != nil {
+		t.Fatal(err)
+	}
+	ready := map[string]interface{}{
+		"clock_calibration": map[string]interface{}{
+			"measured_at":    "2026-07-28T12:00:00Z",
+			"offset_ms":      5.0,
+			"uncertainty_ms": 2.0,
+			"rtt_ms":         4.0,
+		},
+	}
+	readyData, _ := json.MarshalIndent(ready, "", "  ")
+	if err := os.WriteFile(filepath.Join(workerDir, "ready.json"), readyData, 0644); err != nil {
+		t.Fatal(err)
+	}
+	checksDir := filepath.Join(root, runID, "checks")
+	if err := os.MkdirAll(checksDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.WriteFile(filepath.Join(checksDir, "after-import.json"), []byte(`{"ok":true}`), 0644)
+	_ = os.WriteFile(filepath.Join(checksDir, "after-run.json"), []byte(`{"ok":true}`), 0644)
+
+	// 60s measurement => 100 completed New-Orders / 1 min = 100 tpmC
+	rc := minimalRunConfig(runID)
+	cons := &consolidate.Consolidator{ResultRoot: root}
+	agg, err := cons.Consolidate(runID, rc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	meas := agg.Metrics["measurement"].(map[string]interface{})
+	if got := meas["new_order_count"].(int64); got != 100 {
+		t.Fatalf("new_order_count=%v, want 100 (ok+user_aborted)", got)
+	}
+	if got := meas["new_order_ok"].(int64); got != 99 {
+		t.Fatalf("new_order_ok=%v, want 99", got)
+	}
+	if got := meas["new_order_user_aborted"].(int64); got != 1 {
+		t.Fatalf("new_order_user_aborted=%v, want 1", got)
+	}
+	if got := meas["throughput_new_order_per_min"].(float64); got != 100.0 {
+		t.Fatalf("throughput=%v, want 100.0", got)
+	}
+}
+
 func TestConsolidate_integrityMissingChecks(t *testing.T) {
 	root := t.TempDir()
 	runID := "run-no-checks"

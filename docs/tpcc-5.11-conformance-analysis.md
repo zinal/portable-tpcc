@@ -26,10 +26,9 @@ fail-closed integrity. Денежная часть consistency checks также
 
 Основные остающиеся блокирующие причины:
 
-1. неверный учёт штатных rollback New-Order в throughput и response time;
-2. нарушения initial population, кроме принятого решения о синтетических
+1. нарушения initial population, кроме принятого решения о синтетических
    начальных датах;
-3. неполная проверка валидности measurement interval и отчётность.
+2. неполная проверка валидности measurement interval и отчётность.
 
 Синхронная Delivery, отсутствие полноценного RTE и встроенных ACID/checkpoint
 tests являются теперь явно зафиксированными границами продукта. Они остаются
@@ -73,40 +72,29 @@ tests.
 
 ### 3.1. Неверно считается tpmC
 
-**Статус: присутствует на момент анализа.**
+**Статус: устранено.**
 
 TPC-C §5.1.2 и §5.4.2 требуют включать в MQTh штатные 1% New-Order,
 завершившиеся rollback из-за неверного item. Их response time также входит в
 статистику New-Order.
 
-Реализация учитывает такие транзакции отдельно как `UserAborted`:
+Ранее реализация учитывала такие транзакции отдельно как `UserAborted` без
+latency и без вклада в throughput. Теперь:
 
-- [new_order.cpp:185-186](../tpcc/transactions/new_order.cpp#L185-L186);
-- [terminal.cpp:186-189](../tpcc/dbms/pgsql/terminal.cpp#L186-L189);
-- [terminal.cpp:242-244](../tpcc/dbms/pgsql/terminal.cpp#L242-L244).
-
-Но throughput вычисляется только из `new_order_ok`:
-
-- [artifacts.cpp:166-188](../tpcc/dbms/pgsql/artifacts.cpp#L166-L188);
-- [consolidate.go:141-146](../tools/tpccctl/internal/consolidate/consolidate.go#L141-L146).
-
-Следствия:
-
-- throughput систематически занижен приблизительно на 1%;
-- штатные rollback отсутствуют в response-time histogram;
-- счётчик `UserAborted` не экспортируется в worker `result.json`, где
-  публикуются только `OK`, `Failed` и `Retried`
-  ([artifacts.cpp:169-184](../tpcc/dbms/pgsql/artifacts.cpp#L169-L184));
-- невозможно проверить ограничения response time на полном наборе New-Order.
-
-Дополнительно §5.4.2 разрешает учитывать только транзакции, response time которых
-полностью измерен внутри measurement interval. Флаг `recordMetrics` фиксируется
-до keying time
-([terminal.cpp:141-158](../tpcc/dbms/pgsql/terminal.cpp#L141-L158)), а результат
-записывается после завершения транзакции
-([terminal.cpp:228-235](../tpcc/dbms/pgsql/terminal.cpp#L228-L235)).
-Проверки, что начало и окончание response time находятся внутри одного
-measurement interval, нет.
+1. intentional rollback пишет latency в те же New-Order histograms через
+   `AddUserAborted`
+   ([terminal.h](../tpcc/dbms/pgsql/terminal.h),
+   [terminal.cpp](../tpcc/dbms/pgsql/terminal.cpp));
+2. worker `result.json` экспортирует `*_user_aborted`, а `new_order_tpmc`
+   считается как `(ok + user_aborted) / measure_minutes`
+   ([artifacts.cpp](../tpcc/dbms/pgsql/artifacts.cpp),
+   [runner.cpp](../tpcc/dbms/pgsql/runner.cpp));
+3. consolidator включает `new_order_user_aborted` в
+   `new_order_count` / `throughput_new_order_per_min`
+   ([consolidate.go](../tools/tpccctl/internal/consolidate/consolidate.go));
+4. запись метрик выполняется только если response time начался и завершился
+   в фазе Measure (приближение к §5.4.2)
+   ([terminal.cpp](../tpcc/dbms/pgsql/terminal.cpp)).
 
 ### 3.2. Rollback-профиль New-Order выполняется не полностью
 
@@ -555,11 +543,11 @@ carrier `0` как эквивалент `NULL`:
 
 | Область | Оценка |
 | --- | --- |
-| DB workload core | В основном реализован; профили rollback New-Order и Stock-Level home district исправлены; учёт rollback в tpmC имеет нормативные ошибки |
+| DB workload core | В основном реализован; профили rollback New-Order и Stock-Level home district исправлены; штатные rollback учтены в tpmC и RT |
 | Initial population | Cardinalities корректны; synthetic dates — принятое отклонение; delivery timestamps, a-string и C-Load не соответствуют §4.3 |
 | Driver / RTE | Полный RTE осознанно вне области; latency измеряет workload-client boundary |
 | Delivery | Синхронная модель — принятое отклонение; конкурентная обработка oldest order исправлена |
-| tpmC и response time | Текущие значения не являются валидными метриками TPC-C |
+| tpmC и response time | Штатные rollback учтены; полный RTE/FDR по-прежнему вне области |
 | Consistency | Хорошее покрытие 3.3.2.1-12; carrier `0` всё ещё считается эквивалентом `NULL` |
 | Atomicity / isolation / durability | Встроенные certification tests вне области; гарантии обязательны для каждого DBMS adapter |
 | Checkpoints | Управление и контроль вне области; ответственность DBMS/operator |
@@ -577,10 +565,10 @@ workflow, а также внешнее подтверждение RTE/ACID/check
 
 | Статус | Замечания |
 | --- | --- |
-| Устранено | 3.2 полный unused-item rollback New-Order; 3.6 think time exponential (default); 3.7 Stock-Level home district; 4.6 `O_ALL_LOCAL`; 4.9 clock calibration; 4.10 integrity fail-open; 5.1 exact-decimal reads; 5.2 Delivery race; 5.3 legacy index |
+| Устранено | 3.1 учёт rollback New-Order в tpmC/RT; 3.2 полный unused-item rollback New-Order; 3.6 think time exponential (default); 3.7 Stock-Level home district; 4.6 `O_ALL_LOCAL`; 4.9 clock calibration; 4.10 integrity fail-open; 5.1 exact-decimal reads; 5.2 Delivery race; 5.3 legacy index |
 | Частично устранено | 5.4 exact money checks исправлены, carrier `0` как `NULL` остался |
 | Принятое отклонение | 3.3 synchronous Delivery; 3.4 отсутствие полного RTE; 3.5 отсутствие встроенных ACID tests; 4.1 synthetic initial dates; checkpoint-часть 4.11 |
-| Остаётся | 3.1, 4.2-4.5, 4.7, 4.8, sustained-часть 4.11, 4.12 |
+| Остаётся | 4.2-4.5, 4.7, 4.8, sustained-часть 4.11, 4.12 |
 
 Повторный аудит изменений до commit `4d44f21` не выявил новых регрессий,
 внесённых исправлениями. Дополнительно уточнено, что clock-skew enforcement
