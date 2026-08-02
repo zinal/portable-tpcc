@@ -58,13 +58,13 @@ TFuture<bool> GetNewOrderTask(
 
         for (int i = 0; i < generated.NumItems; ++i) {
             generated.ItemIDs.push_back(GetRandomItemID());
-            if (RandomNumber(1, 100) > 1) {
+            if (context.WarehouseCount == 1 || RandomNumber(1, 100) > 1) {
                 generated.SupplierWarehouseIDs.push_back(generated.WarehouseID);
             } else {
                 int supplierID;
                 do {
                     supplierID = RandomNumber(1, context.WarehouseCount);
-                } while (supplierID == generated.WarehouseID && context.WarehouseCount > 1);
+                } while (supplierID == generated.WarehouseID);
                 generated.SupplierWarehouseIDs.push_back(supplierID);
                 generated.AllLocal = 0;
             }
