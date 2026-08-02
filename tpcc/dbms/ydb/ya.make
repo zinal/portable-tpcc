@@ -3,22 +3,22 @@ LIBRARY()
 SUBSCRIBER(g:tpcc)
 
 ADDINCL(
-    GLOBAL tpcc/dbms/pgsql
+    GLOBAL tpcc/dbms/ydb
 )
 
 SRCS(
-    pg_session.cpp
-    pg_connection_pool.cpp
+    ydb_driver.cpp
+    ydb_error_classifier.cpp
+    ydb_capabilities.cpp
+    ydb_session.cpp
     transaction_simulation.cpp
     init.cpp
+    data_splitter.cpp
     import.cpp
     load_batch.cpp
-    pg_error_classifier.cpp
-    pg_capabilities.cpp
-    tpcc_session.cpp
     clean.cpp
     check.cpp
-    pg_admin_adapter.cpp
+    ydb_admin_adapter.cpp
     path_checker.cpp
     terminal.cpp
     runner.cpp
@@ -41,7 +41,14 @@ PEERDIR(
     tpcc/transactions
     tpcc/metrics
     tpcc/runtime
-    contrib/libs/libpqxx
+    ydb/public/api/grpc
+    ydb/public/api/protos
+    ydb/public/sdk/cpp/src/client/driver
+    ydb/public/sdk/cpp/src/client/query
+    ydb/public/sdk/cpp/src/client/table
+    ydb/public/sdk/cpp/src/client/scheme
+    ydb/public/sdk/cpp/src/client/operation
+    ydb/public/sdk/cpp/src/client/proto
     contrib/libs/fmt
     contrib/libs/ftxui
     contrib/restricted/nlohmann_json

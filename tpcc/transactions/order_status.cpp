@@ -84,18 +84,16 @@ TFuture<bool> GetOrderStatusTask(
         orderID = std::get<TOrderHeader>(r.Payload).OrderID;
     }
 
+    LOG_T("Terminal " << context.TerminalID << " committing OrderStatus: C=" << customer.CustomerID << ", O=" << orderID);
     {
-        auto r = co_await SuspendExecute(tx, context, TGetOrderStatusLines{
+        auto finalResult = co_await SuspendExecuteFinalAndCommit(tx, context, TGetOrderStatusLines{
             in.WarehouseID, in.DistrictID, orderID});
-        ThrowIfRetryable(r);
-        if (!r.Ok) {
+        ThrowIfRetryable(finalResult.Operation);
+        if (!finalResult.Operation.Ok) {
             co_return FailPermanent(context.TerminalID, "OrderStatus lines failed");
         }
+        ThrowIfCommitFailed(finalResult.Commit);
     }
-
-    LOG_T("Terminal " << context.TerminalID << " committing OrderStatus: C=" << customer.CustomerID << ", O=" << orderID);
-    auto commit = co_await SuspendCommit(tx, context);
-    ThrowIfCommitFailed(commit);
 
     latency = std::chrono::duration_cast<std::chrono::microseconds>(
         std::chrono::steady_clock::now() - startTs);
