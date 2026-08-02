@@ -21,8 +21,9 @@ TPC-C, но не полный официальный тест TPC-C 5.11. Пол
 
 После первичного анализа устранены замечания по `O_ALL_LOCAL`, exact-decimal
 чтениям PostgreSQL, legacy index, конкурентной Delivery, clock calibration и
-fail-closed integrity. Денежная часть consistency checks также исправлена.
-Новых регрессий, вызванных этими изменениями, не обнаружено.
+fail-closed integrity. Consistency checks сравнивают деньги точно и трактуют
+недоставленный заказ только через `O_CARRIER_ID IS NULL`. Новых регрессий,
+вызванных этими изменениями, не обнаружено.
 
 Основные остающиеся блокирующие причины:
 
@@ -503,7 +504,7 @@ TPC-C не предписывает именно этот SQL-механизм, 
 
 ### 5.4. Consistency checks ослабляют точные сравнения
 
-**Статус: частично устранено в commit `3e6cede`.**
+**Статус: устранено.**
 
 Денежные условия больше не используют допуск `1e-3`; они сравниваются точно
 через `IS DISTINCT FROM`, например:
@@ -513,13 +514,16 @@ TPC-C не предписывает именно этот SQL-механизм, 
 - [check.cpp:355-382](../tpcc/dbms/pgsql/check.cpp#L355-L382);
 - [check.cpp:407-429](../tpcc/dbms/pgsql/check.cpp#L407-L429).
 
-Остаётся вторая часть исходного замечания: checks 3.3.2.5 и 3.3.2.7 трактуют
-carrier `0` как эквивалент `NULL`:
+Checks 3.3.2.5 и 3.3.2.7 определяют недоставленный заказ строго через
+`O_CARRIER_ID IS NULL`, без эквивалентности `0` и `NULL`:
 
-- [check.cpp:250-274](../tpcc/dbms/pgsql/check.cpp#L250-L274);
-- [check.cpp:306-327](../tpcc/dbms/pgsql/check.cpp#L306-L327).
+- [check.cpp:250-276](../tpcc/dbms/pgsql/check.cpp#L250-L276);
+- [check.cpp:306-328](../tpcc/dbms/pgsql/check.cpp#L306-L328).
 
-Спецификация определяет недоставленный заказ через `NULL`.
+Путь данных уже пишет `NULL` для недоставленных заказов (schema default,
+population `std::optional`, New-Order INSERT без `o_carrier_id`, Delivery
+ставит carrier в `[1..10]`), а `post_import.o_carrier_id` проверяет это после
+загрузки.
 
 ## 6. Реализованные корректные части
 
@@ -538,7 +542,8 @@ carrier `0` как эквивалент `NULL`:
 - детерминированная и повторяемая загрузка;
 - создание secondary indexes во всех import paths;
 - все двенадцать consistency conditions;
-- exact money comparisons и fail-closed проверка check artifacts;
+- exact money comparisons, NULL-only carrier checks и fail-closed проверка
+  check artifacts;
 - блокировка конкурентно выбранного oldest new order в Delivery;
 - raw histogram buckets и их merge между workers;
 - wall-clock фазы с общим `--start-at` и реальная clock calibration;
@@ -553,7 +558,7 @@ carrier `0` как эквивалент `NULL`:
 | Driver / RTE | Полный RTE осознанно вне области; latency измеряет workload-client boundary |
 | Delivery | Синхронная модель — принятое отклонение; конкурентная обработка oldest order исправлена |
 | tpmC и response time | Штатные rollback учтены; полный RTE/FDR по-прежнему вне области |
-| Consistency | Хорошее покрытие 3.3.2.1-12; carrier `0` всё ещё считается эквивалентом `NULL` |
+| Consistency | Хорошее покрытие 3.3.2.1-12; exact money и NULL-only carrier comparisons |
 | Atomicity / isolation / durability | Встроенные certification tests вне области; гарантии обязательны для каждого DBMS adapter |
 | Checkpoints | Управление и контроль вне области; ответственность DBMS/operator |
 | Reporting / disclosure | Engineering artifacts, не FDR |
@@ -570,8 +575,8 @@ workflow, а также внешнее подтверждение RTE/ACID/check
 
 | Статус | Замечания |
 | --- | --- |
-| Устранено | 3.1 учёт rollback New-Order в tpmC/RT; 3.2 полный unused-item rollback New-Order; 3.6 think time exponential (default); 3.7 Stock-Level home district; 4.2 `OL_DELIVERY_D = O_ENTRY_D`; 4.6 `O_ALL_LOCAL`; 4.9 clock calibration; 4.10 integrity fail-open; 5.1 exact-decimal reads; 5.2 Delivery race; 5.3 legacy index |
-| Частично устранено | 5.4 exact money checks исправлены, carrier `0` как `NULL` остался |
+| Устранено | 3.1 учёт rollback New-Order в tpmC/RT; 3.2 полный unused-item rollback New-Order; 3.6 think time exponential (default); 3.7 Stock-Level home district; 4.2 `OL_DELIVERY_D = O_ENTRY_D`; 4.6 `O_ALL_LOCAL`; 4.9 clock calibration; 4.10 integrity fail-open; 5.1 exact-decimal reads; 5.2 Delivery race; 5.3 legacy index; 5.4 exact money + NULL-only carrier checks |
+| Частично устранено | — |
 | Принятое отклонение | 3.3 synchronous Delivery; 3.4 отсутствие полного RTE; 3.5 отсутствие встроенных ACID tests; 4.1 synthetic initial dates; checkpoint-часть 4.11 |
 | Остаётся | 4.3-4.5, 4.7, 4.8, sustained-часть 4.11, 4.12 |
 

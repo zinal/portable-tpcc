@@ -151,7 +151,7 @@ missed deadline fails the process; consolidate can merge raw histograms.
 | --- | --- | --- |
 | 4.1 | Shared check catalog in `tpcc/checks` | Done |
 | 4.2 | PG `ICheckAdapter` → structured `checks/` JSON | Done |
-| 4.3 | Fix check SQL blind spots | Done (OUTER JOIN / NULL-safe / carrier 0 / mixed delivery) |
+| 4.3 | Fix check SQL blind spots | Done (OUTER JOIN / NULL-safe / NULL-only carrier / mixed delivery) |
 | 4.4 | Normative roles + legacy aliases **[D]** | Done (`schema\|loader\|worker\|check`; `init`≡`schema`) |
 | 4.5 | `EnsureSchema` / indexes / stats / `Clean` / `Describe` | Done (`TPgAdminAdapter`; no fence APIs) |
 | 4.6 | Reject unknown `database.options`; close password/`endpoint` bypass | Done |
