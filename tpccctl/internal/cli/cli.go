@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 
+	"portable-tpcc/tpccctl/internal/config"
 	"portable-tpcc/tpccctl/internal/orchestrator"
 )
 
@@ -141,8 +142,11 @@ func runPlan(opts orchestrator.Options) int {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-	plan, err := o.Plan()
-	if err != nil {
+	var plan *config.PlanSnapshot
+	if err := withMaterializedProfileLock(o, func(ctx *orchestrator.Context) error {
+		plan = config.BuildPlanSnapshot(ctx.RunConfig)
+		return nil
+	}); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
@@ -161,12 +165,7 @@ func runDeploy(opts orchestrator.Options) int {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-	ctx, err := o.Materialize()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
-	}
-	if err := withProfileLock(o, ctx, func() error { return o.Deploy(ctx) }); err != nil {
+	if err := withMaterializedProfileLock(o, func(ctx *orchestrator.Context) error { return o.Deploy(ctx) }); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
@@ -179,13 +178,8 @@ func runStage(opts orchestrator.Options, stage string) int {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-	ctx, err := o.Materialize()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
-	}
 	var runErr error
-	runErr = withProfileLock(o, ctx, func() error {
+	runErr = withMaterializedProfileLock(o, func(ctx *orchestrator.Context) error {
 		switch stage {
 		case "schema":
 			return o.RunSchema(ctx)
@@ -218,12 +212,7 @@ func runCheck(opts orchestrator.Options, phase string) int {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-	ctx, err := o.Materialize()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
-	}
-	if err := withProfileLock(o, ctx, func() error { return o.RunCheck(ctx, phase) }); err != nil {
+	if err := withMaterializedProfileLock(o, func(ctx *orchestrator.Context) error { return o.RunCheck(ctx, phase) }); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
@@ -256,12 +245,7 @@ func runStop(opts orchestrator.Options) int {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-	ctx, err := o.Materialize()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
-	}
-	if err := withProfileLock(o, ctx, func() error { return o.Stop(ctx) }); err != nil {
+	if err := withMaterializedProfileLock(o, func(ctx *orchestrator.Context) error { return o.Stop(ctx) }); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
@@ -281,12 +265,23 @@ func runFull(opts orchestrator.Options) int {
 	return 0
 }
 
-func withProfileLock(o *orchestrator.Orchestrator, ctx *orchestrator.Context, fn func() error) error {
-	if err := o.StateStore.AcquireProfileLock(o.Profile.Metadata.Name, ctx.RunID); err != nil {
+func withMaterializedProfileLock(o *orchestrator.Orchestrator, fn func(*orchestrator.Context) error) error {
+	runID, err := o.ResolveRunID()
+	if err != nil {
 		return err
 	}
-	defer o.StateStore.ReleaseProfileLock(o.Profile.Metadata.Name, ctx.RunID)
-	return fn()
+	if err := o.StateStore.AcquireProfileLock(o.Profile.Metadata.Name, runID); err != nil {
+		return err
+	}
+	defer o.StateStore.ReleaseProfileLock(o.Profile.Metadata.Name, runID)
+	oldRunID := o.Opts.RunID
+	o.Opts.RunID = runID
+	defer func() { o.Opts.RunID = oldRunID }()
+	ctx, err := o.Materialize()
+	if err != nil {
+		return err
+	}
+	return fn(ctx)
 }
 
 func runCleanup(opts orchestrator.Options, yes bool) int {

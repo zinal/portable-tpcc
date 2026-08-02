@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"portable-tpcc/tpccctl/internal/collect"
@@ -175,7 +176,18 @@ func (o *Orchestrator) launchRole(
 		PID:      pid,
 		State:    "running",
 	})
-	_ = o.waitProcessMetadata(ctx, proc, 2*time.Second)
+	if err := o.waitProcessMetadata(ctx, proc, 2*time.Second); err != nil {
+		_ = sess.Signal(proc.PID, "TERM")
+		_ = o.StateStore.UpsertProcess(ctx.RunID, state.Process{
+			Role:          role,
+			Host:          hostKey,
+			Instance:      instance,
+			PID:           proc.PID,
+			InstanceNonce: proc.InstanceNonce,
+			State:         "failed",
+		})
+		return nil, err
+	}
 	return proc, nil
 }
 
@@ -183,8 +195,17 @@ func (o *Orchestrator) waitProcessMetadata(ctx *Context, proc *launchedProc, tim
 	deadline := time.Now().Add(timeout)
 	for {
 		loaded, err := o.loadProcessMetadata(ctx, proc)
-		if loaded || err != nil || time.Now().After(deadline) {
+		if err != nil {
 			return err
+		}
+		if loaded {
+			if proc.InstanceNonce == "" {
+				return fmt.Errorf("%s/%s process metadata missing instance_nonce", proc.Role, proc.Instance)
+			}
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("timeout waiting for %s/%s process metadata", proc.Role, proc.Instance)
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
@@ -232,8 +253,12 @@ func (o *Orchestrator) waitProcesses(ctx *Context, procs []*launchedProc, timeou
 		}
 		for key, p := range remaining {
 			if p.InstanceNonce == "" {
-				if _, err := o.loadProcessMetadata(ctx, p); err != nil {
+				loaded, err := o.loadProcessMetadata(ctx, p)
+				if err != nil {
 					return err
+				}
+				if !loaded || p.InstanceNonce == "" {
+					return fmt.Errorf("%s/%s process metadata missing instance_nonce", p.Role, p.Instance)
 				}
 			}
 			done, err := p.Session.Exists(p.DonePath)
@@ -395,6 +420,41 @@ func (o *Orchestrator) superviseWorkers(ctx *Context, workers []*launchedProc, t
 	return o.StateStore.Transition(ctx.RunID, state.StateDraining)
 }
 
+type realpathSession interface {
+	Realpath(remotePath string) (string, error)
+}
+
+func validateRemotePathUnder(sess remote.Session, base, elem string) error {
+	if _, ok := sess.(*remote.Local); ok {
+		if _, err := paths.ResolveUnder(base, elem); err != nil {
+			return err
+		}
+		return nil
+	}
+	rp, ok := sess.(realpathSession)
+	if !ok {
+		return nil
+	}
+	target, err := paths.JoinUnder(base, elem)
+	if err != nil {
+		return err
+	}
+	baseReal, err := rp.Realpath(base)
+	if err != nil {
+		return err
+	}
+	targetReal, err := rp.Realpath(target)
+	if err != nil {
+		return err
+	}
+	baseClean := filepath.Clean(baseReal)
+	targetClean := filepath.Clean(targetReal)
+	if targetClean != baseClean && !strings.HasPrefix(targetClean, baseClean+"/") {
+		return fmt.Errorf("resolved path %q escapes base %q", targetClean, baseClean)
+	}
+	return nil
+}
+
 func (o *Orchestrator) collectArtifacts(ctx *Context, sessions map[string]remote.Session) error {
 	collector := &collect.Collector{ResultRoot: o.Expanded.ResultRoot}
 	var manifests []collect.ArtifactManifest
@@ -417,6 +477,9 @@ func (o *Orchestrator) collectArtifacts(ctx *Context, sessions map[string]remote
 		if !exists {
 			return fmt.Errorf("missing artifact-manifest for %s/%s", role, instance)
 		}
+		if err := validateRemotePathUnder(sess, remoteInstance, "artifact-manifest.json"); err != nil {
+			return err
+		}
 		data, err := sess.ReadFile(manifestRemote)
 		if err != nil {
 			return err
@@ -431,6 +494,12 @@ func (o *Orchestrator) collectArtifacts(ctx *Context, sessions map[string]remote
 		for _, p := range manifest.Payloads {
 			remotePath, err := paths.JoinUnder(remoteInstance, p.Path)
 			if err != nil {
+				return err
+			}
+			if err := collect.ValidateArtifactPayloadPath(p.Path); err != nil {
+				return err
+			}
+			if err := validateRemotePathUnder(sess, remoteInstance, p.Path); err != nil {
 				return err
 			}
 			localPath, err := paths.JoinUnder(localTmp, p.Path)

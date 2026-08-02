@@ -27,6 +27,22 @@ type ArtifactPayloadEntry struct {
 	SHA256 string `json:"sha256"`
 }
 
+var allowedArtifactPayloads = map[string]bool{
+	"result.json":  true,
+	"ready.json":   true,
+	"process.json": true,
+	"stdout.log":   true,
+	"stderr.log":   true,
+}
+
+// ValidateArtifactPayloadPath rejects payload names outside the worker artifact set.
+func ValidateArtifactPayloadPath(path string) error {
+	if !allowedArtifactPayloads[path] {
+		return fmt.Errorf("unsupported artifact payload path %q", path)
+	}
+	return nil
+}
+
 // CollectionManifest covers all collected artifacts on the control host.
 type CollectionManifest struct {
 	SchemaVersion int                    `json:"schema_version"`
@@ -65,6 +81,13 @@ func (c *Collector) CollectInstance(runID, role, instance, sourceDir string) err
 	}
 	for _, p := range manifest.Payloads {
 		src, err := paths.JoinUnder(sourceDir, p.Path)
+		if err != nil {
+			return err
+		}
+		if err := ValidateArtifactPayloadPath(p.Path); err != nil {
+			return err
+		}
+		src, err = paths.ResolveUnder(sourceDir, p.Path)
 		if err != nil {
 			return err
 		}

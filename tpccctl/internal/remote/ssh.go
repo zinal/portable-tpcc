@@ -179,6 +179,19 @@ func (s *SSH) ReadFile(remotePath string) ([]byte, error) {
 	return out, nil
 }
 
+// Realpath resolves a remote path through symlinks.
+func (s *SSH) Realpath(remotePath string) (string, error) {
+	cmd := "if command -v realpath >/dev/null 2>&1; then realpath -- " + shellQuote(remotePath) + "; else readlink -f -- " + shellQuote(remotePath) + "; fi"
+	stdout, stderr, exit, err := s.run(cmd)
+	if err != nil {
+		return "", err
+	}
+	if exit != 0 {
+		return "", fmt.Errorf("realpath failed: %s", stderr)
+	}
+	return strings.TrimSpace(stdout), nil
+}
+
 func (s *SSH) WriteFile(remotePath string, data []byte) error {
 	if err := s.MkdirAll(filepath.Dir(remotePath)); err != nil {
 		return err

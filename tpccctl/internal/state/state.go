@@ -28,6 +28,23 @@ const (
 	StateFailed         = "failed"
 )
 
+var pipelineOrder = map[string]int{
+	StatePlanned:        0,
+	StateDeploying:      1,
+	StateSchema:         2,
+	StateLoading:        3,
+	StateCheckingImport: 4,
+	StatePreparing:      5,
+	StateArming:         6,
+	StateRamping:        7,
+	StateMeasuring:      8,
+	StateDraining:       9,
+	StateCheckingResult: 10,
+	StateCollecting:     11,
+	StateConsolidating:  12,
+	StateCompleted:      13,
+}
+
 // RunState is mutable control-host state for a run.
 type RunState struct {
 	SchemaVersion   int                `json:"schema_version"`
@@ -116,11 +133,46 @@ func (s *Store) Transition(runID, newState string) error {
 	if err != nil {
 		return err
 	}
+	if err := validateTransition(rs.State, newState); err != nil {
+		return err
+	}
 	rs.State = newState
 	if newState == StateFailed {
 		// preserve existing error
 	}
 	return s.Save(rs)
+}
+
+// IsTerminal reports whether a state rejects further pipeline transitions.
+func IsTerminal(st string) bool {
+	return st == StateCompleted || st == StateFailed
+}
+
+func validateTransition(oldState, newState string) error {
+	if oldState == "" {
+		oldState = StatePlanned
+	}
+	if oldState == newState {
+		return nil
+	}
+	if IsTerminal(oldState) {
+		return fmt.Errorf("invalid state transition %s -> %s", oldState, newState)
+	}
+	if newState == StateFailed || newState == StateStopping {
+		return nil
+	}
+	if oldState == StateStopping {
+		return fmt.Errorf("invalid state transition %s -> %s", oldState, newState)
+	}
+	oldOrder, oldOK := pipelineOrder[oldState]
+	newOrder, newOK := pipelineOrder[newState]
+	if !oldOK || !newOK {
+		return fmt.Errorf("invalid state transition %s -> %s", oldState, newState)
+	}
+	if newOrder < oldOrder {
+		return fmt.Errorf("invalid state transition %s -> %s", oldState, newState)
+	}
+	return nil
 }
 
 // Fail records failure state and error message.

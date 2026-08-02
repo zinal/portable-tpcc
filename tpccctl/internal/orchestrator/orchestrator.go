@@ -70,17 +70,9 @@ func (o *Orchestrator) Validate() *validate.Result {
 // When run-config.json already exists for the run, it is reused unchanged so
 // worker run_config_sha256 stays valid across later stages (collect/consolidate).
 func (o *Orchestrator) Materialize() (*Context, error) {
-	vr := o.Validate()
-	if !vr.Valid {
-		return nil, fmt.Errorf("profile invalid: %v", vr.Errors)
-	}
-	runID := o.Opts.RunID
-	if runID == "" {
-		var err error
-		runID, err = o.uniqueRunID(config.GenerateRunID(o.Profile.Metadata.Name))
-		if err != nil {
-			return nil, err
-		}
+	runID, err := o.ResolveRunID()
+	if err != nil {
+		return nil, err
 	}
 	profileBytes, err := os.ReadFile(o.Opts.ProfilePath)
 	if err != nil {
@@ -172,6 +164,23 @@ func (o *Orchestrator) Materialize() (*Context, error) {
 	}, nil
 }
 
+// ResolveRunID computes the run ID without creating run artifacts.
+func (o *Orchestrator) ResolveRunID() (string, error) {
+	vr := o.Validate()
+	if !vr.Valid {
+		return "", fmt.Errorf("profile invalid: %v", vr.Errors)
+	}
+	runID := o.Opts.RunID
+	if runID == "" {
+		var err error
+		runID, err = o.uniqueRunID(config.GenerateRunID(o.Profile.Metadata.Name))
+		if err != nil {
+			return "", err
+		}
+	}
+	return runID, nil
+}
+
 func (o *Orchestrator) uniqueRunID(first string) (string, error) {
 	stem := strings.TrimSuffix(first, "-01")
 	for i := 1; i < 100; i++ {
@@ -244,14 +253,21 @@ func (o *Orchestrator) Deploy(ctx *Context) error {
 
 // Run executes the full pipeline (specification §9).
 func (o *Orchestrator) Run() error {
+	runID, err := o.ResolveRunID()
+	if err != nil {
+		return err
+	}
+	if err := o.StateStore.AcquireProfileLock(o.Profile.Metadata.Name, runID); err != nil {
+		return err
+	}
+	defer o.StateStore.ReleaseProfileLock(o.Profile.Metadata.Name, runID)
+	oldRunID := o.Opts.RunID
+	o.Opts.RunID = runID
+	defer func() { o.Opts.RunID = oldRunID }()
 	ctx, err := o.Materialize()
 	if err != nil {
 		return err
 	}
-	if err := o.StateStore.AcquireProfileLock(o.Profile.Metadata.Name, ctx.RunID); err != nil {
-		return err
-	}
-	defer o.StateStore.ReleaseProfileLock(o.Profile.Metadata.Name, ctx.RunID)
 
 	steps := []struct {
 		name    string
