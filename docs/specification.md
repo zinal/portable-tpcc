@@ -50,6 +50,10 @@ verification. By default the report uses `result_class: engineering`.
 - Mandatory Kubernetes / Ansible / systemd.
 - A universal SQL dialect or portable stored-procedure interface.
 - Automatic TPC certification.
+- Proving eight-hour sustained operation or producing a TPC Full Disclosure
+  Report, pricing/availability statements, and mandatory disclosure graphs.
+  These are responsibilities of the test operator and independent verification
+  process; the tooling provides engineering workload and source artifacts.
 - A full Remote Terminal Emulator with TPC-C menu/screens and end-user
   response-time semantics. Latency is measured at the workload-client boundary.
 - Built-in TPC-C atomicity, isolation, durability, power-loss, or other
