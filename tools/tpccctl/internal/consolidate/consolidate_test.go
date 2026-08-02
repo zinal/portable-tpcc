@@ -130,7 +130,9 @@ func TestConsolidate_mergesHistograms(t *testing.T) {
 				"hdr_till":     4,
 				"max_value":    64,
 				"total_count":  4,
+				"min_recorded": 0,
 				"max_recorded": 3,
+				"sum_values":   6,
 				"buckets":      []uint64{1, 1, 1, 1, 0, 0, 0, 0, 0},
 			},
 		},
@@ -147,8 +149,33 @@ func TestConsolidate_mergesHistograms(t *testing.T) {
 	}
 	meas := agg.Metrics["measurement"].(map[string]interface{})
 	rt := meas["response_time_ms"].(map[string]interface{})
-	if _, ok := rt["new_order"]; !ok {
-		t.Fatalf("missing percentiles: %#v", rt)
+	stats, ok := rt["new_order"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("missing response-time stats: %#v", rt)
+	}
+	if stats["min"].(uint64) != 0 || stats["max"].(uint64) != 3 {
+		t.Fatalf("unexpected min/max: %#v", stats)
+	}
+	if avg := stats["avg"].(float64); avg != 1.5 {
+		t.Fatalf("expected avg 1.5, got %v", avg)
+	}
+	if _, ok := stats["p50"]; !ok {
+		t.Fatalf("missing percentiles: %#v", stats)
+	}
+
+	if err := consolidate.WriteAggregate(root, runID, agg); err != nil {
+		t.Fatal(err)
+	}
+	summary, err := os.ReadFile(filepath.Join(root, runID, "summary.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(summary)
+	if !strings.Contains(text, "response_time_ms.new_order min=0 max=3 avg=1.5") {
+		t.Fatalf("summary missing min/max/avg:\n%s", text)
+	}
+	if !strings.Contains(text, "p50=") || !strings.Contains(text, "p99=") {
+		t.Fatalf("summary missing percentiles:\n%s", text)
 	}
 }
 

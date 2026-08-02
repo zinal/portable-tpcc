@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
+	"strings"
 
 	"portable-tpcc/tools/tpccctl/internal/canonical"
 	"portable-tpcc/tools/tpccctl/internal/config"
@@ -137,11 +139,11 @@ func (c *Consolidator) ConsolidateWithOptions(runID string, rc *config.RunConfig
 		if h.Unit != "" {
 			unit = h.Unit
 		}
-		pct, err := histogram.Percentiles(h)
+		stats, err := histogram.ReportStats(h)
 		if err != nil {
 			return nil, err
 		}
-		responseTimes[tx] = pct
+		responseTimes[tx] = stats
 	}
 
 	// TPC-C §5.1.2 / §5.4.2: intentional unused-item New-Order rollbacks are
@@ -583,20 +585,67 @@ func WriteAggregate(resultRoot, runID string, agg *Aggregate) error {
 	if err := os.Rename(tmp, filepath.Join(dir, "aggregate.json")); err != nil {
 		return err
 	}
-	summary := fmt.Sprintf(
+	summary := formatSummary(agg)
+	return os.WriteFile(filepath.Join(dir, "summary.txt"), []byte(summary), 0644)
+}
+
+func formatSummary(agg *Aggregate) string {
+	var b strings.Builder
+	fmt.Fprintf(&b,
 		"run_id=%s result_class=%s workers_complete=%v assignment_valid=%v clock_skew_ok=%v integrity_ok=%v tpcc_settings_conformant=%v\n",
 		agg.RunID, agg.ResultClass, agg.Status.WorkersComplete, agg.Status.AssignmentValid,
 		agg.Status.ClockSkewOK, agg.Status.IntegrityOK, agg.Status.TPCCSettingsConformant,
 	)
 	if !agg.Status.IntegrityOK && len(agg.Status.IntegrityErrors) > 0 {
 		for _, errMsg := range agg.Status.IntegrityErrors {
-			summary += fmt.Sprintf("integrity_error=%s\n", errMsg)
+			fmt.Fprintf(&b, "integrity_error=%s\n", errMsg)
 		}
 	}
 	if !agg.Status.TPCCSettingsConformant {
 		for _, d := range agg.Status.TPCCSettingsDeviations {
-			summary += fmt.Sprintf("tpcc_settings_deviation=%s\n", d)
+			fmt.Fprintf(&b, "tpcc_settings_deviation=%s\n", d)
 		}
 	}
-	return os.WriteFile(filepath.Join(dir, "summary.txt"), []byte(summary), 0644)
+	if meas, ok := agg.Metrics["measurement"].(map[string]interface{}); ok {
+		if v, ok := meas["throughput_new_order_per_min"]; ok {
+			fmt.Fprintf(&b, "throughput_new_order_per_min=%v\n", v)
+		}
+		appendResponseTimeSummary(&b, meas)
+	}
+	return b.String()
+}
+
+func appendResponseTimeSummary(b *strings.Builder, meas map[string]interface{}) {
+	var rtKey string
+	var rt map[string]interface{}
+	for k, v := range meas {
+		if !strings.HasPrefix(k, "response_time_") {
+			continue
+		}
+		m, ok := v.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		rtKey = k
+		rt = m
+		break
+	}
+	if rt == nil {
+		return
+	}
+	txs := make([]string, 0, len(rt))
+	for tx := range rt {
+		txs = append(txs, tx)
+	}
+	sort.Strings(txs)
+	for _, tx := range txs {
+		stats, ok := rt[tx].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		fmt.Fprintf(b, "%s.%s min=%v max=%v avg=%v p50=%v p90=%v p95=%v p99=%v\n",
+			rtKey, tx,
+			stats["min"], stats["max"], stats["avg"],
+			stats["p50"], stats["p90"], stats["p95"], stats["p99"])
+	}
 }

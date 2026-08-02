@@ -279,8 +279,8 @@ Consolidation:
 
 1. require the expected worker set for this `run_id`;
 2. require complete, non-overlapping warehouse coverage;
-3. merge counters and histogram buckets;
-4. compute percentiles and throughput only after the merge;
+3. merge counters and histogram buckets (including min/max/sum);
+4. compute min/max/avg, percentiles and throughput only after the merge;
 5. attach check results and a short infrastructure status
    (workers present, assignment OK, clocks OK, no integrity errors,
    TPC-C settings conformant flag and deviation list, …);

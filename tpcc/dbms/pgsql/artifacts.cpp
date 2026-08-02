@@ -65,7 +65,9 @@ Json HistogramRaw(const THistogram& hist, const std::string& unit) {
     h["hdr_till"] = hist.HdrTill();
     h["max_value"] = hist.MaxValue();
     h["total_count"] = hist.TotalCount();
+    h["min_recorded"] = hist.MinRecordedValue();
     h["max_recorded"] = hist.MaxRecordedValue();
+    h["sum_values"] = hist.SumValues();
     h["buckets"] = hist.Buckets();
     return h;
 }

@@ -1,6 +1,5 @@
 #pragma once
 
-#include <algorithm>
 #include <cstdint>
 #include <vector>
 
@@ -20,7 +19,15 @@ public:
     uint64_t HdrTill() const { return HdrTill_; }
     uint64_t MaxValue() const { return MaxValue_; }
     uint64_t TotalCount() const { return TotalCount_; }
+    // Exact recorded maximum; 0 when empty.
     uint64_t MaxRecordedValue() const { return MaxRecordedValue_; }
+    // Exact recorded minimum; 0 when empty.
+    uint64_t MinRecordedValue() const {
+        return TotalCount_ == 0 ? 0 : MinRecordedValue_;
+    }
+    // Exact sum of recorded values (for average = SumValues / TotalCount).
+    uint64_t SumValues() const { return SumValues_; }
+
     const std::vector<uint64_t>& Buckets() const { return Buckets_; }
 
 private:
@@ -35,6 +42,8 @@ private:
     std::vector<uint64_t> Buckets_;
     uint64_t TotalCount_;
     uint64_t MaxRecordedValue_;
+    uint64_t MinRecordedValue_;
+    uint64_t SumValues_;
 };
 
 } // namespace NTpcc
