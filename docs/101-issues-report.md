@@ -468,10 +468,11 @@ go -C tpccctl build ./cmd/tpccctl
 - path traversal tests не покрывают symlink внутри remote instance directory;
 - нет межпроцессного теста вызова stage-команды во время активного run.
 
-Дополнительный риск совместимости: run directories, созданные до появления
-`profile.sha256`, не могут быть продолжены под тем же run ID
-(`tpccctl/internal/orchestrator/orchestrator.go:109-113`). Требуется либо явно
-зафиксированная несовместимость, либо безопасная migration policy.
+**Принятое ограничение дизайна (несущественно, исправления не требует):** run
+directories, созданные до появления `profile.sha256`, не могут быть продолжены
+под тем же run ID (`tpccctl/internal/orchestrator/orchestrator.go:109-113`).
+Проект не гарантирует возобновление run, созданных предыдущей версией формата;
+fail-closed отказ для таких каталогов является ожидаемым поведением.
 
 ## 7. Состояние исправлений
 
