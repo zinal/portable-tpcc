@@ -3,6 +3,7 @@ package consolidate
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -101,8 +102,7 @@ func (c *Consolidator) ConsolidateWithOptions(runID string, rc *config.RunConfig
 		}
 		var partial map[string]interface{}
 		if err := json.Unmarshal(data, &partial); err != nil {
-			workersComplete = false
-			continue
+			return nil, fmt.Errorf("worker %s: invalid result.json: %w", name, err)
 		}
 		if err := validateWorkerResultIdentity(partial, runID, name, expectedSHA, expectedAssign[name]); err != nil {
 			return nil, fmt.Errorf("worker %s: %w", name, err)
@@ -110,29 +110,11 @@ func (c *Consolidator) ConsolidateWithOptions(runID string, rc *config.RunConfig
 		if exit, ok := partial["exit_status"].(float64); ok && int(exit) != 0 {
 			workersComplete = false
 		}
-		if ctr, ok := partial["counters"].(map[string]interface{}); ok {
-			for k, v := range ctr {
-				if n, ok := v.(float64); ok {
-					counters[k] += int64(n)
-				}
-			}
+		if err := mergeWorkerCounters(counters, partial["counters"], name); err != nil {
+			return nil, err
 		}
-		if hists, ok := partial["histograms"].(map[string]interface{}); ok {
-			for tx, raw := range hists {
-				bytes, err := json.Marshal(raw)
-				if err != nil {
-					continue
-				}
-				var h histogram.Raw
-				if err := json.Unmarshal(bytes, &h); err != nil {
-					continue
-				}
-				cur := mergedHist[tx]
-				if err := histogram.Merge(&cur, h); err != nil {
-					return nil, fmt.Errorf("merge histogram %s from %s: %w", tx, name, err)
-				}
-				mergedHist[tx] = cur
-			}
+		if err := mergeWorkerHistograms(mergedHist, partial["histograms"], name); err != nil {
+			return nil, err
 		}
 		if readyPath := filepath.Join(rawWorkers, name, "ready.json"); true {
 			if cal, ok := readWorkerClockCalibration(readyPath); ok {
@@ -213,6 +195,75 @@ func (c *Consolidator) ConsolidateWithOptions(runID string, rc *config.RunConfig
 		}
 	}
 	return agg, nil
+}
+
+func mergeWorkerCounters(counters map[string]int64, raw interface{}, worker string) error {
+	if raw == nil {
+		return nil
+	}
+	ctr, ok := raw.(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("worker %s: counters must be an object, got %T", worker, raw)
+	}
+	for k, v := range ctr {
+		n, err := jsonNumberAsInt64(v)
+		if err != nil {
+			return fmt.Errorf("worker %s: counter %q: %w", worker, k, err)
+		}
+		counters[k] += n
+	}
+	return nil
+}
+
+func mergeWorkerHistograms(merged map[string]histogram.Raw, raw interface{}, worker string) error {
+	if raw == nil {
+		return nil
+	}
+	hists, ok := raw.(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("worker %s: histograms must be an object, got %T", worker, raw)
+	}
+	for tx, payload := range hists {
+		bytes, err := json.Marshal(payload)
+		if err != nil {
+			return fmt.Errorf("worker %s: histogram %s: encode: %w", worker, tx, err)
+		}
+		var h histogram.Raw
+		if err := json.Unmarshal(bytes, &h); err != nil {
+			return fmt.Errorf("worker %s: histogram %s: decode: %w", worker, tx, err)
+		}
+		if err := histogram.Validate(h); err != nil {
+			return fmt.Errorf("worker %s: histogram %s: %w", worker, tx, err)
+		}
+		cur := merged[tx]
+		if err := histogram.Merge(&cur, h); err != nil {
+			return fmt.Errorf("merge histogram %s from %s: %w", tx, worker, err)
+		}
+		merged[tx] = cur
+	}
+	return nil
+}
+
+func jsonNumberAsInt64(v interface{}) (int64, error) {
+	switch n := v.(type) {
+	case float64:
+		if n != float64(int64(n)) || n > float64(math.MaxInt64) || n < float64(math.MinInt64) {
+			return 0, fmt.Errorf("expected integer, got %v", n)
+		}
+		return int64(n), nil
+	case json.Number:
+		i, err := n.Int64()
+		if err != nil {
+			return 0, fmt.Errorf("expected integer, got %v", n)
+		}
+		return i, nil
+	case int:
+		return int64(n), nil
+	case int64:
+		return n, nil
+	default:
+		return 0, fmt.Errorf("expected integer, got %T", v)
+	}
 }
 
 func resolveExpectedRunConfigSHA256(resultRoot, runID string, opts Options) (string, error) {

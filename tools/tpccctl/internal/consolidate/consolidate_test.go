@@ -131,7 +131,7 @@ func TestConsolidate_mergesHistograms(t *testing.T) {
 				"max_value":    64,
 				"total_count":  4,
 				"max_recorded": 3,
-				"buckets":      []uint64{1, 1, 1, 1, 0, 0, 0},
+				"buckets":      []uint64{1, 1, 1, 1, 0, 0, 0, 0, 0},
 			},
 		},
 	})
@@ -149,6 +149,52 @@ func TestConsolidate_mergesHistograms(t *testing.T) {
 	rt := meas["response_time_ms"].(map[string]interface{})
 	if _, ok := rt["new_order"]; !ok {
 		t.Fatalf("missing percentiles: %#v", rt)
+	}
+}
+
+func TestConsolidate_rejectsBadCounterType(t *testing.T) {
+	root := t.TempDir()
+	runID := "run-bad-counter"
+	rc := minimalRunConfig(runID)
+	sha := writeRunConfig(t, root, runID, rc)
+	writeWorkerArtifacts(t, root, runID, "worker-a", sha, rc, map[string]interface{}{
+		"counters": map[string]interface{}{
+			"new_order_ok": "ten",
+		},
+	})
+
+	cons := &consolidate.Consolidator{ResultRoot: root}
+	_, err := cons.Consolidate(runID, rc)
+	if err == nil || !strings.Contains(err.Error(), "counter") {
+		t.Fatalf("expected counter type error, got %v", err)
+	}
+}
+
+func TestConsolidate_rejectsCorruptHistogram(t *testing.T) {
+	root := t.TempDir()
+	runID := "run-bad-hist"
+	rc := minimalRunConfig(runID)
+	sha := writeRunConfig(t, root, runID, rc)
+	writeWorkerArtifacts(t, root, runID, "worker-a", sha, rc, map[string]interface{}{
+		"counters": map[string]interface{}{
+			"new_order_ok": 10,
+		},
+		"histograms": map[string]interface{}{
+			"new_order": map[string]interface{}{
+				"layout":      "linear_exp",
+				"unit":        "ms",
+				"hdr_till":    4,
+				"max_value":   64,
+				"total_count": 4,
+				"buckets":     []uint64{1, 1, 1, 1},
+			},
+		},
+	})
+
+	cons := &consolidate.Consolidator{ResultRoot: root}
+	_, err := cons.Consolidate(runID, rc)
+	if err == nil || !strings.Contains(err.Error(), "histogram") {
+		t.Fatalf("expected histogram validation error, got %v", err)
 	}
 }
 
