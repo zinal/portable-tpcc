@@ -270,7 +270,7 @@ date, а зависимость от seed обеспечивает стабил�
 
 ### 4.2. OL_DELIVERY_D не равен O_ENTRY_D
 
-**Статус: присутствует на момент анализа.**
+**Статус: устранено.**
 
 Для начальных доставленных заказов TPC-C §4.3.3.1 требует:
 
@@ -278,13 +278,18 @@ date, а зависимость от seed обеспечивает стабил�
 OL_DELIVERY_D = O_ENTRY_D
 ```
 
-Order и order lines получают даты из разных RNG streams:
+Ранее order и order lines получали даты из разных RNG streams (`SaltOrder` vs
+`SaltOrderLine`), а salt даты order line не включал warehouse и district.
 
-- [populate.cpp:169-171](../tpcc/generator/populate.cpp#L169-L171);
-- [populate.cpp:202-205](../tpcc/generator/populate.cpp#L202-L205).
+Теперь `GenerateOrderLines` принимает `deliveryUnix` вызывающей стороны и для
+доставленных заказов записывает во все линии `O_ENTRY_D` заказа:
 
-Кроме того, salt даты order line не включает warehouse и district. Начальная
-база формально некорректна, а post-import checks это условие не проверяют.
+- [populate.cpp](../tpcc/generator/populate.cpp) (`GenerateOrderLines`);
+- [load_batch.cpp](../tpcc/dbms/pgsql/load_batch.cpp).
+
+Post-import check `post_import.ol_delivery_eq_entry` проверяет равенство после
+загрузки ([check.cpp](../tpcc/dbms/pgsql/check.cpp),
+[catalog.cpp](../tpcc/checks/catalog.cpp)).
 
 ### 4.3. Генерация a-string не является alphanumeric
 
@@ -544,7 +549,7 @@ carrier `0` как эквивалент `NULL`:
 | Область | Оценка |
 | --- | --- |
 | DB workload core | В основном реализован; профили rollback New-Order и Stock-Level home district исправлены; штатные rollback учтены в tpmC и RT |
-| Initial population | Cardinalities корректны; synthetic dates — принятое отклонение; delivery timestamps, a-string и C-Load не соответствуют §4.3 |
+| Initial population | Cardinalities корректны; synthetic dates — принятое отклонение; `OL_DELIVERY_D = O_ENTRY_D` для доставленных заказов; a-string и C-Load не соответствуют §4.3 |
 | Driver / RTE | Полный RTE осознанно вне области; latency измеряет workload-client boundary |
 | Delivery | Синхронная модель — принятое отклонение; конкурентная обработка oldest order исправлена |
 | tpmC и response time | Штатные rollback учтены; полный RTE/FDR по-прежнему вне области |
@@ -565,10 +570,10 @@ workflow, а также внешнее подтверждение RTE/ACID/check
 
 | Статус | Замечания |
 | --- | --- |
-| Устранено | 3.1 учёт rollback New-Order в tpmC/RT; 3.2 полный unused-item rollback New-Order; 3.6 think time exponential (default); 3.7 Stock-Level home district; 4.6 `O_ALL_LOCAL`; 4.9 clock calibration; 4.10 integrity fail-open; 5.1 exact-decimal reads; 5.2 Delivery race; 5.3 legacy index |
+| Устранено | 3.1 учёт rollback New-Order в tpmC/RT; 3.2 полный unused-item rollback New-Order; 3.6 think time exponential (default); 3.7 Stock-Level home district; 4.2 `OL_DELIVERY_D = O_ENTRY_D`; 4.6 `O_ALL_LOCAL`; 4.9 clock calibration; 4.10 integrity fail-open; 5.1 exact-decimal reads; 5.2 Delivery race; 5.3 legacy index |
 | Частично устранено | 5.4 exact money checks исправлены, carrier `0` как `NULL` остался |
 | Принятое отклонение | 3.3 synchronous Delivery; 3.4 отсутствие полного RTE; 3.5 отсутствие встроенных ACID tests; 4.1 synthetic initial dates; checkpoint-часть 4.11 |
-| Остаётся | 4.2-4.5, 4.7, 4.8, sustained-часть 4.11, 4.12 |
+| Остаётся | 4.3-4.5, 4.7, 4.8, sustained-часть 4.11, 4.12 |
 
 Повторный аудит изменений до commit `4d44f21` не выявил новых регрессий,
 внесённых исправлениями. Дополнительно уточнено, что clock-skew enforcement
