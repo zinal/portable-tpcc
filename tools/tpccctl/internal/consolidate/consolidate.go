@@ -144,7 +144,7 @@ func (c *Consolidator) ConsolidateWithOptions(runID string, rc *config.RunConfig
 		throughput = float64(newOrder) / measurementMin
 	}
 
-	integrityOK := evaluateIntegrity(c.ResultRoot, runID)
+	integrityOK := evaluateIntegrity(c.ResultRoot, runID, opts)
 
 	agg := &Aggregate{
 		SchemaVersion: 1,
@@ -258,33 +258,70 @@ func evaluateClockSkew(workerCalibrations map[string]workerClockCalibration, max
 	return true
 }
 
-func evaluateIntegrity(resultRoot, runID string) bool {
-	checksDir := filepath.Join(resultRoot, runID, "checks")
-	entries, err := os.ReadDir(checksDir)
-	if err != nil {
-		// No checks collected yet — treat as unknown/ok for consolidate of measurement-only runs.
+var checkPhaseFiles = []struct {
+	skipStep string
+	fileName string
+}{
+	{"check_after_import", "after-import.json"},
+	{"check_after_run", "after-run.json"},
+}
+
+func skippedStepSet(steps []string) map[string]bool {
+	out := make(map[string]bool, len(steps))
+	for _, s := range steps {
+		out[s] = true
+	}
+	return out
+}
+
+func requiredCheckFiles(skipped []string) []string {
+	skip := skippedStepSet(skipped)
+	var required []string
+	for _, p := range checkPhaseFiles {
+		if !skip[p.skipStep] {
+			required = append(required, p.fileName)
+		}
+	}
+	return required
+}
+
+func checkReportOK(data []byte) bool {
+	var report map[string]interface{}
+	if json.Unmarshal(data, &report) != nil {
+		return false
+	}
+	ok, exists := report["ok"].(bool)
+	return exists && ok
+}
+
+func evaluateIntegrity(resultRoot, runID string, opts Options) bool {
+	required := requiredCheckFiles(opts.SkippedSteps)
+	if len(required) == 0 {
 		return true
 	}
-	ok := true
+
+	checksDir := filepath.Join(resultRoot, runID, "checks")
+	for _, name := range required {
+		data, err := os.ReadFile(filepath.Join(checksDir, name))
+		if err != nil || !checkReportOK(data) {
+			return false
+		}
+	}
+
+	entries, err := os.ReadDir(checksDir)
+	if err != nil {
+		return false
+	}
 	for _, e := range entries {
 		if e.IsDir() {
 			continue
 		}
 		data, err := os.ReadFile(filepath.Join(checksDir, e.Name()))
-		if err != nil {
-			ok = false
-			continue
-		}
-		var report map[string]interface{}
-		if json.Unmarshal(data, &report) != nil {
-			ok = false
-			continue
-		}
-		if v, exists := report["ok"].(bool); exists && !v {
-			ok = false
+		if err != nil || !checkReportOK(data) {
+			return false
 		}
 	}
-	return ok
+	return true
 }
 
 func loadChecks(resultRoot, runID string) map[string]interface{} {
