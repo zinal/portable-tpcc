@@ -48,6 +48,13 @@ verification. By default the report uses `result_class: engineering`.
 - Mandatory Kubernetes / Ansible / systemd.
 - A universal SQL dialect or portable stored-procedure interface.
 - Automatic TPC certification.
+- A full Remote Terminal Emulator with TPC-C menu/screens and end-user
+  response-time semantics. Latency is measured at the workload-client boundary.
+- Built-in TPC-C atomicity, isolation, durability, power-loss, or other
+  certification tests. Transaction implementations are still required to use
+  DBMS mechanisms that provide the consistency guarantees defined below.
+- Issuing, scheduling, or verifying DBMS checkpoints. Checkpoint mechanisms
+  differ between DBMSs and remain an operator/DBMS responsibility.
 - Continuing measurement after a worker is lost.
 - Dynamic terminal rebalancing during measurement.
 - Multi-edition TPC-C support or conformance-to-edition checks.
@@ -160,6 +167,13 @@ MUST leave the same final rows. Rows are fully determined by the run-config
 (scale, seed, …). Unconfirmed batches are retried; there is no separate
 recovery mode.
 
+Date/time fields in the initial population intentionally use a deterministic
+synthetic reference time derived from the fixed generator epoch and seed,
+rather than the loader host wall clock. Individual row timestamps may be
+deterministically distributed inside the generator's fixed reference window.
+This models a load scenario anchored at one concrete reference date while
+preserving byte-for-byte stable population across hosts, retries, and adapters.
+
 Exactly one loader owns DB-wide tables; others own disjoint warehouse ranges.
 
 After load, on a quiet database, run integrity checks: assignment coverage,
@@ -179,10 +193,29 @@ Phases: prepare → ramp-up → measurement → drain. Absolute phase instants a
 derived from a wall-clock `--start-at` plus durations in the run-config.
 Warmup samples do not enter measurement metrics.
 
-Delivery-style work **MAY** run inline in the terminal when the adapter
-reports `async_delivery = false`; in that mode there is no separate async
-queue and `async_work_drain` is a no-op. When `async_delivery = true`, async
-work uses a bounded drain window from the run-config.
+Delivery work intentionally runs synchronously, inline in the terminal. All
+adapters **MUST** report `async_delivery = false`; there is no deferred
+Delivery queue or Delivery result log, and `async_work_drain` is a no-op.
+This is a deliberate workload-model deviation from official TPC-C, chosen to
+keep the benchmark focused on DBMS transaction execution.
+
+The product does not emulate TPC-C menus or screens. Keying/think pacing is a
+workload-generation mechanism, and recorded latency covers the workload-client
+request boundary rather than complete end-user Remote Terminal Emulator
+response time.
+
+Every adapter **MUST** execute each shared transaction workflow with atomic
+commit/rollback semantics and an isolation level sufficient to preserve the
+logical consistency conditions under concurrent home and remote transactions.
+The adapter **MUST** classify transaction/commit errors according to the
+normalized error model and **MUST NOT** expose a successful result before the
+commit outcome is known. These guarantees are implementation requirements even
+though portable-tpcc does not contain the official TPC-C ACID certification
+test procedures.
+
+The runtime does not issue or inspect DBMS checkpoints. Operators are
+responsible for configuring transaction logs, checkpoints, recovery, and
+durability mechanisms appropriate to the selected DBMS and test objective.
 
 Startup (wall-clock rendezvous):
 
