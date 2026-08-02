@@ -31,20 +31,21 @@ struct TWorkloadConfig {
     std::array<TTxWorkload, TRANSACTION_TYPE_COUNT> PerTx{};
 };
 
-// Histogram settings from runtime.histogram. Mapped onto THistogram linear_exp layout.
+// Histogram settings from runtime.histogram. Mapped onto THistogram linear_exp:
+// linear buckets [0, HdrTill), then exponential up to MaxValue (= Highest).
+// HdrTill is an implementation constant (4096, capped by Highest); it is not
+// a separate profile knob.
 struct THistogramConfig {
     bool Configured = false;
     std::string Unit = "ms"; // "ms" or "us"
-    uint64_t Lowest = 1;
     uint64_t Highest = 32768;
-    int SignificantFigures = 3;
 
     // Parameters for THistogram (values recorded in Unit).
     uint64_t HdrTill() const {
         if (!Configured) {
             return 4096;
         }
-        // Linear region: prefer a power-of-two-ish window, capped by Highest.
+        // Linear region: fixed default window, capped by Highest.
         uint64_t till = 4096;
         if (Highest < till) {
             till = Highest > 0 ? Highest : 1;

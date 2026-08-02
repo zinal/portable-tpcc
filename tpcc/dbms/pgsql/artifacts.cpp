@@ -238,9 +238,7 @@ void WriteWorkerResultJson(const TArtifactPaths& paths, const TRunConfigDocument
             }},
             {"histogram", {
                 {"unit", histUnit},
-                {"lowest", doc.Histogram.Configured ? doc.Histogram.Lowest : 1},
                 {"highest", doc.Histogram.Configured ? doc.Histogram.Highest : 32768},
-                {"significant_figures", doc.Histogram.Configured ? doc.Histogram.SignificantFigures : 3},
                 {"layout", "linear_exp"},
                 {"hdr_till", stats.HdrTill()},
                 {"max_value", stats.MaxValue()},

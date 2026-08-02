@@ -142,11 +142,15 @@ TRunConfigDocument LoadRunConfigDocument(const std::string& path) {
             const auto& h = rt["histogram"];
             doc.Histogram.Configured = true;
             doc.Histogram.Unit = h.value("unit", "ms");
-            doc.Histogram.Lowest = h.value("lowest", static_cast<uint64_t>(1));
             doc.Histogram.Highest = h.value("highest", static_cast<uint64_t>(32768));
-            doc.Histogram.SignificantFigures = h.value("significant_figures", 3);
             if (doc.Histogram.Unit != "ms" && doc.Histogram.Unit != "us") {
                 throw std::runtime_error("runtime.histogram.unit must be \"ms\" or \"us\"");
+            }
+            if (h.contains("lowest") || h.contains("significant_figures")) {
+                throw std::runtime_error(
+                    "runtime.histogram.lowest and significant_figures are not supported; "
+                    "linear_exp layout uses unit and highest only "
+                    "(hdr_till is an implementation default published in artifacts)");
             }
         }
     }

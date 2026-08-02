@@ -97,9 +97,7 @@
     },
     "histogram": {
       "unit": "us",
-      "lowest": 1,
-      "highest": 120000000,
-      "significant_figures": 3
+      "highest": 120000000
     }
   }
 }

@@ -117,11 +117,12 @@ type RetryJSON struct {
 	RetryAmbiguousCommit bool   `json:"retry_ambiguous_commit"`
 }
 
+// HistogramJSON is the materialized runtime.histogram block.
+// Matches THistogram linear_exp: unit + highest (max_value); hdr_till is
+// derived by the worker and published in result artifacts.
 type HistogramJSON struct {
-	Unit               string `json:"unit"`
-	Lowest             int64  `json:"lowest"`
-	Highest            int64  `json:"highest"`
-	SignificantFigures int    `json:"significant_figures"`
+	Unit    string `json:"unit"`
+	Highest int64  `json:"highest"`
 }
 
 // ExpandedPaths holds resolved filesystem paths from profile.
@@ -250,14 +251,8 @@ func BuildRunConfig(in BuildInput) (*RunConfig, error) {
 	if p.Runtime.Histogram.Unit != "" {
 		hist.Unit = p.Runtime.Histogram.Unit
 	}
-	if p.Runtime.Histogram.Lowest > 0 {
-		hist.Lowest = p.Runtime.Histogram.Lowest
-	}
 	if p.Runtime.Histogram.Highest > 0 {
 		hist.Highest = p.Runtime.Histogram.Highest
-	}
-	if p.Runtime.Histogram.SignificantFigures > 0 {
-		hist.SignificantFigures = p.Runtime.Histogram.SignificantFigures
 	}
 
 	pacing := p.Runtime.Pacing

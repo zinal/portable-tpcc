@@ -32,10 +32,8 @@ func DefaultWorkload() WorkloadBlock {
 
 func DefaultHistogram() HistogramJSON {
 	return HistogramJSON{
-		Unit:               "us",
-		Lowest:             1,
-		Highest:            120000000,
-		SignificantFigures: 3,
+		Unit:    "us",
+		Highest: 120000000,
 	}
 }
 
