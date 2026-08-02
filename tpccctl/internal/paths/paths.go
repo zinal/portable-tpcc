@@ -49,6 +49,14 @@ func Normalize(path string, permittedRoots []string) (string, error) {
 
 // JoinUnder joins elem under base and validates the result stays under base.
 func JoinUnder(base, elem string) (string, error) {
+	if filepath.IsAbs(elem) {
+		return "", fmt.Errorf("path %q must be relative", elem)
+	}
+	for _, part := range strings.FieldsFunc(elem, func(r rune) bool { return r == '/' || r == '\\' }) {
+		if part == ".." {
+			return "", fmt.Errorf("path %q contains parent traversal", elem)
+		}
+	}
 	joined := filepath.Join(base, elem)
 	baseAbs, err := filepath.Abs(base)
 	if err != nil {

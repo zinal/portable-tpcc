@@ -8,6 +8,7 @@ import (
 	"portable-tpcc/tpccctl/internal/assignment"
 	"portable-tpcc/tpccctl/internal/config"
 	"portable-tpcc/tpccctl/internal/profile"
+	"portable-tpcc/tpccctl/internal/remote"
 )
 
 var allowedDBMS = map[string]bool{
@@ -73,6 +74,8 @@ func Profile(p *profile.Profile) *Result {
 		res.Add("database.password_env is required")
 	} else if looksLikeSecret(p.Database.PasswordEnv) {
 		res.Add("database.password_env must be an environment variable name, not a secret literal")
+	} else if !remote.ValidEnvName(p.Database.PasswordEnv) {
+		res.Add("database.password_env must match [A-Za-z_][A-Za-z0-9_]*")
 	}
 	if containsCredential(p.Database.Endpoint) {
 		res.Add("credentials must not appear in database.endpoint")

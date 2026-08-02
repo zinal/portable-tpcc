@@ -127,6 +127,26 @@ func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
 }
 
+// ValidEnvName reports whether name is safe as a POSIX-style environment key.
+func ValidEnvName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for i, r := range name {
+		if i == 0 {
+			if (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || r == '_' {
+				continue
+			}
+			return false
+		}
+		if (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
 func (s *SSH) Upload(localPath, remotePath string) error {
 	data, err := os.ReadFile(localPath)
 	if err != nil {
@@ -214,6 +234,11 @@ func (s *SSH) Remove(remotePath string) error {
 }
 
 func (s *SSH) StartDetached(workDir, binary string, argv []string, env map[string]string, stdoutPath, stderrPath string) (int, error) {
+	for k := range env {
+		if !ValidEnvName(k) {
+			return 0, fmt.Errorf("invalid environment variable name %q", k)
+		}
+	}
 	if err := s.MkdirAll(workDir); err != nil {
 		return 0, err
 	}

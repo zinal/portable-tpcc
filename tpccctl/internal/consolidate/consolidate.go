@@ -45,6 +45,7 @@ type Options struct {
 	SkippedSteps            []string
 	MaxClockSkewMs          int64
 	ExpectedRunConfigSHA256 string
+	AllowIncomplete         bool
 }
 
 // Consolidator merges worker artifacts deterministically.
@@ -88,6 +89,7 @@ func (c *Consolidator) ConsolidateWithOptions(runID string, rc *config.RunConfig
 		maxSkew = rc.Phases.MaxClockSkewMs
 	}
 	workerCalibrations := map[string]workerClockCalibration{}
+	var incompleteWorkers []string
 
 	for _, e := range entries {
 		if !e.IsDir() {
@@ -102,6 +104,7 @@ func (c *Consolidator) ConsolidateWithOptions(runID string, rc *config.RunConfig
 		data, err := os.ReadFile(resultPath)
 		if err != nil {
 			workersComplete = false
+			incompleteWorkers = append(incompleteWorkers, fmt.Sprintf("%s: missing result.json", name))
 			continue
 		}
 		var partial map[string]interface{}
@@ -113,6 +116,7 @@ func (c *Consolidator) ConsolidateWithOptions(runID string, rc *config.RunConfig
 		}
 		if exit, ok := partial["exit_status"].(float64); ok && int(exit) != 0 {
 			workersComplete = false
+			incompleteWorkers = append(incompleteWorkers, fmt.Sprintf("%s: exit_status=%d", name, int(exit)))
 		}
 		if err := mergeWorkerCounters(counters, partial["counters"], name); err != nil {
 			return nil, err
@@ -129,6 +133,7 @@ func (c *Consolidator) ConsolidateWithOptions(runID string, rc *config.RunConfig
 	for _, name := range expected {
 		if !present[name] {
 			workersComplete = false
+			incompleteWorkers = append(incompleteWorkers, fmt.Sprintf("%s: missing worker artifact", name))
 		}
 	}
 	clockSkewOK := evaluateClockSkew(workerCalibrations, maxSkew, expected)
@@ -193,13 +198,8 @@ func (c *Consolidator) ConsolidateWithOptions(runID string, rc *config.RunConfig
 	if assignmentErr != nil && len(entries) == 0 {
 		return nil, assignmentErr
 	}
-	if len(expected) > 0 && len(present) == 0 {
-		return nil, fmt.Errorf("no worker artifacts under %s", rawWorkers)
-	}
-	for _, name := range expected {
-		if !present[name] {
-			return nil, fmt.Errorf("missing worker artifact for %s", name)
-		}
+	if !workersComplete && !opts.AllowIncomplete {
+		return nil, fmt.Errorf("incomplete worker artifacts: %s", strings.Join(incompleteWorkers, "; "))
 	}
 	return agg, nil
 }

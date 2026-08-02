@@ -74,7 +74,7 @@ func tpcSettingsDeviations(
 		))
 	}
 
-	if measurementMs > 0 && measurementMs < TPCCMinMeasurementMs {
+	if measurementMs < TPCCMinMeasurementMs {
 		out = append(out, fmt.Sprintf(
 			"phases.measurement=%dms; TPC-C requires >= 120m (%dms)",
 			measurementMs, TPCCMinMeasurementMs,

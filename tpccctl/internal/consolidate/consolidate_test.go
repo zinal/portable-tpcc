@@ -493,6 +493,45 @@ func TestConsolidate_rejectsUnexpectedWorker(t *testing.T) {
 	}
 }
 
+func TestConsolidateRejectsIncompleteWorkersByDefault(t *testing.T) {
+	root := t.TempDir()
+	runID := "run-incomplete"
+	rc := minimalRunConfig(runID)
+	writeRunConfig(t, root, runID, rc)
+	workerDir := filepath.Join(root, runID, "raw", "worker", "worker-a")
+	if err := os.MkdirAll(workerDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	cons := &consolidate.Consolidator{ResultRoot: root}
+	_, err := cons.Consolidate(runID, rc)
+	if err == nil || !strings.Contains(err.Error(), "incomplete worker artifacts") || !strings.Contains(err.Error(), "worker-a") {
+		t.Fatalf("expected incomplete worker error, got %v", err)
+	}
+}
+
+func TestConsolidateAllowIncompleteReturnsAggregate(t *testing.T) {
+	root := t.TempDir()
+	runID := "run-allow-incomplete"
+	rc := minimalRunConfig(runID)
+	sha := writeRunConfig(t, root, runID, rc)
+	writeWorkerArtifacts(t, root, runID, "worker-a", sha, rc, map[string]interface{}{
+		"exit_status": 7,
+	})
+
+	cons := &consolidate.Consolidator{ResultRoot: root}
+	agg, err := cons.ConsolidateWithOptions(runID, rc, consolidate.Options{
+		MaxClockSkewMs:  100,
+		AllowIncomplete: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agg.Status.WorkersComplete {
+		t.Fatalf("expected workers_complete=false, got %+v", agg.Status)
+	}
+}
+
 func TestConsolidate_rejectsMismatchedRunID(t *testing.T) {
 	root := t.TempDir()
 	runID := "run-id-mismatch"

@@ -64,7 +64,10 @@ func (c *Collector) CollectInstance(runID, role, instance, sourceDir string) err
 		return err
 	}
 	for _, p := range manifest.Payloads {
-		src := filepath.Join(sourceDir, p.Path)
+		src, err := paths.JoinUnder(sourceDir, p.Path)
+		if err != nil {
+			return err
+		}
 		dst, err := paths.JoinUnder(destTmp, p.Path)
 		if err != nil {
 			return err

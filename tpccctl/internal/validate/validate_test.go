@@ -123,6 +123,33 @@ func TestValidate_rejectsBadInstanceName(t *testing.T) {
 	}
 }
 
+func TestValidate_rejectsBadPasswordEnvNames(t *testing.T) {
+	path := filepath.Join("..", "..", "testdata", "profile.valid.yaml")
+	badNames := []string{
+		"TPCC_PASSWORD;touch_x",
+		"$(touch_x)",
+		"`touch_x`",
+		"1TPCC_PASSWORD",
+		"TPCC-PASSWORD",
+	}
+	for _, name := range badNames {
+		t.Run(name, func(t *testing.T) {
+			p, err := profile.ParseFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			p.Database.PasswordEnv = name
+			res := validate.Profile(p)
+			if res.Valid {
+				t.Fatalf("expected invalid password_env %q", name)
+			}
+			if !strings.Contains(strings.Join(res.Errors, "\n"), "password_env") {
+				t.Fatalf("expected password_env error, got %v", res.Errors)
+			}
+		})
+	}
+}
+
 func TestValidate_thinkTimeDistribution(t *testing.T) {
 	path := filepath.Join("..", "..", "testdata", "profile.valid.yaml")
 	p, err := profile.ParseFile(path)

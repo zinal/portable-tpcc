@@ -166,7 +166,7 @@ func runDeploy(opts orchestrator.Options) int {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-	if err := o.Deploy(ctx); err != nil {
+	if err := withProfileLock(o, ctx, func() error { return o.Deploy(ctx) }); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
@@ -185,20 +185,22 @@ func runStage(opts orchestrator.Options, stage string) int {
 		return 1
 	}
 	var runErr error
-	switch stage {
-	case "schema":
-		runErr = o.RunSchema(ctx)
-	case "load":
-		runErr = o.RunLoad(ctx)
-	case "start":
-		runErr = o.RunStart(ctx)
-	case "collect":
-		runErr = o.RunCollect(ctx)
-	case "consolidate":
-		runErr = o.RunConsolidate(ctx)
-	default:
-		runErr = fmt.Errorf("unknown stage %s", stage)
-	}
+	runErr = withProfileLock(o, ctx, func() error {
+		switch stage {
+		case "schema":
+			return o.RunSchema(ctx)
+		case "load":
+			return o.RunLoad(ctx)
+		case "start":
+			return o.RunStart(ctx)
+		case "collect":
+			return o.RunCollect(ctx)
+		case "consolidate":
+			return o.RunConsolidate(ctx)
+		default:
+			return fmt.Errorf("unknown stage %s", stage)
+		}
+	})
 	if runErr != nil {
 		fmt.Fprintln(os.Stderr, runErr)
 		return 1
@@ -221,7 +223,7 @@ func runCheck(opts orchestrator.Options, phase string) int {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-	if err := o.RunCheck(ctx, phase); err != nil {
+	if err := withProfileLock(o, ctx, func() error { return o.RunCheck(ctx, phase) }); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
@@ -259,7 +261,7 @@ func runStop(opts orchestrator.Options) int {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-	if err := o.Stop(ctx); err != nil {
+	if err := withProfileLock(o, ctx, func() error { return o.Stop(ctx) }); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
@@ -277,6 +279,14 @@ func runFull(opts orchestrator.Options) int {
 		return 1
 	}
 	return 0
+}
+
+func withProfileLock(o *orchestrator.Orchestrator, ctx *orchestrator.Context, fn func() error) error {
+	if err := o.StateStore.AcquireProfileLock(o.Profile.Metadata.Name, ctx.RunID); err != nil {
+		return err
+	}
+	defer o.StateStore.ReleaseProfileLock(o.Profile.Metadata.Name, ctx.RunID)
+	return fn()
 }
 
 func runCleanup(opts orchestrator.Options, yes bool) int {

@@ -9,6 +9,7 @@ import (
 
 	"portable-tpcc/tpccctl/internal/collect"
 	"portable-tpcc/tpccctl/internal/config"
+	"portable-tpcc/tpccctl/internal/paths"
 	"portable-tpcc/tpccctl/internal/remote"
 	"portable-tpcc/tpccctl/internal/schedule"
 	"portable-tpcc/tpccctl/internal/state"
@@ -126,6 +127,8 @@ type launchedProc struct {
 	WorkDir  string
 	ProcPath string // remote process.json path
 	DonePath string // remote artifact-manifest.json path
+
+	InstanceNonce string
 }
 
 func (o *Orchestrator) launchRole(
@@ -172,7 +175,49 @@ func (o *Orchestrator) launchRole(
 		PID:      pid,
 		State:    "running",
 	})
+	_ = o.waitProcessMetadata(ctx, proc, 2*time.Second)
 	return proc, nil
+}
+
+func (o *Orchestrator) waitProcessMetadata(ctx *Context, proc *launchedProc, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		loaded, err := o.loadProcessMetadata(ctx, proc)
+		if loaded || err != nil || time.Now().After(deadline) {
+			return err
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+func (o *Orchestrator) loadProcessMetadata(ctx *Context, proc *launchedProc) (bool, error) {
+	exists, err := proc.Session.Exists(proc.ProcPath)
+	if err != nil || !exists {
+		return false, err
+	}
+	data, err := proc.Session.ReadFile(proc.ProcPath)
+	if err != nil {
+		return false, err
+	}
+	var meta map[string]interface{}
+	if err := json.Unmarshal(data, &meta); err != nil {
+		return false, err
+	}
+	if pid := remote.ParsePID(meta["pid"]); pid > 0 {
+		proc.PID = pid
+	}
+	if nonce, ok := meta["instance_nonce"].(string); ok {
+		proc.InstanceNonce = nonce
+	}
+	_ = o.StateStore.UpsertProcess(ctx.RunID, state.Process{
+		Role:          proc.Role,
+		Host:          proc.Host,
+		Instance:      proc.Instance,
+		PID:           proc.PID,
+		InstanceNonce: proc.InstanceNonce,
+		State:         "running",
+	})
+	return true, nil
 }
 
 func (o *Orchestrator) waitProcesses(ctx *Context, procs []*launchedProc, timeout time.Duration, abortOnFail bool) error {
@@ -186,6 +231,11 @@ func (o *Orchestrator) waitProcesses(ctx *Context, procs []*launchedProc, timeou
 			return fmt.Errorf("timeout waiting for processes to finish")
 		}
 		for key, p := range remaining {
+			if p.InstanceNonce == "" {
+				if _, err := o.loadProcessMetadata(ctx, p); err != nil {
+					return err
+				}
+			}
 			done, err := p.Session.Exists(p.DonePath)
 			if err != nil {
 				return err
@@ -195,27 +245,46 @@ func (o *Orchestrator) waitProcesses(ctx *Context, procs []*launchedProc, timeou
 				if err != nil {
 					return err
 				}
-				var manifest map[string]interface{}
+				var manifest collect.ArtifactManifest
 				if err := json.Unmarshal(data, &manifest); err != nil {
 					return err
 				}
-				exitStatus := 0
-				if v, ok := manifest["exit_status"].(float64); ok {
-					exitStatus = int(v)
+				if p.InstanceNonce != "" && manifest.InstanceNonce != p.InstanceNonce {
+					alive, err := p.Session.IsAlive(p.PID)
+					if err == nil && !alive {
+						_ = o.StateStore.UpsertProcess(ctx.RunID, state.Process{
+							Role: p.Role, Host: p.Host, Instance: p.Instance, PID: p.PID, InstanceNonce: p.InstanceNonce, State: "failed",
+						})
+						delete(remaining, key)
+						if abortOnFail {
+							return fmt.Errorf("%s/%s stale manifest nonce %q does not match launched nonce %q and process is dead", p.Role, p.Instance, manifest.InstanceNonce, p.InstanceNonce)
+						}
+					}
+					continue
 				}
-				if finalized, ok := manifest["finalized"].(bool); ok && !finalized {
+				if !manifest.Finalized {
+					alive, err := p.Session.IsAlive(p.PID)
+					if err == nil && !alive {
+						_ = o.StateStore.UpsertProcess(ctx.RunID, state.Process{
+							Role: p.Role, Host: p.Host, Instance: p.Instance, PID: p.PID, InstanceNonce: p.InstanceNonce, State: "failed",
+						})
+						delete(remaining, key)
+						if abortOnFail {
+							return fmt.Errorf("%s/%s died before finalizing artifacts", p.Role, p.Instance)
+						}
+					}
 					continue
 				}
 				st := "exited"
-				if exitStatus != 0 {
+				if manifest.ExitStatus != 0 {
 					st = "failed"
 				}
 				_ = o.StateStore.UpsertProcess(ctx.RunID, state.Process{
-					Role: p.Role, Host: p.Host, Instance: p.Instance, PID: p.PID, State: st,
+					Role: p.Role, Host: p.Host, Instance: p.Instance, PID: p.PID, InstanceNonce: p.InstanceNonce, State: st,
 				})
 				delete(remaining, key)
-				if abortOnFail && exitStatus != 0 {
-					return fmt.Errorf("%s/%s exited with status %d", p.Role, p.Instance, exitStatus)
+				if abortOnFail && manifest.ExitStatus != 0 {
+					return fmt.Errorf("%s/%s exited with status %d", p.Role, p.Instance, manifest.ExitStatus)
 				}
 				continue
 			}
@@ -223,7 +292,7 @@ func (o *Orchestrator) waitProcesses(ctx *Context, procs []*launchedProc, timeou
 			if err == nil && !alive {
 				// Process died before writing manifest.
 				_ = o.StateStore.UpsertProcess(ctx.RunID, state.Process{
-					Role: p.Role, Host: p.Host, Instance: p.Instance, PID: p.PID, State: "failed",
+					Role: p.Role, Host: p.Host, Instance: p.Instance, PID: p.PID, InstanceNonce: p.InstanceNonce, State: "failed",
 				})
 				delete(remaining, key)
 				if abortOnFail {
@@ -360,8 +429,14 @@ func (o *Orchestrator) collectArtifacts(ctx *Context, sessions map[string]remote
 			return err
 		}
 		for _, p := range manifest.Payloads {
-			remotePath := filepath.Join(remoteInstance, p.Path)
-			localPath := filepath.Join(localTmp, p.Path)
+			remotePath, err := paths.JoinUnder(remoteInstance, p.Path)
+			if err != nil {
+				return err
+			}
+			localPath, err := paths.JoinUnder(localTmp, p.Path)
+			if err != nil {
+				return err
+			}
 			if err := sess.Download(remotePath, localPath); err != nil {
 				return fmt.Errorf("download %s: %w", remotePath, err)
 			}
