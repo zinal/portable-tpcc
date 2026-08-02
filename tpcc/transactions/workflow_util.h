@@ -30,6 +30,22 @@ inline void ThrowIfCommitFailed(const TCommitResult& r) {
                            r.Message.empty() ? "commit failed" : r.Message);
 }
 
+// TPC-C §5.1.2 / §5.4.2: intentional unused-item New-Order counts only after a
+// confirmed rollback. Unconfirmed outcomes must not become UserAborted.
+inline void ThrowIfRollbackFailed(const TCommitResult& r) {
+    if (r.Outcome == ECommitOutcome::RolledBack) {
+        return;
+    }
+    throw TClassifiedError(r.ErrorClass, r.NativeCode,
+                           r.Message.empty() ? "rollback failed" : r.Message);
+}
+
+// Cardinality miss on ITEM is Integrity (adapter-api §4.3.1). Other classes are
+// adapter/DBMS failures and must not be treated as the unused-item profile.
+inline bool IsExpectedItemNotFound(const TOperationResult& r) {
+    return !r.Ok && r.ErrorClass == EErrorClass::Integrity;
+}
+
 // Returns a task-queue awaitable (do NOT wrap in another TFuture coroutine).
 inline auto SuspendExecute(
     ITpccTransaction& tx,

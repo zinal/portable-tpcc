@@ -176,13 +176,22 @@ TFuture<bool> GetNewOrderTask(
         const int qty = in.OrderQuantities[idx];
 
         if (iid == INVALID_ITEM_ID) {
+            // TPC-C §2.4.2.3 / §5.1.2: only the expected ITEM not-found followed
+            // by a confirmed rollback may be counted as intentional UserAborted.
             auto r = co_await SuspendExecute(tx, context, TGetItems{{iid}});
             ThrowIfRetryable(r);
             if (r.Ok) {
                 co_return FailPermanent(context.TerminalID,
                     "NewOrder expected unused item to be missing");
             }
-            co_await SuspendRollback(tx, context);
+            if (!IsExpectedItemNotFound(r)) {
+                throw TClassifiedError(
+                    r.ErrorClass,
+                    r.NativeCode,
+                    r.Message.empty() ? "NewOrder unused item lookup failed" : r.Message);
+            }
+            auto rollback = co_await SuspendRollback(tx, context);
+            ThrowIfRollbackFailed(rollback);
             throw TUserAbortedException();
         }
 
