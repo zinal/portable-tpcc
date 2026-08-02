@@ -124,6 +124,7 @@ void WriteReadyJson(const TArtifactPaths& paths, const TRunConfigDocument& doc,
             {"offset_ms", clockCalibration.OffsetMs},
             {"uncertainty_ms", clockCalibration.UncertaintyMs},
             {"rtt_ms", clockCalibration.RttMs},
+            {"time_source", clockCalibration.TimeSource},
         }},
     };
     WriteJsonAtomic(paths.ReadyJson, j);

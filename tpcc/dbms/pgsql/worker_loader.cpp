@@ -27,7 +27,7 @@ int RunLoaderFromRunConfig(const std::string& runConfigPath, const std::string& 
 
     const std::string connection = BuildPgConnectionString(doc);
     CheckDbForImport(connection, doc.Path);
-    const auto clockCalibration = MeasureClockCalibration(connection);
+    const auto clockCalibration = MeasureClockCalibration(connection, doc.Endpoint);
     WriteReadyJson(paths, doc, instance, assign.WarehouseRanges, nonce, clockCalibration);
 
     TImportConfig importCfg;
@@ -75,8 +75,25 @@ int RunWorkerFromRunConfig(
 
     const std::string connection = BuildPgConnectionString(doc);
     CheckDbForRun(connection, doc.ScaleWarehouses, doc.Path);
-    const auto clockCalibration = MeasureClockCalibration(connection);
+    const auto clockCalibration = MeasureClockCalibration(connection, doc.Endpoint);
     WriteReadyJson(paths, doc, instance, assign.WarehouseRanges, nonce, clockCalibration);
+    if (!IsClockSkewWithinBudget(clockCalibration, doc.PhasePolicy.MaxClockSkewMs)) {
+        LOG_E("{}: {}", instance, FormatClockSkewViolation(clockCalibration, doc.PhasePolicy.MaxClockSkewMs));
+        const bool recordUs = doc.Histogram.Configured && doc.Histogram.Unit == "us";
+        const uint64_t histHdr = doc.Histogram.Configured
+            ? doc.Histogram.HdrTill()
+            : 4096ull;
+        const uint64_t histMax = doc.Histogram.Configured
+            ? doc.Histogram.MaxValue()
+            : 32768ull;
+        TTerminalStats emptyStats(histHdr, histMax, recordUs);
+        const auto now = std::chrono::system_clock::now();
+        WriteWorkerResultJson(
+            paths, doc, instance, assign, emptyStats, false,
+            now, now, now, now, 0.0, 1, nonce);
+        WriteArtifactManifest(paths, instance, nonce, 1);
+        return 1;
+    }
 
     TRunConfig runCfg;
     runCfg.ConnectionString = connection;

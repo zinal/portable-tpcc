@@ -62,11 +62,11 @@ func (c *Consolidator) ConsolidateWithOptions(runID string, rc *config.RunConfig
 	counters := map[string]int64{}
 	mergedHist := map[string]histogram.Raw{}
 	workersComplete := true
-	clockSkewOK := true
 	maxSkew := opts.MaxClockSkewMs
 	if maxSkew <= 0 {
 		maxSkew = rc.Phases.MaxClockSkewMs
 	}
+	workerCalibrations := map[string]workerClockCalibration{}
 
 	for _, e := range entries {
 		if !e.IsDir() {
@@ -112,30 +112,8 @@ func (c *Consolidator) ConsolidateWithOptions(runID string, rc *config.RunConfig
 			}
 		}
 		if readyPath := filepath.Join(rawWorkers, e.Name(), "ready.json"); true {
-			readyData, err := os.ReadFile(readyPath)
-			if err != nil {
-				clockSkewOK = false
-				continue
-			}
-			var ready map[string]interface{}
-			if json.Unmarshal(readyData, &ready) != nil {
-				clockSkewOK = false
-				continue
-			}
-			cal, ok := ready["clock_calibration"].(map[string]interface{})
-			if !ok {
-				clockSkewOK = false
-				continue
-			}
-			off, hasOff := cal["offset_ms"].(float64)
-			unc, hasUnc := cal["uncertainty_ms"].(float64)
-			_, hasMeasured := cal["measured_at"].(string)
-			if !hasOff || !hasUnc || !hasMeasured {
-				clockSkewOK = false
-				continue
-			}
-			if absFloat(off) > float64(maxSkew) || absFloat(unc) > float64(maxSkew) {
-				clockSkewOK = false
+			if cal, ok := readWorkerClockCalibration(readyPath); ok {
+				workerCalibrations[e.Name()] = cal
 			}
 		}
 	}
@@ -144,6 +122,7 @@ func (c *Consolidator) ConsolidateWithOptions(runID string, rc *config.RunConfig
 			workersComplete = false
 		}
 	}
+	clockSkewOK := evaluateClockSkew(workerCalibrations, maxSkew, expected)
 
 	responseTimes := map[string]interface{}{}
 	unit := "ms"
@@ -211,6 +190,72 @@ func absFloat(v float64) float64 {
 		return -v
 	}
 	return v
+}
+
+type workerClockCalibration struct {
+	offset      float64
+	uncertainty float64
+}
+
+func readWorkerClockCalibration(readyPath string) (workerClockCalibration, bool) {
+	readyData, err := os.ReadFile(readyPath)
+	if err != nil {
+		return workerClockCalibration{}, false
+	}
+	var ready map[string]interface{}
+	if json.Unmarshal(readyData, &ready) != nil {
+		return workerClockCalibration{}, false
+	}
+	cal, ok := ready["clock_calibration"].(map[string]interface{})
+	if !ok {
+		return workerClockCalibration{}, false
+	}
+	off, hasOff := cal["offset_ms"].(float64)
+	unc, hasUnc := cal["uncertainty_ms"].(float64)
+	_, hasMeasured := cal["measured_at"].(string)
+	if !hasOff || !hasUnc || !hasMeasured {
+		return workerClockCalibration{}, false
+	}
+	return workerClockCalibration{offset: off, uncertainty: unc}, true
+}
+
+// evaluateClockSkew checks per-worker offset vs the reference time source and the
+// spread across workers. The spread check is a hedge for distributed databases where
+// each worker may calibrate against a different node.
+func evaluateClockSkew(workerCalibrations map[string]workerClockCalibration, maxSkew int64, expected []string) bool {
+	if maxSkew <= 0 {
+		return true
+	}
+	if len(expected) > 0 && len(workerCalibrations) != len(expected) {
+		return false
+	}
+	if len(workerCalibrations) == 0 {
+		return false
+	}
+	minOffset := 0.0
+	maxOffset := 0.0
+	first := true
+	for _, cal := range workerCalibrations {
+		if absFloat(cal.offset) > float64(maxSkew) || absFloat(cal.uncertainty) > float64(maxSkew) {
+			return false
+		}
+		if first {
+			minOffset = cal.offset
+			maxOffset = cal.offset
+			first = false
+			continue
+		}
+		if cal.offset < minOffset {
+			minOffset = cal.offset
+		}
+		if cal.offset > maxOffset {
+			maxOffset = cal.offset
+		}
+	}
+	if len(workerCalibrations) >= 2 && maxOffset-minOffset > float64(maxSkew) {
+		return false
+	}
+	return true
 }
 
 func evaluateIntegrity(resultRoot, runID string) bool {

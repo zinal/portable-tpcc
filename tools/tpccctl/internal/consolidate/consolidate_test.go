@@ -132,3 +132,65 @@ func TestConsolidate_clockSkewExceeded(t *testing.T) {
 		t.Fatalf("expected clock_skew_ok=false, got %+v", agg.Status)
 	}
 }
+
+func TestConsolidate_clockSkewSpreadExceeded(t *testing.T) {
+	root := t.TempDir()
+	runID := "run-spread"
+	maxSkew := int64(100)
+	for _, spec := range []struct {
+		name   string
+		offset float64
+	}{
+		{"worker-a", 5.0},
+		{"worker-b", 120.0},
+	} {
+		workerDir := filepath.Join(root, runID, "raw", "worker", spec.name)
+		if err := os.MkdirAll(workerDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		result := map[string]interface{}{
+			"exit_status": 0,
+			"counters": map[string]interface{}{
+				"new_order_ok": 10,
+			},
+		}
+		resultData, _ := json.MarshalIndent(result, "", "  ")
+		if err := os.WriteFile(filepath.Join(workerDir, "result.json"), resultData, 0644); err != nil {
+			t.Fatal(err)
+		}
+		ready := map[string]interface{}{
+			"clock_calibration": map[string]interface{}{
+				"measured_at":    "2026-07-28T12:00:00Z",
+				"offset_ms":      spec.offset,
+				"uncertainty_ms": 2.0,
+				"rtt_ms":         4.0,
+				"time_source":    "db-a",
+			},
+		}
+		readyData, _ := json.MarshalIndent(ready, "", "  ")
+		if err := os.WriteFile(filepath.Join(workerDir, "ready.json"), readyData, 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	rc := &config.RunConfig{
+		RunID: runID,
+		Phases: config.PhasesJSON{
+			MeasurementMs:  60000,
+			MaxClockSkewMs: maxSkew,
+		},
+		Scale: config.ScaleBlock{Warehouses: 20},
+		WorkerAssignment: []config.WorkerAssignmentJSON{
+			{Instance: "worker-a", WarehouseRanges: [][]int{{1, 11}}},
+			{Instance: "worker-b", WarehouseRanges: [][]int{{11, 21}}},
+		},
+	}
+	cons := &consolidate.Consolidator{ResultRoot: root}
+	agg, err := cons.Consolidate(runID, rc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agg.Status.ClockSkewOK {
+		t.Fatalf("expected clock_skew_ok=false for spread=115, got %+v", agg.Status)
+	}
+}
