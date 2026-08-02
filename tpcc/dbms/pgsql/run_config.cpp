@@ -119,6 +119,7 @@ TRunConfigDocument LoadRunConfigDocument(const std::string& path) {
         doc.PhasePolicy.MeasurementMs = phases.value("measurement_ms", 0);
         doc.PhasePolicy.TransactionDrainMs = phases.value("transaction_drain_ms", 0);
         doc.PhasePolicy.StopGraceMs = phases.value("stop_grace_ms", 0);
+        doc.PhasePolicy.MaxClockSkewMs = phases.value("max_clock_skew_ms", 0);
     }
     if (root.contains("runtime") && root["runtime"].is_object()) {
         const auto& rt = root["runtime"];

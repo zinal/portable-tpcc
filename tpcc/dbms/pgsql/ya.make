@@ -30,6 +30,7 @@ SRCS(
     warehouse_range.cpp
     run_config.cpp
     artifacts.cpp
+    clock_calibration.cpp
     worker_loader.cpp
 )
 

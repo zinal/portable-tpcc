@@ -109,7 +109,7 @@ void WriteProcessJson(const TArtifactPaths& paths, const TRunConfigDocument& doc
 
 void WriteReadyJson(const TArtifactPaths& paths, const TRunConfigDocument& doc,
                     const std::string& instance, const std::vector<TWarehouseRange>& ranges,
-                    const std::string& instanceNonce) {
+                    const std::string& instanceNonce, const TClockCalibration& clockCalibration) {
     Json j = {
         {"schema_version", 1},
         {"run_id", doc.RunId},
@@ -120,10 +120,11 @@ void WriteReadyJson(const TArtifactPaths& paths, const TRunConfigDocument& doc,
         {"warehouse_ranges", WarehouseRangesJson(ranges)},
         {"ready_at", FormatTime(SysClock::now())},
         {"clock_calibration", {
-            {"measured_at", FormatTime(SysClock::now())},
-            {"offset_ms", 0},
-            {"uncertainty_ms", 0},
-            {"rtt_ms", 0},
+            {"measured_at", FormatTime(clockCalibration.MeasuredAt)},
+            {"offset_ms", clockCalibration.OffsetMs},
+            {"uncertainty_ms", clockCalibration.UncertaintyMs},
+            {"rtt_ms", clockCalibration.RttMs},
+            {"time_source", clockCalibration.TimeSource},
         }},
     };
     WriteJsonAtomic(paths.ReadyJson, j);
