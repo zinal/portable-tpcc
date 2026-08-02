@@ -54,6 +54,7 @@ func TestConsolidate_mergesHistograms(t *testing.T) {
 	if err := os.MkdirAll(checksDir, 0755); err != nil {
 		t.Fatal(err)
 	}
+	_ = os.WriteFile(filepath.Join(checksDir, "after-import.json"), []byte(`{"ok":true}`), 0644)
 	_ = os.WriteFile(filepath.Join(checksDir, "after-run.json"), []byte(`{"ok":true}`), 0644)
 
 	rc := &config.RunConfig{
@@ -192,5 +193,108 @@ func TestConsolidate_clockSkewSpreadExceeded(t *testing.T) {
 	}
 	if agg.Status.ClockSkewOK {
 		t.Fatalf("expected clock_skew_ok=false for spread=115, got %+v", agg.Status)
+	}
+}
+
+func writeMinimalWorkerArtifacts(t *testing.T, root, runID, workerName string) {
+	t.Helper()
+	workerDir := filepath.Join(root, runID, "raw", "worker", workerName)
+	if err := os.MkdirAll(workerDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	result := map[string]interface{}{
+		"exit_status": 0,
+		"counters": map[string]interface{}{
+			"new_order_ok": 10,
+		},
+	}
+	resultData, _ := json.MarshalIndent(result, "", "  ")
+	if err := os.WriteFile(filepath.Join(workerDir, "result.json"), resultData, 0644); err != nil {
+		t.Fatal(err)
+	}
+	ready := map[string]interface{}{
+		"clock_calibration": map[string]interface{}{
+			"measured_at":    "2026-07-28T12:00:00Z",
+			"offset_ms":      5.0,
+			"uncertainty_ms": 2.0,
+			"rtt_ms":         4.0,
+		},
+	}
+	readyData, _ := json.MarshalIndent(ready, "", "  ")
+	if err := os.WriteFile(filepath.Join(workerDir, "ready.json"), readyData, 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func minimalRunConfig(runID string) *config.RunConfig {
+	return &config.RunConfig{
+		RunID: runID,
+		Phases: config.PhasesJSON{
+			MeasurementMs:  60000,
+			MaxClockSkewMs: 100,
+		},
+		Scale: config.ScaleBlock{Warehouses: 10},
+		WorkerAssignment: []config.WorkerAssignmentJSON{
+			{Instance: "worker-a", WarehouseRanges: [][]int{{1, 11}}},
+		},
+	}
+}
+
+func TestConsolidate_integrityMissingChecks(t *testing.T) {
+	root := t.TempDir()
+	runID := "run-no-checks"
+	writeMinimalWorkerArtifacts(t, root, runID, "worker-a")
+
+	cons := &consolidate.Consolidator{ResultRoot: root}
+	agg, err := cons.Consolidate(runID, minimalRunConfig(runID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agg.Status.IntegrityOK {
+		t.Fatalf("expected integrity_ok=false when checks are missing, got %+v", agg.Status)
+	}
+}
+
+func TestConsolidate_integrityFailedCheck(t *testing.T) {
+	root := t.TempDir()
+	runID := "run-check-fail"
+	writeMinimalWorkerArtifacts(t, root, runID, "worker-a")
+	checksDir := filepath.Join(root, runID, "checks")
+	if err := os.MkdirAll(checksDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.WriteFile(filepath.Join(checksDir, "after-import.json"), []byte(`{"ok":true}`), 0644)
+	_ = os.WriteFile(filepath.Join(checksDir, "after-run.json"), []byte(`{"ok":false}`), 0644)
+
+	cons := &consolidate.Consolidator{ResultRoot: root}
+	agg, err := cons.Consolidate(runID, minimalRunConfig(runID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agg.Status.IntegrityOK {
+		t.Fatalf("expected integrity_ok=false when a check failed, got %+v", agg.Status)
+	}
+}
+
+func TestConsolidate_integritySkippedAfterRun(t *testing.T) {
+	root := t.TempDir()
+	runID := "run-skip-after-run"
+	writeMinimalWorkerArtifacts(t, root, runID, "worker-a")
+	checksDir := filepath.Join(root, runID, "checks")
+	if err := os.MkdirAll(checksDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.WriteFile(filepath.Join(checksDir, "after-import.json"), []byte(`{"ok":true}`), 0644)
+
+	cons := &consolidate.Consolidator{ResultRoot: root}
+	agg, err := cons.ConsolidateWithOptions(runID, minimalRunConfig(runID), consolidate.Options{
+		SkippedSteps:   []string{"check_after_run"},
+		MaxClockSkewMs: 100,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !agg.Status.IntegrityOK {
+		t.Fatalf("expected integrity_ok=true when after-run check was skipped, got %+v", agg.Status)
 	}
 }
