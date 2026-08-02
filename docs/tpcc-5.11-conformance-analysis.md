@@ -1,6 +1,6 @@
 # Анализ соответствия реализации требованиям TPC-C 5.11
 
-Статус: повторный анализ реализации на commit `a997ab8`.
+Статус: повторный анализ реализации на commit `19df199`.
 
 Основа сравнения: [TPC Benchmark C Standard Specification, Revision
 5.11](https://www.tpc.org/TPC_Documents_Current_Versions/pdf/tpc-c_v5.11.0.pdf).
@@ -22,10 +22,13 @@
 
 Эти исправления проходят unit tests и в основном корректны. После повторного
 аудита устранены fail-open классификация intentional rollback, неполный учёт
-measurement boundaries, слияние лишних/stale worker artifacts при consolidate,
-fail-open обработка повреждённых counters/histograms, игнорирование unknown
-YAML fields и пробел post-import coverage для delivered `OL_AMOUNT` /
-`O_CARRIER_ID`.
+measurement boundaries, игнорирование unknown YAML fields и пробел
+post-import coverage для delivered `OL_AMOUNT` / `O_CARRIER_ID`.
+
+Проверка на `19df199` уточнила, что stale-worker и malformed-artifact защита
+закрывают исходные проблемы только частично. Кроме того, новые
+soft-conformance и response-time statistics содержат отдельные ошибки,
+описанные в активной секции.
 
 Документ разделён на:
 
@@ -43,17 +46,21 @@ YAML fields и пробел post-import coverage для delivered `OL_AMOUNT` /
 - terminals, pacing, retries и phase controller;
 - worker artifacts, histograms и `tpccctl consolidate`;
 - integrity checks и orchestration;
-- изменения от `4d44f21` до `a997ab8`.
+- изменения от `884230e` до `19df199`, включая PR #40-#47.
 
 Выполнены проверки:
 
 ```text
-./ya make tpcc/domain/ut tpcc/transactions/ut tpcc/checks/ut
+./ya make tpcc/domain/ut tpcc/transactions/ut tpcc/runtime/ut \
+  tpcc/metrics/ut tpcc/checks/ut
 go test ./...
+go run ./cmd/tpccctl validate --profile ../../docs/examples/profile.v1.yaml
 ```
 
-Обе команды завершились успешно. Статический и unit-test аудит не заменяет
-интеграционные тесты на PostgreSQL, failure tests и длительный запуск SUT.
+Unit-test команды завершились успешно. Последняя команда ожидаемо завершилась
+ошибкой strict YAML на `retry_ambiguous_commit`, подтвердив активное замечание
+3.9. Статический и unit-test аудит не заменяет интеграционные тесты на
+PostgreSQL, failure tests и длительный запуск SUT.
 
 Критичность:
 
@@ -119,17 +126,130 @@ TPC-C §5.4.4; для engineering metric сохранение дробной ч�
 Post-import проверки delivered `OL_AMOUNT = 0.00` и carrier `[1..10]` добавлены
 в 5.18; generator создаёт эти значения корректно.
 
-### 3.4. Нет доказательства sustained operation и полного disclosure
+### 3.4. Stale artifacts прежней попытки того же run принимаются
 
-**Критичность: высокая для официального TPC-C.**
+**Критичность: высокая. Частично исправленное прежнее замечание.**
 
-Остаются:
+Consolidator теперь отвергает unexpected worker names и проверяет `run_id`,
+instance, run-config hash и warehouse assignment. Однако эти значения
+совпадают у повторных попыток одного run:
 
-- отсутствие доказательства восьмичасовой устойчивости §5.5.1.2;
-- отсутствие FDR, price/tpmC, availability date;
-- отсутствие обязательных графиков §5.6/§8.
+- `GenerateRunID` выдаёт один и тот же ID для profile в течение дня
+  ([config.go:345-349](../tpccctl/internal/config/config.go#L345-L349));
+- remote instance directory перед start не очищается;
+- supervisor может принять уже существующий finalized manifest;
+- instance nonce из новой попытки не сопоставляется между supervision,
+  collection и consolidation.
 
-Checkpoint control относится к принятым ограничениям и описан отдельно ниже.
+Старый `result.json` от предыдущей попытки того же run может быть принят как
+актуальный. Нужна сквозная проверка ожидаемого process/instance nonce либо
+атомарная очистка/staging instance directory перед каждым launch.
+
+### 3.5. Неполный worker result всё ещё обрабатывается fail-open
+
+**Критичность: высокая. Частично исправленное прежнее замечание.**
+
+Присутствующие counters/histograms теперь валидируются строго, но допускаются:
+
+- отсутствующие или `null` counters;
+- отсутствующие или `null` histograms;
+- отсутствующий либо неверного типа `exit_status`;
+- отрицательные counters;
+- ненулевые completed counters без соответствующего response-time histogram;
+- несовпадение `histogram.total_count` с completed count transaction type.
+
+Связанный код:
+
+- [consolidate.go:101-121](../tpccctl/internal/consolidate/consolidate.go#L101-L121);
+- [consolidate.go:207-250](../tpccctl/internal/consolidate/consolidate.go#L207-L250).
+
+Такой artifact способен дать `workers_complete=true` и throughput без
+response-time data. Обязательные measurement fields и их перекрёстные
+инварианты должны проверяться до merge.
+
+### 3.6. Microsecond histogram содержит только millisecond precision
+
+**Критичность: высокая для точности engineering reporting. Новая ошибка,
+проявившаяся после добавления min/max/avg.**
+
+Terminal сначала округляет `latency` и `latencyFull` до
+`std::chrono::milliseconds`, после чего при `unit: us` преобразует уже
+округлённое значение обратно в microseconds:
+
+- [terminal.cpp:223-245](../tpcc/dbms/pgsql/terminal.cpp#L223-L245);
+- [terminal.h:149-168](../tpcc/dbms/pgsql/terminal.h#L149-L168).
+
+Default orchestrated histogram использует `us`, но фактическая гранулярность
+остаётся 1000 us. Новые `min`, `max`, `avg` и percentiles выглядят точнее, чем
+исходное измерение; sub-millisecond latency превращается в zero.
+
+Нужно передавать исходные microseconds в stats либо честно публиковать unit
+`ms`.
+
+### 3.7. Soft conformance checks дают ложные verdicts
+
+**Критичность: высокая для нового `tpcc_settings_conformant`.**
+
+Проверка параметров запуска содержит несколько ошибок:
+
+- `measurementMs <= 0` не добавляет deviation из-за условия
+  `measurementMs > 0 && measurementMs < 120m`;
+- New-Order ошибочно задан minimum 45%, хотя §5.2.3 не устанавливает для него
+  minimum;
+- keying time и mean think time сравниваются на точное равенство defaults,
+  хотя TPC-C задаёт минимальные значения и допускает большие;
+- structural validation принимает zero/negative phase durations.
+
+Ссылки:
+
+- [conformance.go:7-17](../tpccctl/internal/config/conformance.go#L7-L17);
+- [conformance.go:34-82](../tpccctl/internal/config/conformance.go#L34-L82);
+- [validate.go:128-150](../tpccctl/internal/validate/validate.go#L128-L150).
+
+В результате `tpcc_settings_conformant` может быть как ложноположительным, так
+и ложноотрицательным. Это informational feature, но его status должен
+вычисляться по фактическим требованиям TPC-C.
+
+### 3.8. Новые histogram extrema и average валидируются недостаточно
+
+**Критичность: средняя/высокая. Новая ошибка reporting feature.**
+
+При JSON decode отсутствующие `min_recorded`, `max_recorded` и `sum_values`
+становятся нулями. Для непустого histogram такой payload может пройти текущие
+проверки, если buckets/`total_count` согласованы, и aggregate опубликует
+`min=0`, `max=0`, `avg=0` для ненулевого распределения.
+
+Кроме того:
+
+- empty histogram не обязан иметь нулевые extrema;
+- merge переносит `max_recorded` из empty histogram;
+- нет checked arithmetic для bucket/count/sum merges.
+
+Ссылки:
+
+- [merge.go:43-81](../tpccctl/internal/histogram/merge.go#L43-L81);
+- [merge.go:84-125](../tpccctl/internal/histogram/merge.go#L84-L125);
+- [merge.go:189-211](../tpccctl/internal/histogram/merge.go#L189-L211).
+
+### 3.9. Histogram profile и официальный пример конфигурации некорректны
+
+**Критичность: средняя.**
+
+`tpccctl validate` не проверяет оставшиеся histogram knobs:
+
+- неизвестный `unit` проходит control-host validation и отклоняется только
+  worker;
+- `highest <= 0` молча заменяется default вместо structural error.
+
+Дополнительно [profile.v1.yaml](examples/profile.v1.yaml) содержит
+`retry_ambiguous_commit`, которого нет в `profile.RetryPolicy`. После включения
+`KnownFields(true)` официальный пример больше не проходит `tpccctl validate`.
+
+Ссылки:
+
+- [profile.go:126-148](../tpccctl/internal/profile/profile.go#L126-L148);
+- [validate.go:98-120](../tpccctl/internal/validate/validate.go#L98-L120);
+- [profile.v1.yaml:86-91](examples/profile.v1.yaml#L86-L91).
 
 ## 4. Принятые ограничения и отклонения
 
@@ -189,10 +309,30 @@ Worker artifact schema и совместимость смешанных верс
   считается ошибкой эксплуатации, а не форматом, который должен согласовывать
   consolidator.
 
+### 4.7. Sustained operation и full disclosure
+
+Доказательство восьмичасовой устойчивости, подготовка Full Disclosure Report,
+price/tpmC, availability date и обязательные disclosure-графики не являются
+гарантиями, которые tooling должен формировать самостоятельно.
+
+Оператор и организация, проводящая тест, отвечают за:
+
+- внешний sustained-load protocol и доказательство §5.5.1.2;
+- сбор инфраструктурных и коммерческих данных;
+- построение и публикацию FDR/графиков §5.6/§8;
+- независимую TPC verification.
+
+Portable-tpcc предоставляет engineering workload и исходные artifacts, но не
+сертификационный процесс и не официальный TPC-C result.
+
 ## 5. Исторические полностью устранённые ошибки
 
 Ниже сохранены первоначальные замечания, которые больше не воспроизводятся на
-commit `a997ab8`.
+commit `19df199`.
+
+Нумерация сохраняет исторические IDs. Пункты 5.15, 5.16 и 5.20 исключены из
+этой секции после повторной проверки: соответствующие исправления оказались
+частичными и описаны как активные замечания 3.4, 3.5 и 3.7.
 
 ### 5.1. Intentional rollback не учитывался в tpmC и RT
 
@@ -301,31 +441,6 @@ affected rows и возвращает retryable abort при конфликте
   ([phase_controller.h](../tpcc/runtime/phase_controller.h),
   [terminal.cpp](../tpcc/dbms/pgsql/terminal.cpp)).
 
-### 5.15. Consolidator объединял лишние или stale worker artifacts
-
-**Устранено:** до слияния counters/histograms consolidator отвергает каталоги
-вне expected worker set и проверяет identity каждого `result.json`:
-
-- `run_id` совпадает с consolidate run;
-- `instance` совпадает с именем каталога;
-- `run_config_sha256` совпадает с hash распределённого `run-config.json`;
-- `assignment.warehouse_ranges` совпадает с assignment из run-config.
-
-`Materialize` больше не перезаписывает существующий `run-config.json`, поэтому
-hash остаётся стабильным между deploy и consolidate
-([consolidate.go](../tpccctl/internal/consolidate/consolidate.go),
-[orchestrator.go](../tpccctl/internal/orchestrator/orchestrator.go)).
-
-### 5.16. Повреждённые counters и histograms обрабатывались fail-open
-
-**Устранено в `e344bf0`/`a997ab8`:** consolidate отклоняет некорректный тип
-counter и повреждённый histogram payload вместо частичного aggregate.
-`histogram.Validate` требует `layout`, `unit`, ожидаемую длину buckets для
-`linear_exp` и равенство `total_count` сумме buckets; `Merge` требует полной
-совместимости layout/unit/параметров/длины buckets
-([consolidate.go](../tpccctl/internal/consolidate/consolidate.go),
-[merge.go](../tpccctl/internal/histogram/merge.go)).
-
 ### 5.17. Unknown YAML fields не отклонялись
 
 **Устранено в `e344bf0`/`a997ab8`:** `profile.Parse` использует
@@ -364,43 +479,6 @@ settings, но `THistogram` layout `linear_exp` использует тольк�
   [profile.go](../tpccctl/internal/profile/profile.go),
   [config.go](../tpccctl/internal/config/config.go)).
 
-### 5.20. Нет TPC-C conformance validation параметров запуска
-
-**Устранено:** soft-проверка effective launch parameters против фиксированных
-требований TPC-C 5.11, зеркалируемых built-in defaults. Engineering-профили по
-прежнему МОГУТ отклоняться; отклонения не делают structural validate
-неуспешным и не меняют `result_class: engineering`.
-
-Проверяются:
-
-- `terminals_per_warehouse == 10` (при `>10` дополнительно фиксируется, что
-  уникальность Stock-Level home `(W_ID, D_ID)` из §2.8.1.1 не выполняется из-за
-  wrap в `HomeDistrictId`);
-- минимальные доли mix ≥ 45/43/4/4/4 %;
-- `runtime.pacing == enabled`;
-- `runtime.think_time_distribution == exponential`;
-- keying/think means равны значениям TPC-C / defaults;
-- `phases.measurement >= 120m`.
-
-Поверхности отчёта:
-
-1. `tpccctl validate` — поля `tpcc_settings_conformant` и
-   `tpcc_settings_deviations` (рядом со structural `Valid`/`Errors`);
-2. `start` — warning в stderr и в `orchestrator.log` control-host run dir
-   (файл продвигается в `results/<run_id>/orchestrator/` при collect);
-3. `aggregate.json` / `summary.txt` — `status.tpcc_settings_conformant` и
-   список `status.tpcc_settings_deviations`.
-
-Сравнение выполняется по resolved settings после merge defaults
-([conformance.go](../tpccctl/internal/config/conformance.go),
-[validate.go](../tpccctl/internal/validate/validate.go),
-[consolidate.go](../tpccctl/internal/consolidate/consolidate.go),
-[orchestrator.go](../tpccctl/internal/orchestrator/orchestrator.go),
-[specification.md](specification.md) §10).
-
-Это не официальный TPC-C verdict и не закрывает пробелы variability inputs
-(3.1), оставшиеся пробелы response-time reporting (3.2) и disclosure (3.4).
-
 ## 6. Итоговая оценка
 
 | Область | Оценка |
@@ -408,23 +486,21 @@ settings, но `THistogram` layout `linear_exp` использует тольк�
 | DB workload core | Основные пять транзакций реализованы; intentional rollback fail-closed по ITEM not-found и подтверждённому rollback |
 | Initial population | Cardinalities и delivery timestamps корректны; synthetic dates приняты; a-string и C constants остаются; post-import coverage для delivered amount/carrier добавлена |
 | Runtime | Think time, Stock-Level и measurement boundaries исправлены для default |
-| Consolidation | Unexpected/stale workers отвергаются; identity/config валидируются до merge; повреждённые histogram/counter payloads отклоняются fail-closed |
+| Consolidation | Unexpected worker names и identity/config mismatch отвергаются; same-run stale attempts и отсутствующие measurement fields остаются |
 | Delivery | Синхронная модель — принятое отклонение; конкурентная обработка исправлена |
-| RTE / ACID / checkpoints | Внешние или вне области по принятому решению |
-| Launch-parameter checks | Soft TPC-C 5.11 settings deviations в validate/start/aggregate (5.20); не официальный verdict |
-| Reporting | Engineering artifacts с min/max/avg и percentiles; не официальный TPC-C FDR |
+| RTE / ACID / checkpoints / disclosure | Внешние или вне области по принятому решению |
+| Launch-parameter checks | Soft TPC-C 5.11 status присутствует, но имеет false-positive/false-negative cases из 3.7 |
+| Reporting | Min/max/avg и percentiles добавлены, но precision и metadata validation требуют исправления |
 | DBMS adapters | Практически реализован только PostgreSQL |
 
-Повторный аудит не обнаружил deadlock или data-corruption регрессий в новых
-ITEM/STOCK locking, Stock-Level binding, think-time sampling, timestamp
-population и carrier checks. Fail-open classification intentional rollback
-устранён (5.13); measurement-boundary учёт §5.4.2 исправлен (5.14);
-слияние лишних/stale worker artifacts устранено (5.15); fail-open counters/
-histograms устранены (5.16); unknown YAML fields отклоняются (5.17);
-post-import amount/carrier checks добавлены (5.18); мёртвые histogram knobs
-`lowest`/`significant_figures` удалены (5.19); soft TPC-C settings
-conformance для параметров запуска добавлена (5.20). Сравнение результатов до
-и после `884230e`/`a997ab8` требует учитывать ожидаемые изменения workload:
-tpmC увеличивается примерно на долю intentional rollback, rollback New-Order
-создаёт полную DB-нагрузку, а default think-time distribution теперь
-экспоненциальное.
+Повторный аудит не обнаружил возврата historical defects 5.1-5.14 и 5.17-5.19
+или deadlock/data-corruption регрессий в ITEM/STOCK locking, Stock-Level
+binding, think-time sampling, timestamp population и carrier checks.
+
+При этом stale-attempt и malformed-measurement fixes оказались частичными
+(3.4-3.5), а новые soft-conformance и response-time statistics добавили
+ошибки 3.6-3.9. Сравнение результатов до и после
+`884230e`/`a997ab8`/`19df199` требует учитывать ожидаемые изменения workload:
+tpmC включает intentional rollback, rollback New-Order создаёт полную
+DB-нагрузку, default think-time distribution экспоненциальное, а response-time
+artifacts теперь содержат extrema и average.
