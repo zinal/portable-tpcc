@@ -248,8 +248,9 @@ void ConsistencyCheck3324(pqxx::nontransaction& txn, int warehouseCount) {
 }
 
 void ConsistencyCheck3325(pqxx::nontransaction& txn, int warehouseCount) {
-    // For every new_order row, the order must exist and have no carrier (NULL or 0).
-    // For every order with no carrier, a new_order row must exist.
+    // TPC-C §3.3.2.5: every NEW-ORDER row pairs with an ORDER that has
+    // O_CARRIER_ID = NULL, and every ORDER with O_CARRIER_ID = NULL has a
+    // matching NEW-ORDER row. Carrier 0 is not a valid undelivered sentinel.
     const int RANGE_SIZE = 50;
     for (int startWh = 1; startWh <= warehouseCount; startWh += RANGE_SIZE) {
         int endWh = std::min(startWh + RANGE_SIZE - 1, warehouseCount);
@@ -260,14 +261,14 @@ void ConsistencyCheck3325(pqxx::nontransaction& txn, int warehouseCount) {
             "  LEFT JOIN {} AS o "
             "    ON no.NO_W_ID = o.O_W_ID AND no.NO_D_ID = o.O_D_ID AND no.NO_O_ID = o.O_ID "
             "  WHERE no.NO_W_ID >= {} AND no.NO_W_ID <= {} "
-            "    AND (o.O_W_ID IS NULL OR (o.O_CARRIER_ID IS NOT NULL AND o.O_CARRIER_ID != 0)) "
+            "    AND (o.O_W_ID IS NULL OR o.O_CARRIER_ID IS NOT NULL) "
             "  UNION ALL "
             "  SELECT o2.O_W_ID, o2.O_D_ID, o2.O_ID "
             "  FROM {} AS o2 "
             "  LEFT JOIN {} AS no2 "
             "    ON o2.O_W_ID = no2.NO_W_ID AND o2.O_D_ID = no2.NO_D_ID AND o2.O_ID = no2.NO_O_ID "
             "  WHERE o2.O_W_ID >= {} AND o2.O_W_ID <= {} "
-            "    AND (o2.O_CARRIER_ID IS NULL OR o2.O_CARRIER_ID = 0) AND no2.NO_W_ID IS NULL"
+            "    AND o2.O_CARRIER_ID IS NULL AND no2.NO_W_ID IS NULL"
             ") sub LIMIT 1",
             TABLE_NEW_ORDER, TABLE_OORDER, startWh, endWh,
             TABLE_OORDER, TABLE_NEW_ORDER, startWh, endWh);
@@ -304,8 +305,8 @@ void ConsistencyCheck3326(pqxx::nontransaction& txn, int warehouseCount) {
 }
 
 void ConsistencyCheck3327(pqxx::nontransaction& txn, int warehouseCount) {
-    // Carrier set (non-null, non-zero) <=> all OL_DELIVERY_D set;
-    // carrier null/0 <=> all OL_DELIVERY_D null; mixed delivery dates always fail.
+    // TPC-C §3.3.2.7: O_CARRIER_ID IS NOT NULL <=> all OL_DELIVERY_D set;
+    // O_CARRIER_ID IS NULL <=> all OL_DELIVERY_D null. Mixed delivery dates fail.
     const int RANGE_SIZE = 10;
     for (int startWh = 1; startWh <= warehouseCount; startWh += RANGE_SIZE) {
         int endWh = std::min(startWh + RANGE_SIZE - 1, warehouseCount);
@@ -320,8 +321,8 @@ void ConsistencyCheck3327(pqxx::nontransaction& txn, int warehouseCount) {
             ") AS l "
             "JOIN {} AS o ON l.OL_W_ID = o.O_W_ID AND l.OL_D_ID = o.O_D_ID AND l.OL_O_ID = o.O_ID "
             "WHERE (l.some_null AND l.some_delivered) "
-            "   OR ((o.O_CARRIER_ID IS NULL OR o.O_CARRIER_ID = 0) AND l.some_delivered) "
-            "   OR (o.O_CARRIER_ID IS NOT NULL AND o.O_CARRIER_ID != 0 AND l.some_null) "
+            "   OR (o.O_CARRIER_ID IS NULL AND l.some_delivered) "
+            "   OR (o.O_CARRIER_ID IS NOT NULL AND l.some_null) "
             "LIMIT 1",
             TABLE_ORDER_LINE, startWh, endWh, TABLE_OORDER);
         CheckNoRows(txn, sql, fmt::format("3.3.2.7 w_id [{},{}]", startWh, endWh));
