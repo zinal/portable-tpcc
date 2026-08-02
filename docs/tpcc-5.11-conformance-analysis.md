@@ -143,7 +143,6 @@ Expected worker list применяется только для поиска о�
 - принадлежность имени каталога expected set;
 - `run_id` и `instance` из `result.json`;
 - `run_config_sha256`;
-- schema version;
 - warehouse assignment артефакта.
 
 Оставшийся после повторного collect каталог или вручную добавленный artifact
@@ -182,30 +181,7 @@ Histogram merge не проверяет:
 artifact должна делать consolidation неуспешной, а не давать частичный
 aggregate.
 
-### 3.5. Семантика worker artifact изменена без schema-version bump
-
-**Критичность: средняя/высокая. Compatibility-регрессия.**
-
-Worker schema version 1 теперь:
-
-- экспортирует `*_user_aborted`;
-- включает intentional rollback в `new_order_tpmc`;
-- записывает UserAborted latency в общий New-Order histogram.
-
-Ссылки:
-
-- [terminal.h:112-123](../tpcc/dbms/pgsql/terminal.h#L112-L123);
-- [artifacts.cpp:170-195](../tpcc/dbms/pgsql/artifacts.cpp#L170-L195);
-- [artifacts.cpp:208-210](../tpcc/dbms/pgsql/artifacts.cpp#L208-L210).
-
-Consolidator не проверяет schema version и трактует отсутствующий
-`new_order_user_aborted` как zero. Смешанный набор старых и новых v1 workers
-даёт частично исправленные tpmC/histograms без diagnostic.
-
-Нужен schema-version bump либо обязательный capability/semantic-version marker
-с отказом от смешивания несовместимых workers.
-
-### 3.6. Нет TPC-C conformance validation параметров запуска
+### 3.5. Нет TPC-C conformance validation параметров запуска
 
 **Критичность: высокая для официального TPC-C; допустимо для engineering
 profiles.**
@@ -229,7 +205,7 @@ profiles.**
 повторяет districts, и уникальность `(W_ID, D_ID)` Stock-Level из §2.8.1.1
 нарушается.
 
-### 3.7. Unknown YAML fields не отклоняются
+### 3.6. Unknown YAML fields не отклоняются
 
 **Критичность: средняя. Ранее не зафиксированный дефект internal validation.**
 
@@ -242,7 +218,7 @@ Profile parser использует обычный `yaml.Unmarshal`, а не dec
 чего бесшумно применяется default `exponential`. Это противоречит требованию
 internal specification отклонять unknown fields.
 
-### 3.8. Не проверяются фактические пределы variability inputs
+### 3.7. Не проверяются фактические пределы variability inputs
 
 **Критичность: высокая для официального TPC-C.**
 
@@ -257,7 +233,7 @@ TPC-C §5.5.1.5 требует проверять на measurement interval:
 Generator использует требуемые вероятности, но worker artifacts не содержат
 business-input counters для проверки фактической выборки.
 
-### 3.9. Response-time reporting остаётся неполным
+### 3.8. Response-time reporting остаётся неполным
 
 **Критичность: высокая для официального TPC-C.**
 
@@ -273,7 +249,7 @@ Raw histogram не хранит сумму значений, поэтому exac
 невозможно. Reported throughput также не truncates до нуля decimal places, как
 требует TPC-C §5.4.4; для engineering metric сохранение дробной части допустимо.
 
-### 3.10. Histogram settings частично игнорируются
+### 3.9. Histogram settings частично игнорируются
 
 **Критичность: средняя. Ранее не зафиксированный internal defect.**
 
@@ -286,7 +262,7 @@ effective settings, но фактический `THistogram` layout их не и
 Два профиля с разными значениями могут создавать одинаковые buckets, но
 aggregate будет утверждать, что применялись разные настройки.
 
-### 3.11. Initial population остаётся частично несовместимым с §4.3
+### 3.10. Initial population остаётся частично несовместимым с §4.3
 
 **Критичность: высокая для официального TPC-C.**
 
@@ -304,7 +280,7 @@ Post-import suite также не проверяет некоторые корр
 `[1..10]` у delivered orders. Generator создаёт их правильно; это defensive
 coverage gap, а не обнаруженная ошибка normal path.
 
-### 3.12. Нет доказательства sustained operation и полного disclosure
+### 3.11. Нет доказательства sustained operation и полного disclosure
 
 **Критичность: высокая для официального TPC-C.**
 
@@ -357,6 +333,22 @@ Atomicity/isolation/durability, power-loss и failure procedures не встро
 Управление transaction log, checkpoint/recovery mechanisms и проверка
 checkpoint interval остаются ответственностью DBMS/operator из-за различий
 между СУБД.
+
+### 4.6. Отсутствие версионирования worker artifacts
+
+Worker artifact schema и совместимость смешанных версий намеренно не
+версионируются как отдельный протокол. Один run предполагает согласованный
+набор бинарных артефактов из одной текущей версии portable-tpcc.
+
+Ответственность разделена следующим образом:
+
+- оператор обязан своевременно вызвать `deploy`, в частности после обновления
+  или смены версии и до запуска workload;
+- `deploy` обязан применить на всех назначенных hosts актуальный набор бинарных
+  артефактов из текущей версии;
+- смешивание worker binaries разных версий в одном run не поддерживается и
+  считается ошибкой эксплуатации, а не форматом, который должен согласовывать
+  consolidator.
 
 ## 5. Исторические полностью устранённые ошибки
 
@@ -461,8 +453,8 @@ affected rows и возвращает retryable abort при конфликте
 Повторный аудит не обнаружил deadlock или data-corruption регрессий в новых
 ITEM/STOCK locking, Stock-Level binding, think-time sampling, timestamp
 population и carrier checks. Но исправления intentional rollback/accounting
-внесли fail-open classification и schema-compatibility риски, перечисленные в
-3.1 и 3.5. Сравнение результатов до и после `884230e` требует учитывать
+оставили fail-open classification и measurement-boundary риски, перечисленные
+в 3.1 и 3.2. Сравнение результатов до и после `884230e` требует учитывать
 ожидаемые изменения workload: tpmC увеличивается примерно на долю intentional
 rollback, rollback New-Order создаёт полную DB-нагрузку, а default think-time
 distribution теперь экспоненциальное.
