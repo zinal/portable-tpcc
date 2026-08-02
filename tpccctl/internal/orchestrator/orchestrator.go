@@ -76,12 +76,17 @@ func (o *Orchestrator) Materialize() (*Context, error) {
 	}
 	runID := o.Opts.RunID
 	if runID == "" {
-		runID = config.GenerateRunID(o.Profile.Metadata.Name)
+		var err error
+		runID, err = o.uniqueRunID(config.GenerateRunID(o.Profile.Metadata.Name))
+		if err != nil {
+			return nil, err
+		}
 	}
 	profileBytes, err := os.ReadFile(o.Opts.ProfilePath)
 	if err != nil {
 		return nil, err
 	}
+	profileSHA := canonical.SHA256Bytes(profileBytes)
 
 	runDir := o.StateStore.RunDir(runID)
 	if err := os.MkdirAll(runDir, 0755); err != nil {
@@ -89,7 +94,10 @@ func (o *Orchestrator) Materialize() (*Context, error) {
 	}
 
 	runConfigPath := filepath.Join(runDir, "run-config.json")
+	profileSHAPath := filepath.Join(runDir, "profile.sha256")
+	profileRedactedPath := filepath.Join(runDir, "profile.redacted.yaml")
 	var rc *config.RunConfig
+	created := false
 	if data, err := os.ReadFile(runConfigPath); err == nil {
 		rc = &config.RunConfig{}
 		if err := json.Unmarshal(data, rc); err != nil {
@@ -97,6 +105,16 @@ func (o *Orchestrator) Materialize() (*Context, error) {
 		}
 		if rc.RunID != "" && rc.RunID != runID {
 			return nil, fmt.Errorf("existing run-config run_id %q does not match %q", rc.RunID, runID)
+		}
+		storedSHA, err := os.ReadFile(profileSHAPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil, fmt.Errorf("existing run %s is missing profile.sha256", runID)
+			}
+			return nil, err
+		}
+		if strings.TrimSpace(string(storedSHA)) != profileSHA {
+			return nil, fmt.Errorf("existing run %s was created from a different profile", runID)
 		}
 		rc.RunID = runID
 	} else if os.IsNotExist(err) {
@@ -112,23 +130,36 @@ func (o *Orchestrator) Materialize() (*Context, error) {
 		if err := state.WriteJSON(runDir, "run-config.json", rc); err != nil {
 			return nil, err
 		}
+		if err := os.WriteFile(profileSHAPath, []byte(profileSHA+"\n"), 0644); err != nil {
+			return nil, err
+		}
+		created = true
 	} else {
 		return nil, err
 	}
 
-	redacted, err := redact.RedactYAML(profileBytes)
-	if err != nil {
-		return nil, err
-	}
-	if err := os.WriteFile(filepath.Join(runDir, "profile.redacted.yaml"), redacted, 0644); err != nil {
-		return nil, err
+	if created || !fileExists(profileRedactedPath) {
+		redacted, err := redact.RedactYAML(profileBytes)
+		if err != nil {
+			return nil, err
+		}
+		if err := os.WriteFile(profileRedactedPath, redacted, 0644); err != nil {
+			return nil, err
+		}
 	}
 
+	_, stateErr := os.Stat(o.StateStore.StatePath(runID))
+	stateExists := stateErr == nil
+	if stateErr != nil && !os.IsNotExist(stateErr) {
+		return nil, stateErr
+	}
 	rs, err := o.StateStore.Load(runID)
 	if err != nil {
 		return nil, err
 	}
-	rs.State = state.StatePlanned
+	if !stateExists || rs.State == "" || rs.State == state.StatePlanned {
+		rs.State = state.StatePlanned
+	}
 	rs.InsecureHostKey = o.Profile.SSH.InsecureIgnore
 	if err := o.StateStore.Save(rs); err != nil {
 		return nil, err
@@ -139,6 +170,40 @@ func (o *Orchestrator) Materialize() (*Context, error) {
 		RunConfig: rc,
 		RunDir:    runDir,
 	}, nil
+}
+
+func (o *Orchestrator) uniqueRunID(first string) (string, error) {
+	stem := strings.TrimSuffix(first, "-01")
+	for i := 1; i < 100; i++ {
+		runID := fmt.Sprintf("%s-%02d", stem, i)
+		exists, err := o.runArtifactsExist(runID)
+		if err != nil {
+			return "", err
+		}
+		if !exists {
+			return runID, nil
+		}
+	}
+	return "", fmt.Errorf("no free run_id suffix for %s", stem)
+}
+
+func (o *Orchestrator) runArtifactsExist(runID string) (bool, error) {
+	for _, path := range []string{
+		o.StateStore.RunDir(runID),
+		filepath.Join(o.Expanded.ResultRoot, runID),
+	} {
+		if _, err := os.Stat(path); err == nil {
+			return true, nil
+		} else if !os.IsNotExist(err) {
+			return false, err
+		}
+	}
+	return false, nil
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 // Plan returns a plan snapshot.
@@ -189,24 +254,28 @@ func (o *Orchestrator) Run() error {
 	defer o.StateStore.ReleaseProfileLock(o.Profile.Metadata.Name, ctx.RunID)
 
 	steps := []struct {
-		name string
-		fn   func() error
+		name    string
+		enabled bool
+		fn      func() error
 	}{
-		{"deploy", func() error { return o.Deploy(ctx) }},
-		{"schema", func() error { return o.schema(ctx) }},
-		{"load", func() error { return o.load(ctx) }},
-		{"check_after_import", func() error { return o.check(ctx, "after-import") }},
-		{"start", func() error { return o.start(ctx) }},
-		{"check_after_run", func() error { return o.check(ctx, "after-run") }},
-		{"collect", func() error { return o.collect(ctx) }},
-		{"consolidate", func() error { return o.consolidate(ctx) }},
+		{"deploy", true, func() error { return o.Deploy(ctx) }},
+		{"schema", true, func() error { return o.schema(ctx) }},
+		{"load", true, func() error { return o.load(ctx) }},
+		{"check_after_import", o.Profile.Checks.AfterImport, func() error { return o.check(ctx, "after-import") }},
+		{"start", true, func() error { return o.start(ctx) }},
+		{"check_after_run", o.Profile.Checks.AfterRun, func() error { return o.check(ctx, "after-run") }},
+		{"collect", true, func() error { return o.collect(ctx) }},
+		{"consolidate", true, func() error { return o.consolidate(ctx) }},
 	}
 	for _, step := range steps {
-		if o.shouldSkip(step.name) {
+		if !step.enabled || o.shouldSkip(step.name) {
 			_ = o.StateStore.RecordSkip(ctx.RunID, step.name)
 			continue
 		}
 		if err := step.fn(); err != nil {
+			if isCheckStep(step.name) && !o.Profile.Checks.FailFast {
+				continue
+			}
 			o.StateStore.Fail(ctx.RunID, err)
 			return fmt.Errorf("%s: %w", step.name, err)
 		}
@@ -221,6 +290,10 @@ func (o *Orchestrator) shouldSkip(name string) bool {
 		}
 	}
 	return false
+}
+
+func isCheckStep(name string) bool {
+	return name == "check_after_import" || name == "check_after_run"
 }
 
 func (o *Orchestrator) schema(ctx *Context) error {
@@ -241,7 +314,11 @@ func (o *Orchestrator) schema(ctx *Context) error {
 		return err
 	}
 	// Schema is synchronous enough: wait up to 30m for completion.
-	return o.waitProcesses(ctx, []*launchedProc{proc}, 30*time.Minute, true)
+	if err := o.waitProcesses(ctx, []*launchedProc{proc}, 30*time.Minute, true); err != nil {
+		_ = o.stopPeers(ctx, sessions)
+		return err
+	}
+	return nil
 }
 
 // RunSchema applies database schema via the remote schema role.
@@ -286,9 +363,6 @@ func (o *Orchestrator) check(ctx *Context, phase string) error {
 		if err := o.StateStore.Transition(ctx.RunID, state.StateCheckingImport); err != nil {
 			return err
 		}
-		if !o.Profile.Checks.AfterImport && !containsSkipOverride(o.Opts.SkipSteps, "check_after_import") {
-			// Profile may disable; still allow explicit check command.
-		}
 	} else {
 		if err := o.StateStore.Transition(ctx.RunID, state.StateCheckingResult); err != nil {
 			return err
@@ -308,21 +382,10 @@ func (o *Orchestrator) check(ctx *Context, phase string) error {
 		return err
 	}
 	if err := o.waitProcesses(ctx, []*launchedProc{proc}, 2*time.Hour, true); err != nil {
-		if o.Profile.Checks.FailFast {
-			return err
-		}
+		_ = o.stopPeers(ctx, sessions)
 		return err
 	}
 	return nil
-}
-
-func containsSkipOverride(steps []string, name string) bool {
-	for _, s := range steps {
-		if s == name {
-			return true
-		}
-	}
-	return false
 }
 
 // RunCheck records check phase and executes the check role.

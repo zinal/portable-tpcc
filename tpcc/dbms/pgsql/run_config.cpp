@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
 #include <vector>
@@ -37,6 +38,41 @@ std::vector<TWarehouseRange> ParseWarehouseRanges(const Json& arr) {
         out.push_back(r);
     }
     return out;
+}
+
+int64_t ReadInt64(const Json& obj, const char* key, int64_t def, const std::string& path) {
+    if (!obj.contains(key)) {
+        return def;
+    }
+    const auto& value = obj[key];
+    if (!value.is_number_integer()) {
+        throw std::runtime_error(path + " must be an integer");
+    }
+    if (value.is_number_unsigned() &&
+        value.get<uint64_t>() > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()))
+    {
+        throw std::runtime_error(path + " is too large");
+    }
+    return value.get<int64_t>();
+}
+
+size_t ReadSizeTNonNegative(const Json& obj, const char* key, size_t def, const std::string& path) {
+    const int64_t value = ReadInt64(obj, key, static_cast<int64_t>(def), path);
+    if (value < 0) {
+        throw std::runtime_error(path + " must not be negative");
+    }
+    return static_cast<size_t>(value);
+}
+
+int ReadIntNonNegative(const Json& obj, const char* key, int def, const std::string& path) {
+    const int64_t value = ReadInt64(obj, key, def, path);
+    if (value < 0) {
+        throw std::runtime_error(path + " must not be negative");
+    }
+    if (value > std::numeric_limits<int>::max()) {
+        throw std::runtime_error(path + " is too large");
+    }
+    return static_cast<int>(value);
 }
 
 std::string ReadFile(const std::string& path) {
@@ -69,6 +105,119 @@ std::string ParentDir(const std::string& path) {
         return "/";
     }
     return path.substr(0, pos);
+}
+
+void ValidateRanges(
+    const std::vector<TWarehouseRange>& ranges,
+    int scaleWarehouses,
+    const std::string& path)
+{
+    if (ranges.empty()) {
+        throw std::runtime_error(path + " must not be empty");
+    }
+    for (const auto& range : ranges) {
+        if (range.Start <= 0 || range.End <= range.Start) {
+            throw std::runtime_error(path + " contains invalid warehouse range");
+        }
+        if (scaleWarehouses > 0 && range.End > scaleWarehouses + 1) {
+            throw std::runtime_error(path + " exceeds scale.warehouses");
+        }
+    }
+}
+
+void ValidateNonNegative(int64_t value, const std::string& path) {
+    if (value < 0) {
+        throw std::runtime_error(path + " must not be negative");
+    }
+}
+
+void ValidateRunConfigDocument(const TRunConfigDocument& doc, const Json& root) {
+    if (doc.RunId.empty()) {
+        throw std::runtime_error("run-config missing run_id");
+    }
+    if (doc.Dbms != "pgsql") {
+        throw std::runtime_error("tpcc-pgsql run-config requires database.dbms=pgsql");
+    }
+    if (doc.ScaleWarehouses <= 0) {
+        throw std::runtime_error("scale.warehouses must be greater than zero");
+    }
+    if (doc.BatchRows < 0) {
+        throw std::runtime_error("data.batch_rows must not be negative");
+    }
+    if (doc.WorkerAssignments.empty()) {
+        throw std::runtime_error("worker_assignment must not be empty");
+    }
+    for (const auto& worker : doc.WorkerAssignments) {
+        ValidateRanges(worker.WarehouseRanges, doc.ScaleWarehouses,
+                       "worker_assignment warehouse_ranges");
+        if (worker.MaxInflight == 0) {
+            throw std::runtime_error("worker_assignment.max_inflight must be greater than zero");
+        }
+    }
+    for (const auto& loader : doc.LoadAssignments) {
+        ValidateRanges(loader.WarehouseRanges, doc.ScaleWarehouses,
+                       "load_assignment warehouse_ranges");
+    }
+
+    ValidateNonNegative(doc.PhasePolicy.StartLeadMs, "phases.start_lead_ms");
+    ValidateNonNegative(doc.PhasePolicy.RampUpMs, "phases.ramp_up_ms");
+    ValidateNonNegative(doc.PhasePolicy.MeasurementMs, "phases.measurement_ms");
+    ValidateNonNegative(doc.PhasePolicy.TransactionDrainMs, "phases.transaction_drain_ms");
+    ValidateNonNegative(doc.PhasePolicy.StopGraceMs, "phases.stop_grace_ms");
+    ValidateNonNegative(doc.PhasePolicy.MaxClockSkewMs, "phases.max_clock_skew_ms");
+    if (root.contains("phases") && root["phases"].is_object()) {
+        const auto& phases = root["phases"];
+        if (phases.contains("async_work_drain_ms")) {
+            ValidateNonNegative(
+                ReadInt64(phases, "async_work_drain_ms", 0, "phases.async_work_drain_ms"),
+                "phases.async_work_drain_ms");
+        }
+    }
+    if (doc.PhasePolicy.MeasurementMs <= 0) {
+        throw std::runtime_error("phases.measurement_ms must be greater than zero");
+    }
+
+    if (doc.Workload.TerminalsPerWarehouse == 0) {
+        throw std::runtime_error("workload.terminals_per_warehouse must be greater than zero");
+    }
+    double totalWeight = 0.0;
+    for (size_t i = 0; i < doc.Workload.PerTx.size(); ++i) {
+        const auto& tx = doc.Workload.PerTx[i];
+        if (tx.Weight < 0.0) {
+            throw std::runtime_error("workload.transaction_mix weights must not be negative");
+        }
+        ValidateNonNegative(tx.KeyingTimeMs, "workload.keying_time_ms");
+        ValidateNonNegative(tx.ThinkTimeMs, "workload.think_time_ms");
+        totalWeight += tx.Weight;
+    }
+    if (totalWeight <= 0.0) {
+        throw std::runtime_error("workload.transaction_mix must have positive total weight");
+    }
+
+    if (doc.Histogram.Configured && doc.Histogram.Highest == 0) {
+        throw std::runtime_error("runtime.histogram.highest must be greater than zero");
+    }
+    ValidateNonNegative(doc.RetryInitialBackoffMs, "runtime.retry.initial_backoff_ms");
+    ValidateNonNegative(doc.RetryMaxBackoffMs, "runtime.retry.max_backoff_ms");
+    if (doc.RetryMaxBackoffMs < doc.RetryInitialBackoffMs) {
+        throw std::runtime_error(
+            "runtime.retry.max_backoff_ms must be greater than or equal to initial_backoff_ms");
+    }
+    if (doc.RetryJitter != "none" && doc.RetryJitter != "full") {
+        throw std::runtime_error("runtime.retry.jitter must be \"none\" or \"full\"");
+    }
+}
+
+std::string LibpqQuoteValue(const std::string& value) {
+    std::string out = "'";
+    for (char c : value) {
+        if (c == '\'' || c == '\\') {
+            out.push_back('\\');
+        }
+        out.push_back(c);
+    }
+    out.push_back('\'');
+    return out;
 }
 
 } // anonymous
@@ -104,11 +253,12 @@ TRunConfigDocument LoadRunConfigDocument(const std::string& path) {
         }
     }
     if (root.contains("scale") && root["scale"].is_object()) {
-        doc.ScaleWarehouses = root["scale"].value("warehouses", 0);
+        doc.ScaleWarehouses = ReadIntNonNegative(
+            root["scale"], "warehouses", 0, "scale.warehouses");
     }
     if (root.contains("data") && root["data"].is_object()) {
         const auto& data = root["data"];
-        doc.BatchRows = data.value("batch_rows", 0);
+        doc.BatchRows = ReadIntNonNegative(data, "batch_rows", 0, "data.batch_rows");
         if (data.contains("seed")) {
             doc.HasSeed = true;
             doc.Seed = data.value("seed", static_cast<int64_t>(0));
@@ -116,16 +266,22 @@ TRunConfigDocument LoadRunConfigDocument(const std::string& path) {
     }
     if (root.contains("phases") && root["phases"].is_object()) {
         const auto& phases = root["phases"];
-        doc.PhasePolicy.StartLeadMs = phases.value("start_lead_ms", 0);
-        doc.PhasePolicy.RampUpMs = phases.value("ramp_up_ms", 0);
-        doc.PhasePolicy.MeasurementMs = phases.value("measurement_ms", 0);
-        doc.PhasePolicy.TransactionDrainMs = phases.value("transaction_drain_ms", 0);
-        doc.PhasePolicy.StopGraceMs = phases.value("stop_grace_ms", 0);
-        doc.PhasePolicy.MaxClockSkewMs = phases.value("max_clock_skew_ms", 0);
+        doc.PhasePolicy.StartLeadMs = ReadInt64(phases, "start_lead_ms", 0, "phases.start_lead_ms");
+        doc.PhasePolicy.RampUpMs = ReadInt64(phases, "ramp_up_ms", 0, "phases.ramp_up_ms");
+        doc.PhasePolicy.MeasurementMs = ReadInt64(phases, "measurement_ms", 0, "phases.measurement_ms");
+        doc.PhasePolicy.TransactionDrainMs = ReadInt64(
+            phases, "transaction_drain_ms", 0, "phases.transaction_drain_ms");
+        doc.PhasePolicy.StopGraceMs = ReadInt64(phases, "stop_grace_ms", 0, "phases.stop_grace_ms");
+        doc.PhasePolicy.MaxClockSkewMs = ReadInt64(
+            phases, "max_clock_skew_ms", 0, "phases.max_clock_skew_ms");
     }
     if (root.contains("runtime") && root["runtime"].is_object()) {
         const auto& rt = root["runtime"];
-        doc.PacingEnabled = rt.value("pacing", "enabled") == std::string("enabled");
+        const auto pacing = rt.value("pacing", std::string("enabled"));
+        if (pacing != "enabled" && pacing != "disabled") {
+            throw std::runtime_error("runtime.pacing must be \"enabled\" or \"disabled\"");
+        }
+        doc.PacingEnabled = pacing == "enabled";
         if (rt.contains("think_time_distribution")) {
             const auto dist = rt.value("think_time_distribution", std::string("exponential"));
             if (!ParseThinkTimeDistribution(dist, doc.ThinkTimeDistribution)) {
@@ -135,14 +291,26 @@ TRunConfigDocument LoadRunConfigDocument(const std::string& path) {
             }
         }
         if (rt.contains("retry") && rt["retry"].is_object()) {
-            doc.RetryMaxAttempts = rt["retry"].value("max_attempts", 0);
-            doc.RetryAmbiguousCommit = rt["retry"].value("retry_ambiguous_commit", false);
+            const auto& retry = rt["retry"];
+            doc.RetryMaxAttempts = ReadSizeTNonNegative(
+                retry, "max_attempts", 0, "runtime.retry.max_attempts");
+            doc.RetryInitialBackoffMs = ReadInt64(
+                retry, "initial_backoff_ms", 10, "runtime.retry.initial_backoff_ms");
+            doc.RetryMaxBackoffMs = ReadInt64(
+                retry, "max_backoff_ms", 500, "runtime.retry.max_backoff_ms");
+            doc.RetryJitter = retry.value("jitter", std::string("full"));
+            doc.RetryAmbiguousCommit = retry.value("retry_ambiguous_commit", false);
         }
         if (rt.contains("histogram") && rt["histogram"].is_object()) {
             const auto& h = rt["histogram"];
             doc.Histogram.Configured = true;
             doc.Histogram.Unit = h.value("unit", "ms");
-            doc.Histogram.Highest = h.value("highest", static_cast<uint64_t>(32768));
+            const int64_t highest = ReadInt64(
+                h, "highest", static_cast<int64_t>(32768), "runtime.histogram.highest");
+            if (highest < 0) {
+                throw std::runtime_error("runtime.histogram.highest must not be negative");
+            }
+            doc.Histogram.Highest = static_cast<uint64_t>(highest);
             if (doc.Histogram.Unit != "ms" && doc.Histogram.Unit != "us") {
                 throw std::runtime_error("runtime.histogram.unit must be \"ms\" or \"us\"");
             }
@@ -158,7 +326,8 @@ TRunConfigDocument LoadRunConfigDocument(const std::string& path) {
         const auto& wl = root["workload"];
         doc.Workload = MakeDefaultWorkloadConfig();
         if (wl.contains("terminals_per_warehouse")) {
-            doc.Workload.TerminalsPerWarehouse = wl.value("terminals_per_warehouse", 0);
+            doc.Workload.TerminalsPerWarehouse = ReadSizeTNonNegative(
+                wl, "terminals_per_warehouse", 0, "workload.terminals_per_warehouse");
         }
         if (wl.contains("transaction_mix") && wl["transaction_mix"].is_object()) {
             const auto& mix = wl["transaction_mix"];
@@ -218,18 +387,14 @@ TRunConfigDocument LoadRunConfigDocument(const std::string& path) {
             TWorkerAssignment a;
             a.Instance = item.value("instance", "");
             a.Host = item.value("host", "");
-            a.Threads = item.value("threads", 0);
-            a.MaxInflight = item.value("max_inflight", 0);
+            a.Threads = ReadSizeTNonNegative(item, "threads", 0, "worker_assignment.threads");
+            a.MaxInflight = ReadSizeTNonNegative(
+                item, "max_inflight", 0, "worker_assignment.max_inflight");
             a.WarehouseRanges = ParseWarehouseRanges(item["warehouse_ranges"]);
             doc.WorkerAssignments.push_back(std::move(a));
         }
     }
-    if (doc.RunId.empty()) {
-        throw std::runtime_error("run-config missing run_id");
-    }
-    if (doc.Dbms != "pgsql") {
-        throw std::runtime_error("tpcc-pgsql run-config requires database.dbms=pgsql");
-    }
+    ValidateRunConfigDocument(doc, root);
     return doc;
 }
 
@@ -272,7 +437,11 @@ std::string BuildPgConnectionString(const TRunConfigDocument& doc) {
         user = u;
     }
 
-    return "host=" + host + " port=" + port + " dbname=" + doc.Database + " user=" + user + " password=" + password;
+    return "host=" + LibpqQuoteValue(host) +
+        " port=" + LibpqQuoteValue(port) +
+        " dbname=" + LibpqQuoteValue(doc.Database) +
+        " user=" + LibpqQuoteValue(user) +
+        " password=" + LibpqQuoteValue(password);
 }
 
 TLoaderAssignment FindLoaderAssignment(const TRunConfigDocument& doc, const std::string& instance) {

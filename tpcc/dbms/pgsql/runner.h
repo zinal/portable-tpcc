@@ -57,6 +57,9 @@ struct TRunConfig {
 
     // Total attempts per business transaction (including the first). 0 → default 4.
     size_t RetryMaxAttempts = 0;
+    int64_t RetryInitialBackoffMs = 10;
+    int64_t RetryMaxBackoffMs = 500;
+    std::string RetryJitter = "full";
     // When false (default), AmbiguousCommit MUST NOT be blind-retried.
     bool RetryAmbiguousCommit = false;
 

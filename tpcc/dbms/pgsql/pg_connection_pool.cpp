@@ -1,4 +1,5 @@
 #include "pg_connection_pool.h"
+#include <domain_util.h>
 #include <log.h>
 
 #include <fmt/format.h>
@@ -10,18 +11,14 @@ PgConnectionPool::PgConnectionPool(const std::string& connectionString,
                                    size_t ioThreads,
                                    const std::string& path)
     : connectionString_(connectionString)
+    , path_(path)
     , poolSize_(poolSize)
     , executor_(std::make_unique<TThreadPool>(ioThreads))
 {
     LOG_I("Creating connection pool: {} connections, {} IO threads", poolSize, ioThreads);
 
     for (size_t i = 0; i < poolSize; ++i) {
-        auto conn = std::make_unique<pqxx::connection>(connectionString_);
-        if (!path.empty()) {
-            pqxx::nontransaction ntx(*conn);
-            ntx.exec(fmt::format("SET search_path TO {}", conn->quote_name(path)));
-        }
-        connections_.push(std::move(conn));
+        connections_.push(CreateConnection());
     }
 
     LOG_I("Connection pool ready");
@@ -42,6 +39,15 @@ PgConnectionPool::~PgConnectionPool() {
     }
 }
 
+std::unique_ptr<pqxx::connection> PgConnectionPool::CreateConnection() const {
+    auto conn = std::make_unique<pqxx::connection>(connectionString_);
+    if (!path_.empty()) {
+        pqxx::nontransaction ntx(*conn);
+        ntx.exec(fmt::format("SET search_path TO {}", conn->quote_name(path_)));
+    }
+    return conn;
+}
+
 PgSession PgConnectionPool::AcquireSession() {
     std::unique_lock lock(mutex_);
     cv_.wait(lock, [this] { return !connections_.empty() || shutdown_; });
@@ -57,13 +63,42 @@ PgSession PgConnectionPool::AcquireSession() {
 }
 
 void PgConnectionPool::ReleaseSession(PgSession session) {
-    auto conn = session.ReleaseConnection();
+    bool reusable = false;
+    auto conn = session.ReleaseConnection(&reusable);
     if (!conn) return;
+    pqxx::connection* released = conn.get();
 
     {
         std::lock_guard lock(mutex_);
-        std::erase(checkedOut_, conn.get());
-        connections_.push(std::move(conn));
+        std::erase(checkedOut_, released);
+        if (shutdown_) {
+            return;
+        }
+    }
+
+    std::unique_ptr<pqxx::connection> replacement;
+    if (!reusable) {
+        LOG_W("Dropping non-reusable PostgreSQL session and opening a replacement");
+        try {
+            replacement = CreateConnection();
+        } catch (const std::exception& ex) {
+            LOG_E("Failed to recreate PostgreSQL connection: {}", ex.what());
+            RequestStopWithError();
+            cv_.notify_all();
+            return;
+        }
+    }
+
+    {
+        std::lock_guard lock(mutex_);
+        if (shutdown_) {
+            return;
+        }
+        if (reusable) {
+            connections_.push(std::move(conn));
+        } else {
+            connections_.push(std::move(replacement));
+        }
     }
     cv_.notify_one();
 }

@@ -70,3 +70,19 @@ func TestTPCSettingsDeviations_emptyPacingIsEnabled(t *testing.T) {
 		t.Fatalf("empty pacing should resolve to enabled, got %#v", devs)
 	}
 }
+
+func TestTPCSettingsDeviations_zeroMeasurementIsNonConformant(t *testing.T) {
+	rc := conformingRunConfig()
+	rc.Phases.MeasurementMs = 0
+	devs := config.TPCSettingsDeviations(rc)
+	found := false
+	for _, d := range devs {
+		if strings.Contains(d, "phases.measurement=0ms") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected zero measurement deviation, got %#v", devs)
+	}
+}

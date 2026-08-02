@@ -3,27 +3,16 @@ package orchestrator_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"portable-tpcc/tpccctl/internal/orchestrator"
+	"portable-tpcc/tpccctl/internal/state"
 )
 
 func TestPlan_snapshot(t *testing.T) {
 	dir := t.TempDir()
-	profileSrc := filepath.Join("..", "..", "testdata", "profile.valid.yaml")
-	profilePath := filepath.Join(dir, "profile.yaml")
-	data, err := os.ReadFile(profileSrc)
-	if err != nil {
-		t.Fatal(err)
-	}
-	content := string(data)
-	content = replaceAll(content, "./dist", filepath.Join(dir, "dist"))
-	content = replaceAll(content, "./remote", filepath.Join(dir, "remote"))
-	content = replaceAll(content, "./results", filepath.Join(dir, "results"))
-	content = replaceAll(content, "./state", filepath.Join(dir, "state"))
-	if err := os.WriteFile(profilePath, []byte(content), 0644); err != nil {
-		t.Fatal(err)
-	}
+	profilePath := writeTestProfile(t, dir, "")
 	if err := os.MkdirAll(filepath.Join(dir, "dist"), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -52,6 +41,108 @@ func TestPlan_snapshot(t *testing.T) {
 	if plan.WorkerAssignment[0].Threads != 2 {
 		t.Fatalf("threads %d, want 2", plan.WorkerAssignment[0].Threads)
 	}
+}
+
+func TestMaterializePreservesActiveRunState(t *testing.T) {
+	dir := t.TempDir()
+	profilePath := writeTestProfile(t, dir, "")
+	o, err := orchestrator.New(orchestrator.Options{ProfilePath: profilePath, RunID: "run-active"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, err := o.Materialize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rs, err := o.StateStore.Load(ctx.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rs.State = state.StateMeasuring
+	if err := o.StateStore.Save(rs); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := o.Materialize(); err != nil {
+		t.Fatal(err)
+	}
+	got, err := o.StateStore.Load(ctx.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != state.StateMeasuring {
+		t.Fatalf("state=%q, want %q", got.State, state.StateMeasuring)
+	}
+}
+
+func TestMaterializeAutoRunIDSkipsExistingRunDir(t *testing.T) {
+	dir := t.TempDir()
+	profilePath := writeTestProfile(t, dir, "")
+	o, err := orchestrator.New(orchestrator.Options{ProfilePath: profilePath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := o.Materialize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := o.Materialize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.RunID == second.RunID {
+		t.Fatalf("auto run IDs should be unique, both were %q", first.RunID)
+	}
+	if !strings.HasSuffix(first.RunID, "-01") || !strings.HasSuffix(second.RunID, "-02") {
+		t.Fatalf("unexpected run IDs: %q, %q", first.RunID, second.RunID)
+	}
+}
+
+func TestMaterializeRejectsRunIDReuseWithDifferentProfile(t *testing.T) {
+	dir := t.TempDir()
+	profilePath := writeTestProfile(t, dir, "")
+	o, err := orchestrator.New(orchestrator.Options{ProfilePath: profilePath, RunID: "run-reuse"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := o.Materialize(); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(profilePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed := strings.Replace(string(data), "endpoint: localhost:5432", "endpoint: localhost:15432", 1)
+	if err := os.WriteFile(profilePath, []byte(changed), 0644); err != nil {
+		t.Fatal(err)
+	}
+	o, err = orchestrator.New(orchestrator.Options{ProfilePath: profilePath, RunID: "run-reuse"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := o.Materialize(); err == nil || !strings.Contains(err.Error(), "different profile") {
+		t.Fatalf("expected profile mismatch error, got %v", err)
+	}
+}
+
+func writeTestProfile(t *testing.T, dir, extra string) string {
+	t.Helper()
+	profileSrc := filepath.Join("..", "..", "testdata", "profile.valid.yaml")
+	profilePath := filepath.Join(dir, "profile.yaml")
+	data, err := os.ReadFile(profileSrc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(data)
+	content = replaceAll(content, "./dist", filepath.Join(dir, "dist"))
+	content = replaceAll(content, "./remote", filepath.Join(dir, "remote"))
+	content = replaceAll(content, "./results", filepath.Join(dir, "results"))
+	content = replaceAll(content, "./state", filepath.Join(dir, "state"))
+	content += extra
+	if err := os.WriteFile(profilePath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	return profilePath
 }
 
 func replaceAll(s, old, new string) string {

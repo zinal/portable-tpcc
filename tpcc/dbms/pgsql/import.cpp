@@ -98,9 +98,9 @@ void ImportSync(const TImportConfig& config) {
     threadCount = std::min(threadCount, assignedWarehouses);
 
     LOG_I("Starting idempotent TPC-C import for {} assigned warehouses (scale {}) "
-          "using {} threads (seed={}, run_id={})",
+          "using {} threads (seed={}, run_id={}, batch_rows={})",
           assignedWarehouses, scaleWarehouses, threadCount, config.Seed,
-          config.RunId.empty() ? "-" : config.RunId);
+          config.RunId.empty() ? "-" : config.RunId, config.BatchRows);
 
     auto startTime = Clock::now();
 
@@ -117,7 +117,8 @@ void ImportSync(const TImportConfig& config) {
         pqxx::connection conn(config.ConnectionString);
         SetSearchPath(conn, config.Path);
         DisableSynchronousCommit(conn);
-        ThrowIfFailed(PutItemsIdempotent(conn, seed, runId), "item PutBatch");
+        ThrowIfFailed(
+            PutItemsIdempotent(conn, seed, runId, config.BatchRows), "item PutBatch");
         state.DataSizeLoaded.fetch_add(EstimateSharedDataSize(), std::memory_order_relaxed);
     }
 
@@ -146,7 +147,8 @@ void ImportSync(const TImportConfig& config) {
                         return;
                     }
                     const int wh = warehouseIds[i];
-                    const auto batchResult = PutWarehouseIdempotent(conn, seed, wh, runId);
+                    const auto batchResult = PutWarehouseIdempotent(
+                        conn, seed, wh, runId, config.BatchRows);
                     if (batchResult.Outcome != EPutBatchOutcome::Completed) {
                         throw std::runtime_error(fmt::format(
                             "warehouse {} PutBatch failed: {}", wh, batchResult.Message));

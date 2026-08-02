@@ -56,14 +56,16 @@ public:
         std::function<void(pqxx::stream_to&)> writer);
 
     bool HasConnection() const { return conn_ != nullptr; }
+    bool IsReusable() const;
     pqxx::connection& GetRawConnection() { return *conn_; }
 
-    std::unique_ptr<pqxx::connection> ReleaseConnection();
+    std::unique_ptr<pqxx::connection> ReleaseConnection(bool* reusable = nullptr);
 
     void SetShutdownFlag(std::shared_ptr<std::atomic<bool>> flag) { shutdownFlag_ = std::move(flag); }
 
 private:
     void CheckShutdown() const;
+    void MarkException(const std::exception& ex);
 
     template<typename... Args>
     TFuture<QueryResult> ExecuteQueryImpl(std::string_view sql, Args&&... args);
@@ -75,6 +77,7 @@ private:
     std::unique_ptr<SnapshotTxn> txn_;
     IExecutor* executor_ = nullptr;
     std::shared_ptr<std::atomic<bool>> shutdownFlag_;
+    bool broken_ = false;
 };
 
 template<typename... Args>
@@ -97,6 +100,9 @@ TFuture<QueryResult> PgSession::ExecuteQueryImpl(std::string_view sql, Args&&...
                 },
                 boundArgs);
             p.SetValue(QueryResult(std::move(result)));
+        } catch (const std::exception& ex) {
+            MarkException(ex);
+            p.SetException(std::current_exception());
         } catch (...) {
             p.SetException(std::current_exception());
         }
@@ -125,6 +131,9 @@ TFuture<uint64_t> PgSession::ExecuteModifyImpl(std::string_view sql, Args&&... a
                 },
                 boundArgs);
             p.SetValue(result.affected_rows());
+        } catch (const std::exception& ex) {
+            MarkException(ex);
+            p.SetException(std::current_exception());
         } catch (...) {
             p.SetException(std::current_exception());
         }

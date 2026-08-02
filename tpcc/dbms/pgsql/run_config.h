@@ -49,6 +49,9 @@ struct TRunConfigDocument {
     bool PacingEnabled = true;
     EThinkTimeDistribution ThinkTimeDistribution = EThinkTimeDistribution::Exponential;
     size_t RetryMaxAttempts = 0;
+    int64_t RetryInitialBackoffMs = 10;
+    int64_t RetryMaxBackoffMs = 500;
+    std::string RetryJitter = "full";
     bool RetryAmbiguousCommit = false;
 
     TWorkloadConfig Workload = MakeDefaultWorkloadConfig();

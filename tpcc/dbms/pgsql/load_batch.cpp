@@ -7,6 +7,7 @@
 
 #include <fmt/format.h>
 
+#include <algorithm>
 #include <ctime>
 #include <iomanip>
 #include <optional>
@@ -79,67 +80,75 @@ void CopyDistricts(pqxx::work& txn, uint64_t seed, int wh) {
     stream.complete();
 }
 
-void CopyStock(pqxx::work& txn, uint64_t seed, int wh) {
-    auto stream = MakeCopyStream(txn, "stock",
-        {"s_w_id", "s_i_id", "s_quantity", "s_ytd", "s_order_cnt", "s_remote_cnt",
-         "s_data", "s_dist_01", "s_dist_02", "s_dist_03", "s_dist_04", "s_dist_05",
-         "s_dist_06", "s_dist_07", "s_dist_08", "s_dist_09", "s_dist_10"});
-    for (int itemId = 1; itemId <= ITEM_COUNT; ++itemId) {
-        auto row = NGenerator::GenerateStock(seed, wh, itemId);
-        stream.write_values(
-            row.WarehouseId,
-            row.ItemId,
-            row.Quantity,
-            row.Ytd.ToString(),
-            row.OrderCount,
-            row.RemoteCount,
-            row.Data,
-            row.Dist[0],
-            row.Dist[1],
-            row.Dist[2],
-            row.Dist[3],
-            row.Dist[4],
-            row.Dist[5],
-            row.Dist[6],
-            row.Dist[7],
-            row.Dist[8],
-            row.Dist[9]);
+void CopyStock(pqxx::work& txn, uint64_t seed, int wh, int batchRows) {
+    const int chunk = batchRows > 0 ? batchRows : ITEM_COUNT;
+    for (int start = 1; start <= ITEM_COUNT; start += chunk) {
+        const int end = std::min(start + chunk - 1, ITEM_COUNT);
+        auto stream = MakeCopyStream(txn, "stock",
+            {"s_w_id", "s_i_id", "s_quantity", "s_ytd", "s_order_cnt", "s_remote_cnt",
+             "s_data", "s_dist_01", "s_dist_02", "s_dist_03", "s_dist_04", "s_dist_05",
+             "s_dist_06", "s_dist_07", "s_dist_08", "s_dist_09", "s_dist_10"});
+        for (int itemId = start; itemId <= end; ++itemId) {
+            auto row = NGenerator::GenerateStock(seed, wh, itemId);
+            stream.write_values(
+                row.WarehouseId,
+                row.ItemId,
+                row.Quantity,
+                row.Ytd.ToString(),
+                row.OrderCount,
+                row.RemoteCount,
+                row.Data,
+                row.Dist[0],
+                row.Dist[1],
+                row.Dist[2],
+                row.Dist[3],
+                row.Dist[4],
+                row.Dist[5],
+                row.Dist[6],
+                row.Dist[7],
+                row.Dist[8],
+                row.Dist[9]);
+        }
+        stream.complete();
     }
-    stream.complete();
 }
 
-void CopyCustomers(pqxx::work& txn, uint64_t seed, int wh, int district) {
-    auto stream = MakeCopyStream(txn, "customer",
-        {"c_w_id", "c_d_id", "c_id", "c_discount", "c_credit", "c_last", "c_first",
-         "c_credit_lim", "c_balance", "c_ytd_payment", "c_payment_cnt", "c_delivery_cnt",
-         "c_street_1", "c_street_2", "c_city", "c_state", "c_zip", "c_phone",
-         "c_since", "c_middle", "c_data"});
-    for (int cid = C_FIRST_CUSTOMER_ID; cid <= CUSTOMERS_PER_DISTRICT; ++cid) {
-        auto row = NGenerator::GenerateCustomer(seed, wh, district, cid);
-        stream.write_values(
-            row.WarehouseId,
-            row.DistrictId,
-            row.Id,
-            row.Discount.ToString(),
-            row.Credit,
-            row.Last,
-            row.First,
-            row.CreditLimit.ToString(),
-            row.Balance.ToString(),
-            row.YtdPayment.ToString(),
-            row.PaymentCount,
-            row.DeliveryCount,
-            row.Street1,
-            row.Street2,
-            row.City,
-            row.State,
-            row.Zip,
-            row.Phone,
-            FormatUnixTimestamp(row.SinceUnix),
-            row.Middle,
-            row.Data);
+void CopyCustomers(pqxx::work& txn, uint64_t seed, int wh, int district, int batchRows) {
+    const int chunk = batchRows > 0 ? batchRows : CUSTOMERS_PER_DISTRICT;
+    for (int start = C_FIRST_CUSTOMER_ID; start <= CUSTOMERS_PER_DISTRICT; start += chunk) {
+        const int end = std::min(start + chunk - 1, CUSTOMERS_PER_DISTRICT);
+        auto stream = MakeCopyStream(txn, "customer",
+            {"c_w_id", "c_d_id", "c_id", "c_discount", "c_credit", "c_last", "c_first",
+             "c_credit_lim", "c_balance", "c_ytd_payment", "c_payment_cnt", "c_delivery_cnt",
+             "c_street_1", "c_street_2", "c_city", "c_state", "c_zip", "c_phone",
+             "c_since", "c_middle", "c_data"});
+        for (int cid = start; cid <= end; ++cid) {
+            auto row = NGenerator::GenerateCustomer(seed, wh, district, cid);
+            stream.write_values(
+                row.WarehouseId,
+                row.DistrictId,
+                row.Id,
+                row.Discount.ToString(),
+                row.Credit,
+                row.Last,
+                row.First,
+                row.CreditLimit.ToString(),
+                row.Balance.ToString(),
+                row.YtdPayment.ToString(),
+                row.PaymentCount,
+                row.DeliveryCount,
+                row.Street1,
+                row.Street2,
+                row.City,
+                row.State,
+                row.Zip,
+                row.Phone,
+                FormatUnixTimestamp(row.SinceUnix),
+                row.Middle,
+                row.Data);
+        }
+        stream.complete();
     }
-    stream.complete();
 }
 
 void CopyHistory(pqxx::work& txn, uint64_t seed, int wh, int district) {
@@ -232,11 +241,12 @@ void CopyOrders(pqxx::work& txn, uint64_t seed, int wh, int district) {
 TPutBatchResult PutItemsIdempotent(
     pqxx::connection& conn,
     uint64_t seed,
-    const std::string& runId)
+    const std::string& runId,
+    int batchRows)
 {
     try {
-        LOG_I("Idempotent load of {} items (seed={}, run_id={})", ITEM_COUNT, seed,
-              runId.empty() ? "-" : runId);
+        LOG_I("Idempotent load of {} items (seed={}, run_id={}, batch_rows={})", ITEM_COUNT, seed,
+              runId.empty() ? "-" : runId, batchRows);
 
         pqxx::work txn(conn);
         txn.exec(
@@ -249,18 +259,22 @@ TPutBatchResult PutItemsIdempotent(
             ") ON COMMIT DROP");
 
         {
-            auto stream = MakeCopyStream(txn, "item_stage",
-                {"i_id", "i_name", "i_price", "i_data", "i_im_id"});
-            for (int i = 1; i <= ITEM_COUNT; ++i) {
-                auto row = NGenerator::GenerateItem(seed, i);
-                stream.write_values(
-                    row.Id,
-                    row.Name,
-                    row.Price.ToString(),
-                    row.Data,
-                    row.ImageId);
+            const int chunk = batchRows > 0 ? batchRows : ITEM_COUNT;
+            for (int start = 1; start <= ITEM_COUNT; start += chunk) {
+                const int end = std::min(start + chunk - 1, ITEM_COUNT);
+                auto stream = MakeCopyStream(txn, "item_stage",
+                    {"i_id", "i_name", "i_price", "i_data", "i_im_id"});
+                for (int i = start; i <= end; ++i) {
+                    auto row = NGenerator::GenerateItem(seed, i);
+                    stream.write_values(
+                        row.Id,
+                        row.Name,
+                        row.Price.ToString(),
+                        row.Data,
+                        row.ImageId);
+                }
+                stream.complete();
             }
-            stream.complete();
         }
 
         txn.exec(
@@ -285,11 +299,12 @@ TPutBatchResult PutWarehouseIdempotent(
     pqxx::connection& conn,
     uint64_t seed,
     int warehouseId,
-    [[maybe_unused]] const std::string& runId)
+    [[maybe_unused]] const std::string& runId,
+    int batchRows)
 {
     try {
-        LOG_D("Idempotent replace warehouse {} (seed={}, run_id={})", warehouseId, seed,
-              runId.empty() ? "-" : runId);
+        LOG_D("Idempotent replace warehouse {} (seed={}, run_id={}, batch_rows={})",
+              warehouseId, seed, runId.empty() ? "-" : runId, batchRows);
 
         pqxx::work txn(conn);
 
@@ -298,9 +313,9 @@ TPutBatchResult PutWarehouseIdempotent(
 
         CopyWarehouse(txn, seed, warehouseId);
         CopyDistricts(txn, seed, warehouseId);
-        CopyStock(txn, seed, warehouseId);
+        CopyStock(txn, seed, warehouseId, batchRows);
         for (int d = DISTRICT_LOW_ID; d <= DISTRICT_HIGH_ID; ++d) {
-            CopyCustomers(txn, seed, warehouseId, d);
+            CopyCustomers(txn, seed, warehouseId, d, batchRows);
             CopyHistory(txn, seed, warehouseId, d);
             CopyOrders(txn, seed, warehouseId, d);
         }

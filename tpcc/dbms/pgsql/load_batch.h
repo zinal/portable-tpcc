@@ -17,15 +17,18 @@ namespace NTpcc {
 TPutBatchResult PutItemsIdempotent(
     pqxx::connection& conn,
     uint64_t seed,
-    const std::string& runId = {});
+    const std::string& runId = {},
+    int batchRows = 0);
 
 // Replaces all data owned by a single warehouse id (warehouse, district, stock,
 // customer, history, oorder, new_order, order_line).
+// When batchRows > 0, large COPY streams are flushed every batchRows rows.
 TPutBatchResult PutWarehouseIdempotent(
     pqxx::connection& conn,
     uint64_t seed,
     int warehouseId,
-    const std::string& runId = {});
+    const std::string& runId = {},
+    int batchRows = 0);
 
 // Adapter façade over the helpers above. For table "item", Begin/End are ignored
 // (full item population). For table "warehouse", [Begin, End) are warehouse ids.

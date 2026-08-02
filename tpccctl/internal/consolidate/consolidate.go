@@ -45,6 +45,7 @@ type Options struct {
 	SkippedSteps            []string
 	MaxClockSkewMs          int64
 	ExpectedRunConfigSHA256 string
+	AllowIncomplete         bool
 }
 
 // Consolidator merges worker artifacts deterministically.
@@ -88,6 +89,7 @@ func (c *Consolidator) ConsolidateWithOptions(runID string, rc *config.RunConfig
 		maxSkew = rc.Phases.MaxClockSkewMs
 	}
 	workerCalibrations := map[string]workerClockCalibration{}
+	var incompleteWorkers []string
 
 	for _, e := range entries {
 		if !e.IsDir() {
@@ -102,6 +104,7 @@ func (c *Consolidator) ConsolidateWithOptions(runID string, rc *config.RunConfig
 		data, err := os.ReadFile(resultPath)
 		if err != nil {
 			workersComplete = false
+			incompleteWorkers = append(incompleteWorkers, fmt.Sprintf("%s: missing result.json", name))
 			continue
 		}
 		var partial map[string]interface{}
@@ -111,8 +114,12 @@ func (c *Consolidator) ConsolidateWithOptions(runID string, rc *config.RunConfig
 		if err := validateWorkerResultIdentity(partial, runID, name, expectedSHA, expectedAssign[name]); err != nil {
 			return nil, fmt.Errorf("worker %s: %w", name, err)
 		}
+		if err := validateWorkerNonceConsistency(rawWorkers, name, partial); err != nil {
+			return nil, fmt.Errorf("worker %s: %w", name, err)
+		}
 		if exit, ok := partial["exit_status"].(float64); ok && int(exit) != 0 {
 			workersComplete = false
+			incompleteWorkers = append(incompleteWorkers, fmt.Sprintf("%s: exit_status=%d", name, int(exit)))
 		}
 		if err := mergeWorkerCounters(counters, partial["counters"], name); err != nil {
 			return nil, err
@@ -129,6 +136,7 @@ func (c *Consolidator) ConsolidateWithOptions(runID string, rc *config.RunConfig
 	for _, name := range expected {
 		if !present[name] {
 			workersComplete = false
+			incompleteWorkers = append(incompleteWorkers, fmt.Sprintf("%s: missing worker artifact", name))
 		}
 	}
 	clockSkewOK := evaluateClockSkew(workerCalibrations, maxSkew, expected)
@@ -193,13 +201,8 @@ func (c *Consolidator) ConsolidateWithOptions(runID string, rc *config.RunConfig
 	if assignmentErr != nil && len(entries) == 0 {
 		return nil, assignmentErr
 	}
-	if len(expected) > 0 && len(present) == 0 {
-		return nil, fmt.Errorf("no worker artifacts under %s", rawWorkers)
-	}
-	for _, name := range expected {
-		if !present[name] {
-			return nil, fmt.Errorf("missing worker artifact for %s", name)
-		}
+	if !workersComplete && !opts.AllowIncomplete {
+		return nil, fmt.Errorf("incomplete worker artifacts: %s", strings.Join(incompleteWorkers, "; "))
 	}
 	return agg, nil
 }
@@ -283,6 +286,36 @@ func resolveExpectedRunConfigSHA256(resultRoot, runID string, opts Options) (str
 		return "", fmt.Errorf("resolve run_config_sha256 from %s: %w", path, err)
 	}
 	return sha, nil
+}
+
+func validateWorkerNonceConsistency(rawWorkers, name string, result map[string]interface{}) error {
+	resultNonce, _ := result["instance_nonce"].(string)
+	if resultNonce == "" {
+		return fmt.Errorf("result.json missing instance_nonce")
+	}
+	for _, artifact := range []string{"ready.json", "process.json", "artifact-manifest.json"} {
+		path := filepath.Join(rawWorkers, name, artifact)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				// ready/process/manifest may be absent for incomplete workers handled elsewhere.
+				continue
+			}
+			return err
+		}
+		var meta map[string]interface{}
+		if err := json.Unmarshal(data, &meta); err != nil {
+			return fmt.Errorf("%s: invalid JSON: %w", artifact, err)
+		}
+		nonce, _ := meta["instance_nonce"].(string)
+		if nonce == "" {
+			return fmt.Errorf("%s missing instance_nonce", artifact)
+		}
+		if nonce != resultNonce {
+			return fmt.Errorf("%s instance_nonce %q does not match result.json %q", artifact, nonce, resultNonce)
+		}
+	}
+	return nil
 }
 
 func validateWorkerResultIdentity(

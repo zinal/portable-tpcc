@@ -141,10 +141,23 @@ func (s *Store) AcquireProfileLock(profileID, runID string) error {
 		return err
 	}
 	lockPath := s.ProfileLockPath(profileID)
-	if data, err := os.ReadFile(lockPath); err == nil {
-		return fmt.Errorf("profile %s locked by run %s", profileID, string(data))
+	f, err := os.OpenFile(lockPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
+	if err != nil {
+		if os.IsExist(err) {
+			data, readErr := os.ReadFile(lockPath)
+			if readErr != nil {
+				return fmt.Errorf("profile %s locked by another run", profileID)
+			}
+			return fmt.Errorf("profile %s locked by run %s", profileID, string(data))
+		}
+		return err
 	}
-	return os.WriteFile(lockPath, []byte(runID), 0644)
+	if _, err := f.Write([]byte(runID)); err != nil {
+		_ = f.Close()
+		_ = os.Remove(lockPath)
+		return err
+	}
+	return f.Close()
 }
 
 // ReleaseProfileLock removes profile lock if owned by runID.
