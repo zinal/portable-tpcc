@@ -382,7 +382,7 @@ tpcc/
 ├── domain/ generator/ transactions/ runtime/ loader/ checks/ metrics/
 ├── dbms/{ydb,pgsql,oceanbase}/
 └── app/{ydb,pgsql,oceanbase}/
-tools/tpccctl/
+tpccctl/
 docs/specification.md
 docs/adapter-api.md
 docs/examples/

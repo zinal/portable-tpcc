@@ -97,8 +97,8 @@ business-input counters для проверки фактической выбо�
 вместе с p50/p90/p95/p99 в `aggregate.json` (`response_time_*`) и
 `summary.txt` ([histogram.h](../tpcc/metrics/histogram.h),
 [artifacts.cpp](../tpcc/dbms/pgsql/artifacts.cpp),
-[merge.go](../tools/tpccctl/internal/histogram/merge.go),
-[consolidate.go](../tools/tpccctl/internal/consolidate/consolidate.go)).
+[merge.go](../tpccctl/internal/histogram/merge.go),
+[consolidate.go](../tpccctl/internal/consolidate/consolidate.go)).
 
 По-прежнему отсутствуют:
 
@@ -135,7 +135,7 @@ instance, run-config hash и warehouse assignment. Однако эти знач�
 совпадают у повторных попыток одного run:
 
 - `GenerateRunID` выдаёт один и тот же ID для profile в течение дня
-  ([config.go:345-349](../tools/tpccctl/internal/config/config.go#L345-L349));
+  ([config.go:345-349](../tpccctl/internal/config/config.go#L345-L349));
 - remote instance directory перед start не очищается;
 - supervisor может принять уже существующий finalized manifest;
 - instance nonce из новой попытки не сопоставляется между supervision,
@@ -160,8 +160,8 @@ instance, run-config hash и warehouse assignment. Однако эти знач�
 
 Связанный код:
 
-- [consolidate.go:101-121](../tools/tpccctl/internal/consolidate/consolidate.go#L101-L121);
-- [consolidate.go:207-250](../tools/tpccctl/internal/consolidate/consolidate.go#L207-L250).
+- [consolidate.go:101-121](../tpccctl/internal/consolidate/consolidate.go#L101-L121);
+- [consolidate.go:207-250](../tpccctl/internal/consolidate/consolidate.go#L207-L250).
 
 Такой artifact способен дать `workers_complete=true` и throughput без
 response-time data. Обязательные measurement fields и их перекрёстные
@@ -202,9 +202,9 @@ Default orchestrated histogram использует `us`, но фактичес�
 
 Ссылки:
 
-- [conformance.go:7-17](../tools/tpccctl/internal/config/conformance.go#L7-L17);
-- [conformance.go:34-82](../tools/tpccctl/internal/config/conformance.go#L34-L82);
-- [validate.go:128-150](../tools/tpccctl/internal/validate/validate.go#L128-L150).
+- [conformance.go:7-17](../tpccctl/internal/config/conformance.go#L7-L17);
+- [conformance.go:34-82](../tpccctl/internal/config/conformance.go#L34-L82);
+- [validate.go:128-150](../tpccctl/internal/validate/validate.go#L128-L150).
 
 В результате `tpcc_settings_conformant` может быть как ложноположительным, так
 и ложноотрицательным. Это informational feature, но его status должен
@@ -227,9 +227,9 @@ Default orchestrated histogram использует `us`, но фактичес�
 
 Ссылки:
 
-- [merge.go:43-81](../tools/tpccctl/internal/histogram/merge.go#L43-L81);
-- [merge.go:84-125](../tools/tpccctl/internal/histogram/merge.go#L84-L125);
-- [merge.go:189-211](../tools/tpccctl/internal/histogram/merge.go#L189-L211).
+- [merge.go:43-81](../tpccctl/internal/histogram/merge.go#L43-L81);
+- [merge.go:84-125](../tpccctl/internal/histogram/merge.go#L84-L125);
+- [merge.go:189-211](../tpccctl/internal/histogram/merge.go#L189-L211).
 
 ### 3.9. Histogram profile и официальный пример конфигурации некорректны
 
@@ -247,8 +247,8 @@ Default orchestrated histogram использует `us`, но фактичес�
 
 Ссылки:
 
-- [profile.go:126-148](../tools/tpccctl/internal/profile/profile.go#L126-L148);
-- [validate.go:98-120](../tools/tpccctl/internal/validate/validate.go#L98-L120);
+- [profile.go:126-148](../tpccctl/internal/profile/profile.go#L126-L148);
+- [validate.go:98-120](../tpccctl/internal/validate/validate.go#L98-L120);
 - [profile.v1.yaml:86-91](examples/profile.v1.yaml#L86-L91).
 
 ## 4. Принятые ограничения и отклонения
@@ -340,7 +340,7 @@ commit `19df199`.
 `*_user_aborted`, входит в worker throughput и aggregate
 ([terminal.h](../tpcc/dbms/pgsql/terminal.h),
 [artifacts.cpp](../tpcc/dbms/pgsql/artifacts.cpp),
-[consolidate.go](../tools/tpccctl/internal/consolidate/consolidate.go)).
+[consolidate.go](../tpccctl/internal/consolidate/consolidate.go)).
 
 Fail-open classification устранён в 5.13; measurement boundaries устранены в 5.14.
 
@@ -390,7 +390,7 @@ skew budget, а consolidator проверяет calibration всех expected wo
 
 **Устранено в `56018f2`/`04b87dd`:** обязательные reports проверяются
 fail-closed, причины публикуются в `integrity_errors`
-([consolidate.go](../tools/tpccctl/internal/consolidate/consolidate.go)).
+([consolidate.go](../tpccctl/internal/consolidate/consolidate.go)).
 
 ### 5.9. Money/rate проходили через double
 
@@ -446,7 +446,7 @@ affected rows и возвращает retryable abort при конфликте
 **Устранено в `e344bf0`/`a997ab8`:** `profile.Parse` использует
 `yaml.NewDecoder` с `KnownFields(true)`, поэтому опечатки вроде
 `think_time_distribtion` отклоняются на parse time
-([profile.go](../tools/tpccctl/internal/profile/profile.go)).
+([profile.go](../tpccctl/internal/profile/profile.go)).
 
 ### 5.18. Post-import suite не проверял delivered OL_AMOUNT и carrier range
 
@@ -476,8 +476,8 @@ settings, но `THistogram` layout `linear_exp` использует тольк�
   ([workload_config.h](../tpcc/domain/workload_config.h),
   [run_config.cpp](../tpcc/dbms/pgsql/run_config.cpp),
   [artifacts.cpp](../tpcc/dbms/pgsql/artifacts.cpp),
-  [profile.go](../tools/tpccctl/internal/profile/profile.go),
-  [config.go](../tools/tpccctl/internal/config/config.go)).
+  [profile.go](../tpccctl/internal/profile/profile.go),
+  [config.go](../tpccctl/internal/config/config.go)).
 
 ## 6. Итоговая оценка
 

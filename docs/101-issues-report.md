@@ -1,11 +1,12 @@
 # Отчёт о программных недоработках и ошибках
 
-Дата анализа: 2026-08-02.
+Дата исходного анализа: 2026-08-02.
+Дата повторной проверки: 2026-08-02.
 
-Проанализирован commit `884230e` (`main`). Отчёт охватывает прикладной код
-`tpcc/` и оркестратор `tools/tpccctl/`. Инфраструктурные каталоги `build/`,
-`contrib/`, `devtools/`, `library/` и `util/` не анализировались на предмет
-дефектов и не изменялись.
+Исходный анализ выполнен на commit `884230e`, повторная проверка — на commit
+`19df199` (`main`). Отчёт охватывает прикладной код `tpcc/` и оркестратор
+`tpccctl/`. Инфраструктурные каталоги `build/`, `contrib/`, `devtools/`,
+`library/` и `util/` не анализировались на предмет дефектов и не изменялись.
 
 ## 1. Резюме
 
@@ -19,6 +20,22 @@
 - разрыв между заявленными настройками и их фактическим применением;
 - неисправная декларация сборки `tpccctl`.
 
+Результат повторной проверки 18 исходных замечаний:
+
+- **устранено:** 2;
+- **частично устранено:** 3;
+- **остаётся:** 13.
+
+Исправлены сборка `tpccctl` штатным Go toolchain (IR-003) и учёт штатного
+New-Order rollback (IR-018), отбрасывание лишних worker artifacts и часть
+fail-closed проверок консолидации (IR-006, IR-015). C++ consumer теперь также
+отклоняет устаревшие параметры histogram, но основные инварианты run-config
+по-прежнему не валидирует (IR-017).
+
+Повторный аудит также выявил два дополнительных открытых замечания:
+неисполняемые настройки retry backoff/jitter (IR-019) и рассогласование control
+artifacts при повторном использовании run ID (IR-020).
+
 Критичность в отчёте означает:
 
 - **высокая** — возможны выполнение посторонней команды, повреждение данных,
@@ -28,13 +45,21 @@
 - **низкая** — ограниченный эксплуатационный риск или недостаток
   диагностируемости.
 
-Все замечания ниже имеют статус **Открыто**.
+Статусы:
+
+- **Остаётся** — дефект подтверждён в commit `19df199`;
+- **Частично устранено** — часть исходного сценария закрыта, но остаточный
+  дефект по-прежнему воспроизводим;
+- **Устранено** — исправление и соответствующая проверка присутствуют в
+  текущем коде.
 
 ## 2. Высокая критичность
 
 ### IR-001. Выход за каталог при сборе удалённых артефактов
 
-**Код:** `tools/tpccctl/internal/orchestrator/drive.go:358-369`.
+**Статус: остаётся.**
+
+**Код:** `tpccctl/internal/orchestrator/drive.go:358-369`.
 
 `payloads[].path` из удалённого `artifact-manifest.json` передаётся в
 `filepath.Join()` и `Session.Download()` до проверки через `paths.JoinUnder()`.
@@ -46,7 +71,7 @@ Manifest со значением наподобие `../../../target` позво
 - записать скачанные данные за пределами локального временного каталога;
 - в local mode обратиться к произвольному абсолютному пути, поскольку
   `Local.resolve()` разрешает абсолютные пути
-  (`tools/tpccctl/internal/remote/local.go:37-41`).
+  (`tpccctl/internal/remote/local.go:37-41`).
 
 **Рекомендация:** до любого чтения или записи проверять относительный путь,
 запрещать абсолютные пути и компоненты `..`, а remote и local destination
@@ -54,8 +79,10 @@ Manifest со значением наподобие `../../../target` позво
 
 ### IR-002. Shell injection через имя переменной `password_env`
 
-**Код:** `tools/tpccctl/internal/remote/ssh.go:223-234`,
-`tools/tpccctl/internal/validate/validate.go:65-69`.
+**Статус: остаётся.**
+
+**Код:** `tpccctl/internal/remote/ssh.go:223-234`,
+`tpccctl/internal/validate/validate.go:65-69`.
 
 Значение переменной окружения экранируется, но её имя без экранирования
 вставляется в удалённую shell-команду:
@@ -72,35 +99,29 @@ b.WriteString(k + "=" + shellQuote(v) + " ")
 `[A-Za-z_][A-Za-z0-9_]*`; дополнительно формировать окружение без интерпретации
 непроверенного текста shell.
 
-### IR-003. `tpccctl` не собирается штатным build graph
+### IR-003. `tpccctl` был ошибочно включён в build graph `ya make`
 
-**Код:** `tools/tpccctl/ya.make:1-5`,
-`tools/tpccctl/cmd/tpccctl/ya.make:1-11`.
+**Статус: устранено.**
 
-Команда:
+**Код:** `tpccctl/go.mod`, `AGENTS.md`,
+`.cursor/rules/repository-conventions.mdc`.
+
+Go-модуль перенесён из инфраструктурного дерева `tools/` в корневой каталог
+`tpccctl/`. Относящиеся к нему `ya.make` удалены, module/import path изменён на
+`portable-tpcc/tpccctl`.
+
+Инструкции для агентов теперь явно требуют стандартные команды:
 
 ```text
-./ya make -t tools/tpccctl
+go -C tpccctl build ./cmd/tpccctl
+go -C tpccctl test ./...
 ```
-
-завершается на configure stage:
-
-```text
-unexpected command END outside of a module
-RECURSE to directory without ya.make: tools/tpccctl/cmd
-```
-
-Корневой `ya.make` содержит лишний `END()` и рекурсирует в `cmd`, где нет
-`ya.make`; единственная декларация находится в `cmd/tpccctl`. Кроме того,
-internal Go packages не представлены модулями build graph. Оркестратор
-фактически выпадает из обязательной сборки и тестирования через `./ya`.
-
-**Рекомендация:** исправить дерево `RECURSE`, добавить недостающие Go-модули и
-подключить Go unit tests к `ya make -t`.
 
 ### IR-004. `Materialize()` сбрасывает состояние активного запуска
 
-**Код:** `tools/tpccctl/internal/orchestrator/orchestrator.go:67-121`.
+**Статус: остаётся.**
+
+**Код:** `tpccctl/internal/orchestrator/orchestrator.go:67-121`.
 
 `Materialize()` загружает существующий `run-state.json`, безусловно меняет
 state на `planned` и сохраняет его. Этот метод вызывается не только новым
@@ -114,7 +135,9 @@ run; запрещать повторную инициализацию актив
 
 ### IR-005. Profile lock захватывается неатомарно
 
-**Код:** `tools/tpccctl/internal/state/state.go:137-147`.
+**Статус: остаётся.**
+
+**Код:** `tpccctl/internal/state/state.go:137-147`.
 
 Блокировка реализована как отдельные `ReadFile()` и `WriteFile()`. Два
 одновременных процесса могут оба увидеть отсутствие файла и оба считать
@@ -126,22 +149,30 @@ OS file lock; распространить блокировку на мутир�
 
 ### IR-006. Повторное использование run ID смешивает старые и новые данные
 
-**Код:** `tools/tpccctl/internal/config/config.go:350-354`,
-`tools/tpccctl/internal/orchestrator/drive.go:178-219`,
-`tools/tpccctl/internal/consolidate/consolidate.go:72-120`.
+**Статус: частично устранено.**
 
-Автоматический run ID всегда имеет суффикс `-01`, поэтому два запуска одного
-profile в один день получают одинаковый ID. Каталоги предыдущего запуска не
-очищаются, а supervisor не сверяет `instance_nonce` manifest с nonce нового
-процесса. Старый manifest может быть принят как завершение только что
-запущенного процесса. При консолидации также объединяются все каталоги worker,
-включая лишние и устаревшие.
+**Код:** `tpccctl/internal/config/config.go:350-354`,
+`tpccctl/internal/orchestrator/drive.go:178-219`,
+`tpccctl/internal/consolidate/consolidate.go:72-120`.
+
+Консолидация теперь отклоняет неожиданные каталоги worker и проверяет
+`run_id`, instance, assignment и SHA-256 run-config
+(`tpccctl/internal/consolidate/consolidate.go:67-122,288-328`).
+
+Остаточный дефект:
+
+- автоматический run ID всё ещё всегда имеет суффикс `-01`, поэтому два запуска
+  одного profile в один день получают одинаковый ID;
+- supervisor не сверяет `instance_nonce` manifest с nonce нового процесса;
+- старый manifest в повторно используемом каталоге может быть принят как
+  завершение только что запущенного процесса.
 
 **Рекомендация:** генерировать уникальный ID, запрещать неявную перезапись
-существующего run, сверять nonce/run ID/config hash и агрегировать только
-ожидаемый набор worker.
+существующего run и сверять nonce manifest с запущенным процессом.
 
 ### IR-007. Нулевой `max_inflight` может навсегда заблокировать worker
+
+**Статус: остаётся.**
 
 **Код:** `tpcc/dbms/pgsql/run_config.cpp:212-229`,
 `tpcc/dbms/pgsql/runner.cpp:247-256,303-315`.
@@ -158,6 +189,8 @@ count и связанные размеры до создания runtime-ком�
 
 ### IR-008. Отрицательные CLI-параметры преобразуются в огромные `size_t`
 
+**Статус: остаётся.**
+
 **Код:** `tpcc/app/pgsql/main.cpp:263-284`.
 
 Флаги `warehouses`, `threads` и `max_inflight` объявлены как signed `int32`, но
@@ -172,6 +205,8 @@ subcommand отдельно определить допустимость нул
 
 ### IR-009. DML cardinality в PostgreSQL adapter преимущественно игнорируется
 
+**Статус: остаётся.**
+
 **Код:** `tpcc/dbms/pgsql/tpcc_session.cpp:253-268,300-331,414-428,511-516`.
 
 Большинство операций вызывают `ExecuteModify()`, игнорируют возвращённое
@@ -183,6 +218,8 @@ subcommand отдельно определить допустимость нул
 классифицировать несовпадение как integrity error.
 
 ### IR-010. Нерабочее соединение возвращается в connection pool
+
+**Статус: остаётся.**
 
 **Код:** `tpcc/dbms/pgsql/pg_connection_pool.cpp:59-68`,
 `tpcc/dbms/pgsql/pg_session.cpp:179-185`.
@@ -197,6 +234,8 @@ reset или пересоздания соединения. Повторные �
 
 ### IR-011. Значения libpq connection string не экранируются
 
+**Статус: остаётся.**
+
 **Код:** `tpcc/dbms/pgsql/run_config.cpp:232-271`.
 
 Host, database, user и password конкатенируются в keyword connection string.
@@ -208,6 +247,8 @@ Host, database, user и password конкатенируются в keyword conne
 параметры через API, не требующий ручной сериализации.
 
 ### IR-012. Парсер RFC3339 принимает невалидные timestamps
+
+**Статус: остаётся.**
 
 **Код:** `tpcc/runtime/time_util.cpp:11-50`.
 
@@ -226,7 +267,9 @@ Host, database, user и password конкатенируются в keyword conne
 
 ### IR-013. Настройки consistency checks не влияют на pipeline
 
-**Код:** `tools/tpccctl/internal/orchestrator/orchestrator.go:171-193,264-296`.
+**Статус: остаётся.**
+
+**Код:** `tpccctl/internal/orchestrator/orchestrator.go:171-193,264-296`.
 
 `checks.after_import: false` и `checks.after_run: false` не исключают
 соответствующие шаги. Условие для `AfterImport` содержит только комментарий.
@@ -236,6 +279,8 @@ Host, database, user и password конкатенируются в keyword conne
 ожидаемое продолжение pipeline при `fail_fast: false`.
 
 ### IR-014. `data.batch_rows` парсится, но не применяется
+
+**Статус: остаётся.**
 
 **Код:** `tpcc/dbms/pgsql/run_config.cpp:109-115`,
 `tpcc/dbms/pgsql/worker_loader.cpp:33-48`.
@@ -248,20 +293,29 @@ Host, database, user и password конкатенируются в keyword conne
 
 ### IR-015. Неполные worker results могут дать формально успешную консолидацию
 
-**Код:** `tools/tpccctl/internal/consolidate/consolidate.go:72-120,154-193`.
+**Статус: частично устранено.**
 
-Неуспешный `exit_status` и нечитаемый result только устанавливают
-`workers_complete=false`; aggregate всё равно записывается без ошибки.
-Некорректная histogram пропускается через `continue`, тогда как counters этого
-worker могут попасть в результат. Это создаёт неполные response-time
-percentiles без явного отказа операции.
+**Код:** `tpccctl/internal/consolidate/consolidate.go:72-120,154-193`.
+
+Невалидные result JSON, counters и histogram теперь приводят к ошибке, а не
+пропускаются (`consolidate.go:101-122,207-250`). Неожиданные worker также
+отклоняются.
+
+Остаточный дефект: неуспешный `exit_status` только устанавливает
+`workers_complete=false`; `ConsolidateWithOptions()` всё равно возвращает
+aggregate без ошибки (`consolidate.go:114-116,163-204`). Аналогично, каталог
+ожидаемого worker без `result.json` только устанавливает этот флаг
+(`consolidate.go:101-105`). Отдельный stage `consolidate` поэтому способен
+завершиться успешно и записать формально неполный результат.
 
 **Рекомендация:** по умолчанию применять fail-closed; разрешать неполный
 engineering aggregate только явной опцией и перечислять исключённые данные.
 
 ### IR-016. Supervisor некорректно обрабатывает незавершённый manifest
 
-**Код:** `tools/tpccctl/internal/orchestrator/drive.go:178-235`.
+**Статус: остаётся.**
+
+**Код:** `tpccctl/internal/orchestrator/drive.go:178-235`.
 
 Если manifest существует с `finalized: false`, цикл сразу выполняет
 `continue` и не проверяет, жив ли процесс. Падение процесса после публикации
@@ -273,9 +327,13 @@ engineering aggregate только явной опцией и перечисля
 
 ### IR-017. C++ run-config не валидирует основные инварианты
 
+**Статус: частично устранено.**
+
 **Код:** `tpcc/dbms/pgsql/run_config.cpp:76-229`.
 
-Перед возвратом документа не проверяются, в частности:
+C++ consumer теперь отклоняет удалённые из формата
+`runtime.histogram.lowest` и `significant_figures`, а также неизвестную unit.
+Перед возвратом документа по-прежнему не проверяются, в частности:
 
 - положительный `scale.warehouses`;
 - непустые warehouse ranges;
@@ -286,6 +344,10 @@ engineering aggregate только явной опцией и перечисля
 
 Проверка Go profile не является достаточной границей: worker самостоятельно
 читает распределённый JSON, который может быть создан вручную или повреждён.
+Кроме того, soft conformance check проверяет минимальную длительность только
+при `measurement_ms > 0`
+(`tpccctl/internal/config/conformance.go:77-82`), поэтому нулевая
+measurement ошибочно получает `tpcc_settings_conformant=true`.
 
 **Рекомендация:** валидировать materialized run-config повторно в consumer и
 завершать процесс до создания артефакта `ready.json`.
@@ -294,29 +356,78 @@ engineering aggregate только явной опцией и перечисля
 
 ### IR-018. Повторный rollback New-Order не проверяет результат
 
-**Код:** `tpcc/transactions/new_order.cpp:178-186`.
+**Статус: устранено.**
 
-Для штатного invalid-item path вызывается `SuspendRollback()`, но
-`TCommitResult` игнорируется, после чего транзакция безусловно учитывается как
-user-aborted. Ошибка rollback теряется в метриках и диагностике.
+**Код:** `tpcc/transactions/new_order.cpp:178-195`,
+`tpcc/transactions/workflow_util.h:33-47`,
+`tpcc/transactions/ut/workflow_ut.cpp`.
 
-**Рекомендация:** проверять outcome/error class rollback и не учитывать
-неподтверждённый rollback как штатное завершение.
+Invalid-item path теперь отдельно проверяет ожидаемый ITEM not-found и вызывает
+`ThrowIfRollbackFailed()`. Только подтверждённый `RolledBack` преобразуется в
+`TUserAbortedException`; остальные исходы классифицируются как ошибка. Добавлен
+unit test.
 
-## 5. Проверка и пробелы тестирования
+## 5. Новые замечания повторной проверки
 
-Выполнено:
+### IR-019. Настройки retry backoff и jitter не исполняются worker
+
+**Статус: остаётся.**
+
+**Код:** `tpccctl/internal/config/config.go:112-117,229-248`,
+`tpcc/dbms/pgsql/run_config.cpp:137-140`,
+`tpcc/dbms/pgsql/terminal.cpp:207-340`.
+
+Оркестратор материализует `initial_backoff_ms`, `max_backoff_ms` и `jitter`, а
+adapter API требует bounded retry с backoff и jitter. C++ parser считывает
+только `max_attempts` и `retry_ambiguous_commit`. Между попытками terminal
+немедленно начинает следующую транзакцию без задержки.
+
+При конфликтной нагрузке это создаёт синхронные повторные столкновения,
+увеличивает abort storm и делает опубликованные настройки run-config
+недостоверными.
+
+**Рекомендация:** передавать все retry settings в `TRunConfig`, реализовать
+ограниченный exponential backoff с выбранным jitter и добавить детерминированные
+unit tests политики.
+
+### IR-020. Повторное использование run ID создаёт противоречивые control artifacts
+
+**Статус: остаётся.**
+
+**Код:** `tpccctl/internal/orchestrator/orchestrator.go:72-135`.
+
+`Materialize()` валидирует текущий profile, но при существующем run ID повторно
+использует старый `run-config.json`. При этом `profile.redacted.yaml`
+безусловно перезаписывается текущим profile.
+
+После изменения profile между stage-командами worker и aggregate используют
+старую конфигурацию, `validate` оценивает новую, а сохранённый redacted profile
+уже не описывает фактический запуск.
+
+**Рекомендация:** хранить и сверять hash исходного profile; для существующего
+run ID запрещать изменение materialized configuration и control artifacts.
+
+## 6. Проверка и пробелы тестирования
+
+На commit `19df199` повторно выполнено:
 
 ```text
 ./ya make -t tpcc
-Total 6 suites:
-    6 - GOOD
-Total 38 tests:
-    38 - GOOD
+Total 7 suites:
+    7 - GOOD
+Total 46 tests:
+    46 - GOOD
 ```
 
-Попытка штатно собрать и запустить тесты `tpccctl` через `ya make` остановилась
-на configure error, описанной в IR-003.
+После переноса `tpccctl` в корень проекта выполнено:
+
+```text
+go -C tpccctl fmt ./...
+go -C tpccctl test ./...
+go -C tpccctl build ./cmd/tpccctl
+```
+
+Форматирование, все Go unit tests и сборка завершились успешно.
 
 Наиболее существенные пробелы:
 
@@ -324,14 +435,17 @@ Total 38 tests:
 - отсутствуют конкурентные тесты profile lock и state transitions;
 - нет тестов повторного использования run ID и stale artifacts;
 - нет C++ unit tests для `run_config.cpp`, connection pool и SQL cardinality;
-- parser времени проверяется только на корректную UTC-строку и отсутствие `Z`;
+- parser времени по-прежнему проверяется только на корректную UTC-строку и
+  отсутствие `Z`;
 - PostgreSQL adapter не имеет интеграционных тестов zero-row DML и
   восстановления соединения.
 
-## 6. Рекомендуемый порядок исправления
+## 7. Рекомендуемый порядок исправления
 
 1. IR-001 и IR-002 — закрыть границы удалённого выполнения и сбора данных.
-2. IR-003 — вернуть `tpccctl` в штатный build/test graph.
-3. IR-004—IR-006 — исправить lifecycle, lock и идентичность артефактов.
-4. IR-007—IR-012 — добавить fail-fast validation и гарантии adapter/runtime.
-5. IR-013—IR-018 — согласовать настройки с поведением и расширить тесты.
+2. IR-004—IR-006 и IR-016 — исправить lifecycle, lock и идентичность
+   артефактов.
+3. IR-007—IR-012 и IR-017 — добавить fail-fast validation и гарантии
+   adapter/runtime.
+4. IR-013—IR-015 и IR-019—IR-020 — согласовать настройки с поведением и
+   расширить тесты.

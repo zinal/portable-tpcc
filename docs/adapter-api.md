@@ -415,7 +415,7 @@ comes from shared libraries and the distributed `run-config.json`.
 | `tpcc/generator`, `loader`, `checks` | Present; PG PutBatch still regenerates rows from seed |
 | `tpcc/dbms/pgsql` | Concrete admin/load/session/check + terminal runtime |
 | `tpcc/dbms/ydb`, `tpcc/dbms/oceanbase` | Not started |
-| `tools/tpccctl` | Phase 5 remote drive / consolidate present |
+| `tpccctl` | Phase 5 remote drive / consolidate present |
 
 Alignment sequencing and accepted API decisions:
 [alignment-plan.md](alignment-plan.md). Module status detail:
