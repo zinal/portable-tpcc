@@ -224,6 +224,7 @@ struct TCompleteOrderDelivery {
     int DistrictID = 0;
     int OrderID = 0;
     int CarrierID = 0;
+    int LineCount = 0;
 };
 
 struct TApplyDeliveryToCustomer {

@@ -73,3 +73,30 @@ func JoinUnder(base, elem string) (string, error) {
 	}
 	return joinedClean, nil
 }
+
+// ResolveUnder joins elem under base, resolves symlinks, and validates the
+// resolved target still stays under the resolved base.
+func ResolveUnder(base, elem string) (string, error) {
+	joined, err := JoinUnder(base, elem)
+	if err != nil {
+		return "", err
+	}
+	baseAbs, err := filepath.Abs(base)
+	if err != nil {
+		return "", err
+	}
+	baseResolved, err := filepath.EvalSymlinks(baseAbs)
+	if err != nil {
+		return "", err
+	}
+	targetResolved, err := filepath.EvalSymlinks(joined)
+	if err != nil {
+		return "", err
+	}
+	baseClean := filepath.Clean(baseResolved)
+	targetClean := filepath.Clean(targetResolved)
+	if targetClean != baseClean && !strings.HasPrefix(targetClean, baseClean+string(os.PathSeparator)) {
+		return "", fmt.Errorf("resolved path %q escapes base %q", targetClean, baseClean)
+	}
+	return targetClean, nil
+}

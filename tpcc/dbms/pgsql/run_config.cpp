@@ -12,6 +12,7 @@
 #include <limits>
 #include <sstream>
 #include <stdexcept>
+#include <unordered_set>
 #include <vector>
 
 namespace NTpcc {
@@ -125,6 +126,46 @@ void ValidateRanges(
     }
 }
 
+void ValidateUniqueInstance(
+    std::unordered_set<std::string>& instances,
+    const std::string& instance,
+    const std::string& path)
+{
+    if (!instances.insert(instance).second) {
+        throw std::runtime_error(path + " has duplicate instance: " + instance);
+    }
+}
+
+void MarkWarehouseCoverage(
+    std::vector<int>& ownership,
+    const std::vector<TWarehouseRange>& ranges,
+    const std::string& path,
+    int ownerIndex)
+{
+    for (const auto& range : ranges) {
+        for (int warehouse = range.Start; warehouse < range.End; ++warehouse) {
+            if (ownership[warehouse] != 0) {
+                throw std::runtime_error(
+                    path + " overlaps warehouse " + std::to_string(warehouse));
+            }
+            ownership[warehouse] = ownerIndex;
+        }
+    }
+}
+
+void ValidateFullCoverage(
+    const std::vector<int>& ownership,
+    int scaleWarehouses,
+    const std::string& path)
+{
+    for (int warehouse = 1; warehouse <= scaleWarehouses; ++warehouse) {
+        if (ownership[warehouse] == 0) {
+            throw std::runtime_error(
+                path + " does not cover warehouse " + std::to_string(warehouse));
+        }
+    }
+}
+
 void ValidateNonNegative(int64_t value, const std::string& path) {
     if (value < 0) {
         throw std::runtime_error(path + " must not be negative");
@@ -147,16 +188,33 @@ void ValidateRunConfigDocument(const TRunConfigDocument& doc, const Json& root) 
     if (doc.WorkerAssignments.empty()) {
         throw std::runtime_error("worker_assignment must not be empty");
     }
+    std::unordered_set<std::string> workerInstances;
+    std::vector<int> workerOwnership(doc.ScaleWarehouses + 1, 0);
+    int workerIndex = 1;
     for (const auto& worker : doc.WorkerAssignments) {
+        ValidateUniqueInstance(workerInstances, worker.Instance, "worker_assignment");
         ValidateRanges(worker.WarehouseRanges, doc.ScaleWarehouses,
                        "worker_assignment warehouse_ranges");
+        MarkWarehouseCoverage(
+            workerOwnership, worker.WarehouseRanges, "worker_assignment", workerIndex++);
         if (worker.MaxInflight == 0) {
             throw std::runtime_error("worker_assignment.max_inflight must be greater than zero");
         }
     }
+    ValidateFullCoverage(workerOwnership, doc.ScaleWarehouses, "worker_assignment");
+
+    std::unordered_set<std::string> loaderInstances;
+    std::vector<int> loaderOwnership(doc.ScaleWarehouses + 1, 0);
+    int loaderIndex = 1;
     for (const auto& loader : doc.LoadAssignments) {
+        ValidateUniqueInstance(loaderInstances, loader.Instance, "load_assignment");
         ValidateRanges(loader.WarehouseRanges, doc.ScaleWarehouses,
                        "load_assignment warehouse_ranges");
+        MarkWarehouseCoverage(
+            loaderOwnership, loader.WarehouseRanges, "load_assignment", loaderIndex++);
+    }
+    if (!doc.LoadAssignments.empty()) {
+        ValidateFullCoverage(loaderOwnership, doc.ScaleWarehouses, "load_assignment");
     }
 
     ValidateNonNegative(doc.PhasePolicy.StartLeadMs, "phases.start_lead_ms");

@@ -10,6 +10,15 @@ TEST(SemanticOp, VariantHoldsOps) {
     EXPECT_TRUE(std::holds_alternative<TGetWarehouseTax>(op));
     EXPECT_EQ(std::get<TGetWarehouseTax>(op).WarehouseID, 1);
 
+    op = TCompleteOrderDelivery{
+        .WarehouseID = 1,
+        .DistrictID = 2,
+        .OrderID = 3,
+        .CarrierID = 4,
+        .LineCount = 5};
+    EXPECT_TRUE(std::holds_alternative<TCompleteOrderDelivery>(op));
+    EXPECT_EQ(std::get<TCompleteOrderDelivery>(op).LineCount, 5);
+
     TOperationResult result;
     result.Ok = true;
     result.Payload = TMoney::FromMajorMinor(1, 50);

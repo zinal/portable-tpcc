@@ -3,6 +3,8 @@ package orchestrator
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -18,6 +20,7 @@ type fakeSession struct {
 	files     map[string][]byte
 	alive     bool
 	downloads int
+	signals   int
 }
 
 func (f *fakeSession) Key() string     { return "host-a" }
@@ -64,6 +67,7 @@ func (f *fakeSession) StartDetached(workDir, binary string, argv []string, env m
 	return 123, nil
 }
 func (f *fakeSession) Signal(pid int, sig string) error {
+	f.signals++
 	return nil
 }
 func (f *fakeSession) IsAlive(pid int) (bool, error) {
@@ -108,6 +112,61 @@ func TestLaunchRoleStoresProcessInstanceNonce(t *testing.T) {
 	}
 }
 
+func TestLaunchRoleFailsWithoutProcessInstanceNonce(t *testing.T) {
+	store := &state.Store{StateDir: t.TempDir()}
+	o := &Orchestrator{
+		Profile:    &profile.Profile{},
+		Expanded:   config.ExpandedPaths{RemoteRoot: t.TempDir()},
+		StateStore: store,
+	}
+	ctx := &Context{
+		RunID: "run-1",
+		RunConfig: &config.RunConfig{
+			Binary: "tpcc-pgsql",
+		},
+	}
+	process := map[string]interface{}{
+		"pid": 456,
+	}
+	data, _ := json.Marshal(process)
+	sess := &fakeSession{files: map[string][]byte{"process.json": data}, alive: true}
+
+	proc, err := o.launchRole(ctx, map[string]remote.Session{"host-a": sess}, "worker", "host-a", "worker-a", nil)
+	if err == nil || !strings.Contains(err.Error(), "missing instance_nonce") {
+		t.Fatalf("expected missing nonce error, got proc=%v err=%v", proc, err)
+	}
+	if sess.signals != 1 {
+		t.Fatalf("Signal called %d times, want 1", sess.signals)
+	}
+	rs, err := store.Load(ctx.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := rs.Processes["worker/worker-a"]
+	if got.State != "failed" || got.PID != 456 {
+		t.Fatalf("state process = %+v", got)
+	}
+}
+
+func TestWaitProcessMetadataTimesOutWhenMissing(t *testing.T) {
+	store := &state.Store{StateDir: t.TempDir()}
+	o := &Orchestrator{StateStore: store}
+	ctx := &Context{RunID: "run-1"}
+	proc := &launchedProc{
+		Role:     "worker",
+		Host:     "host-a",
+		Instance: "worker-a",
+		Session:  &fakeSession{files: map[string][]byte{}, alive: true},
+		PID:      123,
+		ProcPath: "/missing",
+	}
+
+	err := o.waitProcessMetadata(ctx, proc, 0)
+	if err == nil || !strings.Contains(err.Error(), "timeout waiting") {
+		t.Fatalf("expected timeout error, got %v", err)
+	}
+}
+
 func TestWaitProcessesRejectsStaleManifestNonceWhenProcessDead(t *testing.T) {
 	store := &state.Store{StateDir: t.TempDir()}
 	o := &Orchestrator{StateStore: store}
@@ -134,6 +193,35 @@ func TestWaitProcessesRejectsStaleManifestNonceWhenProcessDead(t *testing.T) {
 	err := o.waitProcesses(ctx, []*launchedProc{proc}, time.Second, true)
 	if err == nil || !strings.Contains(err.Error(), "stale manifest nonce") {
 		t.Fatalf("expected stale nonce error, got %v", err)
+	}
+}
+
+func TestWaitProcessesRejectsMissingInstanceNonce(t *testing.T) {
+	store := &state.Store{StateDir: t.TempDir()}
+	o := &Orchestrator{StateStore: store}
+	ctx := &Context{RunID: "run-1"}
+	manifest := collect.ArtifactManifest{
+		SchemaVersion: 1,
+		Instance:      "worker-a",
+		InstanceNonce: "nonce-1",
+		Finalized:     true,
+		ExitStatus:    0,
+	}
+	data, _ := json.Marshal(manifest)
+	sess := &fakeSession{files: map[string][]byte{"/done": data}, alive: true}
+	proc := &launchedProc{
+		Role:     "worker",
+		Host:     "host-a",
+		Instance: "worker-a",
+		Session:  sess,
+		PID:      123,
+		ProcPath: "/process",
+		DonePath: "/done",
+	}
+
+	err := o.waitProcesses(ctx, []*launchedProc{proc}, time.Second, true)
+	if err == nil || !strings.Contains(err.Error(), "missing instance_nonce") {
+		t.Fatalf("expected missing nonce error, got %v", err)
 	}
 }
 
@@ -198,5 +286,92 @@ func TestCollectArtifactsRejectsTraversalBeforeDownload(t *testing.T) {
 	}
 	if sess.downloads != 0 {
 		t.Fatalf("Download called %d times before path validation", sess.downloads)
+	}
+}
+
+func TestCollectArtifactsRejectsDisallowedPayloadBeforeDownload(t *testing.T) {
+	root := t.TempDir()
+	o := &Orchestrator{
+		Expanded: config.ExpandedPaths{
+			RemoteRoot: root + "/remote",
+			ResultRoot: root + "/results",
+		},
+	}
+	ctx := &Context{
+		RunID: "run-1",
+		RunConfig: &config.RunConfig{
+			LoadAssignment: []config.LoadAssignmentJSON{
+				{Instance: "loader-a", Host: "host-a"},
+			},
+		},
+	}
+	manifest := collect.ArtifactManifest{
+		SchemaVersion: 1,
+		Instance:      "loader-a",
+		Finalized:     true,
+		Payloads: []collect.ArtifactPayloadEntry{
+			{Path: "logs/stdout.log"},
+		},
+	}
+	data, _ := json.Marshal(manifest)
+	sess := &fakeSession{files: map[string][]byte{"artifact-manifest.json": data}, alive: true}
+
+	err := o.collectArtifacts(ctx, map[string]remote.Session{"host-a": sess})
+	if err == nil || !strings.Contains(err.Error(), "unsupported artifact payload") {
+		t.Fatalf("expected disallowed payload error, got %v", err)
+	}
+	if sess.downloads != 0 {
+		t.Fatalf("Download called %d times before path validation", sess.downloads)
+	}
+}
+
+func TestCollectArtifactsRejectsLocalSymlinkPayloadEscape(t *testing.T) {
+	root := t.TempDir()
+	remoteRoot := filepath.Join(root, "remote")
+	instanceDir := filepath.Join(remoteRoot, "run-1", "loader", "loader-a")
+	if err := os.MkdirAll(instanceDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(root, "secret")
+	if err := os.WriteFile(outside, []byte("secret"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(instanceDir, "result.json")); err != nil {
+		t.Fatal(err)
+	}
+	manifest := collect.ArtifactManifest{
+		SchemaVersion: 1,
+		Instance:      "loader-a",
+		Finalized:     true,
+		Payloads: []collect.ArtifactPayloadEntry{
+			{Path: "result.json"},
+		},
+	}
+	data, _ := json.Marshal(manifest)
+	if err := os.WriteFile(filepath.Join(instanceDir, "artifact-manifest.json"), data, 0644); err != nil {
+		t.Fatal(err)
+	}
+	sess, err := remote.NewLocal("host-a", "127.0.0.1", remoteRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	o := &Orchestrator{
+		Expanded: config.ExpandedPaths{
+			RemoteRoot: remoteRoot,
+			ResultRoot: filepath.Join(root, "results"),
+		},
+	}
+	ctx := &Context{
+		RunID: "run-1",
+		RunConfig: &config.RunConfig{
+			LoadAssignment: []config.LoadAssignmentJSON{
+				{Instance: "loader-a", Host: "host-a"},
+			},
+		},
+	}
+
+	err = o.collectArtifacts(ctx, map[string]remote.Session{"host-a": sess})
+	if err == nil || !strings.Contains(err.Error(), "escapes base") {
+		t.Fatalf("expected symlink escape error, got %v", err)
 	}
 }

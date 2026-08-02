@@ -17,6 +17,7 @@ struct TOrderData {
     int OrderID = 0;
     int CustomerId = 0;
     TMoney TotalAmount;
+    int LineCount = 0;
 };
 
 } // namespace
@@ -79,6 +80,7 @@ TFuture<bool> GetDeliveryTask(
             }
             order.CustomerId = info.CustomerID;
             order.TotalAmount = info.TotalAmount;
+            order.LineCount = info.LineCount;
         }
     }
 
@@ -90,7 +92,7 @@ TFuture<bool> GetDeliveryTask(
 
         {
             auto r = co_await SuspendExecute(tx, context, TCompleteOrderDelivery{
-                in.WarehouseID, districtID, order.OrderID, in.CarrierID});
+                in.WarehouseID, districtID, order.OrderID, in.CarrierID, order.LineCount});
             ThrowIfRetryable(r);
             if (!r.Ok) {
                 co_return FailPermanent(context.TerminalID, "Delivery complete order failed");

@@ -125,6 +125,27 @@ func TestMaterializeRejectsRunIDReuseWithDifferentProfile(t *testing.T) {
 	}
 }
 
+func TestRunAcquiresProfileLockBeforeMaterialize(t *testing.T) {
+	dir := t.TempDir()
+	profilePath := writeTestProfile(t, dir, "")
+	o, err := orchestrator.New(orchestrator.Options{ProfilePath: profilePath, RunID: "run-locked"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := o.StateStore.AcquireProfileLock(o.Profile.Metadata.Name, "other-run"); err != nil {
+		t.Fatal(err)
+	}
+	defer o.StateStore.ReleaseProfileLock(o.Profile.Metadata.Name, "other-run")
+
+	err = o.Run()
+	if err == nil || !strings.Contains(err.Error(), "locked by run other-run") {
+		t.Fatalf("expected profile lock error, got %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(o.StateStore.RunDir("run-locked"), "run-config.json")); !os.IsNotExist(err) {
+		t.Fatalf("run-config materialized before lock failure: %v", err)
+	}
+}
+
 func writeTestProfile(t *testing.T, dir, extra string) string {
 	t.Helper()
 	profileSrc := filepath.Join("..", "..", "testdata", "profile.valid.yaml")

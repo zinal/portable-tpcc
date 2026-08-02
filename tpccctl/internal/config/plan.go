@@ -105,21 +105,47 @@ func ExpectedWorkerNames(rc *RunConfig) []string {
 }
 
 // ValidateRunConfigAssignment verifies worker assignment completeness.
+// Each warehouse in [1, scale.warehouses] must be owned by exactly one worker;
+// duplicate instance names and overlapping ranges are rejected.
 func ValidateRunConfigAssignment(rc *RunConfig) error {
 	if len(rc.WorkerAssignment) == 0 {
 		return fmt.Errorf("worker assignment is empty")
 	}
-	covered := 0
+	if rc.Scale.Warehouses <= 0 {
+		return fmt.Errorf("scale.warehouses must be positive")
+	}
+	seen := make(map[string]bool, len(rc.WorkerAssignment))
+	ownership := make([]string, rc.Scale.Warehouses+1)
 	for _, w := range rc.WorkerAssignment {
+		if w.Instance == "" {
+			return fmt.Errorf("worker assignment instance must not be empty")
+		}
+		if seen[w.Instance] {
+			return fmt.Errorf("duplicate worker instance %q", w.Instance)
+		}
+		seen[w.Instance] = true
+		if len(w.WarehouseRanges) == 0 {
+			return fmt.Errorf("worker %s has empty warehouse_ranges", w.Instance)
+		}
 		for _, r := range w.WarehouseRanges {
-			if len(r) != 2 {
+			if len(r) != 2 || r[1] <= r[0] || r[0] <= 0 {
 				return fmt.Errorf("invalid warehouse range for %s", w.Instance)
 			}
-			covered += r[1] - r[0]
+			if r[1] > rc.Scale.Warehouses+1 {
+				return fmt.Errorf("worker %s warehouse range exceeds scale.warehouses", w.Instance)
+			}
+			for wh := r[0]; wh < r[1]; wh++ {
+				if ownership[wh] != "" {
+					return fmt.Errorf("warehouse %d assigned to both %s and %s", wh, ownership[wh], w.Instance)
+				}
+				ownership[wh] = w.Instance
+			}
 		}
 	}
-	if covered != rc.Scale.Warehouses {
-		return fmt.Errorf("workers cover %d warehouses, expected %d", covered, rc.Scale.Warehouses)
+	for wh := 1; wh <= rc.Scale.Warehouses; wh++ {
+		if ownership[wh] == "" {
+			return fmt.Errorf("workers do not cover warehouse %d", wh)
+		}
 	}
 	return nil
 }
