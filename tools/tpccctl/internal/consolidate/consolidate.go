@@ -138,7 +138,11 @@ func (c *Consolidator) ConsolidateWithOptions(runID string, rc *config.RunConfig
 		responseTimes[tx] = pct
 	}
 
-	newOrder := counters["new_order_ok"]
+	// TPC-C §5.1.2 / §5.4.2: intentional unused-item New-Order rollbacks are
+	// completed transactions and must be included in MQTh (tpmC).
+	newOrderOk := counters["new_order_ok"]
+	newOrderUserAborted := counters["new_order_user_aborted"]
+	newOrder := newOrderOk + newOrderUserAborted
 	measurementMin := float64(rc.Phases.MeasurementMs) / 60000.0
 	throughput := 0.0
 	if measurementMin > 0 {
@@ -162,6 +166,8 @@ func (c *Consolidator) ConsolidateWithOptions(runID string, rc *config.RunConfig
 		Metrics: map[string]interface{}{
 			"measurement": map[string]interface{}{
 				"new_order_count":              newOrder,
+				"new_order_ok":                 newOrderOk,
+				"new_order_user_aborted":       newOrderUserAborted,
 				"throughput_new_order_per_min": throughput,
 				"counters":                     counters,
 				"response_time_" + unit:        responseTimes,

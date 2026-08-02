@@ -142,7 +142,6 @@ TFuture<void> TTerminal::Run() {
             continue;
         }
 
-        const bool recordMetrics = PhaseController.MayRecord();
         const bool simulationMode =
             Context.SimulateTransactionMs > 0 || Context.SimulateTransactionSelect1 > 0;
 
@@ -171,29 +170,35 @@ TFuture<void> TTerminal::Run() {
         LOG_T("Terminal {} starting {} transaction", Context.TerminalID, txName);
 
         auto startTimeTransaction = std::chrono::steady_clock::now();
+        // TPC-C §5.4.2: count only transactions whose response time is completely
+        // measured during the measurement interval (start and end in Measure).
+        const bool rtStartedInMeasure = PhaseController.MayRecord();
         std::chrono::microseconds latencyPure{0};
         bool fatal = false;
 
         // Reset so each business transaction gets fresh inputs; retries reuse FixedInputs.
         Context.FixedInputs.reset();
 
+        auto shouldRecordMetrics = [&]() {
+            return rtStartedInMeasure && PhaseController.MayRecord();
+        };
         auto recordOk = [&](auto latencyTransaction, auto latencyFull) {
-            if (recordMetrics) {
+            if (shouldRecordMetrics()) {
                 Stats->AddOK(txType, latencyTransaction, latencyFull, latencyPure);
             }
         };
         auto recordFailed = [&]() {
-            if (recordMetrics) {
+            if (shouldRecordMetrics()) {
                 Stats->IncFailed(txType);
             }
         };
-        auto recordUserAborted = [&]() {
-            if (recordMetrics) {
-                Stats->IncUserAborted(txType);
+        auto recordUserAborted = [&](auto latencyTransaction, auto latencyFull) {
+            if (shouldRecordMetrics()) {
+                Stats->AddUserAborted(txType, latencyTransaction, latencyFull, latencyPure);
             }
         };
         auto recordRetried = [&]() {
-            if (recordMetrics) {
+            if (shouldRecordMetrics()) {
                 Stats->IncRetried(txType);
             }
         };
@@ -244,7 +249,12 @@ TFuture<void> TTerminal::Run() {
                     }
                 }
             } catch (const TUserAbortedException&) {
-                recordUserAborted();
+                auto endTime = std::chrono::steady_clock::now();
+                auto latencyFull = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    endTime - startTime);
+                auto latencyTransaction = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    endTime - startTimeTransaction);
+                recordUserAborted(latencyTransaction, latencyFull);
                 LOG_T("Terminal {} {} user aborted", Context.TerminalID, txName);
             } catch (const TClassifiedError& ex) {
                 if (StopToken.stop_requested()) {
