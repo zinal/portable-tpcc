@@ -1,0 +1,49 @@
+--- a/src/core/lib/event_engine/forkable.cc	(index)
++++ b/src/core/lib/event_engine/forkable.cc	(working tree)
+@@ -38,8 +38,14 @@ bool IsForkEnabled() {
+   static bool enabled = grpc_core::ConfigVars::Get().EnableForkSupport();
+   return enabled;
+ }
++
++bool skip_postfork_child = false;
+ }  // namespace
+ 
++void SetSkipPostForkChild() {
++  skip_postfork_child = true;
++}
++
+ void ObjectGroupForkHandler::RegisterForkable(
+     std::shared_ptr<Forkable> forkable, GRPC_UNUSED void (*prepare)(void),
+     GRPC_UNUSED void (*parent)(void), GRPC_UNUSED void (*child)(void)) {
+@@ -90,6 +96,9 @@ void ObjectGroupForkHandler::PostforkChild() {
+     GPR_ASSERT(is_forking_);
+     GRPC_FORK_TRACE_LOG_STRING("PostforkChild");
+     y_absl::ResetDeadlockGraphMu();
++    if (skip_postfork_child) {
++      return;
++    }
+     for (auto it = forkables_.begin(); it != forkables_.end();) {
+       auto shared = it->lock();
+       if (shared) {
+--- a/src/core/lib/event_engine/forkable.h	(index)
++++ b/src/core/lib/event_engine/forkable.h	(working tree)
+@@ -37,6 +37,19 @@ extern grpc_core::TraceFlag grpc_trace_fork;
+ 
+ #define GRPC_FORK_TRACE_LOG_STRING(format) GRPC_FORK_TRACE_LOG("%s", format)
+ 
++// We've faced flickering crash in grpc during fork.
++// Crash is observed in different places before 'execv' is called.
++// It is mentioned in https://man7.org/linux/man-pages/man2/fork.2.html
++// that in multithreading application not all function could be called
++// after fork, so we think that we deal with 'undefined behaviour'.
++// In original grpc code the threads are created during postfork operations,
++// but thread creation is not safe in accordance to the fork documentation.
++//
++// So, if threads in child process are not required, user could
++// skip threads recovery after fork for child process in order
++// to exclude issues with possible UB.
++void SetSkipPostForkChild();
++
+ // An interface to be implemented by EventEngines that wish to have managed fork
+ // support. The child class must guarantee that those methods are thread-safe.
+ class Forkable {

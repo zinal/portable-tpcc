@@ -11,8 +11,6 @@ LICENSE(
 
 LICENSE_TEXTS(.yandex_meta/licenses.list.txt)
 
-SUBSCRIBER(g:cpp-contrib)
-
 VERSION(8.1.1)
 
 ORIGINAL_SOURCE(https://github.com/fmtlib/fmt/archive/8.1.1.tar.gz)

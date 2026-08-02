@@ -9,8 +9,6 @@ LICENSE(
 
 LICENSE_TEXTS(.yandex_meta/licenses.list.txt)
 
-SUBSCRIBER(g:cpp-contrib)
-
 VERSION(2025-11-05)
 
 ORIGINAL_SOURCE(https://github.com/google/re2/archive/2025-11-05.tar.gz)

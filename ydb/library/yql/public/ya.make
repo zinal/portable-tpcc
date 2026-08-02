@@ -1,0 +1,3 @@
+RECURSE(
+    ydb_issue
+)

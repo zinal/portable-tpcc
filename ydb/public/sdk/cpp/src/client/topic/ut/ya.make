@@ -1,0 +1,44 @@
+UNITTEST_FOR(ydb/public/sdk/cpp/src/client/topic)
+
+REQUIREMENTS(ram:32 cpu:4)
+
+IF (SANITIZER_TYPE)
+    SIZE(LARGE)
+    INCLUDE(${ARCADIA_ROOT}/ydb/tests/large.inc)
+ELSE()
+    SIZE(MEDIUM)
+ENDIF()
+
+FORK_SUBTESTS()
+
+PEERDIR(
+    ydb/library/persqueue
+    ydb/public/sdk/cpp/src/client/topic/ut/ut_utils
+)
+
+YQL_LAST_ABI_VERSION()
+
+SRCS(
+    basic_usage_ut.cpp
+    content_based_deduplication_ut.cpp
+    describe_topic_ut.cpp
+    deferred_publication_ack_state_ut.cpp
+    local_partition_ut.cpp
+    producer_deferred_publication_ut.cpp
+    topic_deferred_publish_ut.cpp
+    topic_to_table_ut.cpp
+    topic_tx_skip_conflict_ut.cpp
+    write_session_size_ut.cpp
+)
+
+RESOURCE(
+    ydb/public/sdk/cpp/src/client/topic/ut/resources/topic_A_partition_0_v24-4-2.dat topic_A_partition_0_v24-4-2.dat
+    ydb/public/sdk/cpp/src/client/topic/ut/resources/topic_A_partition_1_v24-4-2.dat topic_A_partition_1_v24-4-2.dat
+)
+
+END()
+
+RECURSE_FOR_TESTS(
+    with_direct_read_ut
+    slow
+)

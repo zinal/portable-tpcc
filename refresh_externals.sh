@@ -2,7 +2,8 @@
 
 set -e
 
-YDB_ROOT=/Users/mzinal/Projects/ydb/core-zinal
+#YDB_ROOT=/Users/mzinal/Projects/ydb/core-zinal
+YDB_ROOT=/home/zinal/Projects/YDB/core/zinal
 
 echo "YDB_ROOT: $YDB_ROOT"
 
