@@ -25,7 +25,9 @@ This document does not restate the TPC-C standard. The project implements one
 fixed workload model. Run parameters (transaction mix, think/keying times,
 terminals per warehouse, and similar) are defaults in `tpccctl` and MAY be
 overridden in the profile. The tool does not select TPC-C editions and does
-not judge whether parameters match any TPC-C edition.
+not emit an official TPC-C conformance verdict. It DOES report soft deviations
+of effective launch parameters from the fixed TPC-C 5.11 requirements used by
+the built-in defaults (validate output, start warning, aggregate status).
 
 Results MUST NOT be called official TPC-C results without independent TPC
 verification. By default the report uses `result_class: engineering`.
@@ -60,7 +62,8 @@ verification. By default the report uses `result_class: engineering`.
   homogeneous artifact set.
 - Continuing measurement after a worker is lost.
 - Dynamic terminal rebalancing during measurement.
-- Multi-edition TPC-C support or conformance-to-edition checks.
+- Multi-edition TPC-C support or an official TPC-C conformance / certification
+  verdict (soft launch-parameter deviation reporting is in scope; see §10).
 - A separate `tpcc-spec`-style helper binary.
 - Using hashes of config files as a substitute for embedding those configs in
   the final result.
@@ -279,11 +282,13 @@ Consolidation:
 3. merge counters and histogram buckets;
 4. compute percentiles and throughput only after the merge;
 5. attach check results and a short infrastructure status
-   (workers present, assignment OK, clocks OK, no integrity errors, …);
+   (workers present, assignment OK, clocks OK, no integrity errors,
+   TPC-C settings conformant flag and deviation list, …);
 6. keep raw per-worker files beside the aggregate for detail.
 
-Do not average p99s, scale partial runs, invent zero samples, or emit a TPC-C
-conformance verdict.
+Do not average p99s, scale partial runs, invent zero samples, or emit an
+official TPC-C conformance verdict. Soft launch-parameter deviation reporting
+is not such a verdict.
 
 Layout:
 
@@ -298,7 +303,8 @@ results/<run_id>/
     ├── profile.redacted.yaml
     ├── run-config.json
     ├── start-token.json
-    └── run-state.json
+    ├── run-state.json
+    └── orchestrator.log      # optional; e.g. TPC-C settings warnings
 ```
 
 Hashes MAY be used operationally (for example to detect a truncated download
@@ -332,12 +338,21 @@ Secrets: passwords only via environment variable names; never in profile
 artifacts, argv, run-config, or logs. Host-key checking is required unless
 explicitly disabled in the profile (recorded in run-state).
 
-## 10. Validation (structural only)
+## 10. Validation
 
 Reject unknown fields/DBMS, bad instance names, empty instance lists, more
 instances than warehouses, manual assignment fields in the profile, invalid
 mix, non-positive sizes/timeouts, secret literals, and retry-after-ambiguous
-commit. Do not reject profiles for differing from a TPC-C edition.
+commit.
+
+Additionally, compare effective (default-merged) launch parameters against the
+fixed TPC-C 5.11 requirements mirrored by built-in defaults: terminals per
+warehouse, minimum mix percentages, pacing enabled, exponential think time,
+standard keying/think means, and measurement interval ≥ 120 minutes. Report
+deviations in `tpccctl validate`, warn at `start`, and persist
+`tpcc_settings_conformant` plus `tpcc_settings_deviations` in the aggregate.
+These deviations MUST NOT fail structural validation or change
+`result_class`.
 
 ## 11. Physical Schema Notes
 

@@ -15,11 +15,13 @@ import (
 
 // Status flags for the consolidated result (specification §8.2).
 type Status struct {
-	WorkersComplete bool     `json:"workers_complete"`
-	AssignmentValid bool     `json:"assignment_valid"`
-	ClockSkewOK     bool     `json:"clock_skew_ok"`
-	IntegrityOK     bool     `json:"integrity_ok"`
-	IntegrityErrors []string `json:"integrity_errors,omitempty"`
+	WorkersComplete        bool     `json:"workers_complete"`
+	AssignmentValid        bool     `json:"assignment_valid"`
+	ClockSkewOK            bool     `json:"clock_skew_ok"`
+	IntegrityOK            bool     `json:"integrity_ok"`
+	IntegrityErrors        []string `json:"integrity_errors,omitempty"`
+	TPCCSettingsConformant bool     `json:"tpcc_settings_conformant"`
+	TPCCSettingsDeviations []string `json:"tpcc_settings_deviations,omitempty"`
 }
 
 // Aggregate is the canonical consolidated result.
@@ -38,9 +40,9 @@ type Aggregate struct {
 
 // Options tune consolidate status evaluation.
 type Options struct {
-	SkippedSteps             []string
-	MaxClockSkewMs           int64
-	ExpectedRunConfigSHA256  string
+	SkippedSteps            []string
+	MaxClockSkewMs          int64
+	ExpectedRunConfigSHA256 string
 }
 
 // Consolidator merges worker artifacts deterministically.
@@ -154,6 +156,7 @@ func (c *Consolidator) ConsolidateWithOptions(runID string, rc *config.RunConfig
 	}
 
 	integrity := evaluateIntegrity(c.ResultRoot, runID, opts)
+	tpccDevs := config.TPCSettingsDeviations(rc)
 
 	agg := &Aggregate{
 		SchemaVersion: 1,
@@ -161,11 +164,13 @@ func (c *Consolidator) ConsolidateWithOptions(runID string, rc *config.RunConfig
 		ResultClass:   "engineering",
 		Settings:      config.SettingsForAggregate(rc),
 		Status: Status{
-			WorkersComplete: workersComplete,
-			AssignmentValid: assignmentErr == nil,
-			ClockSkewOK:     clockSkewOK,
-			IntegrityOK:     integrity.ok,
-			IntegrityErrors: integrity.errors,
+			WorkersComplete:        workersComplete,
+			AssignmentValid:        assignmentErr == nil,
+			ClockSkewOK:            clockSkewOK,
+			IntegrityOK:            integrity.ok,
+			IntegrityErrors:        integrity.errors,
+			TPCCSettingsConformant: len(tpccDevs) == 0,
+			TPCCSettingsDeviations: tpccDevs,
 		},
 		Metrics: map[string]interface{}{
 			"measurement": map[string]interface{}{
@@ -579,13 +584,18 @@ func WriteAggregate(resultRoot, runID string, agg *Aggregate) error {
 		return err
 	}
 	summary := fmt.Sprintf(
-		"run_id=%s result_class=%s workers_complete=%v assignment_valid=%v clock_skew_ok=%v integrity_ok=%v\n",
+		"run_id=%s result_class=%s workers_complete=%v assignment_valid=%v clock_skew_ok=%v integrity_ok=%v tpcc_settings_conformant=%v\n",
 		agg.RunID, agg.ResultClass, agg.Status.WorkersComplete, agg.Status.AssignmentValid,
-		agg.Status.ClockSkewOK, agg.Status.IntegrityOK,
+		agg.Status.ClockSkewOK, agg.Status.IntegrityOK, agg.Status.TPCCSettingsConformant,
 	)
 	if !agg.Status.IntegrityOK && len(agg.Status.IntegrityErrors) > 0 {
 		for _, errMsg := range agg.Status.IntegrityErrors {
 			summary += fmt.Sprintf("integrity_error=%s\n", errMsg)
+		}
+	}
+	if !agg.Status.TPCCSettingsConformant {
+		for _, d := range agg.Status.TPCCSettingsDeviations {
+			summary += fmt.Sprintf("tpcc_settings_deviation=%s\n", d)
 		}
 	}
 	return os.WriteFile(filepath.Join(dir, "summary.txt"), []byte(summary), 0644)

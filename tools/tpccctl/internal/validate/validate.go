@@ -17,9 +17,13 @@ var allowedDBMS = map[string]bool{
 }
 
 // Result holds validation outcome.
+// Structural failures set Valid=false. TPC-C settings deviations are reported
+// separately and do not fail validation (engineering profiles MAY deviate).
 type Result struct {
-	Valid  bool
-	Errors []string
+	Valid                  bool
+	Errors                 []string
+	TPCCSettingsConformant bool     `json:"tpcc_settings_conformant"`
+	TPCCSettingsDeviations []string `json:"tpcc_settings_deviations,omitempty"`
 }
 
 func (r *Result) Add(err string) {
@@ -27,7 +31,10 @@ func (r *Result) Add(err string) {
 	r.Errors = append(r.Errors, err)
 }
 
-// Profile validates a parsed profile (specification §10 — structural only).
+// Profile validates a parsed profile (specification §10).
+// Structural checks may reject the profile. TPC-C launch-parameter conformance
+// is evaluated against effective (default-merged) settings and only populates
+// TPCCSettingsDeviations / TPCCSettingsConformant.
 func Profile(p *profile.Profile) *Result {
 	res := &Result{Valid: true}
 
@@ -179,7 +186,29 @@ func Profile(p *profile.Profile) *Result {
 		}
 	}
 
+	attachTPCSettingsConformance(p, res)
 	return res
+}
+
+func attachTPCSettingsConformance(p *profile.Profile, res *Result) {
+	pacing := p.Runtime.Pacing
+	if pacing == "" {
+		pacing = "enabled"
+	}
+	measurementMs, err := profile.ParseDurationMs(p.Phases.Measurement)
+	if err != nil {
+		measurementMs = 0
+	}
+	devs := config.TPCSettingsDeviations(&config.RunConfig{
+		Workload: config.ResolveWorkload(p.Workload),
+		Phases:   config.PhasesJSON{MeasurementMs: measurementMs},
+		Runtime: config.RunRuntime{
+			Pacing:                pacing,
+			ThinkTimeDistribution: config.ResolveThinkTimeDistribution(p.Runtime.ThinkTimeDistribution),
+		},
+	})
+	res.TPCCSettingsDeviations = devs
+	res.TPCCSettingsConformant = len(devs) == 0
 }
 
 func validateMix(m config.TransactionMixJSON) error {
