@@ -34,14 +34,13 @@ tpccctl  ──SSH──>  tpcc-<dbms>  (schema | loader | worker | check)
 | Layer | Owns | MUST NOT own |
 | --- | --- | --- |
 | Shared libraries | Logical schema, generator, workflows, retry policy shape, check catalog IDs, histograms | SQL dialects, SDK types, connection strings with secrets |
-| Adapter | DDL, physical keys/partitions, query text, `PutBatch`, error mapping, fence metadata | Workload mix, terminal identity, phase schedule |
+| Adapter | DDL, physical keys/partitions, query text, `PutBatch`, error mapping | Workload mix, terminal identity, phase schedule |
 | Binary `tpcc-<dbms>` | CLI roles, wiring factory → runtime | A second copy of the workload model |
 
 Shared code talks to the database only through the adapter interfaces below.
-Today’s PostgreSQL binary still embeds some SQL inside
-`tpcc/dbms/pgsql/transaction_*.cpp`; that is transitional. New adapters MUST
-target the abstract session API so shared workflows can move out of the
-adapter directory.
+PostgreSQL maps semantic ops in `tpcc/dbms/pgsql/tpcc_session.cpp`; shared
+workflows live under `tpcc/transactions/`. New adapters MUST target the same
+abstract session API.
 
 ## 3. Shared Libraries
 
@@ -58,7 +57,7 @@ Money and tax fields that cross the adapter boundary MUST use exact types.
 Adapters map them to `DECIMAL` / YDB `Decimal` / OceanBase `DECIMAL`, never to
 binary floating point.
 
-### 3.2. `tpcc/generator` (target)
+### 3.2. `tpcc/generator`
 
 Produces:
 
@@ -69,18 +68,14 @@ Produces:
 For a given `run-config` (scale, seed, …), logical contents MUST be identical
 across adapters and across loader/worker counts. Parallelism MUST NOT change
 row values. Inputs for a business transaction are fixed before the first
-attempt and reused on retry (see current `FixedTransactionInputs` in the
-PostgreSQL port).
+attempt and reused on retry.
 
 ### 3.3. `tpcc/transactions`
 
 Shared business workflows over `ITpccSession` / `ITpccTransaction`. Workflows
 express **semantic operations** (read customer by id, update stock quantity,
-insert order line, …), not SQL strings.
-
-Skeleton today: `tpcc/transactions/session.h`. PostgreSQL still implements
-workflows against `PgSession`; the migration target is the abstract surface in
-§4.3.
+insert order line, …), not SQL strings. Semantic ops live in `ops.h`; the five
+TPC-C workflows are shared under `tpcc/transactions/`.
 
 ### 3.4. `tpcc/runtime`
 
@@ -93,21 +88,20 @@ workflows against `PgSession`; the migration target is the abstract surface in
 Runtime depends on domain, transactions, metrics, and the abstract adapter
 API only.
 
-### 3.5. `tpcc/loader` (target)
+### 3.5. `tpcc/loader`
 
 Builds deterministic batches for the loader’s warehouse ranges (and the single
 DB-wide shard owner), then calls `ILoadAdapter::PutBatch`. Cardinality and
-sample checks after load are shared; query text is adapter-owned.
+sample checks after load are shared; query text is adapter-owned. The PostgreSQL
+adapter currently regenerates deterministic rows from seed when row payloads
+are empty.
 
-### 3.6. `tpcc/checks` (target)
+### 3.6. `tpcc/checks`
 
 Shared check **catalog**: identifier, expected semantics, result shape.
 Adapters supply the DBMS-specific query or scan that evaluates each check.
 This is integrity / infrastructure checking, not TPC-C edition conformance.
-
-PostgreSQL already implements a concrete suite in `tpcc/dbms/pgsql/check.*`
-(cardinality + consistency conditions). The catalog SHOULD be lifted into
-shared code with adapter-provided evaluators.
+PostgreSQL evaluates the shared catalog via `TPgCheckAdapter`.
 
 ### 3.7. `tpcc/metrics`
 
@@ -417,16 +411,18 @@ comes from shared libraries and the distributed `run-config.json`.
 | Piece | Status |
 | --- | --- |
 | `tpcc/domain`, `runtime`, `metrics` | Present |
-| `tpcc/transactions/session.h` | Skeleton; migrating to async + `TSemanticOp` variant |
-| `tpcc/dbms/pgsql` | Concrete admin/load/session/check; SQL workflows still in adapter |
+| `tpcc/transactions` | Async `ITpccSession` + `TSemanticOp`; five shared workflows |
+| `tpcc/generator`, `loader`, `checks` | Present; PG PutBatch still regenerates rows from seed |
+| `tpcc/dbms/pgsql` | Concrete admin/load/session/check + terminal runtime |
 | `tpcc/dbms/ydb`, `tpcc/dbms/oceanbase` | Not started |
-| Shared generator / loader / checks packages | Not started (logic partially inside pgsql) |
+| `tools/tpccctl` | Phase 5 remote drive / consolidate present |
 
 Alignment sequencing and accepted API decisions:
-[alignment-plan.md](alignment-plan.md).
+[alignment-plan.md](alignment-plan.md). Module status detail:
+[dependencies.md](dependencies.md).
 
-Adapter authors for YDB/OceanBase SHOULD implement against §4 even while the
-PostgreSQL port finishes migrating workflows onto `ITpccSession`.
+Adapter authors for YDB/OceanBase SHOULD implement against §4; the PostgreSQL
+port is the reference adapter.
 
 ## 9. Related documents
 
@@ -435,5 +431,7 @@ PostgreSQL port finishes migrating workflows onto `ITpccSession`.
 - [alignment-plan.md](alignment-plan.md) — phased implementation plan and
   accepted API decisions.
 - [dependencies.md](dependencies.md) — third-party libraries and port status.
+- [tpcc-5.11-conformance-analysis.md](tpcc-5.11-conformance-analysis.md) —
+  engineering vs official TPC-C 5.11 notes.
 - [examples/run-config.v1.json](examples/run-config.v1.json) — concrete settings
   distributed to loaders and workers.

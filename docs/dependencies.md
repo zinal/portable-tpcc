@@ -6,7 +6,8 @@ to implement all adapters described in [specification.md](specification.md)
 and [adapter-api.md](adapter-api.md).
 
 Alignment sequencing: [alignment-plan.md](alignment-plan.md).
-Gap analysis: [implementation-gap-analysis.md](implementation-gap-analysis.md).
+TPC-C 5.11 conformance notes:
+[tpcc-5.11-conformance-analysis.md](tpcc-5.11-conformance-analysis.md).
 
 ## Available in the repository
 
@@ -45,37 +46,41 @@ required for the current port.
 
 | Module | Status | Source |
 | --- | --- | --- |
-| `tpcc/domain` | in progress | constants, `TMoney`/`TRate`, seeded + legacy RNG |
-| `tpcc/metrics` | done | mergeable latency histograms (serialization still missing) |
+| `tpcc/domain` | done | constants, `TMoney`/`TRate`, seeded + legacy RNG |
+| `tpcc/metrics` | done | mergeable latency histograms; workers emit raw buckets |
 | `tpcc/runtime` | done | coroutine scheduler, futures, logging, thread pool |
-| `tpcc/transactions` | in progress | async `ITpccSession` + `TSemanticOp` variant (`ops.h`) |
-| `tpcc/generator` | in progress | deterministic population; wired into PG `ImportSync` |
-| `tpcc/loader` | in progress | `ILoadAdapter`; PG idempotent PutBatch helpers |
+| `tpcc/transactions` | done | async `ITpccSession`, `TSemanticOp` (`ops.h`), five workflows |
+| `tpcc/generator` | done | deterministic population; wired into PG `ImportSync` |
+| `tpcc/loader` | in progress | `ILoadAdapter`; PG PutBatch regenerates rows from seed |
 | `tpcc/checks` | done | catalog, `ICheckAdapter`, JSON report writer |
+
 ### PostgreSQL adapter and executable
 
 | Module | Status | Notes |
 | --- | --- | --- |
-| `tpcc/dbms/pgsql` | transitional | session, pool, SQL workflows, `TPgCheckAdapter`, `TPgAdminAdapter` |
+| `tpcc/dbms/pgsql` | transitional | session, pool, load/admin/check adapters, terminal runtime |
 | `tpcc/app/pgsql` (`tpcc-pgsql`) | transitional | normative roles + legacy aliases; orchestrated `check`/`schema` |
+| `tools/tpccctl` | done (Phase 5) | SSH/local remote drive, `--start-at`, collect/consolidate |
 
 ### Not yet started / blocked
 
 | Module | Notes |
 | --- | --- |
-| `tpcc/dbms/ydb`, `oceanbase` | external SDKs |
-| `tools/tpccctl` remote drive | Phase 5: SSH/local sessions, start-at, collect/consolidate |
+| `tpcc/dbms/ydb`, `oceanbase` | external SDKs; Phase 6 |
 
-## Known defects (tracked)
+## Remaining work (tracked)
 
-These are intentional interim gaps while Phases 1–5 of the alignment plan land:
+Architecture / product (see [alignment-plan.md](alignment-plan.md) Phase 6):
 
-1. **Workers emit percentiles** — not raw histogram buckets (spec §8).
-2. **No `--start-at` handling** — workers start on local clocks.
-3. **SQLSTATE error classifier missing** — only `transaction_rollback` retries.
-4. **Run-config `workload.*` largely ignored** — mix/timings hardcoded.
-5. **PutBatch row payloads** — PG adapter regenerates from seed; shared-loader
-   serialized rows not yet consumed.
+1. **PutBatch row payloads** — PG adapter regenerates from seed; shared-loader
+   serialized rows are not yet consumed.
+2. Open decisions from specification §14 (histogram layout, ambiguous-commit
+   policy, canonical row bytes, minimum PG version).
+3. Broader unit/integration test coverage.
+4. YDB / OceanBase adapters (blocked on SDK packaging below).
+
+TPC-C 5.11 engineering deviations and open defects:
+[tpcc-5.11-conformance-analysis.md](tpcc-5.11-conformance-analysis.md).
 
 ## SDKs outside this repository
 
