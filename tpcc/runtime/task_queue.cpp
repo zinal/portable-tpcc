@@ -170,7 +170,7 @@ void TTaskQueue::WakeupAndNeverSleep() {
 }
 
 void TTaskQueue::HandleQueueFull(const char* queueType) {
-    LOG_E("Failed to push ready {}, queue is full", queueType);
+    LOG_E("Failed to push ready " << queueType << ", queue is full");
     throw std::runtime_error(std::string("Task queue is full: ") + queueType);
 }
 
@@ -256,7 +256,7 @@ void TTaskQueue::ProcessInflightQueue(
         THandleWithTs internalTask;
         if (context.InflightWaitingTasksInternal.TryPop(internalTask)) {
             if (internalTask.Handle && !internalTask.Handle.done()) {
-                LOG_D("Thread {} marked ready task waited for inflight (internal)", threadId);
+                LOG_D("Thread " << threadId << " marked ready task waited for inflight (internal)");
                 internalInflightWaitTimeMs = static_cast<uint64_t>(internalTask.ElapsedMs());
                 context.ReadyTasksInternal.TryPush(std::move(internalTask));
             }
@@ -296,7 +296,7 @@ void TTaskQueue::RunThread(size_t threadId) {
                 break;
             }
             if (handleWithTs.Handle && !handleWithTs.Handle.done()) {
-                LOG_T("Thread {} resumed task (external)", threadId);
+                LOG_T("Thread " << threadId << " resumed task (external)");
                 stats.ExternalTasksResumed.fetch_add(1, std::memory_order_relaxed);
                 externalQueueTimeLatencies.emplace_back(static_cast<uint64_t>(handleWithTs.ElapsedMs()));
 
@@ -313,7 +313,7 @@ void TTaskQueue::RunThread(size_t threadId) {
         THandleWithTs internalTask;
         if (context.ReadyTasksInternal.TryPop(internalTask)) {
             if (internalTask.Handle && !internalTask.Handle.done()) {
-                LOG_D("Thread {} resumed task (internal)", threadId);
+                LOG_D("Thread " << threadId << " resumed task (internal)");
                 stats.InternalTasksResumed.fetch_add(1, std::memory_order_relaxed);
                 internalQueueTimeMs = static_cast<uint64_t>(internalTask.ElapsedMs());
                 auto execStart = Clock::now();

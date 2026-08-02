@@ -158,17 +158,17 @@ void PrintConsoleStats(
     }
 
     if (config.NoDelays) {
-        LOG_I("{:.0f}s/{:.0f}s | tpmC:{:.0f} | OK:{} Fail:{} Inflight:{} |{}",
+        LOG_I(fmt::format("{:.0f}s/{:.0f}s | tpmC:{:.0f} | OK:{} Fail:{} Inflight:{} |{}",
               elapsed, elapsed + remaining, tpmc,
               totalOK, totalFailed,
               TransactionsInflight.load(std::memory_order_relaxed),
-              latencies);
+              latencies));
     } else {
-        LOG_I("{:.0f}s/{:.0f}s | tpmC:{:.0f} eff:{:.1f}% | OK:{} Fail:{} Inflight:{} |{}",
+        LOG_I(fmt::format("{:.0f}s/{:.0f}s | tpmC:{:.0f} eff:{:.1f}% | OK:{} Fail:{} Inflight:{} |{}",
               elapsed, elapsed + remaining, tpmc, efficiency,
               totalOK, totalFailed,
               TransactionsInflight.load(std::memory_order_relaxed),
-              latencies);
+              latencies));
     }
 }
 
@@ -203,13 +203,13 @@ void PrintFinalResults(
         ? (tpmc / (MAX_TPMC_PER_WAREHOUSE * config.WarehouseCount) * 100.0) : 0.0;
 
     LOG_I("=== TPC-C Results ===");
-    LOG_I("  Measured Duration: {:.1f}s (configured: {}s)",
-          measureDuration, config.RunDuration.count());
-    LOG_I("  New-Order Throughput: {:.2f} tpmC", tpmc);
+    LOG_I(fmt::format("  Measured Duration: {:.1f}s (configured: {}s)",
+          measureDuration, config.RunDuration.count()));
+    LOG_I(fmt::format("  New-Order Throughput: {:.2f} tpmC", tpmc));
     if (!config.NoDelays) {
-        LOG_I("  Efficiency: {:.1f}%", efficiency);
+        LOG_I(fmt::format("  Efficiency: {:.1f}%", efficiency));
     }
-    LOG_I("  Total Failed: {}", totalFailed);
+    LOG_I("  Total Failed: " << totalFailed);
 
     for (size_t i = 0; i < TRANSACTION_TYPE_COUNT; ++i) {
         auto type = static_cast<ETransactionType>(i);
@@ -219,11 +219,7 @@ void PrintFinalResults(
         auto userAborted = s.UserAborted.load(std::memory_order_relaxed);
         if (ok == 0 && failed == 0 && userAborted == 0) continue;
 
-        LOG_I("  {}: OK={} UserAborted={} Failed={} p50={}ms p90={}ms p99={}ms",
-              TransactionTypeName(type), ok, userAborted, failed,
-              s.LatencyHistogramFullMs.GetValueAtPercentile(50),
-              s.LatencyHistogramFullMs.GetValueAtPercentile(90),
-              s.LatencyHistogramFullMs.GetValueAtPercentile(99));
+        LOG_I("  " << TransactionTypeName(type) << ": OK=" << ok << " UserAborted=" << userAborted << " Failed=" << failed << " p50=" << s.LatencyHistogramFullMs.GetValueAtPercentile(50) << "ms p90=" << s.LatencyHistogramFullMs.GetValueAtPercentile(90) << "ms p99=" << s.LatencyHistogramFullMs.GetValueAtPercentile(99) << "ms");
     }
 }
 
@@ -279,36 +275,33 @@ TRunOutcome RunSync(const TRunConfig& config, TTerminalStats* aggregatedStats) {
     } else {
         threadCount = config.ThreadCount;
         if (threadCount > maxTerminalThreadCountAvailable) {
-            LOG_I("User provided thread count {} is above max available {} "
-                  "(cpu count {}, io threads {}). Recommended for {} warehouses is {}. "
-                  "Setting thread count to {}",
-                  threadCount, maxTerminalThreadCountAvailable,
-                  cpuCount, ioThreads, warehouseCount, recommendedThreadCount,
-                  maxTerminalThreadCountAvailable);
+            LOG_I("User provided thread count " << threadCount << " is above max available " << maxTerminalThreadCountAvailable << " "
+                  "(cpu count " << cpuCount << ", io threads " << ioThreads << "). Recommended for " << warehouseCount << " warehouses is " << recommendedThreadCount << ". "
+                  "Setting thread count to " << maxTerminalThreadCountAvailable);
             threadCount = maxTerminalThreadCountAvailable;
         }
     }
     threadCount = std::max(threadCount, size_t(1));
 
     if (threadCount < recommendedThreadCount) {
-        LOG_W("Thread count {} is lower than recommended {}. "
-              "It might affect benchmark results",
-              threadCount, recommendedThreadCount);
+        LOG_W("Thread count " << threadCount << " is lower than recommended " << recommendedThreadCount << ". "
+              "It might affect benchmark results");
     }
 
     if (config.IsSimulationMode()) {
         if (config.SimulateTransactionMs > 0) {
-            LOG_I("SIMULATION MODE: sleep {}ms per transaction (no DB queries)", config.SimulateTransactionMs);
+            LOG_I("SIMULATION MODE: sleep " << config.SimulateTransactionMs << "ms per transaction (no DB queries)");
         } else {
-            LOG_I("SIMULATION MODE: {} SELECT 1 queries per transaction", config.SimulateTransactionSelect1);
+            LOG_I("SIMULATION MODE: " << config.SimulateTransactionSelect1 << " SELECT 1 queries per transaction");
         }
     }
 
     const bool needsConnections = !config.IsSimulationMode() || config.SimulateTransactionSelect1 > 0;
 
-    LOG_I("Starting TPC-C benchmark: {} warehouses, {} terminals, {} threads, {} connections, {} max inflight",
-          warehouseCount, terminalCount, threadCount,
-          needsConnections ? poolSize : 0, maxInflight);
+    LOG_I("Starting TPC-C benchmark: " << warehouseCount << " warehouses, " << terminalCount
+          << " terminals, " << threadCount << " threads, "
+          << (needsConnections ? poolSize : 0) << " connections, "
+          << maxInflight << " max inflight");
 
     std::unique_ptr<PgConnectionPool> connectionPool;
     if (needsConnections) {
@@ -436,8 +429,7 @@ TRunOutcome RunSync(const TRunConfig& config, TTerminalStats* aggregatedStats) {
     if (config.StartAt.has_value()) {
         rampStart = *config.StartAt;
         if (preparedAt >= rampStart) {
-            LOG_E("Missed --start-at deadline {}: prepare finished at {}",
-                  FormatRfc3339Utc(rampStart), FormatRfc3339Utc(preparedAt));
+            LOG_E("Missed --start-at deadline " << FormatRfc3339Utc(rampStart) << ": prepare finished at " << FormatRfc3339Utc(preparedAt));
             GetGlobalErrorVariable().store(true);
             GetGlobalInterruptSource().request_stop();
             if (connectionPool) {
@@ -448,9 +440,7 @@ TRunOutcome RunSync(const TRunConfig& config, TTerminalStats* aggregatedStats) {
             outcome.ExitCode = 1;
             return outcome;
         }
-        LOG_I("Prepared; waiting until start-at {} ({} ms)",
-              FormatRfc3339Utc(rampStart),
-              std::chrono::duration_cast<std::chrono::milliseconds>(rampStart - preparedAt).count());
+        LOG_I("Prepared; waiting until start-at " << FormatRfc3339Utc(rampStart) << " (" << std::chrono::duration_cast<std::chrono::milliseconds>(rampStart - preparedAt).count() << " ms)");
         while (!stopToken.stop_requested()) {
             const auto now = SysClock::now();
             if (now >= rampStart) {
@@ -487,14 +477,10 @@ TRunOutcome RunSync(const TRunConfig& config, TTerminalStats* aggregatedStats) {
         std::chrono::duration<double>(schedule.MeasurementEnd - schedule.MeasurementStart).count();
 
     if (forcedWarmup) {
-        LOG_I("Forced minimal warmup: {}ms", durations.RampUpMs);
+        LOG_I("Forced minimal warmup: " << durations.RampUpMs << "ms");
     }
 
-    LOG_I("Phase schedule: ramp={} measure_start={} measure_end={} drain={}",
-          FormatRfc3339Utc(schedule.RampStart),
-          FormatRfc3339Utc(schedule.MeasurementStart),
-          FormatRfc3339Utc(schedule.MeasurementEnd),
-          FormatRfc3339Utc(schedule.DrainDeadline));
+    LOG_I("Phase schedule: ramp=" << FormatRfc3339Utc(schedule.RampStart) << " measure_start=" << FormatRfc3339Utc(schedule.MeasurementStart) << " measure_end=" << FormatRfc3339Utc(schedule.MeasurementEnd) << " drain=" << FormatRfc3339Utc(schedule.DrainDeadline));
 
     phaseController.SetPhase(ERunPhase::Ramp);
     if (durations.RampUpMs <= 0) {
@@ -506,14 +492,13 @@ TRunOutcome RunSync(const TRunConfig& config, TTerminalStats* aggregatedStats) {
     auto runEnd = warmupEnd + std::chrono::milliseconds(durations.MeasurementMs);
 
 #ifdef TPCC_HAS_TUI
-    TLogCapture logCapture(TUI_LOG_LINES);
     std::unique_ptr<TRunnerTui> tui;
     if (config.UseTui) {
-        StartLogCapture(logCapture);
+        StartLogCapture();
         auto initData = CollectDisplayData(
             config, threadCount, terminalCount, *taskQueue,
             perThreadStats, startTs, warmupEnd, runEnd, durations.RampUpMs <= 0);
-        tui = std::make_unique<TRunnerTui>(logCapture, initData);
+        tui = std::make_unique<TRunnerTui>(*GetLogBackend(), initData);
     }
 #endif
 
@@ -562,11 +547,11 @@ TRunOutcome RunSync(const TRunConfig& config, TTerminalStats* aggregatedStats) {
                 break;
             }
             if (wallNow >= schedule.DrainDeadline) {
-                LOG_I("Drain deadline reached with {} in-flight transactions", inflight);
+                LOG_I("Drain deadline reached with " << inflight << " in-flight transactions");
                 break;
             }
             if (!asyncDelivery) {
-                LOG_T("Draining in-flight={}", inflight);
+                LOG_T("Draining in-flight=" << inflight);
             }
         }
 

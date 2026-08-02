@@ -39,8 +39,7 @@ TFuture<bool> GetOrderStatusTask(
         return generated;
     });
 
-    LOG_T("Terminal {} started OrderStatus: W={}, D={}",
-          context.TerminalID, in.WarehouseID, in.DistrictID);
+    LOG_T("Terminal " << context.TerminalID << " started OrderStatus: W=" << in.WarehouseID << ", D=" << in.DistrictID);
 
     TCustomerRow customer;
     if (in.LookupByName) {
@@ -75,7 +74,7 @@ TFuture<bool> GetOrderStatusTask(
             co_return FailPermanent(context.TerminalID, "OrderStatus latest order failed");
         }
         if (r.ActualRows == 0) {
-            LOG_T("Terminal {} customer has no orders", context.TerminalID);
+            LOG_T("Terminal " << context.TerminalID << " customer has no orders");
             auto commit = co_await SuspendCommit(tx, context);
             ThrowIfCommitFailed(commit);
             latency = std::chrono::duration_cast<std::chrono::microseconds>(
@@ -94,8 +93,7 @@ TFuture<bool> GetOrderStatusTask(
         }
     }
 
-    LOG_T("Terminal {} committing OrderStatus: C={}, O={}",
-          context.TerminalID, customer.CustomerID, orderID);
+    LOG_T("Terminal " << context.TerminalID << " committing OrderStatus: C=" << customer.CustomerID << ", O=" << orderID);
     auto commit = co_await SuspendCommit(tx, context);
     ThrowIfCommitFailed(commit);
 

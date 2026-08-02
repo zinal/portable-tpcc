@@ -44,10 +44,10 @@ PEERDIR(
     tpcc/runtime
     contrib/libs/libpqxx
     contrib/libs/fmt
-    contrib/restricted/spdlog
     contrib/libs/ftxui
     contrib/restricted/nlohmann_json
     contrib/libs/openssl
+    library/cpp/logger
 )
 
 CFLAGS(

@@ -16,7 +16,7 @@ TPC-C 5.11 conformance notes:
 | libpq | `contrib/libs/libpq` | PostgreSQL wire protocol (C API) |
 | libpqxx | `contrib/libs/libpqxx` (7.2.0) | PostgreSQL adapter (`PgSession`, COPY, transactions) |
 | fmt | `contrib/libs/fmt` | String formatting for logs and TUI |
-| spdlog | `contrib/restricted/spdlog` | Structured logging |
+| library/cpp/logger | `library/cpp/logger` | Structured logging (shared with YDB SDK) |
 | gflags | `contrib/libs/gflags` | CLI for `tpcc-pgsql` |
 | ftxui | `contrib/libs/ftxui` | Terminal UI (optional, enabled in `tpcc-pgsql`) |
 | googletest | `contrib/restricted/googletest` | Unit and integration tests |

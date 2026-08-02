@@ -14,12 +14,12 @@ namespace {
 
 void DropTable(pqxx::nontransaction& txn, const char* tableName) {
     std::string sql = fmt::format("DROP TABLE IF EXISTS {} CASCADE", tableName);
-    LOG_T("Dropping table {}", tableName);
+    LOG_T("Dropping table " << tableName);
     try {
         txn.exec(sql);
-        LOG_I("Table {} dropped successfully", tableName);
+        LOG_I("Table " << tableName << " dropped successfully");
     } catch (const std::exception& ex) {
-        LOG_W("Failed to drop table {}: {}", tableName, ex.what());
+        LOG_W("Failed to drop table " << tableName << ": " << ex.what());
     }
 }
 
@@ -52,9 +52,9 @@ void CleanSync(const std::string& connectionString, const std::string& path) {
         try {
             pqxx::nontransaction ntx2(conn);
             ntx2.exec(fmt::format("DROP SCHEMA IF EXISTS {} CASCADE", conn.quote_name(path)));
-            LOG_I("Schema '{}' dropped", path);
+            LOG_I("Schema '" << path << "' dropped");
         } catch (const std::exception& ex) {
-            LOG_W("Failed to drop schema '{}': {}", path, ex.what());
+            LOG_W("Failed to drop schema '" << path << "': " << ex.what());
         }
     }
 

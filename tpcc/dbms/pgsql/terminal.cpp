@@ -165,7 +165,7 @@ void TTerminal::Start() {
 TFuture<void> TTerminal::Run() {
     co_await TTaskReady(TaskQueue, Context.TerminalID);
 
-    LOG_D("Terminal {} started", Context.TerminalID);
+    LOG_D("Terminal " << Context.TerminalID << " started");
 
     TPgErrorClassifier classifier;
     const auto transactions = BuildTransactions(Workload);
@@ -190,8 +190,7 @@ TFuture<void> TTerminal::Run() {
 
         if (!NoDelays && !simulationMode) {
             auto& transaction = transactions[txIndex];
-            LOG_T("Terminal {} keying time for {}: {}ms",
-                Context.TerminalID, transaction.Name, transaction.KeyingTime.count());
+            LOG_T("Terminal " << Context.TerminalID << " keying time for " << transaction.Name << ": " << transaction.KeyingTime.count() << "ms");
             co_await TSuspend(TaskQueue, Context.TerminalID, transaction.KeyingTime);
             if (StopToken.stop_requested()) break;
             if (!PhaseController.MayAdmit()) {
@@ -209,7 +208,7 @@ TFuture<void> TTerminal::Run() {
             break;
         }
 
-        LOG_T("Terminal {} starting {} transaction", Context.TerminalID, txName);
+        LOG_T("Terminal " << Context.TerminalID << " starting " << txName << " transaction");
 
         auto startTimeTransaction = std::chrono::steady_clock::now();
         std::chrono::microseconds latencyPure{0};
@@ -266,10 +265,10 @@ TFuture<void> TTerminal::Run() {
                     auto latencyTransaction = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTimeTransaction);
                     if (result) {
                         recordOk(latencyTransaction, latencyFull, endWall);
-                        LOG_T("Terminal {} {} succeeded", Context.TerminalID, txName);
+                        LOG_T("Terminal " << Context.TerminalID << " " << txName << " succeeded");
                     } else {
                         recordFailed(endWall);
-                        LOG_D("Terminal {} {} failed", Context.TerminalID, txName);
+                        LOG_D("Terminal " << Context.TerminalID << " " << txName << " failed");
                     }
                 } else {
                     TPgTpccSession tpccSession(session);
@@ -285,10 +284,10 @@ TFuture<void> TTerminal::Run() {
                     auto latencyTransaction = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTimeTransaction);
                     if (result) {
                         recordOk(latencyTransaction, latencyFull, endWall);
-                        LOG_T("Terminal {} {} succeeded", Context.TerminalID, txName);
+                        LOG_T("Terminal " << Context.TerminalID << " " << txName << " succeeded");
                     } else {
                         recordFailed(endWall);
-                        LOG_D("Terminal {} {} failed", Context.TerminalID, txName);
+                        LOG_D("Terminal " << Context.TerminalID << " " << txName << " failed");
                     }
                 }
             } catch (const TUserAbortedException&) {
@@ -299,10 +298,10 @@ TFuture<void> TTerminal::Run() {
                 auto latencyTransaction = std::chrono::duration_cast<std::chrono::milliseconds>(
                     endTime - startTimeTransaction);
                 recordUserAborted(latencyTransaction, latencyFull, endWall);
-                LOG_T("Terminal {} {} user aborted", Context.TerminalID, txName);
+                LOG_T("Terminal " << Context.TerminalID << " " << txName << " user aborted");
             } catch (const TClassifiedError& ex) {
                 if (StopToken.stop_requested()) {
-                    LOG_D("Terminal {} {} interrupted during shutdown", Context.TerminalID, txName);
+                    LOG_D("Terminal " << Context.TerminalID << " " << txName << " interrupted during shutdown");
                     break;
                 }
 
@@ -311,26 +310,24 @@ TFuture<void> TTerminal::Run() {
                 const auto endWall = std::chrono::system_clock::now();
 
                 if (cls == EErrorClass::Integrity) {
-                    LOG_E("Terminal {} integrity error in {}: {}", Context.TerminalID, txName, ex.what());
+                    LOG_E("Terminal " << Context.TerminalID << " integrity error in " << txName << ": " << ex.what());
                     recordFailed(endWall);
                     fatal = true;
                 } else if (cls == EErrorClass::Cancelled) {
-                    LOG_D("Terminal {} {} cancelled: {}", Context.TerminalID, txName, ex.what());
+                    LOG_D("Terminal " << Context.TerminalID << " " << txName << " cancelled: " << ex.what());
                     break;
                 } else if (ShouldRetryClass(cls, RetryAmbiguousCommit) && attemptsRemain) {
                     shouldRetry = true;
                     recordRetried(endWall);
-                    LOG_D("Terminal {} {} classified retry {}/{}: {}",
-                          Context.TerminalID, txName, attempt + 1, RetryMaxAttempts, ex.what());
+                    LOG_D("Terminal " << Context.TerminalID << " " << txName << " classified retry " << attempt + 1 << "/" << RetryMaxAttempts << ": " << ex.what());
                 } else {
                     recordFailed(endWall);
                     if (cls == EErrorClass::AmbiguousCommit && !RetryAmbiguousCommit) {
-                        LOG_E("Terminal {} {} ambiguous commit (blind retry disabled): {}",
-                              Context.TerminalID, txName, ex.what());
+                        LOG_E("Terminal " << Context.TerminalID << " " << txName << " ambiguous commit (blind retry disabled): " << ex.what());
                     } else if (!attemptsRemain && ShouldRetryClass(cls, RetryAmbiguousCommit)) {
-                        LOG_D("Terminal {} {} retries exhausted: {}", Context.TerminalID, txName, ex.what());
+                        LOG_D("Terminal " << Context.TerminalID << " " << txName << " retries exhausted: " << ex.what());
                     } else {
-                        LOG_E("Terminal {} classified error in {}: {}", Context.TerminalID, txName, ex.what());
+                        LOG_E("Terminal " << Context.TerminalID << " classified error in " << txName << ": " << ex.what());
                         if (cls == EErrorClass::Permanent) {
                             fatal = true;
                         }
@@ -338,7 +335,7 @@ TFuture<void> TTerminal::Run() {
                 }
             } catch (const std::exception& ex) {
                 if (StopToken.stop_requested()) {
-                    LOG_D("Terminal {} {} interrupted during shutdown", Context.TerminalID, txName);
+                    LOG_D("Terminal " << Context.TerminalID << " " << txName << " interrupted during shutdown");
                     break;
                 }
 
@@ -347,29 +344,25 @@ TFuture<void> TTerminal::Run() {
                 const auto endWall = std::chrono::system_clock::now();
 
                 if (cls == EErrorClass::Integrity) {
-                    LOG_E("Terminal {} integrity error in {}: {}", Context.TerminalID, txName, ex.what());
+                    LOG_E("Terminal " << Context.TerminalID << " integrity error in " << txName << ": " << ex.what());
                     recordFailed(endWall);
                     fatal = true;
                 } else if (cls == EErrorClass::Cancelled) {
-                    LOG_D("Terminal {} {} cancelled: {}", Context.TerminalID, txName, ex.what());
+                    LOG_D("Terminal " << Context.TerminalID << " " << txName << " cancelled: " << ex.what());
                     break;
                 } else if (ShouldRetryClass(cls, RetryAmbiguousCommit) && attemptsRemain) {
                     shouldRetry = true;
                     recordRetried(endWall);
-                    LOG_D("Terminal {} {} classified {} ({})",
-                          Context.TerminalID, txName,
-                          static_cast<int>(cls), ex.what());
-                    LOG_D("Terminal {} {} retry {}/{}",
-                          Context.TerminalID, txName, attempt + 1, RetryMaxAttempts);
+                    LOG_D("Terminal " << Context.TerminalID << " " << txName << " classified " << static_cast<int>(cls) << " (" << ex.what() << ")");
+                    LOG_D("Terminal " << Context.TerminalID << " " << txName << " retry " << attempt + 1 << "/" << RetryMaxAttempts);
                 } else {
                     recordFailed(endWall);
                     if (cls == EErrorClass::AmbiguousCommit && !RetryAmbiguousCommit) {
-                        LOG_E("Terminal {} {} ambiguous commit (blind retry disabled): {}",
-                              Context.TerminalID, txName, ex.what());
+                        LOG_E("Terminal " << Context.TerminalID << " " << txName << " ambiguous commit (blind retry disabled): " << ex.what());
                     } else if (!attemptsRemain && ShouldRetryClass(cls, RetryAmbiguousCommit)) {
-                        LOG_D("Terminal {} {} retries exhausted: {}", Context.TerminalID, txName, ex.what());
+                        LOG_D("Terminal " << Context.TerminalID << " " << txName << " retries exhausted: " << ex.what());
                     } else {
-                        LOG_E("Terminal {} exception in {}: {}", Context.TerminalID, txName, ex.what());
+                        LOG_E("Terminal " << Context.TerminalID << " exception in " << txName << ": " << ex.what());
                         if (cls == EErrorClass::Permanent) {
                             fatal = true;
                         }
@@ -381,8 +374,7 @@ TFuture<void> TTerminal::Run() {
             const auto delay = RetryDelay(
                 attempt, RetryInitialBackoffMs, RetryMaxBackoffMs, RetryJitter);
             if (delay.count() > 0) {
-                LOG_D("Terminal {} {} retry backoff {}ms",
-                      Context.TerminalID, txName, delay.count());
+                LOG_D("Terminal " << Context.TerminalID << " " << txName << " retry backoff " << delay.count() << "ms");
                 co_await TSuspend(TaskQueue, Context.TerminalID, delay);
                 if (StopToken.stop_requested()) {
                     break;
@@ -402,16 +394,12 @@ TFuture<void> TTerminal::Run() {
             auto& transaction = transactions[txIndex];
             const auto thinkTime = std::chrono::milliseconds(SampleThinkTimeMs(
                 transaction.ThinkTime.count(), ThinkTimeDistribution));
-            LOG_T("Terminal {} think time: {}ms (mean {}ms, {})",
-                  Context.TerminalID,
-                  thinkTime.count(),
-                  transaction.ThinkTime.count(),
-                  ThinkTimeDistributionToString(ThinkTimeDistribution));
+            LOG_T("Terminal " << Context.TerminalID << " think time: " << thinkTime.count() << "ms (mean " << transaction.ThinkTime.count() << "ms, " << ThinkTimeDistributionToString(ThinkTimeDistribution) << ")");
             co_await TSuspend(TaskQueue, Context.TerminalID, thinkTime);
         }
     }
 
-    LOG_D("Terminal {} stopped", Context.TerminalID);
+    LOG_D("Terminal " << Context.TerminalID << " stopped");
     Done.store(true, std::memory_order_relaxed);
     co_return;
 }

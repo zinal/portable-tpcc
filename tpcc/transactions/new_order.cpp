@@ -78,8 +78,7 @@ TFuture<bool> GetNewOrderTask(
         return generated;
     });
 
-    LOG_T("Terminal {} started NewOrder: W={}, D={}, C={}",
-          context.TerminalID, in.WarehouseID, in.DistrictID, in.CustomerID);
+    LOG_T("Terminal " << context.TerminalID << " started NewOrder: W=" << in.WarehouseID << ", D=" << in.DistrictID << ", C=" << in.CustomerID);
 
     {
         auto r = co_await SuspendExecute(tx, context, TGetCustomerById{
@@ -234,7 +233,7 @@ TFuture<bool> GetNewOrderTask(
         }
     }
 
-    LOG_T("Terminal {} committing NewOrder", context.TerminalID);
+    LOG_T("Terminal " << context.TerminalID << " committing NewOrder");
     auto commit = co_await SuspendCommit(tx, context);
     ThrowIfCommitFailed(commit);
 

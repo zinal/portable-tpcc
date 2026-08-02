@@ -187,7 +187,7 @@ void InitSync(const std::string& connectionString, const std::string& path) {
         if (!path.empty()) {
             pqxx::nontransaction ntx(conn);
             ntx.exec(fmt::format("CREATE SCHEMA IF NOT EXISTS {}", conn.quote_name(path)));
-            LOG_I("Created schema '{}'", path);
+            LOG_I("Created schema '" << path << "'");
         }
 
         SetSearchPath(conn, path);
@@ -196,7 +196,7 @@ void InitSync(const std::string& connectionString, const std::string& path) {
         ntx.exec(DDL);
         LOG_I("All TPC-C tables created successfully");
     } catch (const std::exception& e) {
-        LOG_E("Failed to create TPC-C tables: {}", e.what());
+        LOG_E("Failed to create TPC-C tables: " << e.what());
         LOG_E("After fixing the reason, you might need to run `tpcc clean`.");
         throw;
     }
@@ -213,7 +213,7 @@ void CreateIndexes(const std::string& connectionString, const std::string& path)
         ntx.exec(INDEX_DDL);
         LOG_I("Secondary indexes created");
     } catch (const std::exception& e) {
-        LOG_E("Failed to create indexes: {}", e.what());
+        LOG_E("Failed to create indexes: " << e.what());
         throw;
     }
 }

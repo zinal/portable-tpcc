@@ -10,7 +10,7 @@ namespace NTpcc {
 
 class TRunnerTui : public TuiBase {
 public:
-    TRunnerTui(TLogCapture& logCapture, std::shared_ptr<TRunDisplayData> data);
+    TRunnerTui(TLogBackendWithCapture& logBackend, std::shared_ptr<TRunDisplayData> data);
 
     void Update(std::shared_ptr<TRunDisplayData> data);
 
@@ -21,7 +21,7 @@ private:
     ftxui::Component BuildComponent() override;
 
 private:
-    TLogCapture& LogCapture;
+    TLogBackendWithCapture& LogBackend;
     std::shared_ptr<TRunDisplayData> DataToDisplay;
 };
 

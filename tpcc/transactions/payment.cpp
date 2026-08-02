@@ -58,8 +58,7 @@ TFuture<bool> GetPaymentTask(
         return generated;
     });
 
-    LOG_T("Terminal {} started Payment: W={}, D={}",
-          context.TerminalID, in.WarehouseID, in.DistrictID);
+    LOG_T("Terminal " << context.TerminalID << " started Payment: W=" << in.WarehouseID << ", D=" << in.DistrictID);
 
     TWarehouseDistrictInfo loc;
     {
@@ -156,7 +155,7 @@ TFuture<bool> GetPaymentTask(
         }
     }
 
-    LOG_T("Terminal {} committing Payment", context.TerminalID);
+    LOG_T("Terminal " << context.TerminalID << " committing Payment");
     auto commit = co_await SuspendCommit(tx, context);
     ThrowIfCommitFailed(commit);
 

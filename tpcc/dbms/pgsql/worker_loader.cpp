@@ -49,7 +49,7 @@ int RunLoaderFromRunConfig(const std::string& runConfigPath, const std::string& 
         ImportSync(importCfg);
         // ImportSync creates secondary indexes and runs ANALYZE.
     } catch (const std::exception& ex) {
-        LOG_E("Loader failed: {}", ex.what());
+        LOG_E("Loader failed: " << ex.what());
         exitCode = 1;
     }
 
@@ -77,7 +77,7 @@ int RunWorkerFromRunConfig(
     const auto clockCalibration = MeasureClockCalibration(connection, doc.Endpoint);
     WriteReadyJson(paths, doc, instance, assign.WarehouseRanges, nonce, clockCalibration);
     if (!IsClockSkewWithinBudget(clockCalibration, doc.PhasePolicy.MaxClockSkewMs)) {
-        LOG_E("{}: {}", instance, FormatClockSkewViolation(clockCalibration, doc.PhasePolicy.MaxClockSkewMs));
+        LOG_E(instance + ": " + FormatClockSkewViolation(clockCalibration, doc.PhasePolicy.MaxClockSkewMs));
         const bool recordUs = doc.Histogram.Configured && doc.Histogram.Unit == "us";
         const uint64_t histHdr = doc.Histogram.Configured
             ? doc.Histogram.HdrTill()
@@ -137,7 +137,7 @@ int RunWorkerFromRunConfig(
         outcome = RunSync(runCfg, &aggregated);
         exitCode = outcome.ExitCode;
     } catch (const std::exception& ex) {
-        LOG_E("Worker failed: {}", ex.what());
+        LOG_E("Worker failed: " << ex.what());
         exitCode = 1;
     }
 
@@ -165,10 +165,9 @@ int RunSchemaFromRunConfig(const std::string& runConfigPath, const std::string& 
         TPgAdminAdapter admin(connection, doc.Path);
         admin.EnsureSchema();
         auto desc = admin.Describe();
-        LOG_I("Schema ready (server={}, client={}, instance={})",
-              desc.ServerVersion, desc.ClientVersion, instance);
+        LOG_I("Schema ready (server=" << desc.ServerVersion << ", client=" << desc.ClientVersion << ", instance=" << instance << ")");
     } catch (const std::exception& ex) {
-        LOG_E("Schema failed: {}", ex.what());
+        LOG_E("Schema failed: " << ex.what());
         exitCode = 1;
     }
 

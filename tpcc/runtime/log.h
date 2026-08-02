@@ -1,20 +1,85 @@
 #pragma once
 
-#include <spdlog/spdlog.h>
-#include <spdlog/fmt/fmt.h>
+#include <library/cpp/colorizer/colors.h>
+#include <library/cpp/logger/log.h>
+
+#include <util/datetime/base.h>
+#include <util/string/builder.h>
+#include <util/system/compiler.h>
+
+#include <functional>
+#include <memory>
+#include <string>
 
 namespace NTpcc {
 
-// Initialize the global logger. Call once at startup.
-void InitLogging(spdlog::level::level_enum level = spdlog::level::info);
+using TLogProcessor = std::function<void(ELogPriority, const std::string&)>;
 
-// Get the shared logger instance
-std::shared_ptr<spdlog::logger>& GetLogger();
+inline const char* PriorityToString(ELogPriority priority) {
+    switch (priority) {
+        case TLOG_EMERG:     return "EMERG";
+        case TLOG_ALERT:     return "ALERT";
+        case TLOG_CRIT:      return "CRIT";
+        case TLOG_ERR:       return "ERROR";
+        case TLOG_WARNING:   return "WARN";
+        case TLOG_NOTICE:    return "NOTICE";
+        case TLOG_INFO:      return "INFO";
+        case TLOG_DEBUG:     return "DEBUG";
+        case TLOG_RESOURCES: return "TRACE";
+        default:             return "UNKNOWN";
+    }
+}
+
+inline TStringBuf GetLogColor(ELogPriority priority) {
+    switch (priority) {
+        case TLOG_EMERG:
+            [[fallthrough]];
+        case TLOG_ALERT:
+            [[fallthrough]];
+        case TLOG_CRIT:
+            [[fallthrough]];
+        case TLOG_ERR:
+            return NColorizer::StdErr().RedColor();
+        case TLOG_WARNING:
+            return NColorizer::StdErr().YellowColor();
+        case TLOG_NOTICE:
+            [[fallthrough]];
+        case TLOG_INFO:
+            [[fallthrough]];
+        case TLOG_DEBUG:
+            [[fallthrough]];
+        case TLOG_RESOURCES:
+            [[fallthrough]];
+        default:
+            return NColorizer::StdErr().Default();
+    }
+}
+
+inline size_t GetLenOfFormatDate8601Part() {
+    return 20;
+}
+
+// Initialize the global logger. Call once at startup.
+void InitLogging(ELogPriority level = TLOG_INFO);
+
+// Shared logger used by LOG_* macros.
+std::shared_ptr<TLog>& GetLog();
 
 } // namespace NTpcc
 
-#define LOG_T(...) SPDLOG_LOGGER_TRACE(NTpcc::GetLogger(), __VA_ARGS__)
-#define LOG_D(...) SPDLOG_LOGGER_DEBUG(NTpcc::GetLogger(), __VA_ARGS__)
-#define LOG_I(...) SPDLOG_LOGGER_INFO(NTpcc::GetLogger(), __VA_ARGS__)
-#define LOG_W(...) SPDLOG_LOGGER_WARN(NTpcc::GetLogger(), __VA_ARGS__)
-#define LOG_E(...) SPDLOG_LOGGER_ERROR(NTpcc::GetLogger(), __VA_ARGS__)
+#define LOG_IMPL(log, level, message) \
+    if (log && log->FiltrationLevel() >= level) { \
+        char buf[DATE_8601_LEN]; \
+        log->Write(level, TStringBuilder() \
+            << TStringBuf(buf, FormatDate8601(buf, sizeof(buf), TInstant::Now().Seconds())) \
+            << " " << NTpcc::GetLogColor(level) << NTpcc::PriorityToString(level) \
+            << NColorizer::StdErr().Default() \
+            << ": " << message << Endl); \
+    } \
+    Y_SEMICOLON_GUARD
+
+#define LOG_T(message) LOG_IMPL(NTpcc::GetLog(), ELogPriority::TLOG_RESOURCES, message)
+#define LOG_D(message) LOG_IMPL(NTpcc::GetLog(), ELogPriority::TLOG_DEBUG, message)
+#define LOG_I(message) LOG_IMPL(NTpcc::GetLog(), ELogPriority::TLOG_INFO, message)
+#define LOG_W(message) LOG_IMPL(NTpcc::GetLog(), ELogPriority::TLOG_WARNING, message)
+#define LOG_E(message) LOG_IMPL(NTpcc::GetLog(), ELogPriority::TLOG_ERR, message)

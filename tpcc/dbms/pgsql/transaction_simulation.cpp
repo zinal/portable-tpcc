@@ -18,7 +18,7 @@ TFuture<bool> GetSimulationTask(
     TTransactionInflightGuard guard;
     co_await TTaskReady(context.TaskQueue, context.TerminalID);
 
-    LOG_T("Terminal {} started simulated transaction", context.TerminalID);
+    LOG_T("Terminal " << context.TerminalID << " started simulated transaction");
 
     for (size_t i = 0; i < 10; ++i) {
         RandomNumber(DISTRICT_LOW_ID, DISTRICT_HIGH_ID);
@@ -36,7 +36,7 @@ TFuture<bool> GetSimulationTask(
         auto result = co_await TSuspendWithFuture(
             session.ExecuteQuery("SELECT $1::int", 1),
             context.TaskQueue, context.TerminalID);
-        LOG_T("Terminal {} select1 iteration {}", context.TerminalID, i);
+        LOG_T("Terminal " << context.TerminalID << " select1 iteration " << i);
     }
 
     co_await TSuspendWithFuture(session.Commit(), context.TaskQueue, context.TerminalID);

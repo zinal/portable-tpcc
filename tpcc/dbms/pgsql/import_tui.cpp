@@ -14,8 +14,8 @@ using namespace ftxui;
 
 namespace NTpcc {
 
-TImportTui::TImportTui(TLogCapture& logCapture, size_t warehouseCount, size_t loadThreads, const TImportDisplayData& data)
-    : LogCapture(logCapture)
+TImportTui::TImportTui(TLogBackendWithCapture& logBackend, size_t warehouseCount, size_t loadThreads, const TImportDisplayData& data)
+    : LogBackend(logBackend)
     , WarehouseCount(warehouseCount)
     , LoadThreads(loadThreads)
     , DataToDisplay(data)
@@ -77,10 +77,10 @@ Component TImportTui::BuildComponent() {
     try {
         return Container::Vertical({
             Renderer([=]{ return BuildUpperPart(); }),
-            LogsScroller(LogCapture),
+            LogsScroller(LogBackend),
         });
     } catch (const std::exception& ex) {
-        LOG_E("Exception in TUI: {}", ex.what());
+        LOG_E("Exception in TUI: " << ex.what());
         RequestStopWithError();
         return Renderer([] { return filler(); });
     }

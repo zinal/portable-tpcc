@@ -2,39 +2,63 @@
 
 #include <log.h>
 
-#include <spdlog/sinks/stdout_color_sinks.h>
-#include <spdlog/sinks/rotating_file_sink.h>
+#include <library/cpp/logger/backend.h>
+#include <library/cpp/logger/log.h>
 
-#include <functional>
-#include <memory>
-#include <mutex>
+#include <util/generic/string.h>
+#include <util/system/mutex.h>
+
+#include <deque>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace NTpcc {
 
-class TLogCapture;
-
-using TLogProcessor = std::function<void(spdlog::level::level_enum, const std::string&)>;
-
-void StartLogCapture(TLogCapture& capture);
-void StopLogCapture();
-
-// Captures recent log lines for TUI display
-class TLogCapture {
+// Either writes logs to the real backend or captures them for TUI display.
+class TLogBackendWithCapture : public TLogBackend {
 public:
-    explicit TLogCapture(size_t maxLines = 1000);
+    explicit TLogBackendWithCapture(const TString& type, ELogPriority priority, size_t maxLines);
+    ~TLogBackendWithCapture() override = default;
 
-    void AddLine(const std::string& line);
-    std::vector<std::string> GetLines() const;
-    void Clear();
+    void StartCapture();
+    void StopCapture();
+    void StopCaptureAndFlush(IOutputStream& os);
+
+    // Get current log lines to display in TUI.
+    // Assumes single consumer, multiple producers.
+    void GetLogLines(const TLogProcessor& processor);
+
+    void WriteData(const TLogRecord& rec) override;
+
+    void ReopenLog() override {
+        RealBackend->ReopenLog();
+    }
+
+    ELogPriority FiltrationLevel() const override {
+        return RealBackend->FiltrationLevel();
+    }
 
 private:
-    mutable std::mutex Mutex_;
-    std::vector<std::string> Lines_;
-    size_t MaxLines_;
-    size_t WritePos_ = 0;
-    bool Wrapped_ = false;
+    void ProcessNewLines(bool logTaken);
+
+private:
+    THolder<TLogBackend> RealBackend;
+    const size_t MaxLines;
+
+    std::deque<std::pair<ELogPriority, std::string>> LogLines;
+    size_t TruncatedCount = 0;
+
+    TMutex CapturingMutex;
+    bool IsCapturing = false;
+    std::vector<std::pair<ELogPriority, std::string>> CapturedLines;
 };
+
+// Global capture backend installed by InitLogging (owned by GetLog()).
+TLogBackendWithCapture* GetLogBackend();
+
+void StartLogCapture();
+void StopLogCapture();
+void StopLogCaptureAndFlush(IOutputStream& os);
 
 } // namespace NTpcc

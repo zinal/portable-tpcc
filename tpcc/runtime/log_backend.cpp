@@ -1,126 +1,170 @@
 #include <log_backend.h>
-#include <log.h>
 
-#include <spdlog/sinks/base_sink.h>
-#include <spdlog/sinks/stdout_color_sinks.h>
+#include <library/cpp/logger/backend_creator.h>
+
+#include <util/stream/output.h>
+#include <util/system/guard.h>
+
+#include <utility>
+
+namespace {
+constexpr size_t DefaultCaptureLines = 1000;
+}
 
 namespace NTpcc {
 
-//-----------------------------------------------------------------------------
+namespace {
 
-// Wraps the real stderr sink. When capture is active, formats log messages
-// as plain text and routes them to TLogCapture instead of stderr.
-class TRoutingSink : public spdlog::sinks::base_sink<std::mutex> {
-public:
-    explicit TRoutingSink(spdlog::sink_ptr realSink)
-        : RealSink_(std::move(realSink))
-    {}
+std::shared_ptr<TLog> GlobalLog;
+TLogBackendWithCapture* GlobalLogBackend = nullptr;
 
-    void SetCapture(TLogCapture* capture) {
-        std::lock_guard<std::mutex> lock(mutex_);
-        Capture_ = capture;
+} // namespace
+
+TLogBackendWithCapture::TLogBackendWithCapture(const TString& type, ELogPriority priority, size_t maxLines)
+    : RealBackend(CreateLogBackend(type, priority, true).Release())
+    , MaxLines(maxLines)
+{
+    CapturedLines.reserve(MaxLines * 2);
+}
+
+void TLogBackendWithCapture::StartCapture() {
+    TGuard guard(CapturingMutex);
+    IsCapturing = true;
+}
+
+void TLogBackendWithCapture::StopCapture() {
+    TGuard guard(CapturingMutex);
+
+    if (!IsCapturing) {
+        return;
     }
 
-protected:
-    void sink_it_(const spdlog::details::log_msg& msg) override {
-        if (Capture_) {
-            spdlog::memory_buf_t formatted;
-            formatter_->format(msg, formatted);
-            Capture_->AddLine(std::string(formatted.data(), formatted.size()));
-        } else {
-            RealSink_->log(msg);
+    IsCapturing = false;
+
+    ProcessNewLines(true);
+    CapturedLines.clear();
+    LogLines.clear();
+    TruncatedCount = 0;
+}
+
+void TLogBackendWithCapture::StopCaptureAndFlush(IOutputStream& os) {
+    TGuard guard(CapturingMutex);
+
+    if (!IsCapturing) {
+        return;
+    }
+
+    IsCapturing = false;
+
+    ProcessNewLines(true);
+
+    for (const auto& [priority, line] : LogLines) {
+        Y_UNUSED(priority);
+        os << line;
+    }
+
+    CapturedLines.clear();
+    LogLines.clear();
+    TruncatedCount = 0;
+}
+
+void TLogBackendWithCapture::GetLogLines(const TLogProcessor& processor) {
+    ProcessNewLines(false);
+
+    if (TruncatedCount > 0) {
+        processor(TLOG_INFO, "... logs truncated: " + std::to_string(TruncatedCount) + " lines");
+    }
+
+    for (const auto& [priority, line] : LogLines) {
+        processor(priority, line);
+    }
+}
+
+void TLogBackendWithCapture::ProcessNewLines(bool lockTaken) {
+    std::vector<std::pair<ELogPriority, std::string>> newLines;
+    newLines.reserve(MaxLines * 2);
+    if (lockTaken) {
+        newLines.swap(CapturedLines);
+    } else {
+        TGuard guard(CapturingMutex);
+        newLines.swap(CapturedLines);
+    }
+
+    if (newLines.empty()) {
+        return;
+    }
+
+    auto currentSize = LogLines.size();
+    auto newSize = currentSize + newLines.size();
+    if (newSize > MaxLines && newLines.size() > MaxLines) {
+        TruncatedCount += LogLines.size();
+        LogLines.clear();
+
+        size_t newLinesTruncateCount = newLines.size() - MaxLines;
+        TruncatedCount += newLinesTruncateCount;
+        for (size_t i = newLinesTruncateCount; i < newLines.size(); ++i) {
+            LogLines.emplace_back(std::move(newLines[i]));
+        }
+    } else {
+        size_t popCount = 0;
+        if (newSize > MaxLines) {
+            popCount = newSize - MaxLines;
+        }
+        TruncatedCount += popCount;
+        for (size_t i = 0; i < popCount && !LogLines.empty(); ++i) {
+            LogLines.pop_front();
+        }
+        for (auto& line : newLines) {
+            LogLines.emplace_back(std::move(line));
         }
     }
-
-    void flush_() override {
-        RealSink_->flush();
-    }
-
-private:
-    spdlog::sink_ptr RealSink_;
-    TLogCapture* Capture_ = nullptr;
-};
-
-//-----------------------------------------------------------------------------
-
-static std::shared_ptr<spdlog::logger> GlobalLogger;
-static std::shared_ptr<TRoutingSink> GlobalRoutingSink;
-
-void InitLogging(spdlog::level::level_enum level) {
-    auto console_sink = std::make_shared<spdlog::sinks::stderr_color_sink_mt>();
-    console_sink->set_level(level);
-    console_sink->set_pattern("%Y-%m-%dT%H:%M:%S.%e %^%l%$: %v");
-
-    GlobalRoutingSink = std::make_shared<TRoutingSink>(console_sink);
-    GlobalRoutingSink->set_level(level);
-    GlobalRoutingSink->set_pattern("%Y-%m-%dT%H:%M:%S.%e %l: %v");
-
-    GlobalLogger = std::make_shared<spdlog::logger>("tpcc", GlobalRoutingSink);
-    GlobalLogger->set_level(level);
-    spdlog::set_default_logger(GlobalLogger);
 }
 
-std::shared_ptr<spdlog::logger>& GetLogger() {
-    if (!GlobalLogger) {
+void TLogBackendWithCapture::WriteData(const TLogRecord& record) {
+    {
+        TGuard guard(CapturingMutex);
+        if (IsCapturing) {
+            CapturedLines.emplace_back(record.Priority, std::string(record.Data, record.Len));
+            return;
+        }
+    }
+    RealBackend->WriteData(record);
+}
+
+void InitLogging(ELogPriority level) {
+    // TLog takes ownership of the backend via THolder.
+    GlobalLogBackend = new TLogBackendWithCapture("cerr", level, DefaultCaptureLines);
+    GlobalLog = std::make_shared<TLog>(THolder<TLogBackend>(GlobalLogBackend));
+}
+
+std::shared_ptr<TLog>& GetLog() {
+    if (!GlobalLog) {
         InitLogging();
     }
-    return GlobalLogger;
+    return GlobalLog;
 }
 
-void StartLogCapture(TLogCapture& capture) {
-    if (GlobalRoutingSink) {
-        GlobalRoutingSink->SetCapture(&capture);
+TLogBackendWithCapture* GetLogBackend() {
+    GetLog();
+    return GlobalLogBackend;
+}
+
+void StartLogCapture() {
+    if (auto* backend = GetLogBackend()) {
+        backend->StartCapture();
     }
 }
 
 void StopLogCapture() {
-    if (GlobalRoutingSink) {
-        GlobalRoutingSink->SetCapture(nullptr);
+    if (GlobalLogBackend) {
+        GlobalLogBackend->StopCapture();
     }
 }
 
-//-----------------------------------------------------------------------------
-
-TLogCapture::TLogCapture(size_t maxLines)
-    : MaxLines_(maxLines)
-{
-    Lines_.resize(maxLines);
-}
-
-void TLogCapture::AddLine(const std::string& line) {
-    std::lock_guard lock(Mutex_);
-    Lines_[WritePos_] = line;
-    WritePos_ = (WritePos_ + 1) % MaxLines_;
-    if (WritePos_ == 0) {
-        Wrapped_ = true;
+void StopLogCaptureAndFlush(IOutputStream& os) {
+    if (GlobalLogBackend) {
+        GlobalLogBackend->StopCaptureAndFlush(os);
     }
-}
-
-std::vector<std::string> TLogCapture::GetLines() const {
-    std::lock_guard lock(Mutex_);
-    std::vector<std::string> result;
-    if (Wrapped_) {
-        for (size_t i = WritePos_; i < MaxLines_; ++i) {
-            if (!Lines_[i].empty()) result.push_back(Lines_[i]);
-        }
-        for (size_t i = 0; i < WritePos_; ++i) {
-            if (!Lines_[i].empty()) result.push_back(Lines_[i]);
-        }
-    } else {
-        for (size_t i = 0; i < WritePos_; ++i) {
-            if (!Lines_[i].empty()) result.push_back(Lines_[i]);
-        }
-    }
-    return result;
-}
-
-void TLogCapture::Clear() {
-    std::lock_guard lock(Mutex_);
-    for (auto& line : Lines_) {
-        line.clear();
-    }
-    WritePos_ = 0;
-    Wrapped_ = false;
 }
 
 } // namespace NTpcc

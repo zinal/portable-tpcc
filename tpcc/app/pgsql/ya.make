@@ -9,7 +9,7 @@ SRCS(
 PEERDIR(
     tpcc/dbms/pgsql
     contrib/libs/gflags
-    contrib/restricted/spdlog
+    library/cpp/logger
 )
 
 END()

@@ -14,7 +14,8 @@ SRCS(
 
 PEERDIR(
     tpcc/metrics
-    contrib/restricted/spdlog
+    library/cpp/logger
+    library/cpp/colorizer
 )
 
 END()

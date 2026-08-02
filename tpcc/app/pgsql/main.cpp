@@ -11,8 +11,9 @@
 #include <domain_util.h>
 #include <think_time.h>
 
+#include <library/cpp/logger/priority.h>
+
 #include <gflags/gflags.h>
-#include <spdlog/spdlog.h>
 
 #include <iostream>
 #include <optional>
@@ -97,13 +98,13 @@ void PrintHelp() {
         "  tpcc check -w 10 --after-import\n";
 }
 
-spdlog::level::level_enum ParseLogLevel(const std::string& level) {
-    if (level == "trace") return spdlog::level::trace;
-    if (level == "debug") return spdlog::level::debug;
-    if (level == "info") return spdlog::level::info;
-    if (level == "warn" || level == "warning") return spdlog::level::warn;
-    if (level == "error" || level == "err") return spdlog::level::err;
-    return spdlog::level::info;
+ELogPriority ParseLogLevel(const std::string& level) {
+    if (level == "trace") return TLOG_RESOURCES;
+    if (level == "debug") return TLOG_DEBUG;
+    if (level == "info") return TLOG_INFO;
+    if (level == "warn" || level == "warning") return TLOG_WARNING;
+    if (level == "error" || level == "err") return TLOG_ERR;
+    return TLOG_INFO;
 }
 
 bool IsValidCommand(const std::string& cmd) {
@@ -184,19 +185,19 @@ int RunOrchestrated(
     bool afterRun)
 {
     if (command == "worker") {
-        LOG_I("Starting orchestrated worker {}...", instance);
+        LOG_I("Starting orchestrated worker " << instance << "...");
         return NTpcc::RunWorkerFromRunConfig(runConfig, instance, startAt);
     }
     if (command == "loader") {
-        LOG_I("Starting orchestrated loader {}...", instance);
+        LOG_I("Starting orchestrated loader " << instance << "...");
         return NTpcc::RunLoaderFromRunConfig(runConfig, instance);
     }
     if (command == "schema") {
-        LOG_I("Starting orchestrated schema {}...", instance);
+        LOG_I("Starting orchestrated schema " << instance << "...");
         return RunOrchestratedSchema(runConfig, instance);
     }
     if (command == "check") {
-        LOG_I("Starting orchestrated check {}...", instance);
+        LOG_I("Starting orchestrated check " << instance << "...");
         return NTpcc::RunCheckFromRunConfig(runConfig, instance, afterImport, afterRun);
     }
     return 1;
@@ -376,13 +377,12 @@ int main(int argc, char* argv[]) {
                     std::cerr << "Error: check requires exactly one of --after-import or --after-run\n";
                     return 1;
                 }
-                NTpcc::InitLogging();
-                spdlog::set_level(spdlog::level::info);
+                NTpcc::InitLogging(TLOG_INFO);
                 try {
                     return RunOrchestrated(
                         earlyCommand, runConfig, instance, startAt, afterImport, afterRun);
                 } catch (const std::exception& ex) {
-                    LOG_E("Fatal error: {}", ex.what());
+                    LOG_E("Fatal error: " << ex.what());
                     return 1;
                 }
             }
@@ -412,8 +412,7 @@ int main(int argc, char* argv[]) {
     gflags::SetUsageMessage("TPC-C benchmark for PostgreSQL");
     gflags::ParseCommandLineFlags(&argc, &argv, true);
 
-    NTpcc::InitLogging();
-    spdlog::set_level(ParseLogLevel(FLAGS_log_level));
+    NTpcc::InitLogging(ParseLogLevel(FLAGS_log_level));
 
     try {
         if (command == "schema" || command == "init") {
@@ -421,7 +420,7 @@ int main(int argc, char* argv[]) {
             RunSchema();
             LOG_I("Schema initialization complete");
         } else if (command == "import") {
-            LOG_I("Importing TPC-C data ({} warehouses)...", FLAGS_warehouses);
+            LOG_I("Importing TPC-C data (" << FLAGS_warehouses << " warehouses)...");
             RunImport();
             LOG_I("Data import complete");
         } else if (command == "run") {
@@ -452,7 +451,7 @@ int main(int argc, char* argv[]) {
             return RunOrchestrated(command, runConfig, instance, startAt, afterImport, afterRun);
         }
     } catch (const std::exception& ex) {
-        LOG_E("Fatal error: {}", ex.what());
+        LOG_E("Fatal error: " << ex.what());
         return 1;
     }
 

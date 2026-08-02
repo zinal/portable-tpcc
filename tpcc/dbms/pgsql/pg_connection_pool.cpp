@@ -15,7 +15,7 @@ PgConnectionPool::PgConnectionPool(const std::string& connectionString,
     , poolSize_(poolSize)
     , executor_(std::make_unique<TThreadPool>(ioThreads))
 {
-    LOG_I("Creating connection pool: {} connections, {} IO threads", poolSize, ioThreads);
+    LOG_I("Creating connection pool: " << poolSize << " connections, " << ioThreads << " IO threads");
 
     for (size_t i = 0; i < poolSize; ++i) {
         connections_.push(CreateConnection());
@@ -82,7 +82,7 @@ void PgConnectionPool::ReleaseSession(PgSession session) {
         try {
             replacement = CreateConnection();
         } catch (const std::exception& ex) {
-            LOG_E("Failed to recreate PostgreSQL connection: {}", ex.what());
+            LOG_E("Failed to recreate PostgreSQL connection: " << ex.what());
             sessionShutdownFlag_->store(true, std::memory_order_release);
             {
                 std::lock_guard lock(mutex_);

@@ -64,7 +64,7 @@ inline auto SuspendRollback(ITpccTransaction& tx, TTransactionContext& context) 
 }
 
 inline bool FailPermanent(size_t terminalId, const char* msg) {
-    LOG_E("Terminal {} {}", terminalId, msg);
+    LOG_E("Terminal " << terminalId << " " << msg);
     RequestStopWithError();
     return false;
 }
