@@ -184,7 +184,8 @@ TNewOrderRow GenerateNewOrder(int warehouseId, int districtId, int orderId) {
 }
 
 std::vector<TOrderLineRow> GenerateOrderLines(
-    uint64_t seed, int warehouseId, int districtId, int orderId, int olCnt, bool delivered)
+    uint64_t seed, int warehouseId, int districtId, int orderId, int olCnt,
+    std::optional<int64_t> deliveryUnix)
 {
     TSeededRng rng = DistrictRng(seed, SaltOrderLine, warehouseId, districtId)
                          .Fork(static_cast<uint64_t>(orderId));
@@ -199,10 +200,10 @@ std::vector<TOrderLineRow> GenerateOrderLines(
         line.ItemId = static_cast<int>(RandomNumber(rng, 1, ITEM_COUNT));
         line.SupplyWarehouseId = warehouseId;
         line.Quantity = 5;
-        if (delivered) {
+        if (deliveryUnix) {
+            // TPC-C §4.3.3.1: for initially delivered orders, OL_DELIVERY_D = O_ENTRY_D.
             line.Amount = TMoney::FromCents(0);
-            line.DeliveryUnix = LoadTimestampUnix(seed, SaltOrderLine ^ static_cast<uint64_t>(orderId) << 16
-                                                               ^ static_cast<uint64_t>(ol));
+            line.DeliveryUnix = *deliveryUnix;
         } else {
             line.Amount = TMoney::FromCents(static_cast<int64_t>(RandomNumber(rng, 1, 999999)));
         }

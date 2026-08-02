@@ -3,6 +3,8 @@
 #include "rows.h"
 
 #include <cstdint>
+#include <optional>
+#include <vector>
 
 namespace NTpcc::NGenerator {
 
@@ -22,8 +24,11 @@ THistoryRow GenerateHistory(uint64_t seed, int warehouseId, int districtId, int 
 // Order id in [1, CUSTOMERS_PER_DISTRICT]; customer permutation is deterministic.
 TOrderRow GenerateOrder(uint64_t seed, int warehouseId, int districtId, int orderId, int customerId);
 TNewOrderRow GenerateNewOrder(int warehouseId, int districtId, int orderId);
+// When deliveryUnix is set (initial delivered orders), every line gets
+// OL_DELIVERY_D = *deliveryUnix, matching O_ENTRY_D per TPC-C §4.3.3.1.
 std::vector<TOrderLineRow> GenerateOrderLines(
-    uint64_t seed, int warehouseId, int districtId, int orderId, int olCnt, bool delivered);
+    uint64_t seed, int warehouseId, int districtId, int orderId, int olCnt,
+    std::optional<int64_t> deliveryUnix);
 
 // Deterministic order-line count in [MIN_ITEMS, MAX_ITEMS] for a customer order.
 int GenerateOrderLineCount(uint64_t seed, int warehouseId, int districtId, int customerId);

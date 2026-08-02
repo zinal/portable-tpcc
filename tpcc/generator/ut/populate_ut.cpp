@@ -77,3 +77,28 @@ TEST(Generator, CustomerPermutationSize) {
     auto perm2 = InitialOrderCustomerPermutation(99, 1, 1);
     EXPECT_EQ(perm, perm2);
 }
+
+TEST(Generator, DeliveredOrderLineDeliveryEqualsEntry) {
+    // TPC-C §4.3.3.1: for initially delivered orders, OL_DELIVERY_D = O_ENTRY_D.
+    constexpr uint64_t seed = 731910246;
+    constexpr int wh = 1;
+    constexpr int district = 3;
+    constexpr int orderId = 42;
+    auto order = GenerateOrder(seed, wh, district, orderId, /*customerId=*/7);
+    ASSERT_LT(orderId, FIRST_UNPROCESSED_O_ID);
+    auto lines = GenerateOrderLines(
+        seed, wh, district, orderId, order.OlCnt, order.EntryUnix);
+    ASSERT_FALSE(lines.empty());
+    for (const auto& line : lines) {
+        ASSERT_TRUE(line.DeliveryUnix.has_value());
+        EXPECT_EQ(*line.DeliveryUnix, order.EntryUnix);
+        EXPECT_EQ(line.Amount, TMoney::FromCents(0));
+    }
+
+    auto undelivered = GenerateOrderLines(
+        seed, wh, district, FIRST_UNPROCESSED_O_ID, /*olCnt=*/5, std::nullopt);
+    ASSERT_EQ(undelivered.size(), 5u);
+    for (const auto& line : undelivered) {
+        EXPECT_FALSE(line.DeliveryUnix.has_value());
+    }
+}

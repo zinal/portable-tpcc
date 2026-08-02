@@ -201,8 +201,10 @@ void CopyOrders(pqxx::work& txn, uint64_t seed, int wh, int district) {
             int cid = customerIds[oid - 1];
             auto order = NGenerator::GenerateOrder(seed, wh, district, oid, cid);
             const bool delivered = oid < FIRST_UNPROCESSED_O_ID;
+            // TPC-C §4.3.3.1: OL_DELIVERY_D must equal O_ENTRY_D for delivered orders.
             auto lines = NGenerator::GenerateOrderLines(
-                seed, wh, district, oid, order.OlCnt, delivered);
+                seed, wh, district, oid, order.OlCnt,
+                delivered ? std::optional<int64_t>(order.EntryUnix) : std::nullopt);
             for (const auto& line : lines) {
                 std::optional<std::string> deliveryDate;
                 if (line.DeliveryUnix) {

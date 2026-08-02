@@ -475,6 +475,19 @@ void PostImportCheckNoDeliveryDates(pqxx::nontransaction& txn) {
     CheckNoRows(txn, sql, "Unprocessed order lines must have NULL OL_DELIVERY_D after import");
 }
 
+void PostImportCheckDeliveryEqualsEntry(pqxx::nontransaction& txn) {
+    // TPC-C §4.3.3.1: for initially delivered orders, OL_DELIVERY_D = O_ENTRY_D.
+    std::string sql = fmt::format(
+        "SELECT ol.OL_W_ID, ol.OL_D_ID, ol.OL_O_ID, ol.OL_NUMBER "
+        "FROM {} AS ol "
+        "JOIN {} AS o ON o.O_W_ID = ol.OL_W_ID AND o.O_D_ID = ol.OL_D_ID AND o.O_ID = ol.OL_O_ID "
+        "WHERE ol.OL_O_ID < {} AND "
+        "(ol.OL_DELIVERY_D IS NULL OR ol.OL_DELIVERY_D IS DISTINCT FROM o.O_ENTRY_D) "
+        "LIMIT 1",
+        TABLE_ORDER_LINE, TABLE_OORDER, FIRST_UNPROCESSED_O_ID);
+    CheckNoRows(txn, sql, "Delivered order lines must have OL_DELIVERY_D = O_ENTRY_D after import");
+}
+
 void RecordResult(TCheckReport& report, const std::string& id, ECheckStatus status,
                   const std::string& detail, bool print) {
     TCheckResult r;
@@ -622,6 +635,8 @@ TCheckReport RunPgChecks(const std::string& connectionString, const TCheckReques
                    [&] { PostImportCheckNoCarriers(txn); });
             RunOne(report, "post_import.ol_delivery_d", print,
                    [&] { PostImportCheckNoDeliveryDates(txn); });
+            RunOne(report, "post_import.ol_delivery_eq_entry", print,
+                   [&] { PostImportCheckDeliveryEqualsEntry(txn); });
         }
     } catch (const std::exception& ex) {
         RecordResult(report, "connection", ECheckStatus::Error, ex.what(), print);
