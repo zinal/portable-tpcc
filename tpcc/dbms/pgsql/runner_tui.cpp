@@ -31,8 +31,8 @@ const char* TransactionTypeName(ETransactionType type) {
 
 } // anonymous
 
-TRunnerTui::TRunnerTui(TLogCapture& logCapture, std::shared_ptr<TRunDisplayData> data)
-    : LogCapture(logCapture)
+TRunnerTui::TRunnerTui(TLogBackendWithCapture& logBackend, std::shared_ptr<TRunDisplayData> data)
+    : LogBackend(logBackend)
     , DataToDisplay(std::move(data))
 {
     StartLoop();
@@ -228,7 +228,7 @@ Component TRunnerTui::BuildComponent() {
     try {
         Component resultPreview = Renderer([=] { return BuildPreviewPart(); });
         Component middleScroller = Scroller(Renderer([=] { return BuildThreadStatsPart(); }), "TPC-C client state");
-        Component logsScroller = LogsScroller(LogCapture);
+        Component logsScroller = LogsScroller(LogBackend);
 
         auto container = Container::Vertical({ resultPreview, middleScroller, logsScroller });
 
@@ -283,7 +283,7 @@ Component TRunnerTui::BuildComponent() {
             });
         });
     } catch (const std::exception& ex) {
-        LOG_E("Exception in TUI: {}", ex.what());
+        LOG_E("Exception in TUI: " << ex.what());
         RequestStopWithError();
         return Renderer([] { return filler(); });
     }

@@ -245,8 +245,9 @@ TPutBatchResult PutItemsIdempotent(
     int batchRows)
 {
     try {
-        LOG_I("Idempotent load of {} items (seed={}, run_id={}, batch_rows={})", ITEM_COUNT, seed,
-              runId.empty() ? "-" : runId, batchRows);
+        LOG_I("Idempotent load of " << ITEM_COUNT << " items (seed=" << seed
+              << ", run_id=" << (runId.empty() ? "-" : runId)
+              << ", batch_rows=" << batchRows << ")");
 
         pqxx::work txn(conn);
         txn.exec(
@@ -290,7 +291,7 @@ TPutBatchResult PutItemsIdempotent(
         LOG_I("Items loaded (idempotent upsert)");
         return OkResult();
     } catch (const std::exception& ex) {
-        LOG_E("PutItemsIdempotent failed: {}", ex.what());
+        LOG_E("PutItemsIdempotent failed: " << ex.what());
         return FailResult(ex);
     }
 }
@@ -303,8 +304,9 @@ TPutBatchResult PutWarehouseIdempotent(
     int batchRows)
 {
     try {
-        LOG_D("Idempotent replace warehouse {} (seed={}, run_id={}, batch_rows={})",
-              warehouseId, seed, runId.empty() ? "-" : runId, batchRows);
+        LOG_D("Idempotent replace warehouse " << warehouseId << " (seed=" << seed
+              << ", run_id=" << (runId.empty() ? "-" : runId)
+              << ", batch_rows=" << batchRows << ")");
 
         pqxx::work txn(conn);
 
@@ -323,7 +325,7 @@ TPutBatchResult PutWarehouseIdempotent(
         txn.commit();
         return OkResult();
     } catch (const std::exception& ex) {
-        LOG_E("PutWarehouseIdempotent(w_id={}) failed: {}", warehouseId, ex.what());
+        LOG_E("PutWarehouseIdempotent(w_id=" << warehouseId << ") failed: " << ex.what());
         return FailResult(ex);
     }
 }

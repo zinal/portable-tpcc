@@ -33,8 +33,7 @@ TFuture<bool> GetStockLevelTask(
         };
     });
 
-    LOG_T("Terminal {} started StockLevel: W={}, D={}",
-          context.TerminalID, in.WarehouseID, in.DistrictID);
+    LOG_T("Terminal " << context.TerminalID << " started StockLevel: W=" << in.WarehouseID << ", D=" << in.DistrictID);
 
     {
         auto r = co_await SuspendExecute(tx, context, TCountRecentLowStock{
@@ -45,7 +44,7 @@ TFuture<bool> GetStockLevelTask(
         }
     }
 
-    LOG_T("Terminal {} committing StockLevel", context.TerminalID);
+    LOG_T("Terminal " << context.TerminalID << " committing StockLevel");
     auto commit = co_await SuspendCommit(tx, context);
     ThrowIfCommitFailed(commit);
 

@@ -10,7 +10,7 @@ namespace NTpcc {
 
 class TImportTui : public TuiBase {
 public:
-    TImportTui(TLogCapture& logCapture, size_t warehouseCount, size_t loadThreads, const TImportDisplayData& data);
+    TImportTui(TLogBackendWithCapture& logBackend, size_t warehouseCount, size_t loadThreads, const TImportDisplayData& data);
 
     void Update(const TImportDisplayData& data);
 
@@ -19,7 +19,7 @@ private:
     ftxui::Component BuildComponent() override;
 
 private:
-    TLogCapture& LogCapture;
+    TLogBackendWithCapture& LogBackend;
     size_t WarehouseCount;
     size_t LoadThreads;
     TImportDisplayData DataToDisplay;

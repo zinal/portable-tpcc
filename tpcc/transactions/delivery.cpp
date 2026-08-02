@@ -44,7 +44,7 @@ TFuture<bool> GetDeliveryTask(
         };
     });
 
-    LOG_T("Terminal {} started Delivery: W={}", context.TerminalID, in.WarehouseID);
+    LOG_T("Terminal " << context.TerminalID << " started Delivery: W=" << in.WarehouseID);
 
     std::array<std::optional<TOrderData>, DISTRICT_COUNT> orders;
 
@@ -58,7 +58,7 @@ TFuture<bool> GetDeliveryTask(
                 co_return FailPermanent(context.TerminalID, "Delivery oldest new order failed");
             }
             if (r.ActualRows == 0) {
-                LOG_T("Terminal {} no new orders for district {}", context.TerminalID, districtID);
+                LOG_T("Terminal " << context.TerminalID << " no new orders for district " << districtID);
                 continue;
             }
             orderID = std::get<int>(r.Payload);
@@ -109,7 +109,7 @@ TFuture<bool> GetDeliveryTask(
         }
     }
 
-    LOG_T("Terminal {} committing Delivery", context.TerminalID);
+    LOG_T("Terminal " << context.TerminalID << " committing Delivery");
     auto commit = co_await SuspendCommit(tx, context);
     ThrowIfCommitFailed(commit);
 

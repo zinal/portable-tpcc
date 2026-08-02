@@ -115,8 +115,7 @@ void CheckDbForImport(const std::string& connectionString, const std::string& pa
         // Idempotent import replaces assigned warehouse ranges; non-empty tables are OK.
         int whCount = GetWarehouseCount(conn);
         if (whCount != 0) {
-            LOG_W("Database already has {} warehouses; import will replace assigned ranges",
-                  whCount);
+            LOG_W("Database already has " << whCount << " warehouses; import will replace assigned ranges");
         }
     } catch (const std::exception& e) {
         std::cerr << "Pre-flight check for import failed: " << e.what() << std::endl;

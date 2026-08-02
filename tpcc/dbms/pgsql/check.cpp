@@ -726,7 +726,7 @@ int RunCheckFromRunConfig(const std::string& runConfigPath, const std::string& i
     WriteProcessJson(paths, doc, instance, "check", static_cast<int>(::getpid()), nonce);
     WriteArtifactManifest(paths, instance, nonce, report.Ok() ? 0 : 1);
 
-    LOG_I("Check report written to {}", reportPath);
+    LOG_I("Check report written to " << reportPath);
     return report.Ok() ? 0 : 1;
 }
 

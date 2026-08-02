@@ -7,6 +7,6 @@
 
 namespace NTpcc {
 
-ftxui::Component LogsScroller(TLogCapture& logCapture);
+ftxui::Component LogsScroller(TLogBackendWithCapture& logBackend);
 
 } // namespace NTpcc

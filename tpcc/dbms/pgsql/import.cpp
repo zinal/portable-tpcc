@@ -97,10 +97,11 @@ void ImportSync(const TImportConfig& config) {
     threadCount = std::max(threadCount, size_t(1));
     threadCount = std::min(threadCount, assignedWarehouses);
 
-    LOG_I("Starting idempotent TPC-C import for {} assigned warehouses (scale {}) "
-          "using {} threads (seed={}, run_id={}, batch_rows={})",
-          assignedWarehouses, scaleWarehouses, threadCount, config.Seed,
-          config.RunId.empty() ? "-" : config.RunId, config.BatchRows);
+    LOG_I("Starting idempotent TPC-C import for " << assignedWarehouses
+          << " assigned warehouses (scale " << scaleWarehouses << ") using "
+          << threadCount << " threads (seed=" << config.Seed
+          << ", run_id=" << (config.RunId.empty() ? "-" : config.RunId)
+          << ", batch_rows=" << config.BatchRows << ")");
 
     auto startTime = Clock::now();
 
@@ -158,24 +159,22 @@ void ImportSync(const TImportConfig& config) {
                         EstimatePerWarehouseDataSize(), std::memory_order_relaxed);
                     state.WarehousesLoaded.fetch_add(1, std::memory_order_relaxed);
 
-                    LOG_I("Warehouse {} replaced ({}/{})",
-                          wh, state.WarehousesLoaded.load(), assignedWarehouses);
+                    LOG_I("Warehouse " << wh << " replaced (" << state.WarehousesLoaded.load() << "/" << assignedWarehouses << ")");
                 }
             } catch (const std::exception& ex) {
-                LOG_E("Import thread failed: {}", ex.what());
+                LOG_E("Import thread failed: " << ex.what());
                 RequestStopWithError();
             }
         });
     }
 
 #ifdef TPCC_HAS_TUI
-    TLogCapture logCapture(TUI_LOG_LINES);
     std::unique_ptr<TImportTui> tui;
     if (config.UseTui) {
-        StartLogCapture(logCapture);
+        StartLogCapture();
         TImportDisplayData initData(state);
         tui = std::make_unique<TImportTui>(
-            logCapture, assignedWarehouses, threadCount, initData);
+            *GetLogBackend(), assignedWarehouses, threadCount, initData);
     }
 #endif
 
@@ -259,7 +258,7 @@ void ImportSync(const TImportConfig& config) {
     }
 
     auto elapsed = std::chrono::duration<double>(Clock::now() - startTime);
-    LOG_I("Import completed successfully in {:.1f}s", elapsed.count());
+    LOG_I(fmt::format("Import completed successfully in {:.1f}s", elapsed.count()));
 }
 
 } // namespace NTpcc
