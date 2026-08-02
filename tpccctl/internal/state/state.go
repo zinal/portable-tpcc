@@ -10,22 +10,22 @@ import (
 
 // Run states per specification §8.10.
 const (
-	StatePlanned          = "planned"
-	StateDeploying        = "deploying"
-	StateSchema           = "schema"
-	StateLoading          = "loading"
-	StateCheckingImport   = "checking_import"
-	StatePreparing        = "preparing"
-	StateArming           = "arming"
-	StateRamping          = "ramping"
-	StateMeasuring        = "measuring"
-	StateDraining         = "draining"
-	StateCheckingResult   = "checking_result"
-	StateCollecting       = "collecting"
-	StateConsolidating    = "consolidating"
-	StateCompleted        = "completed"
-	StateStopping         = "stopping"
-	StateFailed           = "failed"
+	StatePlanned        = "planned"
+	StateDeploying      = "deploying"
+	StateSchema         = "schema"
+	StateLoading        = "loading"
+	StateCheckingImport = "checking_import"
+	StatePreparing      = "preparing"
+	StateArming         = "arming"
+	StateRamping        = "ramping"
+	StateMeasuring      = "measuring"
+	StateDraining       = "draining"
+	StateCheckingResult = "checking_result"
+	StateCollecting     = "collecting"
+	StateConsolidating  = "consolidating"
+	StateCompleted      = "completed"
+	StateStopping       = "stopping"
+	StateFailed         = "failed"
 )
 
 // RunState is mutable control-host state for a run.

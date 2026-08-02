@@ -17,11 +17,11 @@ type Token struct {
 }
 
 type Phases struct {
-	RampStart               string `json:"ramp_start"`
-	MeasurementStart        string `json:"measurement_start"`
-	MeasurementEnd          string `json:"measurement_end"`
-	DrainDeadline           string `json:"drain_deadline"`
-	AsyncWorkDrainDeadline  string `json:"async_work_drain_deadline"`
+	RampStart              string `json:"ramp_start"`
+	MeasurementStart       string `json:"measurement_start"`
+	MeasurementEnd         string `json:"measurement_end"`
+	DrainDeadline          string `json:"drain_deadline"`
+	AsyncWorkDrainDeadline string `json:"async_work_drain_deadline"`
 }
 
 // Compute builds a start token: start_at = now + start_lead_ms.

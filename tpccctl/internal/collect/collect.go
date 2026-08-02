@@ -29,11 +29,11 @@ type ArtifactPayloadEntry struct {
 
 // CollectionManifest covers all collected artifacts on the control host.
 type CollectionManifest struct {
-	SchemaVersion int                      `json:"schema_version"`
-	RunID         string                   `json:"run_id"`
-	SHA256        string                   `json:"sha256"`
-	Processes     []ArtifactManifest       `json:"processes"`
-	ControlFiles  []ArtifactPayloadEntry   `json:"control_files"`
+	SchemaVersion int                    `json:"schema_version"`
+	RunID         string                 `json:"run_id"`
+	SHA256        string                 `json:"sha256"`
+	Processes     []ArtifactManifest     `json:"processes"`
+	ControlFiles  []ArtifactPayloadEntry `json:"control_files"`
 }
 
 // Collector copies and verifies remote/local instance artifacts.

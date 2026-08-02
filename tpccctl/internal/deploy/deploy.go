@@ -13,10 +13,10 @@ import (
 
 // Manifest is the host-local deploy manifest per specification §8.4.
 type Manifest struct {
-	SchemaVersion int              `json:"schema_version"`
-	Complete      bool             `json:"complete"`
-	Files         []ManifestEntry  `json:"files"`
-	UpdatedAt     string           `json:"updated_at"`
+	SchemaVersion int             `json:"schema_version"`
+	Complete      bool            `json:"complete"`
+	Files         []ManifestEntry `json:"files"`
+	UpdatedAt     string          `json:"updated_at"`
 }
 
 type ManifestEntry struct {

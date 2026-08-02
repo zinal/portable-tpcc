@@ -24,19 +24,19 @@ type WarehouseRange struct {
 
 // LoaderAssignment describes warehouse ranges and global-data ownership for a loader.
 type LoaderAssignment struct {
-	Instance         string
-	Host             string
-	WarehouseRanges  []WarehouseRange
-	OwnsGlobalData   bool
+	Instance        string
+	Host            string
+	WarehouseRanges []WarehouseRange
+	OwnsGlobalData  bool
 }
 
 // WorkerAssignment describes warehouse ranges and runtime params for a worker.
 type WorkerAssignment struct {
-	Instance         string
-	Host             string
-	WarehouseRanges  []WarehouseRange
-	Threads          int
-	MaxInflight      int
+	Instance        string
+	Host            string
+	WarehouseRanges []WarehouseRange
+	Threads         int
+	MaxInflight     int
 }
 
 // BalancedContiguous divides warehouses across instances (specification §5).
@@ -86,10 +86,10 @@ func BuildLoaderAssignments(loaders []Instance, warehouses int) ([]LoaderAssignm
 	out := make([]LoaderAssignment, len(sorted))
 	for i, inst := range sorted {
 		out[i] = LoaderAssignment{
-			Instance:         inst.Name,
-			Host:             inst.Host,
-			WarehouseRanges:  []WarehouseRange{ranges[i]},
-			OwnsGlobalData:   i == 0,
+			Instance:        inst.Name,
+			Host:            inst.Host,
+			WarehouseRanges: []WarehouseRange{ranges[i]},
+			OwnsGlobalData:  i == 0,
 		}
 	}
 	return out, nil
@@ -108,11 +108,11 @@ func BuildWorkerAssignments(workers []Instance, warehouses, threads, maxInflight
 	out := make([]WorkerAssignment, len(sorted))
 	for i, inst := range sorted {
 		out[i] = WorkerAssignment{
-			Instance:         inst.Name,
-			Host:             inst.Host,
-			WarehouseRanges:  []WarehouseRange{ranges[i]},
-			Threads:          threads,
-			MaxInflight:      maxInflight,
+			Instance:        inst.Name,
+			Host:            inst.Host,
+			WarehouseRanges: []WarehouseRange{ranges[i]},
+			Threads:         threads,
+			MaxInflight:     maxInflight,
 		}
 	}
 	return out, nil

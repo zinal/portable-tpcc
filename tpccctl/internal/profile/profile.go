@@ -7,8 +7,8 @@ import (
 	"regexp"
 	"time"
 
-	"portable-tpcc/tpccctl/internal/assignment"
 	"gopkg.in/yaml.v3"
+	"portable-tpcc/tpccctl/internal/assignment"
 )
 
 const (
@@ -124,12 +124,12 @@ type Phases struct {
 }
 
 type Runtime struct {
-	Pacing                 string      `yaml:"pacing"`
-	ThinkTimeDistribution  string      `yaml:"think_time_distribution"`
-	ThreadsPerWorker       int         `yaml:"threads_per_worker"`
-	MaxInflightPerWorker   int         `yaml:"max_inflight_per_worker"`
-	Retry                  RetryPolicy `yaml:"retry"`
-	Histogram              Histogram   `yaml:"histogram"`
+	Pacing                string      `yaml:"pacing"`
+	ThinkTimeDistribution string      `yaml:"think_time_distribution"`
+	ThreadsPerWorker      int         `yaml:"threads_per_worker"`
+	MaxInflightPerWorker  int         `yaml:"max_inflight_per_worker"`
+	Retry                 RetryPolicy `yaml:"retry"`
+	Histogram             Histogram   `yaml:"histogram"`
 }
 
 type RetryPolicy struct {
