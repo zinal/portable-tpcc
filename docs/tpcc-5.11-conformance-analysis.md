@@ -1,586 +1,468 @@
 # Анализ соответствия реализации требованиям TPC-C 5.11
 
-Статус: повторный анализ реализации на commit `4d44f21`.
+Статус: повторный анализ реализации на commit `884230e`.
 
 Основа сравнения: [TPC Benchmark C Standard Specification, Revision
 5.11](https://www.tpc.org/TPC_Documents_Current_Versions/pdf/tpc-c_v5.11.0.pdf).
 
 ## 1. Резюме
 
-Текущий репозиторий реализует полезный PostgreSQL workload generator в стиле
-TPC-C, но не полный официальный тест TPC-C 5.11. Получаемый throughput нельзя
-публиковать как валидный `tpmC`.
+Репозиторий реализует PostgreSQL workload generator в стиле TPC-C, но не полный
+официальный тест TPC-C 5.11. Результаты намеренно маркируются как
+`result_class: engineering` и не должны публиковаться как официальный `tpmC`.
 
-Это соответствует заявленному позиционированию проекта:
+После предыдущего контроля исправлены:
 
-- [README.md](../README.md) запрещает называть результаты официальными без
-  требуемой TPC-верификации;
-- [specification.md](specification.md) определяет результат как
-  `result_class: engineering`, разрешает менять параметры workload и не
-  выполняет проверку соответствия конкретной редакции TPC-C.
+- экспоненциальное распределение think time по умолчанию;
+- DB-профиль intentional rollback New-Order для валидных order lines;
+- включение intentional rollback в throughput и response-time histogram;
+- постоянный home district Stock-Level для стандартных 10 terminals/warehouse;
+- `OL_DELIVERY_D = O_ENTRY_D` в initial population;
+- NULL-only семантика carrier в consistency checks.
 
-После первичного анализа устранены замечания по `O_ALL_LOCAL`, exact-decimal
-чтениям PostgreSQL, legacy index, конкурентной Delivery, clock calibration и
-fail-closed integrity. Consistency checks сравнивают деньги точно и трактуют
-недоставленный заказ только через `O_CARRIER_ID IS NULL`. Новых регрессий,
-вызванных этими изменениями, не обнаружено.
+Эти исправления проходят unit tests и в основном корректны. Однако проверка
+выявила новую fail-open ошибку в классификации intentional rollback, неполное
+исправление measurement boundaries и ранее не зафиксированные проблемы
+консолидации worker artifacts.
 
-Основные остающиеся блокирующие причины:
+Документ разделён на:
 
-1. нарушения initial population, кроме принятого решения о синтетических
-   начальных датах;
-2. неполная проверка валидности measurement interval и отчётность.
-
-Синхронная Delivery, отсутствие полноценного RTE и встроенных ACID/checkpoint
-tests являются теперь явно зафиксированными границами продукта. Они остаются
-отклонениями от официальной TPC-C 5.11, но не считаются дефектами относительно
-внутренней [specification.md](specification.md).
+1. активные замечания;
+2. принятые ограничения продукта;
+3. исторические, полностью устранённые ошибки.
 
 ## 2. Область и методика
 
 Проверены:
 
-- схема и начальная загрузка PostgreSQL;
-- генерация данных и transaction inputs;
-- workflows пяти транзакций;
-- terminal runtime, pacing, retry и фазы запуска;
-- сбор и консолидация метрик;
-- consistency checks;
-- orchestration и итоговые артефакты.
+- schema, generator, initial population и loader;
+- shared workflows пяти транзакций;
+- PostgreSQL session/transaction adapter;
+- terminals, pacing, retries и phase controller;
+- worker artifacts, histograms и `tpccctl consolidate`;
+- integrity checks и orchestration;
+- изменения от `4d44f21` до `884230e`.
 
-Анализ является статическим. Он не заменяет обязательные испытания TPC-C на
-полностью сконфигурированном SUT, в частности ACID, failure и sustained-load
-tests.
-
-Критичность в документе означает:
-
-- **критическая** — делает результат функционально неверным или самостоятельно
-  блокирует соответствие TPC-C;
-- **высокая** — нарушает обязательный профиль, population или правила
-  измерения;
-- **средняя** — локальный дефект либо риск, который не всегда проявляется в
-  итоговом результате.
-
-Статус каждого исходного замечания:
-
-- **Остаётся** — код по-прежнему содержит описанную проблему;
-- **Устранено** — замечание сохранено для истории, но исправлено в текущем коде;
-- **Принятое отклонение** — несоответствие официальной TPC-C осознанно принято
-  как граница engineering workload;
-- **Частично устранено** — исправлена только часть исходного замечания.
-
-## 3. Критические замечания исходного аудита
-
-### 3.1. Неверно считается tpmC
-
-**Статус: устранено.**
-
-TPC-C §5.1.2 и §5.4.2 требуют включать в MQTh штатные 1% New-Order,
-завершившиеся rollback из-за неверного item. Их response time также входит в
-статистику New-Order.
-
-Ранее реализация учитывала такие транзакции отдельно как `UserAborted` без
-latency и без вклада в throughput. Теперь:
-
-1. intentional rollback пишет latency в те же New-Order histograms через
-   `AddUserAborted`
-   ([terminal.h](../tpcc/dbms/pgsql/terminal.h),
-   [terminal.cpp](../tpcc/dbms/pgsql/terminal.cpp));
-2. worker `result.json` экспортирует `*_user_aborted`, а `new_order_tpmc`
-   считается как `(ok + user_aborted) / measure_minutes`
-   ([artifacts.cpp](../tpcc/dbms/pgsql/artifacts.cpp),
-   [runner.cpp](../tpcc/dbms/pgsql/runner.cpp));
-3. consolidator включает `new_order_user_aborted` в
-   `new_order_count` / `throughput_new_order_per_min`
-   ([consolidate.go](../tools/tpccctl/internal/consolidate/consolidate.go));
-4. запись метрик выполняется только если response time начался и завершился
-   в фазе Measure (приближение к §5.4.2)
-   ([terminal.cpp](../tpcc/dbms/pgsql/terminal.cpp)).
-
-### 3.2. Rollback-профиль New-Order выполняется не полностью
-
-**Статус: устранено в commit `0467d46`.**
-
-По TPC-C §2.4.2.3 все валидные позиции должны быть обработаны до последней
-неверной позиции. Эффекты этой работы затем откатываются общей транзакцией.
-Знание о неверном item разрешает пропустить действия только для самого
-неверного item.
-
-Ранее реализация исключала invalid item из запроса ITEM, сразу выполняла
-rollback по флагу `HasInvalidItem` и не доходила до обработки stock и order
-lines для валидных позиций. Invalid item также не вызывал предусмотренный
-профилем ITEM `not-found`.
-
-Теперь для 1% unused-item New-Order:
-
-1. валидные ITEM читаются отдельно
-   ([new_order.cpp:126-144](../tpcc/transactions/new_order.cpp#L126-L144));
-2. STOCK и ORDER-LINE выполняются для всех валидных позиций
-   ([new_order.cpp:146-225](../tpcc/transactions/new_order.cpp#L146-L225));
-3. unused item выбирается из ITEM; ожидаемый `not-found` приводит к rollback
-   ([new_order.cpp:178-186](../tpcc/transactions/new_order.cpp#L178-L186)).
-
-### 3.3. Delivery не соответствует обязательной deferred-модели
-
-**Статус: принятое отклонение.**
-
-TPC-C §2.7.2 требует:
-
-- поставить Delivery в очередь;
-- вернуть управление терминалу независимо от завершения фактической доставки;
-- выполнить доставку отдельно;
-- записать durable result file с временем постановки, завершения и
-  обработанными заказами.
-
-В PostgreSQL-адаптере Delivery явно объявлена синхронной:
-
-- [pg_capabilities.cpp:12](../tpcc/dbms/pgsql/pg_capabilities.cpp#L12);
-- [terminal.cpp:223-230](../tpcc/dbms/pgsql/terminal.cpp#L223-L230);
-- [delivery.cpp:24-117](../tpcc/transactions/delivery.cpp#L24-L117).
-
-Отдельной очереди и Delivery result file нет. Из-за этого невозможно проверить
-80-секундное ограничение deferred Delivery, долю skipped deliveries и
-интерактивный response time Delivery. Согласно принятому решению, тест
-производительности СУБД намеренно выполняет Delivery синхронно, inline в
-терминале. Это зафиксировано во внутренней
-[specification.md](specification.md) как сознательное отступление от TPC-C 5.11
-и не планируется к устранению.
-
-### 3.4. Отсутствует полноценный Remote Terminal Emulator
-
-**Статус: принятое ограничение области.**
-
-TPC-C требует menu cycle, input/output screens, menu response time и отображение
-всех результатов транзакций. Реализация вызывает business workflow напрямую и
-измеряет внутренний вызов.
-
-Например, New-Order не формирует обязательные выходные данные:
-
-- `total_amount`;
-- `brand_generic`;
-- полный набор customer, tax, item и stock output fields.
-
-Часть нужных данных читается, но результат не используется
-([new_order.cpp:85-214](../tpcc/transactions/new_order.cpp#L85-L214)).
-Menu response time отсутствует. Поэтому собранная задержка не является полным
-response time эмулированного пользователя по TPC-C §5.3.
-
-Полноценный RTE не входит и не будет входить в область проекта: его реализация
-выходит за рамки теста производительности СУБД. Метрики следует трактовать как
-latency на границе workload client, а не как end-user response time TPC-C.
-
-### 3.5. Отсутствуют обязательные ACID tests
-
-**Статус: принятое ограничение области с обязательными требованиями к
-адаптерам.**
-
-Реализовано хорошее покрытие consistency conditions 3.3.2.1-12:
-
-- [catalog.cpp:18-34](../tpcc/checks/catalog.cpp#L18-L34);
-- [check.cpp:192-625](../tpcc/dbms/pgsql/check.cpp#L192-L625).
-
-Однако отсутствуют:
-
-- Atomicity tests из §3.2.2;
-- consistency demonstration под нагрузкой из §3.3.3;
-- Isolation tests из §3.4.2;
-- crash, memory, power и durable-media tests из §3.5.4.
-
-Проверка SQL-инвариантов после workload не заменяет эти испытания.
-
-Встроенные процедуры ACID certification реализовывать не планируется. При этом
-внутренняя спецификация требует от каждого DBMS-адаптера атомарного
-commit/rollback, достаточной изоляции concurrent home/remote transactions и
-корректной обработки неопределённого результата commit. Эти свойства должны
-обеспечиваться механизмами выбранной СУБД и проверяться отдельно от
-portable-tpcc.
-
-### 3.6. Think time не имеет требуемого распределения
-
-**Статус: устранено (default); опциональный режим совместимости сохранён.**
-
-TPC-C §5.2.5.4 требует независимо выбирать think time из
-отрицательно-экспоненциального распределения:
+Выполнены проверки:
 
 ```text
-Tt = -log(r) * mean
+./ya make tpcc/domain/ut tpcc/transactions/ut tpcc/checks/ut
+go test ./...
 ```
 
-По умолчанию runtime сэмплирует think time по этой формуле с truncation на
-`10 * mean` ([think_time.h](../tpcc/domain/think_time.h),
-[terminal.cpp](../tpcc/dbms/pgsql/terminal.cpp)).
+Обе команды завершились успешно. Статический и unit-test аудит не заменяет
+интеграционные тесты на PostgreSQL, failure tests и длительный запуск SUT.
 
-Опциональный режим `runtime.think_time_distribution: compatibility` (alias
-`constant`) сохраняет прежнее поведение portable-tpcc: фиксированное ожидание,
-равное настроенному среднему. Для соответствия TPC-C 5.11 этот режим включать
-не следует.
+Критичность:
 
-### 3.7. Stock-Level не закреплён за district терминала
+- **критическая** — результат может быть принят за корректный при фактически
+  неверном выполнении или измерении;
+- **высокая** — существенно искажает workload, throughput либо aggregate;
+- **средняя** — ограниченный сценарий, несовместимость или недостаточная
+  валидация;
+- **низкая** — защитная проверка или пробел test coverage вне normal path.
 
-**Статус: устранено.**
+## 3. Активные замечания
 
-По TPC-C §2.8.1.1 каждому из десяти терминалов warehouse должна соответствовать
-постоянная уникальная пара `(W_ID, D_ID)`.
+### 3.1. Ошибка может быть засчитана как intentional rollback New-Order
 
-Ранее runtime передавал терминалу только warehouse, а Stock-Level выбирал
-district заново для каждой транзакции. Теперь при создании терминала
-назначается home district (`HomeDistrictId` по индексу терминала внутри
-warehouse), он сохраняется в `TTransactionContext::DistrictID`, а Stock-Level
-использует это постоянное значение:
+**Критичность: высокая. Новая ошибка в пути исправления rollback/accounting.**
 
-- [constants.h](../tpcc/domain/constants.h) (`HomeDistrictId`);
-- [runner.cpp](../tpcc/dbms/pgsql/runner.cpp);
-- [context.h](../tpcc/transactions/context.h);
-- [stock_level.cpp](../tpcc/transactions/stock_level.cpp).
+TPC-C §5.1.2 и §5.4.2 разрешают считать завершённой только предусмотренную
+профилем транзакцию, успешно откатившую изменения после `not-found` последнего
+unused item.
 
-При default `terminals_per_warehouse = 10` отображение 1:1 и уникальность
-`(W_ID, D_ID)` соблюдаются. New-Order / Payment / Order-Status по-прежнему
-сэмплируют `D_ID` случайно в `[1..10]`, как требуют их профили. Non-default
-число терминалов на warehouse по-прежнему относится к замечанию 4.5.
+Текущий путь:
 
-## 4. Замечания высокой критичности исходного аудита
-
-### 4.1. Начальные даты не соответствуют спецификации
-
-**Статус: принятое отклонение.**
-
-TPC-C §4.3.3.1 требует, чтобы `C_SINCE`, `H_DATE` и `O_ENTRY_D` содержали текущие
-дату и время ОС при population.
-
-Генератор использует случайное время в пределах недели после фиксированной
-эпохи 2020-01-01:
-
-- [populate.h:9-11](../tpcc/generator/populate.h#L9-L11);
-- [populate.cpp:26-29](../tpcc/generator/populate.cpp#L26-L29);
-- [populate.cpp:111-113](../tpcc/generator/populate.cpp#L111-L113);
-- [populate.cpp:134-136](../tpcc/generator/populate.cpp#L134-L136);
-- [populate.cpp:169-171](../tpcc/generator/populate.cpp#L169-L171).
-
-Это прямое отклонение от требований initial population TPC-C, принятое ради
-воспроизводимости. Синтетические даты привязаны к одной конкретной reference
-date, а зависимость от seed обеспечивает стабильное наполнение при повторной
-загрузке, на разных hosts и в разных adapters. Решение зафиксировано во
-внутренней [specification.md](specification.md).
-
-Текущая реализация распределяет отдельные timestamps в интервале до семи суток
-после reference epoch
-([populate.cpp:26-29](../tpcc/generator/populate.cpp#L26-L29)). Поэтому её
-следует описывать как фиксированное synthetic reference window, а не как одно
-одинаковое значение времени для всех rows. Это уточнение документации, не
-регрессия последних исправлений.
-
-### 4.2. OL_DELIVERY_D не равен O_ENTRY_D
-
-**Статус: устранено.**
-
-Для начальных доставленных заказов TPC-C §4.3.3.1 требует:
-
-```text
-OL_DELIVERY_D = O_ENTRY_D
-```
-
-Ранее order и order lines получали даты из разных RNG streams (`SaltOrder` vs
-`SaltOrderLine`), а salt даты order line не включал warehouse и district.
-
-Теперь `GenerateOrderLines` принимает `deliveryUnix` вызывающей стороны и для
-доставленных заказов записывает во все линии `O_ENTRY_D` заказа:
-
-- [populate.cpp](../tpcc/generator/populate.cpp) (`GenerateOrderLines`);
-- [load_batch.cpp](../tpcc/dbms/pgsql/load_batch.cpp).
-
-Post-import check `post_import.ol_delivery_eq_entry` проверяет равенство после
-загрузки ([check.cpp](../tpcc/dbms/pgsql/check.cpp),
-[catalog.cpp](../tpcc/checks/catalog.cpp)).
-
-### 4.3. Генерация a-string не является alphanumeric
-
-**Статус: присутствует на момент анализа.**
-
-TPC-C §4.3.2.2 определяет a-string как случайную последовательность
-alphanumeric-символов. `RandomAString` генерирует только `a-z`:
-[strings.h:9-23](../tpcc/generator/strings.h#L9-L23).
-
-Это затрагивает ITEM, warehouse, district, customer, history и другие поля.
-Поля, для которых спецификация отдельно требует только буквы или n-string,
-данным замечанием не затрагиваются.
-
-### 4.4. C-Load не выбирается случайно при population
-
-**Статус: присутствует на момент анализа.**
-
-TPC-C §4.3.3.1 требует независимо случайно выбирать NURand-константу C для
-population и test run с соблюдением ограничений на разность.
-
-Обе константы зафиксированы:
-
-- [constants.h:32-33](../tpcc/domain/constants.h#L32-L33);
-- [rng.h:164-173](../tpcc/domain/rng.h#L164-L173).
-
-Разность между ними допустима, но требование выбора C для конкретной population
-не выполнено.
-
-### 4.5. Нет conformance validation параметров запуска
-
-**Статус: присутствует на момент анализа.**
-
-Конфигурация допускает:
-
-- не 10 терминалов на warehouse;
-- mix, не обеспечивающий минимальные проценты TPC-C;
-- отключённый pacing;
-- произвольные keying и think times;
-- measurement interval менее 120 минут.
+1. выполняет `TGetItems` для invalid item;
+2. вызывает `ThrowIfRetryable`, который выбрасывает исключение только для
+   retryable/ambiguous classes;
+3. любой другой `r.Ok == false` воспринимает как ожидаемый `not-found`;
+4. игнорирует результат `Rollback()`;
+5. безусловно выбрасывает `TUserAbortedException`.
 
 Связанный код:
 
-- [validate.go:101-107](../tools/tpccctl/internal/validate/validate.go#L101-L107);
-- [validate.go:115-137](../tools/tpccctl/internal/validate/validate.go#L115-L137);
-- [validate.go:179-191](../tools/tpccctl/internal/validate/validate.go#L179-L191);
-- [worker_loader.cpp:96-113](../tpcc/dbms/pgsql/worker_loader.cpp#L96-L113).
+- [new_order.cpp:178-186](../tpcc/transactions/new_order.cpp#L178-L186);
+- [workflow_util.h:16-23](../tpcc/transactions/workflow_util.h#L16-L23);
+- [tpcc_session.cpp:106-124](../tpcc/dbms/pgsql/tpcc_session.cpp#L106-L124);
+- [terminal.cpp:251-258](../tpcc/dbms/pgsql/terminal.cpp#L251-L258).
 
-TPC-C §4.2.2 требует 10 терминалов на warehouse, а §5.5.2 — непрерывный
-measurement interval не менее 120 минут. Aggregate не сообщает, что конкретная
-конфигурация этим требованиям не соответствует.
+Следствия:
 
-### 4.6. O_ALL_LOCAL некорректен при одном warehouse
+- permission, schema или permanent adapter error может быть ошибочно принят за
+  штатный unused-item rollback;
+- неподтверждённый rollback также считается успешным;
+- событие увеличивает `UserAborted`, попадает в New-Order histogram и tpmC.
 
-**Статус: устранено в commit `4d44f21`.**
+Исправление должно отличать ожидаемый ITEM `not-found` от других error classes
+и проверять `TCommitResult` rollback перед `TUserAbortedException`.
 
-TPC-C §2.4.1.5 требует при конфигурации с одним warehouse снабжать все позиции
-из home warehouse. Соответственно, создаваемый заказ должен иметь
-`O_ALL_LOCAL = 1`.
+### 3.2. Response time может пересекать measurement boundary
 
-Теперь remote-ветка недоступна при `WarehouseCount == 1`, а `AllLocal` меняется
-на `0` только после выбора другого warehouse:
-[new_order.cpp:59-70](../tpcc/transactions/new_order.cpp#L59-L70).
-Все заказы односкладской конфигурации получают корректное
-`O_ALL_LOCAL = 1`.
+**Критичность: высокая. Неполное исправление учёта §5.4.2.**
 
-### 4.7. Не проверяются фактические пределы вариативности inputs
+Экспортируемый `LatencyHistogramFullMs` начинается до ожидания inflight slot:
 
-**Статус: присутствует на момент анализа.**
+- `startTime` устанавливается в
+  [terminal.cpp:163](../tpcc/dbms/pgsql/terminal.cpp#L163);
+- затем выполняется `TTaskHasInflight`;
+- `rtStartedInMeasure` фиксируется только после получения slot в
+  [terminal.cpp:172-175](../tpcc/dbms/pgsql/terminal.cpp#L172-L175).
 
-TPC-C §5.5.1.5 требует проверять на конкретном measurement interval:
+Если ожидание началось в Ramp, а slot получен уже в Measure, транзакция
+учитывается, хотя экспортируемый latency начался до measurement interval.
+
+Дополнительно phase enum обновляется вызовом `Tick()` из main loop с периодом до
+50 ms. На границах возможны:
+
+- пропуск транзакций из начала measurement;
+- admission и запись транзакций после фактического `MeasurementEnd`.
+
+Связанный код:
+
+- [phase_controller.h](../tpcc/runtime/phase_controller.h);
+- [runner.cpp:545-567](../tpcc/dbms/pgsql/runner.cpp#L545-L567);
+- [runner.h](../tpcc/dbms/pgsql/runner.h).
+
+Начало и завершение response time следует сравнивать с абсолютными timestamps
+schedule, а начало `latencyFull` и проверяемая граница должны совпадать.
+
+### 3.3. Consolidator объединяет лишние или stale worker artifacts
+
+**Критичность: высокая. Ранее не зафиксированный дефект.**
+
+`ConsolidateWithOptions` перебирает все каталоги под `raw/worker` и до проверки
+expected set складывает их counters, histograms и clock calibration:
+
+- [consolidate.go:72-119](../tools/tpccctl/internal/consolidate/consolidate.go#L72-L119).
+
+Expected worker list применяется только для поиска отсутствующих workers. Не
+проверяются:
+
+- принадлежность имени каталога expected set;
+- `run_id` и `instance` из `result.json`;
+- `run_config_sha256`;
+- schema version;
+- warehouse assignment артефакта.
+
+Оставшийся после повторного collect каталог или вручную добавленный artifact
+может увеличить throughput, хотя `Aggregate.Workers` перечисляет только
+expected workers и status остаётся положительным.
+
+Consolidator должен отвергать unexpected workers и валидировать identity/config
+каждого result до слияния.
+
+### 3.4. Повреждённые counters и histograms обрабатываются fail-open
+
+**Критичность: высокая. Ранее не зафиксированный дефект.**
+
+Ошибки преобразования отдельных histogram payloads молча пропускаются:
+
+- [consolidate.go:98-113](../tools/tpccctl/internal/consolidate/consolidate.go#L98-L113).
+
+При этом counters того же worker уже могут быть добавлены, а
+`workers_complete` не становится `false`. Aggregate способен содержать
+throughput без соответствующих response-time samples.
+
+Histogram merge не проверяет:
+
+- обязательное наличие `layout` и `unit`;
+- ожидаемую длину buckets;
+- равенство `total_count` и суммы buckets;
+- overflow counters/buckets;
+- полную совместимость bucket layout.
+
+Связанный код:
+
+- [merge.go](../tools/tpccctl/internal/histogram/merge.go);
+- [consolidate.go:91-113](../tools/tpccctl/internal/consolidate/consolidate.go#L91-L113).
+
+Некорректный counter type также игнорируется. Любая ошибка raw measurement
+artifact должна делать consolidation неуспешной, а не давать частичный
+aggregate.
+
+### 3.5. Семантика worker artifact изменена без schema-version bump
+
+**Критичность: средняя/высокая. Compatibility-регрессия.**
+
+Worker schema version 1 теперь:
+
+- экспортирует `*_user_aborted`;
+- включает intentional rollback в `new_order_tpmc`;
+- записывает UserAborted latency в общий New-Order histogram.
+
+Ссылки:
+
+- [terminal.h:112-123](../tpcc/dbms/pgsql/terminal.h#L112-L123);
+- [artifacts.cpp:170-195](../tpcc/dbms/pgsql/artifacts.cpp#L170-L195);
+- [artifacts.cpp:208-210](../tpcc/dbms/pgsql/artifacts.cpp#L208-L210).
+
+Consolidator не проверяет schema version и трактует отсутствующий
+`new_order_user_aborted` как zero. Смешанный набор старых и новых v1 workers
+даёт частично исправленные tpmC/histograms без diagnostic.
+
+Нужен schema-version bump либо обязательный capability/semantic-version marker
+с отказом от смешивания несовместимых workers.
+
+### 3.6. Нет TPC-C conformance validation параметров запуска
+
+**Критичность: высокая для официального TPC-C; допустимо для engineering
+profiles.**
+
+Конфигурация допускает:
+
+- не 10 terminals/warehouse;
+- mix, не обеспечивающий минимальные доли TPC-C;
+- отключённый pacing;
+- compatibility/constant think time;
+- произвольные keying/think means;
+- measurement interval менее 120 минут.
+
+Ссылки:
+
+- [validate.go](../tools/tpccctl/internal/validate/validate.go);
+- [defaults.go](../tools/tpccctl/internal/config/defaults.go);
+- [specification.md](specification.md).
+
+В частности, при `terminals_per_warehouse > 10` `HomeDistrictId` циклически
+повторяет districts, и уникальность `(W_ID, D_ID)` Stock-Level из §2.8.1.1
+нарушается.
+
+### 3.7. Unknown YAML fields не отклоняются
+
+**Критичность: средняя. Ранее не зафиксированный дефект internal validation.**
+
+Profile parser использует обычный `yaml.Unmarshal`, а не decoder с
+`KnownFields(true)`:
+
+- [profile.go:159-179](../tools/tpccctl/internal/profile/profile.go#L159-L179).
+
+Например, опечатка `think_time_distribtion: compatibility` игнорируется, после
+чего бесшумно применяется default `exponential`. Это противоречит требованию
+internal specification отклонять unknown fields.
+
+### 3.8. Не проверяются фактические пределы variability inputs
+
+**Критичность: высокая для официального TPC-C.**
+
+TPC-C §5.5.1.5 требует проверять на measurement interval:
 
 - 0,9-1,1% rollback New-Order;
-- среднее число order lines в диапазоне 9,5-10,5 и равномерность 5-15;
+- среднее число order lines 9,5-10,5 и равномерность 5-15;
 - 0,95-1,05% remote order lines;
 - 14-16% remote Payment;
 - 57-63% выбора customer по фамилии для Payment и Order-Status.
 
-Генератор задаёт требуемые вероятности, например в
-[new_order.cpp:53-78](../tpcc/transactions/new_order.cpp#L53-L78) и
-[payment.cpp:40-57](../tpcc/transactions/payment.cpp#L40-L57), но runtime не
-собирает business-input counters, необходимые для проверки реально полученной
-выборки. Worker JSON содержит только результаты и retries транзакций
-([artifacts.cpp:169-184](../tpcc/dbms/pgsql/artifacts.cpp#L169-L184)).
+Generator использует требуемые вероятности, но worker artifacts не содержат
+business-input counters для проверки фактической выборки.
 
-Даже корректная вероятность генерации не гарантирует попадание конкретного
-measurement interval в нормативные пределы.
+### 3.9. Response-time reporting остаётся неполным
 
-### 4.8. Response-time требования не проверяются и неполно отчётны
+**Критичность: высокая для официального TPC-C.**
 
-**Статус: присутствует на момент анализа для официального TPC-C; полноценные RTE-метрики вне
-принятой области проекта.**
+Aggregate публикует p50/p90/p95/p99, но не:
 
-TPC-C требует average, maximum и p90 для каждого типа транзакций, menu response
-time, отдельные interactive/deferred Delivery times и response-time
-distributions.
+- average и maximum по каждому transaction type;
+- menu response time;
+- отдельные interactive/deferred Delivery metrics;
+- проверку допустимых p90;
+- required frequency distributions и графики §5.6.
 
-Consolidator публикует только p50, p90, p95 и p99:
-[merge.go:95-113](../tools/tpccctl/internal/histogram/merge.go#L95-L113).
+Raw histogram не хранит сумму значений, поэтому exact average восстановить
+невозможно. Reported throughput также не truncates до нуля decimal places, как
+требует TPC-C §5.4.4; для engineering metric сохранение дробной части допустимо.
 
-Average нельзя точно восстановить, поскольку raw histogram не хранит сумму
-значений. `MaxRecorded` хранится, но в итоговые response times не выводится.
-Также не проверяются допустимые p90:
+### 3.10. Histogram settings частично игнорируются
 
-- 5 секунд для New-Order, Payment, Order-Status и interactive Delivery;
-- 20 секунд для Stock-Level;
-- 80 секунд для deferred Delivery.
+**Критичность: средняя. Ранее не зафиксированный internal defect.**
 
-Нарушение этих ограничений не инвалидирует опубликованный throughput.
+`runtime.histogram.lowest` и `significant_figures` читаются и публикуются как
+effective settings, но фактический `THistogram` layout их не использует:
 
-### 4.9. Проверка синхронизации часов является заглушкой
+- [workload_config.h](../tpcc/domain/workload_config.h);
+- [artifacts.cpp:237-245](../tpcc/dbms/pgsql/artifacts.cpp#L237-L245).
 
-**Статус: устранено в commit `45ce1f6`.**
+Два профиля с разными значениями могут создавать одинаковые buckets, но
+aggregate будет утверждать, что применялись разные настройки.
 
-Worker выполняет пять запросов `clock_timestamp()` к PostgreSQL, выбирает sample
-с минимальным RTT и записывает измеренные offset/uncertainty:
+### 3.11. Initial population остаётся частично несовместимым с §4.3
 
-- [clock_calibration.cpp:25-61](../tpcc/dbms/pgsql/clock_calibration.cpp#L25-L61);
-- [artifacts.cpp:110-130](../tpcc/dbms/pgsql/artifacts.cpp#L110-L130).
+**Критичность: высокая для официального TPC-C.**
 
-Worker завершается с ошибкой при превышении положительного skew budget
-([worker_loader.cpp:74-94](../tpcc/dbms/pgsql/worker_loader.cpp#L74-L94)), а
-consolidator проверяет наличие calibration каждого worker и разброс offsets
-([consolidate.go:197-260](../tools/tpccctl/internal/consolidate/consolidate.go#L197-L260)).
+Остаются:
 
-При `max_clock_skew_ms <= 0` enforcement осознанно отключён; standalone `run`
-также не проходит orchestrated calibration. Эти режимы нельзя считать
-проверенными multi-host измерениями.
+- `RandomAString` генерирует только `a-z`, а не alphanumeric
+  ([strings.h](../tpcc/generator/strings.h));
+- C-Load/C-Run заданы compile-time constants вместо случайного выбора для
+  конкретных population/run
+  ([constants.h](../tpcc/domain/constants.h),
+  [rng.h](../tpcc/domain/rng.h)).
 
-### 4.10. Aggregate считает отсутствие checks успешным результатом
+Post-import suite также не проверяет некоторые корректные normal-path значения,
+например `OL_AMOUNT = 0.00` у initial delivered lines и диапазон carrier
+`[1..10]` у delivered orders. Generator создаёт их правильно; это defensive
+coverage gap, а не обнаруженная ошибка normal path.
 
-**Статус: устранено в commits `56018f2` и `04b87dd`.**
+### 3.12. Нет доказательства sustained operation и полного disclosure
 
-Consolidator определяет обязательные check reports с учётом явно skipped steps,
-возвращает `integrity_ok = false` при отсутствии, ошибке чтения, некорректном
-JSON или `ok=false`, а причины публикует в `integrity_errors`:
-[consolidate.go:263-357](../tools/tpccctl/internal/consolidate/consolidate.go#L263-L357).
+**Критичность: высокая для официального TPC-C.**
 
-### 4.11. Не контролируются sustained operation и checkpoints
+Остаются:
 
-**Статус: частично принятое ограничение области.**
+- отсутствие доказательства восьмичасовой устойчивости §5.5.1.2;
+- отсутствие FDR, price/tpmC, availability date;
+- отсутствие обязательных графиков §5.6/§8.
 
-TPC-C §5.5.1.2 требует конфигурацию, способную непрерывно поддерживать
-заявленный throughput не менее восьми часов без вмешательства оператора.
-§5.5.2.2 требует для систем с deferred writes checkpoint interval не более
-30 минут и не менее четырёх checkpoints внутри measurement interval.
+Checkpoint control относится к принятым ограничениям и описан отдельно ниже.
 
-Контроль checkpoint осознанно находится вне области portable-tpcc, поскольку
-разные СУБД используют разные transaction log, flush и recovery mechanisms.
-Их конфигурация и проверка остаются ответственностью оператора.
+## 4. Принятые ограничения и отклонения
 
-При этом отсутствие доказательства восьмичасовой устойчивости остаётся
-ограничением результата: двухчасовой workload сам по себе не подтверждает
-sustained performance тестируемой конфигурации по TPC-C §5.5.1.2.
+Эти пункты не являются планируемыми исправлениями portable-tpcc. Они остаются
+отклонениями от официальной TPC-C, но соответствуют внутренней
+[specification.md](specification.md).
 
-### 4.12. Нет полного TPC-C disclosure/reporting
+### 4.1. Синхронная Delivery
 
-**Статус: присутствует на момент анализа для официального TPC-C; FDR не является целью engineering
-workload.**
+Delivery выполняется inline в terminal. Deferred queue, Delivery result log и
+80-second deferred completion metric не реализуются. Решение принято для
+фокусировки workload на DBMS transaction execution.
 
-Отсутствуют price/tpmC, availability date, Full Disclosure Report, сведения о
-checkpoint, доказательство steady state и значительная часть отчётности §8. В
-частности, не строятся обязательные:
+### 4.2. Отсутствие полноценного Remote Terminal Emulator
 
-- response-time distributions для каждого transaction type (§5.6.1);
-- New-Order response time versus throughput (§5.6.2);
-- New-Order think-time distribution (§5.6.3);
-- New-Order throughput versus elapsed time (§5.6.4).
+Проект не моделирует TPC-C menus/screens и end-user response time. Latency
+измеряется на workload-client boundary. Поэтому официальные RTE requirements и
+menu metrics неприменимы к engineering result.
 
-Итог намеренно помечается как `engineering`:
-[consolidate.go:157-174](../tools/tpccctl/internal/consolidate/consolidate.go#L157-L174).
+### 4.3. Отсутствие встроенных ACID certification tests
 
-Это правильная маркировка для текущего инструмента, но она подтверждает его
-неполноту как официального теста.
+Atomicity/isolation/durability, power-loss и failure procedures не встроены.
+Каждый DBMS adapter при этом обязан обеспечивать:
 
-## 5. Замечания средней критичности исходного аудита
+- atomic commit/rollback;
+- достаточную isolation для concurrent home/remote transactions;
+- корректную классификацию commit outcome;
+- сохранение logical consistency conditions.
 
-### 5.1. Денежные значения проходят через double
+Подтверждение этих свойств выполняется внешними средствами.
 
-**Статус: устранено в commit `3e6cede`.**
+### 4.4. Детерминированные synthetic initial dates
 
-Таблицы PostgreSQL используют `DECIMAL`, shared domain — `TMoney`/`TRate`, а
-адаптер теперь читает точное текстовое представление PostgreSQL:
+`C_SINCE`, `H_DATE` и `O_ENTRY_D` привязаны к fixed reference epoch и
+детерминированному семидневному window вместо wall clock loader host. Это
+принято ради стабильной population между hosts, retries и adapters.
 
-- [query_result.h:111-127](../tpcc/dbms/pgsql/query_result.h#L111-L127);
-- [tpcc_session.cpp:193-239](../tpcc/dbms/pgsql/tpcc_session.cpp#L193-L239);
-- [tpcc_session.cpp:342-374](../tpcc/dbms/pgsql/tpcc_session.cpp#L342-L374);
-- [tpcc_session.cpp:450-490](../tpcc/dbms/pgsql/tpcc_session.cpp#L450-L490).
+### 4.5. Внешний контроль checkpoints
 
-Money/rate на domain↔adapter пути больше не преобразуются через `double`.
+Управление transaction log, checkpoint/recovery mechanisms и проверка
+checkpoint interval остаются ответственностью DBMS/operator из-за различий
+между СУБД.
 
-### 5.2. Конкурентная Delivery выбирает заказ без блокировки
+## 5. Исторические полностью устранённые ошибки
 
-**Статус: устранено в commit `2cab3ab`.**
+Ниже сохранены первоначальные замечания, которые больше не воспроизводятся на
+commit `884230e`.
 
-Oldest new order теперь выбирается с `FOR UPDATE`:
-[tpcc_session.cpp:290-298](../tpcc/dbms/pgsql/tpcc_session.cpp#L290-L298).
-Удаление дополнительно проверяет affected-row count и классифицирует уже
-захваченный заказ как retryable abort:
-[tpcc_session.cpp:493-501](../tpcc/dbms/pgsql/tpcc_session.cpp#L493-L501).
+### 5.1. Intentional rollback не учитывался в tpmC и RT
 
-TPC-C не предписывает именно этот SQL-механизм, но текущая реализация устраняет
-выявленный риск повторной конкурентной обработки.
+**Устранено:** intentional rollback теперь записывает latency,
+`*_user_aborted`, входит в worker throughput и aggregate
+([terminal.h](../tpcc/dbms/pgsql/terminal.h),
+[artifacts.cpp](../tpcc/dbms/pgsql/artifacts.cpp),
+[consolidate.go](../tools/tpccctl/internal/consolidate/consolidate.go)).
 
-### 5.3. Legacy import не создаёт customer-name index
+Активные проблемы fail-open classification и boundaries вынесены в 3.1 и 3.2.
 
-**Статус: устранено в commit `7b759a2`.**
+### 5.2. Валидные строки rollback New-Order не выполняли DB-профиль
 
-Общий `ImportSync` теперь вызывает `CreateIndexes` до `ANALYZE`, поэтому индекс
-создаётся и в standalone, и в orchestrated paths:
-[import.cpp:243-257](../tpcc/dbms/pgsql/import.cpp#L243-L257).
+**Устранено в `0467d46`:** для валидных позиций выполняются ITEM, STOCK update
+и ORDER-LINE insert до lookup unused item
+([new_order.cpp:122-225](../tpcc/transactions/new_order.cpp#L122-L225)).
 
-### 5.4. Consistency checks ослабляют точные сравнения
+### 5.3. Think time был постоянным
 
-**Статус: устранено.**
+**Устранено по умолчанию:** `SampleThinkTimeMs` реализует
+`-log(r) * mean` с допустимым cap `10 * mean`
+([think_time.h](../tpcc/domain/think_time.h)). Constant behavior оставлено
+только как явно выбранный compatibility mode.
 
-Денежные условия больше не используют допуск `1e-3`; они сравниваются точно
-через `IS DISTINCT FROM`, например:
+### 5.4. Stock-Level выбирал новый district для каждой транзакции
 
-- [check.cpp:192-200](../tpcc/dbms/pgsql/check.cpp#L192-L200);
-- [check.cpp:331-350](../tpcc/dbms/pgsql/check.cpp#L331-L350);
-- [check.cpp:355-382](../tpcc/dbms/pgsql/check.cpp#L355-L382);
-- [check.cpp:407-429](../tpcc/dbms/pgsql/check.cpp#L407-L429).
+**Устранено для стандартной конфигурации:** terminal получает постоянный home
+district, который использует Stock-Level
+([runner.cpp](../tpcc/dbms/pgsql/runner.cpp),
+[stock_level.cpp](../tpcc/transactions/stock_level.cpp)).
 
-Checks 3.3.2.5 и 3.3.2.7 определяют недоставленный заказ строго через
-`O_CARRIER_ID IS NULL`, без эквивалентности `0` и `NULL`:
+### 5.5. OL_DELIVERY_D initial order не совпадал с O_ENTRY_D
 
-- [check.cpp:250-276](../tpcc/dbms/pgsql/check.cpp#L250-L276);
-- [check.cpp:306-328](../tpcc/dbms/pgsql/check.cpp#L306-L328).
+**Устранено:** delivered lines получают `order.EntryUnix`; добавлен post-import
+check `post_import.ol_delivery_eq_entry`
+([populate.cpp](../tpcc/generator/populate.cpp),
+[load_batch.cpp](../tpcc/dbms/pgsql/load_batch.cpp),
+[check.cpp](../tpcc/dbms/pgsql/check.cpp)).
 
-Путь данных уже пишет `NULL` для недоставленных заказов (schema default,
-population `std::optional`, New-Order INSERT без `o_carrier_id`, Delivery
-ставит carrier в `[1..10]`), а `post_import.o_carrier_id` проверяет это после
-загрузки.
+### 5.6. O_ALL_LOCAL был неверен при одном warehouse
 
-## 6. Реализованные корректные части
+**Устранено в `4d44f21`:** remote branch недоступна при одном warehouse
+([new_order.cpp:58-69](../tpcc/transactions/new_order.cpp#L58-L69)).
 
-К сильным сторонам текущей реализации относятся:
+### 5.7. Clock calibration содержала нулевую заглушку
 
-- девять основных таблиц и правильные базовые cardinalities;
-- все пять типов транзакций и большая часть их DB-изменений;
-- default mix `45/43/4/4/4`, корректные минимальные keying times и
-  экспоненциальный think time по умолчанию;
-- NURand с допустимой разностью текущих C-Load/C-Run;
-- 5-15 order lines, 1% remote lines и полный unused-item rollback profile
-  New-Order (§2.4.2.3);
-- 85/15 Payment и 60/40 выбор customer;
-- `DECIMAL` в PostgreSQL и `TMoney` в shared domain;
-- exact-decimal PostgreSQL reads без промежуточного `double`;
-- детерминированная и повторяемая загрузка;
-- создание secondary indexes во всех import paths;
-- все двенадцать consistency conditions;
-- exact money comparisons, NULL-only carrier checks и fail-closed проверка
-  check artifacts;
-- блокировка конкурентно выбранного oldest new order в Delivery;
-- raw histogram buckets и их merge между workers;
-- wall-clock фазы с общим `--start-at` и реальная clock calibration;
-- явная маркировка результатов как `engineering`.
+**Устранено в `45ce1f6`:** worker измеряет PostgreSQL clock offset/RTT, проверяет
+skew budget, а consolidator проверяет calibration всех expected workers
+([clock_calibration.cpp](../tpcc/dbms/pgsql/clock_calibration.cpp)).
 
-## 7. Общая оценка
+При `max_clock_skew_ms <= 0` проверка явно отключена; standalone run не является
+проверенным multi-host режимом.
+
+### 5.8. Aggregate считал отсутствие checks успешным
+
+**Устранено в `56018f2`/`04b87dd`:** обязательные reports проверяются
+fail-closed, причины публикуются в `integrity_errors`
+([consolidate.go](../tools/tpccctl/internal/consolidate/consolidate.go)).
+
+### 5.9. Money/rate проходили через double
+
+**Устранено в `3e6cede`:** PostgreSQL adapter использует exact text parsing
+`GetMoney`/`GetRate`
+([query_result.h](../tpcc/dbms/pgsql/query_result.h),
+[tpcc_session.cpp](../tpcc/dbms/pgsql/tpcc_session.cpp)).
+
+### 5.10. Конкурентная Delivery выбирала oldest order без блокировки
+
+**Устранено в `2cab3ab`:** выбор использует `FOR UPDATE`, а delete проверяет
+affected rows и возвращает retryable abort при конфликте
+([tpcc_session.cpp](../tpcc/dbms/pgsql/tpcc_session.cpp)).
+
+### 5.11. Legacy import не создавал customer-name index
+
+**Устранено в `7b759a2`:** общий `ImportSync` вызывает `CreateIndexes` перед
+`ANALYZE` ([import.cpp](../tpcc/dbms/pgsql/import.cpp)).
+
+### 5.12. Consistency checks использовали epsilon и carrier 0 как NULL
+
+**Устранено:** money сравнивается точно через `IS DISTINCT FROM`; условия
+3.3.2.5/7 используют только `O_CARRIER_ID IS NULL`
+([check.cpp:192-429](../tpcc/dbms/pgsql/check.cpp#L192-L429)).
+
+## 6. Итоговая оценка
 
 | Область | Оценка |
 | --- | --- |
-| DB workload core | В основном реализован; профили rollback New-Order и Stock-Level home district исправлены; штатные rollback учтены в tpmC и RT |
-| Initial population | Cardinalities корректны; synthetic dates — принятое отклонение; `OL_DELIVERY_D = O_ENTRY_D` для доставленных заказов; a-string и C-Load не соответствуют §4.3 |
-| Driver / RTE | Полный RTE осознанно вне области; latency измеряет workload-client boundary |
-| Delivery | Синхронная модель — принятое отклонение; конкурентная обработка oldest order исправлена |
-| tpmC и response time | Штатные rollback учтены; полный RTE/FDR по-прежнему вне области |
-| Consistency | Хорошее покрытие 3.3.2.1-12; exact money и NULL-only carrier comparisons |
-| Atomicity / isolation / durability | Встроенные certification tests вне области; гарантии обязательны для каждого DBMS adapter |
-| Checkpoints | Управление и контроль вне области; ответственность DBMS/operator |
-| Reporting / disclosure | Engineering artifacts, не FDR |
+| DB workload core | Основные пять транзакций реализованы; intentional rollback требует fail-closed классификации и проверки rollback outcome |
+| Initial population | Cardinalities и delivery timestamps корректны; synthetic dates приняты; a-string и C constants остаются |
+| Runtime | Think time и Stock-Level исправлены для default; measurement boundaries требуют доработки |
+| Consolidation | Histogram merge работает для корректных однородных artifacts; identity/schema/integrity raw data валидируются недостаточно |
+| Delivery | Синхронная модель — принятое отклонение; конкурентная обработка исправлена |
+| RTE / ACID / checkpoints | Внешние или вне области по принятому решению |
+| Reporting | Engineering artifacts, не официальный TPC-C FDR |
 | DBMS adapters | Практически реализован только PostgreSQL |
 
-Для нагрузочного, сравнительного и регрессионного тестирования PostgreSQL
-проект пригоден при явном указании фактической конфигурации. Для получения
-результата, называемого TPC-C или tpmC, необходима существенная доработка
-transaction profiles, population, measurement validation и disclosure
-workflow, а также внешнее подтверждение RTE/ACID/checkpoint требований, которые
-осознанно не входят в portable-tpcc.
-
-## 8. Итог повторного контроля
-
-| Статус | Замечания |
-| --- | --- |
-| Устранено | 3.1 учёт rollback New-Order в tpmC/RT; 3.2 полный unused-item rollback New-Order; 3.6 think time exponential (default); 3.7 Stock-Level home district; 4.2 `OL_DELIVERY_D = O_ENTRY_D`; 4.6 `O_ALL_LOCAL`; 4.9 clock calibration; 4.10 integrity fail-open; 5.1 exact-decimal reads; 5.2 Delivery race; 5.3 legacy index; 5.4 exact money + NULL-only carrier checks |
-| Частично устранено | — |
-| Принятое отклонение | 3.3 synchronous Delivery; 3.4 отсутствие полного RTE; 3.5 отсутствие встроенных ACID tests; 4.1 synthetic initial dates; checkpoint-часть 4.11 |
-| Остаётся | 4.3-4.5, 4.7, 4.8, sustained-часть 4.11, 4.12 |
-
-Повторный аудит изменений до commit `4d44f21` не выявил новых регрессий,
-внесённых исправлениями. Дополнительно уточнено, что clock-skew enforcement
-работает только при положительном `max_clock_skew_ms` и в orchestrated worker
-path. Это ограничение конфигурации, а не регрессия реализации calibration.
+Повторный аудит не обнаружил deadlock или data-corruption регрессий в новых
+ITEM/STOCK locking, Stock-Level binding, think-time sampling, timestamp
+population и carrier checks. Но исправления intentional rollback/accounting
+внесли fail-open classification и schema-compatibility риски, перечисленные в
+3.1 и 3.5. Сравнение результатов до и после `884230e` требует учитывать
+ожидаемые изменения workload: tpmC увеличивается примерно на долю intentional
+rollback, rollback New-Order создаёт полную DB-нагрузку, а default think-time
+distribution теперь экспоненциальное.
