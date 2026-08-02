@@ -46,9 +46,7 @@ int RunLoaderFromRunConfig(const std::string& runConfigPath, const std::string& 
     int exitCode = 0;
     try {
         ImportSync(importCfg);
-        TPgAdminAdapter admin(connection, doc.Path);
-        admin.EnsureIndexes();
-        // ImportSync already runs ANALYZE; EnsureStatistics remains available for schema role.
+        // ImportSync creates secondary indexes and runs ANALYZE.
     } catch (const std::exception& ex) {
         LOG_E("Loader failed: {}", ex.what());
         exitCode = 1;

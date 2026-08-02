@@ -79,7 +79,8 @@ void CheckIndexExists(pqxx::connection& conn, const std::string& schema,
     if (!indexes.contains(expectedIndex)) {
         std::cerr << "Table '" << tableName
                   << "' is missing expected index '" << expectedIndex
-                  << "'. Did you forget to run 'tpcc init'?" << std::endl;
+                  << "'. Run 'tpcc import' to create indexes after bulk load."
+                  << std::endl;
         std::exit(1);
     }
 }

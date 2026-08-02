@@ -244,6 +244,8 @@ void ImportSync(const TImportConfig& config) {
         throw std::runtime_error("Import was interrupted or failed. See logs.");
     }
 
+    CreateIndexes(config.ConnectionString, config.Path);
+
     LOG_I("Running ANALYZE on TPC-C tables...");
     {
         pqxx::connection conn(config.ConnectionString);
