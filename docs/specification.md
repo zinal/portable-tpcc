@@ -204,7 +204,7 @@ workload-generation mechanism, and recorded latency covers the workload-client
 request boundary rather than complete end-user Remote Terminal Emulator
 response time. Keying time is constant. Think time defaults to the TPC-C
 negative-exponential distribution (`Tt = -log(r) * mean`, truncated at
-`10 * mean`). Profile field `runtime.think_time_distribution: benchbase`
+`10 * mean`). Profile field `runtime.think_time_distribution: compatibility`
 (alias `constant`) MAY select fixed mean think time for engineering
 comparability with historical portable-tpcc runs.
 

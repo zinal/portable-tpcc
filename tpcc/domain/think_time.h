@@ -10,7 +10,7 @@
 namespace NTpcc {
 
 // TPC-C §5.2.5.4: Tt = -log(r) * mean, truncated at 10 * mean.
-// Benchbase mode returns the configured mean unchanged (constant think time).
+// Compatibility mode returns the configured mean unchanged (constant think time).
 inline int64_t SampleThinkTimeMs(
     NDetail::TFastRng& rng,
     int64_t meanMs,
@@ -19,7 +19,7 @@ inline int64_t SampleThinkTimeMs(
     if (meanMs <= 0) {
         return 0;
     }
-    if (distribution == EThinkTimeDistribution::Benchbase) {
+    if (distribution == EThinkTimeDistribution::Compatibility) {
         return meanMs;
     }
 
@@ -38,22 +38,22 @@ inline int64_t SampleThinkTimeMs(int64_t meanMs, EThinkTimeDistribution distribu
 
 inline const char* ThinkTimeDistributionToString(EThinkTimeDistribution distribution) {
     switch (distribution) {
-        case EThinkTimeDistribution::Benchbase:
-            return "benchbase";
+        case EThinkTimeDistribution::Compatibility:
+            return "compatibility";
         case EThinkTimeDistribution::Exponential:
         default:
             return "exponential";
     }
 }
 
-// Parses run-config / CLI values. Accepts "constant" as an alias for benchbase.
+// Parses run-config / CLI values. Accepts "constant" as an alias for compatibility.
 inline bool ParseThinkTimeDistribution(const std::string& value, EThinkTimeDistribution& out) {
     if (value.empty() || value == "exponential") {
         out = EThinkTimeDistribution::Exponential;
         return true;
     }
-    if (value == "benchbase" || value == "constant") {
-        out = EThinkTimeDistribution::Benchbase;
+    if (value == "compatibility" || value == "constant") {
+        out = EThinkTimeDistribution::Compatibility;
         return true;
     }
     return false;

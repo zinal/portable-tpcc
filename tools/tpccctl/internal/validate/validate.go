@@ -92,7 +92,7 @@ func Profile(p *profile.Profile) *Result {
 		res.Add("runtime.pacing must be \"enabled\" or \"disabled\"")
 	}
 	if !config.ValidThinkTimeDistribution(p.Runtime.ThinkTimeDistribution) {
-		res.Add("runtime.think_time_distribution must be \"exponential\", \"benchbase\", or \"constant\"")
+		res.Add("runtime.think_time_distribution must be \"exponential\", \"compatibility\", or \"constant\"")
 	}
 	if p.Runtime.ThreadsPerWorker < 0 {
 		res.Add("runtime.threads_per_worker must not be negative")

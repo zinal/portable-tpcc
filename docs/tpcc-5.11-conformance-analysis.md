@@ -223,7 +223,7 @@ Tt = -log(r) * mean
 `10 * mean` ([think_time.h](../tpcc/domain/think_time.h),
 [terminal.cpp](../tpcc/dbms/pgsql/terminal.cpp)).
 
-Опциональный режим `runtime.think_time_distribution: benchbase` (alias
+Опциональный режим `runtime.think_time_distribution: compatibility` (alias
 `constant`) сохраняет прежнее поведение portable-tpcc: фиксированное ожидание,
 равное настроенному среднему. Для соответствия TPC-C 5.11 этот режим включать
 не следует.

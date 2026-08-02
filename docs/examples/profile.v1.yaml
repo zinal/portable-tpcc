@@ -79,7 +79,7 @@ phases:
 
 runtime:
   pacing: enabled
-  # exponential (default): TPC-C §5.2.5.4. Use benchbase for constant mean think time.
+  # exponential (default): TPC-C §5.2.5.4. Use compatibility for constant mean think time.
   think_time_distribution: exponential
   threads_per_worker: 4
   max_inflight_per_worker: 256

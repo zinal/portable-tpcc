@@ -9,11 +9,11 @@
 namespace NTpcc {
 
 // How think time is drawn from the configured per-tx mean (ThinkTimeMs).
-// Exponential matches TPC-C §5.2.5.4. Benchbase keeps a constant mean wait
-// (previous portable-tpcc behavior; optional engineering compatibility mode).
+// Exponential matches TPC-C §5.2.5.4. Compatibility keeps a constant mean wait
+// (previous portable-tpcc behavior; optional engineering mode).
 enum class EThinkTimeDistribution {
     Exponential,
-    Benchbase,
+    Compatibility,
 };
 
 // Per-transaction mix weight and pacing (from run-config workload.*).

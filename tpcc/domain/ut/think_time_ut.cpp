@@ -8,11 +8,11 @@
 
 using namespace NTpcc;
 
-TEST(ThinkTime, BenchbaseReturnsConfiguredMean) {
+TEST(ThinkTime, CompatibilityReturnsConfiguredMean) {
     TSeededRng rng(1);
-    EXPECT_EQ(SampleThinkTimeMs(rng.Impl(), 12000, EThinkTimeDistribution::Benchbase), 12000);
-    EXPECT_EQ(SampleThinkTimeMs(rng.Impl(), 0, EThinkTimeDistribution::Benchbase), 0);
-    EXPECT_EQ(SampleThinkTimeMs(rng.Impl(), -1, EThinkTimeDistribution::Benchbase), 0);
+    EXPECT_EQ(SampleThinkTimeMs(rng.Impl(), 12000, EThinkTimeDistribution::Compatibility), 12000);
+    EXPECT_EQ(SampleThinkTimeMs(rng.Impl(), 0, EThinkTimeDistribution::Compatibility), 0);
+    EXPECT_EQ(SampleThinkTimeMs(rng.Impl(), -1, EThinkTimeDistribution::Compatibility), 0);
 }
 
 TEST(ThinkTime, ExponentialRespectsMeanAndTruncation) {
@@ -45,7 +45,7 @@ TEST(ThinkTime, ExponentialRespectsMeanAndTruncation) {
 }
 
 TEST(ThinkTime, ParseAndStringRoundTrip) {
-    EThinkTimeDistribution dist = EThinkTimeDistribution::Benchbase;
+    EThinkTimeDistribution dist = EThinkTimeDistribution::Compatibility;
     EXPECT_TRUE(ParseThinkTimeDistribution("", dist));
     EXPECT_EQ(dist, EThinkTimeDistribution::Exponential);
     EXPECT_STREQ(ThinkTimeDistributionToString(dist), "exponential");
@@ -53,13 +53,14 @@ TEST(ThinkTime, ParseAndStringRoundTrip) {
     EXPECT_TRUE(ParseThinkTimeDistribution("exponential", dist));
     EXPECT_EQ(dist, EThinkTimeDistribution::Exponential);
 
-    EXPECT_TRUE(ParseThinkTimeDistribution("benchbase", dist));
-    EXPECT_EQ(dist, EThinkTimeDistribution::Benchbase);
-    EXPECT_STREQ(ThinkTimeDistributionToString(dist), "benchbase");
+    EXPECT_TRUE(ParseThinkTimeDistribution("compatibility", dist));
+    EXPECT_EQ(dist, EThinkTimeDistribution::Compatibility);
+    EXPECT_STREQ(ThinkTimeDistributionToString(dist), "compatibility");
 
     EXPECT_TRUE(ParseThinkTimeDistribution("constant", dist));
-    EXPECT_EQ(dist, EThinkTimeDistribution::Benchbase);
+    EXPECT_EQ(dist, EThinkTimeDistribution::Compatibility);
 
+    EXPECT_FALSE(ParseThinkTimeDistribution("benchbase", dist));
     EXPECT_FALSE(ParseThinkTimeDistribution("uniform", dist));
 }
 

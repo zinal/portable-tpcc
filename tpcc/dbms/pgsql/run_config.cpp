@@ -131,7 +131,7 @@ TRunConfigDocument LoadRunConfigDocument(const std::string& path) {
             if (!ParseThinkTimeDistribution(dist, doc.ThinkTimeDistribution)) {
                 throw std::runtime_error(
                     "runtime.think_time_distribution must be \"exponential\", "
-                    "\"benchbase\", or \"constant\"");
+                    "\"compatibility\", or \"constant\"");
             }
         }
         if (rt.contains("retry") && rt["retry"].is_object()) {

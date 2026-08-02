@@ -31,7 +31,7 @@ DEFINE_int32(threads, 0, "Number of threads (coroutines for run, importers for i
 DEFINE_int32(max_inflight, NTpcc::DEFAULT_MAX_INFLIGHT, "Max inflight transactions");
 DEFINE_bool(no_delays, false, "Disable keying and think time delays");
 DEFINE_string(think_time_distribution, "exponential",
-    "Think time distribution: exponential (TPC-C default) or benchbase/constant");
+    "Think time distribution: exponential (TPC-C default) or compatibility/constant");
 DEFINE_bool(high_res_histogram, false, "Use high resolution histograms");
 DEFINE_int32(simulate_ms, 0, "Simulation mode: sleep N ms per transaction instead of real TPC-C (0 = disabled)");
 DEFINE_int32(simulate_select1, 0, "Simulation mode: run N SELECT 1 queries per transaction instead of real TPC-C (0 = disabled)");
@@ -72,7 +72,7 @@ void PrintHelp() {
         "                        0 = auto (default: 0)\n"
         "  -m, --max-inflight    Max inflight transactions (default: 100)\n"
         "  --no-delays           Disable keying and think time delays (default: false)\n"
-        "  --think-time-distribution  exponential (TPC-C default) or benchbase/constant\n"
+        "  --think-time-distribution  exponential (TPC-C default) or compatibility/constant\n"
         "  --high-res-histogram  Use high resolution histograms (default: false)\n"
         "  --log-level           Log level: trace, debug, info, warn, error (default: \"info\")\n"
         "  --no-tui              Disable terminal UI (default: false)\n"
@@ -289,7 +289,7 @@ void RunBenchmark() {
     config.UseTui = !FLAGS_no_tui;
     if (!NTpcc::ParseThinkTimeDistribution(FLAGS_think_time_distribution, config.ThinkTimeDistribution)) {
         throw std::runtime_error(
-            "--think-time-distribution must be \"exponential\", \"benchbase\", or \"constant\"");
+            "--think-time-distribution must be \"exponential\", \"compatibility\", or \"constant\"");
     }
 
     if (!config.IsSimulationMode()) {

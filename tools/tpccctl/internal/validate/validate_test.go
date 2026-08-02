@@ -75,7 +75,7 @@ func TestValidate_thinkTimeDistribution(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, ok := range []string{"", "exponential", "benchbase", "constant"} {
+	for _, ok := range []string{"", "exponential", "compatibility", "constant"} {
 		p.Runtime.ThinkTimeDistribution = ok
 		res := validate.Profile(p)
 		if !res.Valid {

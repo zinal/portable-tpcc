@@ -54,13 +54,13 @@ const DefaultThinkTimeDistribution = "exponential"
 
 // ResolveThinkTimeDistribution returns a canonical distribution name.
 // Empty input yields the TPC-C default. "constant" is accepted as an alias
-// for the optional benchbase compatibility mode (fixed mean think time).
+// for the optional compatibility mode (fixed mean think time).
 func ResolveThinkTimeDistribution(value string) string {
 	switch value {
 	case "", "exponential":
 		return DefaultThinkTimeDistribution
-	case "benchbase", "constant":
-		return "benchbase"
+	case "compatibility", "constant":
+		return "compatibility"
 	default:
 		return value
 	}
@@ -69,7 +69,7 @@ func ResolveThinkTimeDistribution(value string) string {
 // ValidThinkTimeDistribution reports whether value is a known distribution.
 func ValidThinkTimeDistribution(value string) bool {
 	switch value {
-	case "", "exponential", "benchbase", "constant":
+	case "", "exponential", "compatibility", "constant":
 		return true
 	default:
 		return false
