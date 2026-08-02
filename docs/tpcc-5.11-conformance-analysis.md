@@ -27,11 +27,10 @@ fail-closed integrity. Денежная часть consistency checks также
 Основные остающиеся блокирующие причины:
 
 1. неверный учёт штатных rollback New-Order в throughput и response time;
-2. сокращённый профиль rollback New-Order;
-3. несоответствующая спецификации модель Stock-Level terminals;
-4. нарушения initial population, кроме принятого решения о синтетических
+2. несоответствующая спецификации модель Stock-Level terminals;
+3. нарушения initial population, кроме принятого решения о синтетических
    начальных датах;
-5. неполная проверка валидности measurement interval и отчётность.
+4. неполная проверка валидности measurement interval и отчётность.
 
 Синхронная Delivery, отсутствие полноценного RTE и встроенных ACID/checkpoint
 tests являются теперь явно зафиксированными границами продукта. Они остаются
@@ -83,7 +82,7 @@ TPC-C §5.1.2 и §5.4.2 требуют включать в MQTh штатные 
 
 Реализация учитывает такие транзакции отдельно как `UserAborted`:
 
-- [new_order.cpp:143-145](../tpcc/transactions/new_order.cpp#L143-L145);
+- [new_order.cpp:185-186](../tpcc/transactions/new_order.cpp#L185-L186);
 - [terminal.cpp:186-189](../tpcc/dbms/pgsql/terminal.cpp#L186-L189);
 - [terminal.cpp:242-244](../tpcc/dbms/pgsql/terminal.cpp#L242-L244).
 
@@ -112,26 +111,26 @@ measurement interval, нет.
 
 ### 3.2. Rollback-профиль New-Order выполняется не полностью
 
-**Статус: присутствует на момент анализа.**
+**Статус: устранено в commit `0467d46`.**
 
 По TPC-C §2.4.2.3 все валидные позиции должны быть обработаны до последней
 неверной позиции. Эффекты этой работы затем откатываются общей транзакцией.
 Знание о неверном item разрешает пропустить действия только для самого
 неверного item.
 
-Реализация:
+Ранее реализация исключала invalid item из запроса ITEM, сразу выполняла
+rollback по флагу `HasInvalidItem` и не доходила до обработки stock и order
+lines для валидных позиций. Invalid item также не вызывал предусмотренный
+профилем ITEM `not-found`.
 
-1. исключает invalid item из запроса ITEM
-   ([new_order.cpp:123-129](../tpcc/transactions/new_order.cpp#L123-L129));
-2. сразу выполняет rollback
-   ([new_order.cpp:143-145](../tpcc/transactions/new_order.cpp#L143-L145));
-3. не доходит до обработки stock и order lines
-   ([new_order.cpp:148-214](../tpcc/transactions/new_order.cpp#L148-L214)).
+Теперь для 1% unused-item New-Order:
 
-Таким образом, около 1% New-Order не создают обязательную read/write-нагрузку
-для валидных позиций. Invalid item также не вызывает предусмотренный профилем
-ITEM `not-found`: rollback выполняется по заранее известному флагу
-`HasInvalidItem`.
+1. валидные ITEM читаются отдельно
+   ([new_order.cpp:126-144](../tpcc/transactions/new_order.cpp#L126-L144));
+2. STOCK и ORDER-LINE выполняются для всех валидных позиций
+   ([new_order.cpp:146-225](../tpcc/transactions/new_order.cpp#L146-L225));
+3. unused item выбирается из ITEM; ожидаемый `not-found` приводит к rollback
+   ([new_order.cpp:178-186](../tpcc/transactions/new_order.cpp#L178-L186)).
 
 ### 3.3. Delivery не соответствует обязательной deferred-модели
 
@@ -530,7 +529,8 @@ carrier `0` как эквивалент `NULL`:
 - default mix `45/43/4/4/4`, корректные минимальные keying times и
   экспоненциальный think time по умолчанию;
 - NURand с допустимой разностью текущих C-Load/C-Run;
-- 5-15 order lines, 1% remote lines и 1% rollback inputs;
+- 5-15 order lines, 1% remote lines и полный unused-item rollback profile
+  New-Order (§2.4.2.3);
 - 85/15 Payment и 60/40 выбор customer;
 - `DECIMAL` в PostgreSQL и `TMoney` в shared domain;
 - exact-decimal PostgreSQL reads без промежуточного `double`;
@@ -547,7 +547,7 @@ carrier `0` как эквивалент `NULL`:
 
 | Область | Оценка |
 | --- | --- |
-| DB workload core | В основном реализован; rollback New-Order и Stock-Level имеют нормативные ошибки |
+| DB workload core | В основном реализован; профиль rollback New-Order исправлен; Stock-Level и учёт rollback в tpmC имеют нормативные ошибки |
 | Initial population | Cardinalities корректны; synthetic dates — принятое отклонение; delivery timestamps, a-string и C-Load не соответствуют §4.3 |
 | Driver / RTE | Полный RTE осознанно вне области; latency измеряет workload-client boundary |
 | Delivery | Синхронная модель — принятое отклонение; конкурентная обработка oldest order исправлена |
@@ -569,10 +569,10 @@ workflow, а также внешнее подтверждение RTE/ACID/check
 
 | Статус | Замечания |
 | --- | --- |
-| Устранено | 3.6 think time exponential (default); 4.6 `O_ALL_LOCAL`; 4.9 clock calibration; 4.10 integrity fail-open; 5.1 exact-decimal reads; 5.2 Delivery race; 5.3 legacy index |
+| Устранено | 3.2 полный unused-item rollback New-Order; 3.6 think time exponential (default); 4.6 `O_ALL_LOCAL`; 4.9 clock calibration; 4.10 integrity fail-open; 5.1 exact-decimal reads; 5.2 Delivery race; 5.3 legacy index |
 | Частично устранено | 5.4 exact money checks исправлены, carrier `0` как `NULL` остался |
 | Принятое отклонение | 3.3 synchronous Delivery; 3.4 отсутствие полного RTE; 3.5 отсутствие встроенных ACID tests; 4.1 synthetic initial dates; checkpoint-часть 4.11 |
-| Остаётся | 3.1, 3.2, 3.7, 4.2-4.5, 4.7, 4.8, sustained-часть 4.11, 4.12 |
+| Остаётся | 3.1, 3.7, 4.2-4.5, 4.7, 4.8, sustained-часть 4.11, 4.12 |
 
 Повторный аудит изменений до commit `4d44f21` не выявил новых регрессий,
 внесённых исправлениями. Дополнительно уточнено, что clock-skew enforcement
