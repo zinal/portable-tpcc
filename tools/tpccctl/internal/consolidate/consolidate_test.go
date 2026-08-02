@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"portable-tpcc/tools/tpccctl/internal/config"
@@ -253,6 +254,13 @@ func TestConsolidate_integrityMissingChecks(t *testing.T) {
 	if agg.Status.IntegrityOK {
 		t.Fatalf("expected integrity_ok=false when checks are missing, got %+v", agg.Status)
 	}
+	if len(agg.Status.IntegrityErrors) == 0 {
+		t.Fatalf("expected integrity_errors with missing report details, got %+v", agg.Status)
+	}
+	joined := strings.Join(agg.Status.IntegrityErrors, "\n")
+	if !strings.Contains(joined, "after-import.json") || !strings.Contains(joined, "after-run.json") {
+		t.Fatalf("expected missing report names in integrity_errors, got %#v", agg.Status.IntegrityErrors)
+	}
 }
 
 func TestConsolidate_integrityFailedCheck(t *testing.T) {
@@ -273,6 +281,23 @@ func TestConsolidate_integrityFailedCheck(t *testing.T) {
 	}
 	if agg.Status.IntegrityOK {
 		t.Fatalf("expected integrity_ok=false when a check failed, got %+v", agg.Status)
+	}
+	if len(agg.Status.IntegrityErrors) != 1 {
+		t.Fatalf("expected one integrity error, got %#v", agg.Status.IntegrityErrors)
+	}
+	if !strings.Contains(agg.Status.IntegrityErrors[0], "after-run.json") || !strings.Contains(agg.Status.IntegrityErrors[0], "ok=false") {
+		t.Fatalf("expected failed check reason, got %#v", agg.Status.IntegrityErrors[0])
+	}
+
+	if err := consolidate.WriteAggregate(root, runID, agg); err != nil {
+		t.Fatal(err)
+	}
+	summary, err := os.ReadFile(filepath.Join(root, runID, "summary.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(summary), "integrity_error=check report after-run.json: ok=false") {
+		t.Fatalf("summary missing integrity error details:\n%s", summary)
 	}
 }
 
@@ -296,5 +321,8 @@ func TestConsolidate_integritySkippedAfterRun(t *testing.T) {
 	}
 	if !agg.Status.IntegrityOK {
 		t.Fatalf("expected integrity_ok=true when after-run check was skipped, got %+v", agg.Status)
+	}
+	if len(agg.Status.IntegrityErrors) != 0 {
+		t.Fatalf("expected no integrity_errors, got %#v", agg.Status.IntegrityErrors)
 	}
 }

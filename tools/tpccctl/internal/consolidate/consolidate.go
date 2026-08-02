@@ -12,10 +12,11 @@ import (
 
 // Status flags for the consolidated result (specification §8.2).
 type Status struct {
-	WorkersComplete bool `json:"workers_complete"`
-	AssignmentValid bool `json:"assignment_valid"`
-	ClockSkewOK     bool `json:"clock_skew_ok"`
-	IntegrityOK     bool `json:"integrity_ok"`
+	WorkersComplete bool     `json:"workers_complete"`
+	AssignmentValid bool     `json:"assignment_valid"`
+	ClockSkewOK     bool     `json:"clock_skew_ok"`
+	IntegrityOK     bool     `json:"integrity_ok"`
+	IntegrityErrors []string `json:"integrity_errors,omitempty"`
 }
 
 // Aggregate is the canonical consolidated result.
@@ -144,7 +145,7 @@ func (c *Consolidator) ConsolidateWithOptions(runID string, rc *config.RunConfig
 		throughput = float64(newOrder) / measurementMin
 	}
 
-	integrityOK := evaluateIntegrity(c.ResultRoot, runID, opts)
+	integrity := evaluateIntegrity(c.ResultRoot, runID, opts)
 
 	agg := &Aggregate{
 		SchemaVersion: 1,
@@ -155,7 +156,8 @@ func (c *Consolidator) ConsolidateWithOptions(runID string, rc *config.RunConfig
 			WorkersComplete: workersComplete,
 			AssignmentValid: assignmentErr == nil,
 			ClockSkewOK:     clockSkewOK,
-			IntegrityOK:     integrityOK,
+			IntegrityOK:     integrity.ok,
+			IntegrityErrors: integrity.errors,
 		},
 		Metrics: map[string]interface{}{
 			"measurement": map[string]interface{}{
@@ -285,43 +287,74 @@ func requiredCheckFiles(skipped []string) []string {
 	return required
 }
 
-func checkReportOK(data []byte) bool {
+func checkReportOK(data []byte) (bool, string) {
 	var report map[string]interface{}
 	if json.Unmarshal(data, &report) != nil {
-		return false
+		return false, "invalid JSON"
 	}
 	ok, exists := report["ok"].(bool)
-	return exists && ok
+	if !exists {
+		return false, "missing ok field"
+	}
+	if !ok {
+		if failed, exists := report["failed"].(float64); exists && failed > 0 {
+			return false, fmt.Sprintf("ok=false (failed=%d)", int(failed))
+		}
+		return false, "ok=false"
+	}
+	return true, ""
 }
 
-func evaluateIntegrity(resultRoot, runID string, opts Options) bool {
+type integrityEvaluation struct {
+	ok     bool
+	errors []string
+}
+
+func evaluateIntegrity(resultRoot, runID string, opts Options) integrityEvaluation {
 	required := requiredCheckFiles(opts.SkippedSteps)
 	if len(required) == 0 {
-		return true
+		return integrityEvaluation{ok: true}
 	}
 
 	checksDir := filepath.Join(resultRoot, runID, "checks")
-	for _, name := range required {
-		data, err := os.ReadFile(filepath.Join(checksDir, name))
-		if err != nil || !checkReportOK(data) {
-			return false
-		}
-	}
+	present := map[string]bool{}
+	var errors []string
 
 	entries, err := os.ReadDir(checksDir)
 	if err != nil {
-		return false
+		if os.IsNotExist(err) {
+			for _, name := range required {
+				errors = append(errors, fmt.Sprintf("required check report missing: %s", name))
+			}
+			return integrityEvaluation{ok: false, errors: errors}
+		}
+		return integrityEvaluation{
+			ok:     false,
+			errors: []string{fmt.Sprintf("checks directory unreadable: %v", err)},
+		}
 	}
+
 	for _, e := range entries {
 		if e.IsDir() {
 			continue
 		}
-		data, err := os.ReadFile(filepath.Join(checksDir, e.Name()))
-		if err != nil || !checkReportOK(data) {
-			return false
+		present[e.Name()] = true
+		path := filepath.Join(checksDir, e.Name())
+		data, err := os.ReadFile(path)
+		if err != nil {
+			errors = append(errors, fmt.Sprintf("check report %s unreadable: %v", e.Name(), err))
+			continue
+		}
+		if ok, reason := checkReportOK(data); !ok {
+			errors = append(errors, fmt.Sprintf("check report %s: %s", e.Name(), reason))
 		}
 	}
-	return true
+	for _, name := range required {
+		if !present[name] {
+			errors = append(errors, fmt.Sprintf("required check report missing: %s", name))
+		}
+	}
+	return integrityEvaluation{ok: len(errors) == 0, errors: errors}
 }
 
 func loadChecks(resultRoot, runID string) map[string]interface{} {
@@ -373,5 +406,10 @@ func WriteAggregate(resultRoot, runID string, agg *Aggregate) error {
 		agg.RunID, agg.ResultClass, agg.Status.WorkersComplete, agg.Status.AssignmentValid,
 		agg.Status.ClockSkewOK, agg.Status.IntegrityOK,
 	)
+	if !agg.Status.IntegrityOK && len(agg.Status.IntegrityErrors) > 0 {
+		for _, errMsg := range agg.Status.IntegrityErrors {
+			summary += fmt.Sprintf("integrity_error=%s\n", errMsg)
+		}
+	}
 	return os.WriteFile(filepath.Join(dir, "summary.txt"), []byte(summary), 0644)
 }
