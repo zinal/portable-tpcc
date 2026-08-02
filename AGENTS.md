@@ -8,7 +8,9 @@ Before making changes, study the surrounding code and **preserve the style used 
 
 - **Naming and structural conventions** — follow the patterns in neighboring files (`C` class prefixes, `TIdent`/`INT32` types, TPC/Artistic License header style, and so on).
 - **Formatting** — do not reformat code incidentally; the diff must contain only the changes required for the task.
-- **Dependencies and builds** — use the existing `ya.make` files; do not add alternative build systems unless explicitly requested.
+- **Dependencies and builds** — use the existing build system for each component;
+  do not add alternative build systems unless explicitly requested. The
+  `tpccctl/` module is built with the standard Go toolchain, not `ya make`.
 
 If a task affects multiple subsystems, follow the style of **each specific directory being modified**, not a “universal” modern C++ style.
 
@@ -17,10 +19,11 @@ If a task affects multiple subsystems, follow the style of **each specific direc
 **Do not make changes until you have completed this analysis:**
 
 1. **Understand the task** — determine which directories and components are affected and whether the proposed solution fits the repository architecture.
-2. **Study the context** — read the files to be modified and their immediate consumers/dependencies; inspect `ya.make` and related modules.
+2. **Study the context** — read the files to be modified and their immediate consumers/dependencies; inspect `ya.make` for ya modules or `go.mod` for `tpccctl/`.
 3. **Assess the scope** — minimize the diff; do not refactor or “improve” code outside the task’s scope.
 4. **Check the restrictions** — make sure the plan does not violate the prohibitions in sections 4 and 5 below.
-5. **Verify the changes** — whenever possible, build the affected targets (`./ya make …`) and/or run the relevant tests.
+5. **Verify the changes** — whenever possible, build the affected targets and
+   run the relevant tests using the component's build system.
 
 If the task is ambiguous or requires changes in protected areas, **stop and ask the user for explicit confirmation** instead of assuming permission.
 
@@ -34,6 +37,20 @@ The build system is invoked via the **`./ya` launcher script in the repository r
 ```
 
 On first use the script may download the ya binary; subsequent builds reuse it. Do not assume `ya` is on `PATH` — always use `./ya`.
+
+### Building tpccctl with Go
+
+`tpccctl/` is a standalone Go module and **must not** be added to the `ya make`
+graph. Build and test it from the repository root with the standard Go
+toolchain:
+
+```bash
+go -C tpccctl build ./cmd/tpccctl
+go -C tpccctl test ./...
+```
+
+When changing dependencies, use Go module commands such as
+`go -C tpccctl get` and `go -C tpccctl mod tidy`.
 
 ## 4. Do not modify infrastructure directories
 
