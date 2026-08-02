@@ -14,7 +14,9 @@ type Raw struct {
 	HdrTill     uint64   `json:"hdr_till"`
 	MaxValue    uint64   `json:"max_value"`
 	TotalCount  uint64   `json:"total_count"`
+	MinRecorded uint64   `json:"min_recorded"`
 	MaxRecorded uint64   `json:"max_recorded"`
+	SumValues   uint64   `json:"sum_values"`
 	Buckets     []uint64 `json:"buckets"`
 }
 
@@ -64,6 +66,18 @@ func Validate(h Raw) error {
 	if sum != h.TotalCount {
 		return fmt.Errorf("histogram total_count %d != sum(buckets) %d", h.TotalCount, sum)
 	}
+	if h.TotalCount == 0 {
+		if h.SumValues != 0 {
+			return fmt.Errorf("histogram sum_values %d != 0 for empty histogram", h.SumValues)
+		}
+		return nil
+	}
+	if h.MinRecorded > h.MaxRecorded {
+		return fmt.Errorf("histogram min_recorded %d > max_recorded %d", h.MinRecorded, h.MaxRecorded)
+	}
+	if h.SumValues < h.MaxRecorded {
+		return fmt.Errorf("histogram sum_values %d < max_recorded %d", h.SumValues, h.MaxRecorded)
+	}
 	return nil
 }
 
@@ -98,10 +112,16 @@ func Merge(dst *Raw, src Raw) error {
 	for i := range src.Buckets {
 		dst.Buckets[i] += src.Buckets[i]
 	}
+	if src.TotalCount > 0 {
+		if dst.TotalCount == 0 || src.MinRecorded < dst.MinRecorded {
+			dst.MinRecorded = src.MinRecorded
+		}
+	}
 	dst.TotalCount += src.TotalCount
 	if src.MaxRecorded > dst.MaxRecorded {
 		dst.MaxRecorded = src.MaxRecorded
 	}
+	dst.SumValues += src.SumValues
 	return nil
 }
 
@@ -163,5 +183,30 @@ func Percentiles(h Raw) (map[string]uint64, error) {
 		}
 		out[p.name] = v
 	}
+	return out, nil
+}
+
+// ReportStats returns response-time stats for aggregate reporting:
+// min/max/avg plus p50/p90/p95/p99. Average uses exact sum_values/total_count.
+func ReportStats(h Raw) (map[string]interface{}, error) {
+	pct, err := Percentiles(h)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]interface{}{
+		"min": uint64(0),
+		"max": uint64(0),
+		"avg": 0.0,
+		"p50": pct["p50"],
+		"p90": pct["p90"],
+		"p95": pct["p95"],
+		"p99": pct["p99"],
+	}
+	if h.TotalCount == 0 {
+		return out, nil
+	}
+	out["min"] = h.MinRecorded
+	out["max"] = h.MaxRecorded
+	out["avg"] = float64(h.SumValues) / float64(h.TotalCount)
 	return out, nil
 }

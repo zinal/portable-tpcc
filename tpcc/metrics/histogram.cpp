@@ -1,5 +1,6 @@
 #include "histogram.h"
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <stdexcept>
@@ -11,6 +12,8 @@ THistogram::THistogram(uint64_t hdrTill, uint64_t maxValue)
     , MaxValue_(maxValue)
     , TotalCount_(0)
     , MaxRecordedValue_(0)
+    , MinRecordedValue_(std::numeric_limits<uint64_t>::max())
+    , SumValues_(0)
 {
     if (hdrTill == 0 || maxValue == 0 || hdrTill > maxValue) {
         throw std::invalid_argument("Invalid histogram parameters");
@@ -29,6 +32,8 @@ void THistogram::RecordValue(uint64_t value) {
     Buckets_[bucketIndex]++;
     TotalCount_++;
     MaxRecordedValue_ = std::max(MaxRecordedValue_, value);
+    MinRecordedValue_ = std::min(MinRecordedValue_, value);
+    SumValues_ += value;
 }
 
 void THistogram::Add(const THistogram& other) {
@@ -39,8 +44,12 @@ void THistogram::Add(const THistogram& other) {
     for (size_t i = 0; i < Buckets_.size() && i < other.Buckets_.size(); ++i) {
         Buckets_[i] += other.Buckets_[i];
     }
+    if (other.TotalCount_ > 0) {
+        MinRecordedValue_ = std::min(MinRecordedValue_, other.MinRecordedValue_);
+    }
     TotalCount_ += other.TotalCount_;
     MaxRecordedValue_ = std::max(MaxRecordedValue_, other.MaxRecordedValue_);
+    SumValues_ += other.SumValues_;
 }
 
 void THistogram::Sub(const THistogram& other) {
@@ -52,6 +61,8 @@ void THistogram::Sub(const THistogram& other) {
         Buckets_[i] -= other.Buckets_[i];
     }
     TotalCount_ -= other.TotalCount_;
+    // Min/max of a window delta cannot be restored from Sub; leave absolute extrema.
+    SumValues_ -= other.SumValues_;
 }
 
 uint64_t THistogram::GetValueAtPercentile(double percentile) const {
@@ -80,6 +91,8 @@ void THistogram::Reset() {
     std::fill(Buckets_.begin(), Buckets_.end(), 0);
     TotalCount_ = 0;
     MaxRecordedValue_ = 0;
+    MinRecordedValue_ = std::numeric_limits<uint64_t>::max();
+    SumValues_ = 0;
 }
 
 size_t THistogram::GetBucketIndex(uint64_t value) const {

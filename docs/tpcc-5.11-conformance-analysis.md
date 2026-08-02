@@ -85,17 +85,23 @@ business-input counters для проверки фактической выбо�
 
 **Критичность: высокая для официального TPC-C.**
 
-Aggregate публикует p50/p90/p95/p99, но не:
+Частично улучшено: worker histogram теперь хранит exact `min_recorded`,
+`max_recorded` и `sum_values`; consolidate публикует `min` / `max` / `avg`
+вместе с p50/p90/p95/p99 в `aggregate.json` (`response_time_*`) и
+`summary.txt` ([histogram.h](../tpcc/metrics/histogram.h),
+[artifacts.cpp](../tpcc/dbms/pgsql/artifacts.cpp),
+[merge.go](../tools/tpccctl/internal/histogram/merge.go),
+[consolidate.go](../tools/tpccctl/internal/consolidate/consolidate.go)).
 
-- average и maximum по каждому transaction type;
+По-прежнему отсутствуют:
+
 - menu response time;
 - отдельные interactive/deferred Delivery metrics;
-- проверку допустимых p90;
+- проверка допустимых p90;
 - required frequency distributions и графики §5.6.
 
-Raw histogram не хранит сумму значений, поэтому exact average восстановить
-невозможно. Reported throughput также не truncates до нуля decimal places, как
-требует TPC-C §5.4.4; для engineering metric сохранение дробной части допустимо.
+Reported throughput также не truncates до нуля decimal places, как требует
+TPC-C §5.4.4; для engineering metric сохранение дробной части допустимо.
 
 ### 3.3. Histogram settings частично игнорируются
 
@@ -388,7 +394,7 @@ Generator уже создавал корректные значения; это 
 [specification.md](specification.md) §10).
 
 Это не официальный TPC-C verdict и не закрывает пробелы variability inputs
-(3.1), response-time reporting (3.2) и disclosure (3.5).
+(3.1), оставшиеся пробелы response-time reporting (3.2) и disclosure (3.5).
 
 ## 6. Итоговая оценка
 
@@ -401,7 +407,7 @@ Generator уже создавал корректные значения; это 
 | Delivery | Синхронная модель — принятое отклонение; конкурентная обработка исправлена |
 | RTE / ACID / checkpoints | Внешние или вне области по принятому решению |
 | Launch-parameter checks | Soft TPC-C 5.11 settings deviations в validate/start/aggregate (5.19); не официальный verdict |
-| Reporting | Engineering artifacts, не официальный TPC-C FDR |
+| Reporting | Engineering artifacts с min/max/avg и percentiles; не официальный TPC-C FDR |
 | DBMS adapters | Практически реализован только PostgreSQL |
 
 Повторный аудит не обнаружил deadlock или data-corruption регрессий в новых
