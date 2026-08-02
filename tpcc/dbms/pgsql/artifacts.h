@@ -1,5 +1,6 @@
 #pragma once
 
+#include "clock_calibration.h"
 #include "run_config.h"
 #include "terminal.h"
 
@@ -27,7 +28,7 @@ void WriteProcessJson(const TArtifactPaths& paths, const TRunConfigDocument& doc
                       const std::string& instanceNonce);
 void WriteReadyJson(const TArtifactPaths& paths, const TRunConfigDocument& doc,
                     const std::string& instance, const std::vector<TWarehouseRange>& ranges,
-                    const std::string& instanceNonce);
+                    const std::string& instanceNonce, const TClockCalibration& clockCalibration);
 void WriteLoaderResultJson(const TArtifactPaths& paths, const TRunConfigDocument& doc,
                            const std::string& instance, const TLoaderAssignment& assign, int exitCode);
 void WriteWorkerResultJson(const TArtifactPaths& paths, const TRunConfigDocument& doc,

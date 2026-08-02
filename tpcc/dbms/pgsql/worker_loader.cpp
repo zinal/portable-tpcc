@@ -2,6 +2,7 @@
 
 #include "pg_admin_adapter.h"
 #include "artifacts.h"
+#include "clock_calibration.h"
 #include "import.h"
 #include "path_checker.h"
 #include "run_config.h"
@@ -23,10 +24,11 @@ int RunLoaderFromRunConfig(const std::string& runConfigPath, const std::string& 
     const std::string nonce = GenerateInstanceNonce();
 
     WriteProcessJson(paths, doc, instance, "loader", static_cast<int>(::getpid()), nonce);
-    WriteReadyJson(paths, doc, instance, assign.WarehouseRanges, nonce);
 
     const std::string connection = BuildPgConnectionString(doc);
     CheckDbForImport(connection, doc.Path);
+    const auto clockCalibration = MeasureClockCalibration(connection);
+    WriteReadyJson(paths, doc, instance, assign.WarehouseRanges, nonce, clockCalibration);
 
     TImportConfig importCfg;
     importCfg.ConnectionString = connection;
@@ -70,10 +72,11 @@ int RunWorkerFromRunConfig(
     const std::string nonce = GenerateInstanceNonce();
 
     WriteProcessJson(paths, doc, instance, "worker", static_cast<int>(::getpid()), nonce);
-    WriteReadyJson(paths, doc, instance, assign.WarehouseRanges, nonce);
 
     const std::string connection = BuildPgConnectionString(doc);
     CheckDbForRun(connection, doc.ScaleWarehouses, doc.Path);
+    const auto clockCalibration = MeasureClockCalibration(connection);
+    WriteReadyJson(paths, doc, instance, assign.WarehouseRanges, nonce, clockCalibration);
 
     TRunConfig runCfg;
     runCfg.ConnectionString = connection;

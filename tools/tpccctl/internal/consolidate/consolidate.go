@@ -112,17 +112,30 @@ func (c *Consolidator) ConsolidateWithOptions(runID string, rc *config.RunConfig
 			}
 		}
 		if readyPath := filepath.Join(rawWorkers, e.Name(), "ready.json"); true {
-			if readyData, err := os.ReadFile(readyPath); err == nil {
-				var ready map[string]interface{}
-				if json.Unmarshal(readyData, &ready) == nil {
-					if cal, ok := ready["clock_calibration"].(map[string]interface{}); ok {
-						if off, ok := cal["offset_ms"].(float64); ok {
-							if absFloat(off) > float64(maxSkew) {
-								clockSkewOK = false
-							}
-						}
-					}
-				}
+			readyData, err := os.ReadFile(readyPath)
+			if err != nil {
+				clockSkewOK = false
+				continue
+			}
+			var ready map[string]interface{}
+			if json.Unmarshal(readyData, &ready) != nil {
+				clockSkewOK = false
+				continue
+			}
+			cal, ok := ready["clock_calibration"].(map[string]interface{})
+			if !ok {
+				clockSkewOK = false
+				continue
+			}
+			off, hasOff := cal["offset_ms"].(float64)
+			unc, hasUnc := cal["uncertainty_ms"].(float64)
+			_, hasMeasured := cal["measured_at"].(string)
+			if !hasOff || !hasUnc || !hasMeasured {
+				clockSkewOK = false
+				continue
+			}
+			if absFloat(off) > float64(maxSkew) || absFloat(unc) > float64(maxSkew) {
+				clockSkewOK = false
 			}
 		}
 	}
