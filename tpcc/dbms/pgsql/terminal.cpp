@@ -7,6 +7,7 @@
 #include <domain_util.h>
 #include <constants.h>
 #include <rng.h>
+#include <think_time.h>
 
 #include <array>
 #include <optional>
@@ -97,7 +98,8 @@ TTerminal::TTerminal(size_t terminalID,
                      int simulateTransactionMs,
                      int simulateTransactionSelect1,
                      size_t retryMaxAttempts,
-                     bool retryAmbiguousCommit)
+                     bool retryAmbiguousCommit,
+                     EThinkTimeDistribution thinkTimeDistribution)
     : TaskQueue(taskQueue)
     , ConnectionPool(connectionPool)
     , Context{terminalID, warehouseID, warehouseCount, taskQueue,
@@ -109,6 +111,7 @@ TTerminal::TTerminal(size_t terminalID,
     , Workload(workload)
     , RetryMaxAttempts(EffectiveRetryMaxAttempts(retryMaxAttempts))
     , RetryAmbiguousCommit(retryAmbiguousCommit)
+    , ThinkTimeDistribution(thinkTimeDistribution)
 {}
 
 void TTerminal::Start() {
@@ -330,8 +333,14 @@ TFuture<void> TTerminal::Run() {
 
         if (!NoDelays && !simulationMode && PhaseController.MayAdmit()) {
             auto& transaction = transactions[txIndex];
-            LOG_T("Terminal {} think time: {}ms", Context.TerminalID, transaction.ThinkTime.count());
-            co_await TSuspend(TaskQueue, Context.TerminalID, transaction.ThinkTime);
+            const auto thinkTime = std::chrono::milliseconds(SampleThinkTimeMs(
+                transaction.ThinkTime.count(), ThinkTimeDistribution));
+            LOG_T("Terminal {} think time: {}ms (mean {}ms, {})",
+                  Context.TerminalID,
+                  thinkTime.count(),
+                  transaction.ThinkTime.count(),
+                  ThinkTimeDistributionToString(ThinkTimeDistribution));
+            co_await TSuspend(TaskQueue, Context.TerminalID, thinkTime);
         }
     }
 

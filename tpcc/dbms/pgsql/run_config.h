@@ -47,6 +47,7 @@ struct TRunConfigDocument {
 
     TPhasePolicy PhasePolicy;
     bool PacingEnabled = true;
+    EThinkTimeDistribution ThinkTimeDistribution = EThinkTimeDistribution::Exponential;
     size_t RetryMaxAttempts = 0;
     bool RetryAmbiguousCommit = false;
 

@@ -111,6 +111,7 @@ int RunWorkerFromRunConfig(
     runCfg.RetryAmbiguousCommit = doc.RetryAmbiguousCommit;
     runCfg.Workload = doc.Workload;
     runCfg.Histogram = doc.Histogram;
+    runCfg.ThinkTimeDistribution = doc.ThinkTimeDistribution;
 
     if (startAtRfc3339.has_value()) {
         runCfg.StartAt = ParseRfc3339Utc(*startAtRfc3339);

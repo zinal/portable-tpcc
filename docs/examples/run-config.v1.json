@@ -87,6 +87,7 @@
   },
   "runtime": {
     "pacing": "enabled",
+    "think_time_distribution": "exponential",
     "retry": {
       "max_attempts": 4,
       "initial_backoff_ms": 10,

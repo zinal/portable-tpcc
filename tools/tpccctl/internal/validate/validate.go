@@ -88,6 +88,12 @@ func Profile(p *profile.Profile) *Result {
 	if p.Data.BatchRows < 0 {
 		res.Add("data.batch_rows must not be negative")
 	}
+	if p.Runtime.Pacing != "" && p.Runtime.Pacing != "enabled" && p.Runtime.Pacing != "disabled" {
+		res.Add("runtime.pacing must be \"enabled\" or \"disabled\"")
+	}
+	if !config.ValidThinkTimeDistribution(p.Runtime.ThinkTimeDistribution) {
+		res.Add("runtime.think_time_distribution must be \"exponential\", \"compatibility\", or \"constant\"")
+	}
 	if p.Runtime.ThreadsPerWorker < 0 {
 		res.Add("runtime.threads_per_worker must not be negative")
 	}

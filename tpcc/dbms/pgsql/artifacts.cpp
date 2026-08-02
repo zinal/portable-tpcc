@@ -3,6 +3,7 @@
 #include <nlohmann/json.hpp>
 
 #include <constants.h>
+#include <think_time.h>
 
 #include <chrono>
 #include <filesystem>
@@ -225,6 +226,7 @@ void WriteWorkerResultJson(const TArtifactPaths& paths, const TRunConfigDocument
                 {"keying_time_ms", keying},
                 {"think_time_ms", think},
                 {"pacing", doc.PacingEnabled ? "enabled" : "disabled"},
+                {"think_time_distribution", ThinkTimeDistributionToString(doc.ThinkTimeDistribution)},
             }},
             {"histogram", {
                 {"unit", histUnit},

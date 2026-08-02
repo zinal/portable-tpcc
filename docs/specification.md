@@ -202,7 +202,11 @@ keep the benchmark focused on DBMS transaction execution.
 The product does not emulate TPC-C menus or screens. Keying/think pacing is a
 workload-generation mechanism, and recorded latency covers the workload-client
 request boundary rather than complete end-user Remote Terminal Emulator
-response time.
+response time. Keying time is constant. Think time defaults to the TPC-C
+negative-exponential distribution (`Tt = -log(r) * mean`, truncated at
+`10 * mean`). Profile field `runtime.think_time_distribution: compatibility`
+(alias `constant`) MAY select fixed mean think time for engineering
+comparability with historical portable-tpcc runs.
 
 Every adapter **MUST** execute each shared transaction workflow with atomic
 commit/rollback semantics and an isolation level sufficient to preserve the

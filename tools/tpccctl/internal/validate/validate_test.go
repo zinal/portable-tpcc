@@ -68,3 +68,25 @@ func TestValidate_rejectsBadInstanceName(t *testing.T) {
 	}
 }
 
+func TestValidate_thinkTimeDistribution(t *testing.T) {
+	path := filepath.Join("..", "..", "testdata", "profile.valid.yaml")
+	p, err := profile.ParseFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, ok := range []string{"", "exponential", "compatibility", "constant"} {
+		p.Runtime.ThinkTimeDistribution = ok
+		res := validate.Profile(p)
+		if !res.Valid {
+			t.Fatalf("expected valid think_time_distribution %q, errors: %v", ok, res.Errors)
+		}
+	}
+
+	p.Runtime.ThinkTimeDistribution = "uniform"
+	res := validate.Profile(p)
+	if res.Valid {
+		t.Fatal("expected invalid think_time_distribution")
+	}
+}
+

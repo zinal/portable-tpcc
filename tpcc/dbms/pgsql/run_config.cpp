@@ -1,5 +1,7 @@
 #include "run_config.h"
 
+#include <think_time.h>
+
 #include <nlohmann/json.hpp>
 
 #include <openssl/evp.h>
@@ -124,6 +126,14 @@ TRunConfigDocument LoadRunConfigDocument(const std::string& path) {
     if (root.contains("runtime") && root["runtime"].is_object()) {
         const auto& rt = root["runtime"];
         doc.PacingEnabled = rt.value("pacing", "enabled") == std::string("enabled");
+        if (rt.contains("think_time_distribution")) {
+            const auto dist = rt.value("think_time_distribution", std::string("exponential"));
+            if (!ParseThinkTimeDistribution(dist, doc.ThinkTimeDistribution)) {
+                throw std::runtime_error(
+                    "runtime.think_time_distribution must be \"exponential\", "
+                    "\"compatibility\", or \"constant\"");
+            }
+        }
         if (rt.contains("retry") && rt["retry"].is_object()) {
             doc.RetryMaxAttempts = rt["retry"].value("max_attempts", 0);
             doc.RetryAmbiguousCommit = rt["retry"].value("retry_ambiguous_commit", false);
