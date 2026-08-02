@@ -1,5 +1,7 @@
 #pragma once
 
+#include <money.h>
+
 #include <pqxx/pqxx>
 
 #include <optional>
@@ -104,6 +106,24 @@ public:
 
     std::string GetString(size_t col) const {
         return (*Row_)[static_cast<pqxx::row::size_type>(col)].as<std::string>();
+    }
+
+    TMoney GetMoney(std::string_view col) const {
+        return TMoney::Parse((*Row_)[std::string(col)].as<std::string>());
+    }
+
+    TRate GetRate(std::string_view col) const {
+        return TRate::Parse((*Row_)[std::string(col)].as<std::string>());
+    }
+
+    TMoney GetMoney(size_t col) const {
+        return TMoney::Parse(
+            (*Row_)[static_cast<pqxx::row::size_type>(col)].as<std::string>());
+    }
+
+    TRate GetRate(size_t col) const {
+        return TRate::Parse(
+            (*Row_)[static_cast<pqxx::row::size_type>(col)].as<std::string>());
     }
 
     const pqxx::result& GetRawResult() const { return Result_; }
