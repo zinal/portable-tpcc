@@ -11,6 +11,7 @@ Full text: [AGENTS.md](../../AGENTS.md).
 
 - Preserve the coding style of the directory being modified; do not perform drive-by refactoring.
 - Before making changes, study the context, dependencies, and `ya.make`; minimize the diff.
+- Build and test from the repository root with `./ya make …` (see [AGENTS.md](../../AGENTS.md) §3); do not assume `ya` is on `PATH`.
 - Ask the user if the task is ambiguous or requires changes in protected areas.
 
 ## Do not modify without an explicit user request
