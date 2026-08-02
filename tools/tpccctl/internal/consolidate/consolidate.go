@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 
+	"portable-tpcc/tools/tpccctl/internal/canonical"
 	"portable-tpcc/tools/tpccctl/internal/config"
 	"portable-tpcc/tools/tpccctl/internal/histogram"
 )
@@ -35,8 +37,9 @@ type Aggregate struct {
 
 // Options tune consolidate status evaluation.
 type Options struct {
-	SkippedSteps []string
-	MaxClockSkewMs int64
+	SkippedSteps             []string
+	MaxClockSkewMs           int64
+	ExpectedRunConfigSHA256  string
 }
 
 // Consolidator merges worker artifacts deterministically.
@@ -58,6 +61,18 @@ func (c *Consolidator) ConsolidateWithOptions(runID string, rc *config.RunConfig
 	}
 	expected := config.ExpectedWorkerNames(rc)
 	assignmentErr := config.ValidateRunConfigAssignment(rc)
+	expectedSet := make(map[string]bool, len(expected))
+	for _, name := range expected {
+		expectedSet[name] = true
+	}
+	expectedAssign := make(map[string]config.WorkerAssignmentJSON, len(rc.WorkerAssignment))
+	for _, w := range rc.WorkerAssignment {
+		expectedAssign[w.Instance] = w
+	}
+	expectedSHA, err := resolveExpectedRunConfigSHA256(c.ResultRoot, runID, opts)
+	if err != nil {
+		return nil, err
+	}
 
 	present := map[string]bool{}
 	counters := map[string]int64{}
@@ -73,8 +88,12 @@ func (c *Consolidator) ConsolidateWithOptions(runID string, rc *config.RunConfig
 		if !e.IsDir() {
 			continue
 		}
-		present[e.Name()] = true
-		resultPath := filepath.Join(rawWorkers, e.Name(), "result.json")
+		name := e.Name()
+		if !expectedSet[name] {
+			return nil, fmt.Errorf("unexpected worker artifact %q (not in expected set %v)", name, expected)
+		}
+		present[name] = true
+		resultPath := filepath.Join(rawWorkers, name, "result.json")
 		data, err := os.ReadFile(resultPath)
 		if err != nil {
 			workersComplete = false
@@ -84,6 +103,9 @@ func (c *Consolidator) ConsolidateWithOptions(runID string, rc *config.RunConfig
 		if err := json.Unmarshal(data, &partial); err != nil {
 			workersComplete = false
 			continue
+		}
+		if err := validateWorkerResultIdentity(partial, runID, name, expectedSHA, expectedAssign[name]); err != nil {
+			return nil, fmt.Errorf("worker %s: %w", name, err)
 		}
 		if exit, ok := partial["exit_status"].(float64); ok && int(exit) != 0 {
 			workersComplete = false
@@ -107,14 +129,14 @@ func (c *Consolidator) ConsolidateWithOptions(runID string, rc *config.RunConfig
 				}
 				cur := mergedHist[tx]
 				if err := histogram.Merge(&cur, h); err != nil {
-					return nil, fmt.Errorf("merge histogram %s from %s: %w", tx, e.Name(), err)
+					return nil, fmt.Errorf("merge histogram %s from %s: %w", tx, name, err)
 				}
 				mergedHist[tx] = cur
 			}
 		}
-		if readyPath := filepath.Join(rawWorkers, e.Name(), "ready.json"); true {
+		if readyPath := filepath.Join(rawWorkers, name, "ready.json"); true {
 			if cal, ok := readWorkerClockCalibration(readyPath); ok {
-				workerCalibrations[e.Name()] = cal
+				workerCalibrations[name] = cal
 			}
 		}
 	}
@@ -191,6 +213,104 @@ func (c *Consolidator) ConsolidateWithOptions(runID string, rc *config.RunConfig
 		}
 	}
 	return agg, nil
+}
+
+func resolveExpectedRunConfigSHA256(resultRoot, runID string, opts Options) (string, error) {
+	if opts.ExpectedRunConfigSHA256 != "" {
+		return opts.ExpectedRunConfigSHA256, nil
+	}
+	path := filepath.Join(resultRoot, runID, "orchestrator", "run-config.json")
+	sha, err := canonical.SHA256File(path)
+	if err != nil {
+		return "", fmt.Errorf("resolve run_config_sha256 from %s: %w", path, err)
+	}
+	return sha, nil
+}
+
+func validateWorkerResultIdentity(
+	partial map[string]interface{},
+	runID, instance, expectedSHA string,
+	expected config.WorkerAssignmentJSON,
+) error {
+	gotRunID, _ := partial["run_id"].(string)
+	if gotRunID == "" {
+		return fmt.Errorf("result.json missing run_id")
+	}
+	if gotRunID != runID {
+		return fmt.Errorf("run_id %q does not match consolidate run_id %q", gotRunID, runID)
+	}
+	gotInstance, _ := partial["instance"].(string)
+	if gotInstance == "" {
+		return fmt.Errorf("result.json missing instance")
+	}
+	if gotInstance != instance {
+		return fmt.Errorf("instance %q does not match directory %q", gotInstance, instance)
+	}
+	gotSHA, _ := partial["run_config_sha256"].(string)
+	if gotSHA == "" {
+		return fmt.Errorf("result.json missing run_config_sha256")
+	}
+	if gotSHA != expectedSHA {
+		return fmt.Errorf("run_config_sha256 %q does not match expected %q", gotSHA, expectedSHA)
+	}
+	assign, ok := partial["assignment"].(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("result.json missing assignment")
+	}
+	if assignInstance, _ := assign["instance"].(string); assignInstance != "" && assignInstance != instance {
+		return fmt.Errorf("assignment.instance %q does not match %q", assignInstance, instance)
+	}
+	gotRanges, err := parseWarehouseRanges(assign["warehouse_ranges"])
+	if err != nil {
+		return fmt.Errorf("assignment.warehouse_ranges: %w", err)
+	}
+	if !reflect.DeepEqual(gotRanges, expected.WarehouseRanges) {
+		return fmt.Errorf("warehouse_ranges %v do not match expected %v", gotRanges, expected.WarehouseRanges)
+	}
+	return nil
+}
+
+func parseWarehouseRanges(v interface{}) ([][]int, error) {
+	arr, ok := v.([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("expected array, got %T", v)
+	}
+	out := make([][]int, 0, len(arr))
+	for i, item := range arr {
+		pair, ok := item.([]interface{})
+		if !ok || len(pair) != 2 {
+			return nil, fmt.Errorf("entry %d must be [start, end)", i)
+		}
+		start, okStart := jsonNumberAsInt(pair[0])
+		end, okEnd := jsonNumberAsInt(pair[1])
+		if !okStart || !okEnd {
+			return nil, fmt.Errorf("entry %d bounds must be integers", i)
+		}
+		out = append(out, []int{start, end})
+	}
+	return out, nil
+}
+
+func jsonNumberAsInt(v interface{}) (int, bool) {
+	switch n := v.(type) {
+	case float64:
+		if n != float64(int(n)) {
+			return 0, false
+		}
+		return int(n), true
+	case json.Number:
+		i, err := n.Int64()
+		if err != nil {
+			return 0, false
+		}
+		return int(i), true
+	case int:
+		return n, true
+	case int64:
+		return int(n), true
+	default:
+		return 0, false
+	}
 }
 
 func absFloat(v float64) float64 {

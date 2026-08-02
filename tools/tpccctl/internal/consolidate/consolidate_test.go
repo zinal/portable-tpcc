@@ -7,36 +7,65 @@ import (
 	"strings"
 	"testing"
 
+	"portable-tpcc/tools/tpccctl/internal/canonical"
 	"portable-tpcc/tools/tpccctl/internal/config"
 	"portable-tpcc/tools/tpccctl/internal/consolidate"
+	"portable-tpcc/tools/tpccctl/internal/state"
 )
 
-func TestConsolidate_mergesHistograms(t *testing.T) {
-	root := t.TempDir()
-	runID := "run-hist"
-	workerDir := filepath.Join(root, runID, "raw", "worker", "worker-a")
+func writeRunConfig(t *testing.T, root, runID string, rc *config.RunConfig) string {
+	t.Helper()
+	orchDir := filepath.Join(root, runID, "orchestrator")
+	if err := state.WriteJSON(orchDir, "run-config.json", rc); err != nil {
+		t.Fatal(err)
+	}
+	sha, err := canonical.SHA256File(filepath.Join(orchDir, "run-config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sha
+}
+
+func writeWorkerArtifacts(t *testing.T, root, runID, workerName, sha string, rc *config.RunConfig, resultExtras map[string]interface{}) {
+	t.Helper()
+	var assign config.WorkerAssignmentJSON
+	for _, w := range rc.WorkerAssignment {
+		if w.Instance == workerName {
+			assign = w
+			break
+		}
+	}
+	if assign.Instance == "" {
+		assign = config.WorkerAssignmentJSON{
+			Instance:        workerName,
+			WarehouseRanges: [][]int{{1, 11}},
+		}
+	}
+	workerDir := filepath.Join(root, runID, "raw", "worker", workerName)
 	if err := os.MkdirAll(workerDir, 0755); err != nil {
 		t.Fatal(err)
 	}
 	result := map[string]interface{}{
+		"run_id":            runID,
+		"instance":          workerName,
+		"run_config_sha256": sha,
+		"assignment": map[string]interface{}{
+			"instance":         assign.Instance,
+			"host":             assign.Host,
+			"warehouse_ranges": assign.WarehouseRanges,
+			"threads":          assign.Threads,
+			"max_inflight":     assign.MaxInflight,
+		},
 		"exit_status": 0,
 		"counters": map[string]interface{}{
-			"new_order_ok": 100,
-		},
-		"histograms": map[string]interface{}{
-			"new_order": map[string]interface{}{
-				"layout":       "linear_exp",
-				"unit":         "ms",
-				"hdr_till":     4,
-				"max_value":    64,
-				"total_count":  4,
-				"max_recorded": 3,
-				"buckets":      []uint64{1, 1, 1, 1, 0, 0, 0},
-			},
+			"new_order_ok": 10,
 		},
 	}
-	data, _ := json.MarshalIndent(result, "", "  ")
-	if err := os.WriteFile(filepath.Join(workerDir, "result.json"), data, 0644); err != nil {
+	for k, v := range resultExtras {
+		result[k] = v
+	}
+	resultData, _ := json.MarshalIndent(result, "", "  ")
+	if err := os.WriteFile(filepath.Join(workerDir, "result.json"), resultData, 0644); err != nil {
 		t.Fatal(err)
 	}
 	ready := map[string]interface{}{
@@ -51,14 +80,28 @@ func TestConsolidate_mergesHistograms(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(workerDir, "ready.json"), readyData, 0644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func writePassingChecks(t *testing.T, root, runID string) {
+	t.Helper()
 	checksDir := filepath.Join(root, runID, "checks")
 	if err := os.MkdirAll(checksDir, 0755); err != nil {
 		t.Fatal(err)
 	}
 	_ = os.WriteFile(filepath.Join(checksDir, "after-import.json"), []byte(`{"ok":true}`), 0644)
 	_ = os.WriteFile(filepath.Join(checksDir, "after-run.json"), []byte(`{"ok":true}`), 0644)
+}
 
-	rc := &config.RunConfig{
+func writeMinimalWorkerArtifacts(t *testing.T, root, runID, workerName string) string {
+	t.Helper()
+	rc := minimalRunConfig(runID)
+	sha := writeRunConfig(t, root, runID, rc)
+	writeWorkerArtifacts(t, root, runID, workerName, sha, rc, nil)
+	return sha
+}
+
+func minimalRunConfig(runID string) *config.RunConfig {
+	return &config.RunConfig{
 		RunID: runID,
 		Phases: config.PhasesJSON{
 			MeasurementMs:  60000,
@@ -66,9 +109,34 @@ func TestConsolidate_mergesHistograms(t *testing.T) {
 		},
 		Scale: config.ScaleBlock{Warehouses: 10},
 		WorkerAssignment: []config.WorkerAssignmentJSON{
-			{Instance: "worker-a", WarehouseRanges: [][]int{{1, 11}}},
+			{Instance: "worker-a", Host: "host-a", WarehouseRanges: [][]int{{1, 11}}, Threads: 1, MaxInflight: 64},
 		},
 	}
+}
+
+func TestConsolidate_mergesHistograms(t *testing.T) {
+	root := t.TempDir()
+	runID := "run-hist"
+	rc := minimalRunConfig(runID)
+	sha := writeRunConfig(t, root, runID, rc)
+	writeWorkerArtifacts(t, root, runID, "worker-a", sha, rc, map[string]interface{}{
+		"counters": map[string]interface{}{
+			"new_order_ok": 100,
+		},
+		"histograms": map[string]interface{}{
+			"new_order": map[string]interface{}{
+				"layout":       "linear_exp",
+				"unit":         "ms",
+				"hdr_till":     4,
+				"max_value":    64,
+				"total_count":  4,
+				"max_recorded": 3,
+				"buckets":      []uint64{1, 1, 1, 1, 0, 0, 0},
+			},
+		},
+	})
+	writePassingChecks(t, root, runID)
+
 	cons := &consolidate.Consolidator{ResultRoot: root}
 	agg, err := cons.Consolidate(runID, rc)
 	if err != nil {
@@ -87,20 +155,9 @@ func TestConsolidate_mergesHistograms(t *testing.T) {
 func TestConsolidate_clockSkewExceeded(t *testing.T) {
 	root := t.TempDir()
 	runID := "run-skew"
-	workerDir := filepath.Join(root, runID, "raw", "worker", "worker-a")
-	if err := os.MkdirAll(workerDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	result := map[string]interface{}{
-		"exit_status": 0,
-		"counters": map[string]interface{}{
-			"new_order_ok": 10,
-		},
-	}
-	resultData, _ := json.MarshalIndent(result, "", "  ")
-	if err := os.WriteFile(filepath.Join(workerDir, "result.json"), resultData, 0644); err != nil {
-		t.Fatal(err)
-	}
+	rc := minimalRunConfig(runID)
+	sha := writeRunConfig(t, root, runID, rc)
+	writeWorkerArtifacts(t, root, runID, "worker-a", sha, rc, nil)
 	ready := map[string]interface{}{
 		"clock_calibration": map[string]interface{}{
 			"measured_at":    "2026-07-28T12:00:00Z",
@@ -110,21 +167,10 @@ func TestConsolidate_clockSkewExceeded(t *testing.T) {
 		},
 	}
 	readyData, _ := json.MarshalIndent(ready, "", "  ")
-	if err := os.WriteFile(filepath.Join(workerDir, "ready.json"), readyData, 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, runID, "raw", "worker", "worker-a", "ready.json"), readyData, 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	rc := &config.RunConfig{
-		RunID: runID,
-		Phases: config.PhasesJSON{
-			MeasurementMs:  60000,
-			MaxClockSkewMs: 100,
-		},
-		Scale: config.ScaleBlock{Warehouses: 10},
-		WorkerAssignment: []config.WorkerAssignmentJSON{
-			{Instance: "worker-a", WarehouseRanges: [][]int{{1, 11}}},
-		},
-	}
 	cons := &consolidate.Consolidator{ResultRoot: root}
 	agg, err := cons.Consolidate(runID, rc)
 	if err != nil {
@@ -139,42 +185,6 @@ func TestConsolidate_clockSkewSpreadExceeded(t *testing.T) {
 	root := t.TempDir()
 	runID := "run-spread"
 	maxSkew := int64(100)
-	for _, spec := range []struct {
-		name   string
-		offset float64
-	}{
-		{"worker-a", 5.0},
-		{"worker-b", 120.0},
-	} {
-		workerDir := filepath.Join(root, runID, "raw", "worker", spec.name)
-		if err := os.MkdirAll(workerDir, 0755); err != nil {
-			t.Fatal(err)
-		}
-		result := map[string]interface{}{
-			"exit_status": 0,
-			"counters": map[string]interface{}{
-				"new_order_ok": 10,
-			},
-		}
-		resultData, _ := json.MarshalIndent(result, "", "  ")
-		if err := os.WriteFile(filepath.Join(workerDir, "result.json"), resultData, 0644); err != nil {
-			t.Fatal(err)
-		}
-		ready := map[string]interface{}{
-			"clock_calibration": map[string]interface{}{
-				"measured_at":    "2026-07-28T12:00:00Z",
-				"offset_ms":      spec.offset,
-				"uncertainty_ms": 2.0,
-				"rtt_ms":         4.0,
-				"time_source":    "db-a",
-			},
-		}
-		readyData, _ := json.MarshalIndent(ready, "", "  ")
-		if err := os.WriteFile(filepath.Join(workerDir, "ready.json"), readyData, 0644); err != nil {
-			t.Fatal(err)
-		}
-	}
-
 	rc := &config.RunConfig{
 		RunID: runID,
 		Phases: config.PhasesJSON{
@@ -187,6 +197,30 @@ func TestConsolidate_clockSkewSpreadExceeded(t *testing.T) {
 			{Instance: "worker-b", WarehouseRanges: [][]int{{11, 21}}},
 		},
 	}
+	sha := writeRunConfig(t, root, runID, rc)
+	for _, spec := range []struct {
+		name   string
+		offset float64
+	}{
+		{"worker-a", 5.0},
+		{"worker-b", 120.0},
+	} {
+		writeWorkerArtifacts(t, root, runID, spec.name, sha, rc, nil)
+		ready := map[string]interface{}{
+			"clock_calibration": map[string]interface{}{
+				"measured_at":    "2026-07-28T12:00:00Z",
+				"offset_ms":      spec.offset,
+				"uncertainty_ms": 2.0,
+				"rtt_ms":         4.0,
+				"time_source":    "db-a",
+			},
+		}
+		readyData, _ := json.MarshalIndent(ready, "", "  ")
+		if err := os.WriteFile(filepath.Join(root, runID, "raw", "worker", spec.name, "ready.json"), readyData, 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
 	cons := &consolidate.Consolidator{ResultRoot: root}
 	agg, err := cons.Consolidate(runID, rc)
 	if err != nil {
@@ -197,89 +231,20 @@ func TestConsolidate_clockSkewSpreadExceeded(t *testing.T) {
 	}
 }
 
-func writeMinimalWorkerArtifacts(t *testing.T, root, runID, workerName string) {
-	t.Helper()
-	workerDir := filepath.Join(root, runID, "raw", "worker", workerName)
-	if err := os.MkdirAll(workerDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	result := map[string]interface{}{
-		"exit_status": 0,
-		"counters": map[string]interface{}{
-			"new_order_ok": 10,
-		},
-	}
-	resultData, _ := json.MarshalIndent(result, "", "  ")
-	if err := os.WriteFile(filepath.Join(workerDir, "result.json"), resultData, 0644); err != nil {
-		t.Fatal(err)
-	}
-	ready := map[string]interface{}{
-		"clock_calibration": map[string]interface{}{
-			"measured_at":    "2026-07-28T12:00:00Z",
-			"offset_ms":      5.0,
-			"uncertainty_ms": 2.0,
-			"rtt_ms":         4.0,
-		},
-	}
-	readyData, _ := json.MarshalIndent(ready, "", "  ")
-	if err := os.WriteFile(filepath.Join(workerDir, "ready.json"), readyData, 0644); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func minimalRunConfig(runID string) *config.RunConfig {
-	return &config.RunConfig{
-		RunID: runID,
-		Phases: config.PhasesJSON{
-			MeasurementMs:  60000,
-			MaxClockSkewMs: 100,
-		},
-		Scale: config.ScaleBlock{Warehouses: 10},
-		WorkerAssignment: []config.WorkerAssignmentJSON{
-			{Instance: "worker-a", WarehouseRanges: [][]int{{1, 11}}},
-		},
-	}
-}
-
 func TestConsolidate_includesUserAbortedInThroughput(t *testing.T) {
 	root := t.TempDir()
 	runID := "run-tpmc-abort"
-	workerDir := filepath.Join(root, runID, "raw", "worker", "worker-a")
-	if err := os.MkdirAll(workerDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	result := map[string]interface{}{
-		"exit_status": 0,
+	rc := minimalRunConfig(runID)
+	sha := writeRunConfig(t, root, runID, rc)
+	writeWorkerArtifacts(t, root, runID, "worker-a", sha, rc, map[string]interface{}{
 		"counters": map[string]interface{}{
 			"new_order_ok":           99,
 			"new_order_user_aborted": 1,
 		},
-	}
-	resultData, _ := json.MarshalIndent(result, "", "  ")
-	if err := os.WriteFile(filepath.Join(workerDir, "result.json"), resultData, 0644); err != nil {
-		t.Fatal(err)
-	}
-	ready := map[string]interface{}{
-		"clock_calibration": map[string]interface{}{
-			"measured_at":    "2026-07-28T12:00:00Z",
-			"offset_ms":      5.0,
-			"uncertainty_ms": 2.0,
-			"rtt_ms":         4.0,
-		},
-	}
-	readyData, _ := json.MarshalIndent(ready, "", "  ")
-	if err := os.WriteFile(filepath.Join(workerDir, "ready.json"), readyData, 0644); err != nil {
-		t.Fatal(err)
-	}
-	checksDir := filepath.Join(root, runID, "checks")
-	if err := os.MkdirAll(checksDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	_ = os.WriteFile(filepath.Join(checksDir, "after-import.json"), []byte(`{"ok":true}`), 0644)
-	_ = os.WriteFile(filepath.Join(checksDir, "after-run.json"), []byte(`{"ok":true}`), 0644)
+	})
+	writePassingChecks(t, root, runID)
 
 	// 60s measurement => 100 completed New-Orders / 1 min = 100 tpmC
-	rc := minimalRunConfig(runID)
 	cons := &consolidate.Consolidator{ResultRoot: root}
 	agg, err := cons.Consolidate(runID, rc)
 	if err != nil {
@@ -383,5 +348,99 @@ func TestConsolidate_integritySkippedAfterRun(t *testing.T) {
 	}
 	if len(agg.Status.IntegrityErrors) != 0 {
 		t.Fatalf("expected no integrity_errors, got %#v", agg.Status.IntegrityErrors)
+	}
+}
+
+func TestConsolidate_rejectsUnexpectedWorker(t *testing.T) {
+	root := t.TempDir()
+	runID := "run-extra"
+	rc := minimalRunConfig(runID)
+	sha := writeRunConfig(t, root, runID, rc)
+	writeWorkerArtifacts(t, root, runID, "worker-a", sha, rc, nil)
+	writeWorkerArtifacts(t, root, runID, "worker-stale", sha, rc, map[string]interface{}{
+		"instance": "worker-stale",
+		"assignment": map[string]interface{}{
+			"instance":         "worker-stale",
+			"warehouse_ranges": [][]int{{1, 11}},
+		},
+		"counters": map[string]interface{}{
+			"new_order_ok": 999,
+		},
+	})
+
+	cons := &consolidate.Consolidator{ResultRoot: root}
+	_, err := cons.Consolidate(runID, rc)
+	if err == nil {
+		t.Fatal("expected error for unexpected worker artifact")
+	}
+	if !strings.Contains(err.Error(), "unexpected worker artifact") || !strings.Contains(err.Error(), "worker-stale") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestConsolidate_rejectsMismatchedRunID(t *testing.T) {
+	root := t.TempDir()
+	runID := "run-id-mismatch"
+	rc := minimalRunConfig(runID)
+	sha := writeRunConfig(t, root, runID, rc)
+	writeWorkerArtifacts(t, root, runID, "worker-a", sha, rc, map[string]interface{}{
+		"run_id": "other-run",
+	})
+
+	cons := &consolidate.Consolidator{ResultRoot: root}
+	_, err := cons.Consolidate(runID, rc)
+	if err == nil || !strings.Contains(err.Error(), "run_id") {
+		t.Fatalf("expected run_id mismatch error, got %v", err)
+	}
+}
+
+func TestConsolidate_rejectsMismatchedInstance(t *testing.T) {
+	root := t.TempDir()
+	runID := "run-instance-mismatch"
+	rc := minimalRunConfig(runID)
+	sha := writeRunConfig(t, root, runID, rc)
+	writeWorkerArtifacts(t, root, runID, "worker-a", sha, rc, map[string]interface{}{
+		"instance": "worker-b",
+	})
+
+	cons := &consolidate.Consolidator{ResultRoot: root}
+	_, err := cons.Consolidate(runID, rc)
+	if err == nil || !strings.Contains(err.Error(), "instance") {
+		t.Fatalf("expected instance mismatch error, got %v", err)
+	}
+}
+
+func TestConsolidate_rejectsStaleRunConfigSHA(t *testing.T) {
+	root := t.TempDir()
+	runID := "run-stale-sha"
+	rc := minimalRunConfig(runID)
+	sha := writeRunConfig(t, root, runID, rc)
+	writeWorkerArtifacts(t, root, runID, "worker-a", sha, rc, map[string]interface{}{
+		"run_config_sha256": "deadbeef",
+	})
+
+	cons := &consolidate.Consolidator{ResultRoot: root}
+	_, err := cons.Consolidate(runID, rc)
+	if err == nil || !strings.Contains(err.Error(), "run_config_sha256") {
+		t.Fatalf("expected run_config_sha256 mismatch error, got %v", err)
+	}
+}
+
+func TestConsolidate_rejectsMismatchedWarehouseAssignment(t *testing.T) {
+	root := t.TempDir()
+	runID := "run-wh-mismatch"
+	rc := minimalRunConfig(runID)
+	sha := writeRunConfig(t, root, runID, rc)
+	writeWorkerArtifacts(t, root, runID, "worker-a", sha, rc, map[string]interface{}{
+		"assignment": map[string]interface{}{
+			"instance":         "worker-a",
+			"warehouse_ranges": [][]int{{1, 5}},
+		},
+	})
+
+	cons := &consolidate.Consolidator{ResultRoot: root}
+	_, err := cons.Consolidate(runID, rc)
+	if err == nil || !strings.Contains(err.Error(), "warehouse_ranges") {
+		t.Fatalf("expected warehouse_ranges mismatch error, got %v", err)
 	}
 }
