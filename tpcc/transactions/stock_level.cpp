@@ -26,7 +26,9 @@ TFuture<bool> GetStockLevelTask(
     const auto& in = FixedTransactionInputs<TInputs>(context, [&] {
         return TInputs{
             .WarehouseID = static_cast<int>(context.WarehouseID),
-            .DistrictID = static_cast<int>(RandomNumber(DISTRICT_LOW_ID, DISTRICT_HIGH_ID)),
+            // TPC-C §2.8.1.1: D_ID is the terminal's home district, constant
+            // for the whole measurement interval.
+            .DistrictID = static_cast<int>(context.DistrictID),
             .Threshold = static_cast<int>(RandomNumber(10, 20)),
         };
     });

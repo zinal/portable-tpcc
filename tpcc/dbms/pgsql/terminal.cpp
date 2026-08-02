@@ -87,6 +87,7 @@ bool ShouldRetryClass(EErrorClass cls, bool retryAmbiguousCommit) {
 
 TTerminal::TTerminal(size_t terminalID,
                      size_t warehouseID,
+                     size_t districtID,
                      size_t warehouseCount,
                      ITaskQueue& taskQueue,
                      PgConnectionPool* connectionPool,
@@ -102,7 +103,7 @@ TTerminal::TTerminal(size_t terminalID,
                      EThinkTimeDistribution thinkTimeDistribution)
     : TaskQueue(taskQueue)
     , ConnectionPool(connectionPool)
-    , Context{terminalID, warehouseID, warehouseCount, taskQueue,
+    , Context{terminalID, warehouseID, districtID, warehouseCount, taskQueue,
               simulateTransactionMs, simulateTransactionSelect1, {}}
     , NoDelays(noDelays)
     , StopToken(stopToken)

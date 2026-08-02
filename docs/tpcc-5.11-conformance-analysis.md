@@ -27,10 +27,9 @@ fail-closed integrity. Денежная часть consistency checks также
 Основные остающиеся блокирующие причины:
 
 1. неверный учёт штатных rollback New-Order в throughput и response time;
-2. несоответствующая спецификации модель Stock-Level terminals;
-3. нарушения initial population, кроме принятого решения о синтетических
+2. нарушения initial population, кроме принятого решения о синтетических
    начальных датах;
-4. неполная проверка валидности measurement interval и отчётность.
+3. неполная проверка валидности measurement interval и отчётность.
 
 Синхронная Delivery, отсутствие полноценного RTE и встроенных ACID/checkpoint
 tests являются теперь явно зафиксированными границами продукта. Они остаются
@@ -229,17 +228,26 @@ Tt = -log(r) * mean
 
 ### 3.7. Stock-Level не закреплён за district терминала
 
-**Статус: присутствует на момент анализа.**
+**Статус: устранено.**
 
 По TPC-C §2.8.1.1 каждому из десяти терминалов warehouse должна соответствовать
 постоянная уникальная пара `(W_ID, D_ID)`.
 
-В runtime терминалу передаётся только warehouse
-([runner.cpp:329-349](../tpcc/dbms/pgsql/runner.cpp#L329-L349)), а Stock-Level
-выбирает district заново для каждой транзакции:
-[stock_level.cpp:26-31](../tpcc/transactions/stock_level.cpp#L26-L31).
+Ранее runtime передавал терминалу только warehouse, а Stock-Level выбирал
+district заново для каждой транзакции. Теперь при создании терминала
+назначается home district (`HomeDistrictId` по индексу терминала внутри
+warehouse), он сохраняется в `TTransactionContext::DistrictID`, а Stock-Level
+использует это постоянное значение:
 
-Это нарушает профиль Stock-Level и распределение доступа по districts.
+- [constants.h](../tpcc/domain/constants.h) (`HomeDistrictId`);
+- [runner.cpp](../tpcc/dbms/pgsql/runner.cpp);
+- [context.h](../tpcc/transactions/context.h);
+- [stock_level.cpp](../tpcc/transactions/stock_level.cpp).
+
+При default `terminals_per_warehouse = 10` отображение 1:1 и уникальность
+`(W_ID, D_ID)` соблюдаются. New-Order / Payment / Order-Status по-прежнему
+сэмплируют `D_ID` случайно в `[1..10]`, как требуют их профили. Non-default
+число терминалов на warehouse по-прежнему относится к замечанию 4.5.
 
 ## 4. Замечания высокой критичности исходного аудита
 
@@ -547,7 +555,7 @@ carrier `0` как эквивалент `NULL`:
 
 | Область | Оценка |
 | --- | --- |
-| DB workload core | В основном реализован; профиль rollback New-Order исправлен; Stock-Level и учёт rollback в tpmC имеют нормативные ошибки |
+| DB workload core | В основном реализован; профили rollback New-Order и Stock-Level home district исправлены; учёт rollback в tpmC имеет нормативные ошибки |
 | Initial population | Cardinalities корректны; synthetic dates — принятое отклонение; delivery timestamps, a-string и C-Load не соответствуют §4.3 |
 | Driver / RTE | Полный RTE осознанно вне области; latency измеряет workload-client boundary |
 | Delivery | Синхронная модель — принятое отклонение; конкурентная обработка oldest order исправлена |
@@ -569,10 +577,10 @@ workflow, а также внешнее подтверждение RTE/ACID/check
 
 | Статус | Замечания |
 | --- | --- |
-| Устранено | 3.2 полный unused-item rollback New-Order; 3.6 think time exponential (default); 4.6 `O_ALL_LOCAL`; 4.9 clock calibration; 4.10 integrity fail-open; 5.1 exact-decimal reads; 5.2 Delivery race; 5.3 legacy index |
+| Устранено | 3.2 полный unused-item rollback New-Order; 3.6 think time exponential (default); 3.7 Stock-Level home district; 4.6 `O_ALL_LOCAL`; 4.9 clock calibration; 4.10 integrity fail-open; 5.1 exact-decimal reads; 5.2 Delivery race; 5.3 legacy index |
 | Частично устранено | 5.4 exact money checks исправлены, carrier `0` как `NULL` остался |
 | Принятое отклонение | 3.3 synchronous Delivery; 3.4 отсутствие полного RTE; 3.5 отсутствие встроенных ACID tests; 4.1 synthetic initial dates; checkpoint-часть 4.11 |
-| Остаётся | 3.1, 3.7, 4.2-4.5, 4.7, 4.8, sustained-часть 4.11, 4.12 |
+| Остаётся | 3.1, 4.2-4.5, 4.7, 4.8, sustained-часть 4.11, 4.12 |
 
 Повторный аудит изменений до commit `4d44f21` не выявил новых регрессий,
 внесённых исправлениями. Дополнительно уточнено, что clock-skew enforcement

@@ -171,6 +171,7 @@ public:
     TTerminal(
         size_t terminalID,
         size_t warehouseID,
+        size_t districtID,
         size_t warehouseCount,
         ITaskQueue& taskQueue,
         PgConnectionPool* connectionPool,

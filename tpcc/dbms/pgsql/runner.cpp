@@ -331,10 +331,12 @@ TRunOutcome RunSync(const TRunConfig& config, TTerminalStats* aggregatedStats) {
         for (int wh = range.Start; wh < range.End; ++wh) {
             for (size_t t = 0; t < terminalsPerWh; ++t) {
                 const size_t threadIndex = terminalIndex % threadCount;
+                const size_t districtID = static_cast<size_t>(HomeDistrictId(t));
 
                 terminals.push_back(std::make_unique<TTerminal>(
                     terminalIndex,
                     static_cast<size_t>(wh),
+                    districtID,
                     scaleWarehouses,
                     *taskQueue,
                     connectionPool.get(),

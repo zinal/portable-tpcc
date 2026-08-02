@@ -16,6 +16,15 @@ constexpr int DISTRICT_LOW_ID = 1;
 constexpr int DISTRICT_HIGH_ID = 10;
 constexpr int DISTRICT_COUNT = DISTRICT_HIGH_ID - DISTRICT_LOW_ID + 1;
 
+// TPC-C §2.8.1.1: Stock-Level uses a unique constant (W_ID, D_ID) per terminal.
+// terminalIndexInWarehouse is 0-based within the home warehouse. With the default
+// TERMINALS_PER_WAREHOUSE (== DISTRICT_COUNT) this is a 1:1 mapping. Fewer
+// terminals still get distinct home districts; more than DISTRICT_COUNT wrap
+// (uniqueness cannot hold — see non-default terminals_per_warehouse).
+inline int HomeDistrictId(size_t terminalIndexInWarehouse) {
+    return DISTRICT_LOW_ID + static_cast<int>(terminalIndexInWarehouse % DISTRICT_COUNT);
+}
+
 constexpr int C_INVALID_CUSTOMER_ID = 0;
 constexpr int C_FIRST_CUSTOMER_ID = 1;
 constexpr int C_ID_C = 259; // in range [0, 1023]
