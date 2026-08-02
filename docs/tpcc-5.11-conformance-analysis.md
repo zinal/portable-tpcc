@@ -90,8 +90,8 @@ business-input counters для проверки фактической выбо�
 вместе с p50/p90/p95/p99 в `aggregate.json` (`response_time_*`) и
 `summary.txt` ([histogram.h](../tpcc/metrics/histogram.h),
 [artifacts.cpp](../tpcc/dbms/pgsql/artifacts.cpp),
-[merge.go](../tools/tpccctl/internal/histogram/merge.go),
-[consolidate.go](../tools/tpccctl/internal/consolidate/consolidate.go)).
+[merge.go](../tpccctl/internal/histogram/merge.go),
+[consolidate.go](../tpccctl/internal/consolidate/consolidate.go)).
 
 По-прежнему отсутствуют:
 
@@ -200,7 +200,7 @@ commit `a997ab8`.
 `*_user_aborted`, входит в worker throughput и aggregate
 ([terminal.h](../tpcc/dbms/pgsql/terminal.h),
 [artifacts.cpp](../tpcc/dbms/pgsql/artifacts.cpp),
-[consolidate.go](../tools/tpccctl/internal/consolidate/consolidate.go)).
+[consolidate.go](../tpccctl/internal/consolidate/consolidate.go)).
 
 Fail-open classification устранён в 5.13; measurement boundaries устранены в 5.14.
 
@@ -250,7 +250,7 @@ skew budget, а consolidator проверяет calibration всех expected wo
 
 **Устранено в `56018f2`/`04b87dd`:** обязательные reports проверяются
 fail-closed, причины публикуются в `integrity_errors`
-([consolidate.go](../tools/tpccctl/internal/consolidate/consolidate.go)).
+([consolidate.go](../tpccctl/internal/consolidate/consolidate.go)).
 
 ### 5.9. Money/rate проходили через double
 
@@ -313,8 +313,8 @@ affected rows и возвращает retryable abort при конфликте
 
 `Materialize` больше не перезаписывает существующий `run-config.json`, поэтому
 hash остаётся стабильным между deploy и consolidate
-([consolidate.go](../tools/tpccctl/internal/consolidate/consolidate.go),
-[orchestrator.go](../tools/tpccctl/internal/orchestrator/orchestrator.go)).
+([consolidate.go](../tpccctl/internal/consolidate/consolidate.go),
+[orchestrator.go](../tpccctl/internal/orchestrator/orchestrator.go)).
 
 ### 5.16. Повреждённые counters и histograms обрабатывались fail-open
 
@@ -323,15 +323,15 @@ counter и повреждённый histogram payload вместо частич�
 `histogram.Validate` требует `layout`, `unit`, ожидаемую длину buckets для
 `linear_exp` и равенство `total_count` сумме buckets; `Merge` требует полной
 совместимости layout/unit/параметров/длины buckets
-([consolidate.go](../tools/tpccctl/internal/consolidate/consolidate.go),
-[merge.go](../tools/tpccctl/internal/histogram/merge.go)).
+([consolidate.go](../tpccctl/internal/consolidate/consolidate.go),
+[merge.go](../tpccctl/internal/histogram/merge.go)).
 
 ### 5.17. Unknown YAML fields не отклонялись
 
 **Устранено в `e344bf0`/`a997ab8`:** `profile.Parse` использует
 `yaml.NewDecoder` с `KnownFields(true)`, поэтому опечатки вроде
 `think_time_distribtion` отклоняются на parse time
-([profile.go](../tools/tpccctl/internal/profile/profile.go)).
+([profile.go](../tpccctl/internal/profile/profile.go)).
 
 ### 5.18. Post-import suite не проверял delivered OL_AMOUNT и carrier range
 
@@ -361,8 +361,8 @@ settings, но `THistogram` layout `linear_exp` использует тольк�
   ([workload_config.h](../tpcc/domain/workload_config.h),
   [run_config.cpp](../tpcc/dbms/pgsql/run_config.cpp),
   [artifacts.cpp](../tpcc/dbms/pgsql/artifacts.cpp),
-  [profile.go](../tools/tpccctl/internal/profile/profile.go),
-  [config.go](../tools/tpccctl/internal/config/config.go)).
+  [profile.go](../tpccctl/internal/profile/profile.go),
+  [config.go](../tpccctl/internal/config/config.go)).
 
 ### 5.20. Нет TPC-C conformance validation параметров запуска
 
@@ -392,10 +392,10 @@ settings, но `THistogram` layout `linear_exp` использует тольк�
    список `status.tpcc_settings_deviations`.
 
 Сравнение выполняется по resolved settings после merge defaults
-([conformance.go](../tools/tpccctl/internal/config/conformance.go),
-[validate.go](../tools/tpccctl/internal/validate/validate.go),
-[consolidate.go](../tools/tpccctl/internal/consolidate/consolidate.go),
-[orchestrator.go](../tools/tpccctl/internal/orchestrator/orchestrator.go),
+([conformance.go](../tpccctl/internal/config/conformance.go),
+[validate.go](../tpccctl/internal/validate/validate.go),
+[consolidate.go](../tpccctl/internal/consolidate/consolidate.go),
+[orchestrator.go](../tpccctl/internal/orchestrator/orchestrator.go),
 [specification.md](specification.md) §10).
 
 Это не официальный TPC-C verdict и не закрывает пробелы variability inputs

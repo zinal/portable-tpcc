@@ -5,7 +5,7 @@ Depends on: [specification.md](specification.md), [adapter-api.md](adapter-api.m
 Current module status: [dependencies.md](dependencies.md). TPC-C 5.11 notes:
 [tpcc-5.11-conformance-analysis.md](tpcc-5.11-conformance-analysis.md).
 
-This plan brings `tpcc/` and `tools/tpccctl` to the architecture’s “Done When”
+This plan brings `tpcc/` and `tpccctl` to the architecture’s “Done When”
 criteria ([specification.md](specification.md) §13).
 
 ---

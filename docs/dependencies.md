@@ -60,7 +60,7 @@ required for the current port.
 | --- | --- | --- |
 | `tpcc/dbms/pgsql` | transitional | session, pool, load/admin/check adapters, terminal runtime |
 | `tpcc/app/pgsql` (`tpcc-pgsql`) | transitional | normative roles + legacy aliases; orchestrated `check`/`schema` |
-| `tools/tpccctl` | done (Phase 5) | SSH/local remote drive, `--start-at`, collect/consolidate |
+| `tpccctl` | done (Phase 5) | SSH/local remote drive, `--start-at`, collect/consolidate |
 
 ### Not yet started / blocked
 

@@ -5,7 +5,7 @@
 
 Исходный анализ выполнен на commit `884230e`, повторная проверка — на commit
 `19df199` (`main`). Отчёт охватывает прикладной код `tpcc/` и оркестратор
-`tools/tpccctl/`. Инфраструктурные каталоги `build/`, `contrib/`, `devtools/`,
+`tpccctl/`. Инфраструктурные каталоги `build/`, `contrib/`, `devtools/`,
 `library/` и `util/` не анализировались на предмет дефектов и не изменялись.
 
 ## 1. Резюме
@@ -22,14 +22,15 @@
 
 Результат повторной проверки 18 исходных замечаний:
 
-- **устранено:** 1;
+- **устранено:** 2;
 - **частично устранено:** 3;
-- **остаётся:** 14.
+- **остаётся:** 13.
 
-Исправлены учёт штатного New-Order rollback (IR-018), отбрасывание лишних
-worker artifacts и часть fail-closed проверок консолидации (IR-006, IR-015).
-C++ consumer теперь также отклоняет устаревшие параметры histogram, но основные
-инварианты run-config по-прежнему не валидирует (IR-017).
+Исправлены сборка `tpccctl` штатным Go toolchain (IR-003) и учёт штатного
+New-Order rollback (IR-018), отбрасывание лишних worker artifacts и часть
+fail-closed проверок консолидации (IR-006, IR-015). C++ consumer теперь также
+отклоняет устаревшие параметры histogram, но основные инварианты run-config
+по-прежнему не валидирует (IR-017).
 
 Повторный аудит также выявил два дополнительных открытых замечания:
 неисполняемые настройки retry backoff/jitter (IR-019) и рассогласование control
@@ -49,8 +50,8 @@ artifacts при повторном использовании run ID (IR-020).
 - **Остаётся** — дефект подтверждён в commit `19df199`;
 - **Частично устранено** — часть исходного сценария закрыта, но остаточный
   дефект по-прежнему воспроизводим;
-- **Устранено** — исправление и соответствующий тест присутствуют в текущем
-  `main`.
+- **Устранено** — исправление и соответствующая проверка присутствуют в
+  текущем коде.
 
 ## 2. Высокая критичность
 
@@ -58,7 +59,7 @@ artifacts при повторном использовании run ID (IR-020).
 
 **Статус: остаётся.**
 
-**Код:** `tools/tpccctl/internal/orchestrator/drive.go:358-369`.
+**Код:** `tpccctl/internal/orchestrator/drive.go:358-369`.
 
 `payloads[].path` из удалённого `artifact-manifest.json` передаётся в
 `filepath.Join()` и `Session.Download()` до проверки через `paths.JoinUnder()`.
@@ -70,7 +71,7 @@ Manifest со значением наподобие `../../../target` позво
 - записать скачанные данные за пределами локального временного каталога;
 - в local mode обратиться к произвольному абсолютному пути, поскольку
   `Local.resolve()` разрешает абсолютные пути
-  (`tools/tpccctl/internal/remote/local.go:37-41`).
+  (`tpccctl/internal/remote/local.go:37-41`).
 
 **Рекомендация:** до любого чтения или записи проверять относительный путь,
 запрещать абсолютные пути и компоненты `..`, а remote и local destination
@@ -80,8 +81,8 @@ Manifest со значением наподобие `../../../target` позво
 
 **Статус: остаётся.**
 
-**Код:** `tools/tpccctl/internal/remote/ssh.go:223-234`,
-`tools/tpccctl/internal/validate/validate.go:65-69`.
+**Код:** `tpccctl/internal/remote/ssh.go:223-234`,
+`tpccctl/internal/validate/validate.go:65-69`.
 
 Значение переменной окружения экранируется, но её имя без экранирования
 вставляется в удалённую shell-команду:
@@ -98,39 +99,29 @@ b.WriteString(k + "=" + shellQuote(v) + " ")
 `[A-Za-z_][A-Za-z0-9_]*`; дополнительно формировать окружение без интерпретации
 непроверенного текста shell.
 
-### IR-003. `tpccctl` не собирается штатным build graph
+### IR-003. `tpccctl` был ошибочно включён в build graph `ya make`
 
-**Статус: остаётся.**
+**Статус: устранено.**
 
-**Код:** `tools/tpccctl/ya.make:1-5`,
-`tools/tpccctl/cmd/tpccctl/ya.make:1-11`.
+**Код:** `tpccctl/go.mod`, `AGENTS.md`,
+`.cursor/rules/repository-conventions.mdc`.
 
-Команда:
+Go-модуль перенесён из инфраструктурного дерева `tools/` в корневой каталог
+`tpccctl/`. Относящиеся к нему `ya.make` удалены, module/import path изменён на
+`portable-tpcc/tpccctl`.
 
-```text
-./ya make -t tools/tpccctl
-```
-
-завершается на configure stage:
+Инструкции для агентов теперь явно требуют стандартные команды:
 
 ```text
-unexpected command END outside of a module
-RECURSE to directory without ya.make: tools/tpccctl/cmd
+go -C tpccctl build ./cmd/tpccctl
+go -C tpccctl test ./...
 ```
-
-Корневой `ya.make` содержит лишний `END()` и рекурсирует в `cmd`, где нет
-`ya.make`; единственная декларация находится в `cmd/tpccctl`. Кроме того,
-internal Go packages не представлены модулями build graph. Оркестратор
-фактически выпадает из обязательной сборки и тестирования через `./ya`.
-
-**Рекомендация:** исправить дерево `RECURSE`, добавить недостающие Go-модули и
-подключить Go unit tests к `ya make -t`.
 
 ### IR-004. `Materialize()` сбрасывает состояние активного запуска
 
 **Статус: остаётся.**
 
-**Код:** `tools/tpccctl/internal/orchestrator/orchestrator.go:67-121`.
+**Код:** `tpccctl/internal/orchestrator/orchestrator.go:67-121`.
 
 `Materialize()` загружает существующий `run-state.json`, безусловно меняет
 state на `planned` и сохраняет его. Этот метод вызывается не только новым
@@ -146,7 +137,7 @@ run; запрещать повторную инициализацию актив
 
 **Статус: остаётся.**
 
-**Код:** `tools/tpccctl/internal/state/state.go:137-147`.
+**Код:** `tpccctl/internal/state/state.go:137-147`.
 
 Блокировка реализована как отдельные `ReadFile()` и `WriteFile()`. Два
 одновременных процесса могут оба увидеть отсутствие файла и оба считать
@@ -160,13 +151,13 @@ OS file lock; распространить блокировку на мутир�
 
 **Статус: частично устранено.**
 
-**Код:** `tools/tpccctl/internal/config/config.go:350-354`,
-`tools/tpccctl/internal/orchestrator/drive.go:178-219`,
-`tools/tpccctl/internal/consolidate/consolidate.go:72-120`.
+**Код:** `tpccctl/internal/config/config.go:350-354`,
+`tpccctl/internal/orchestrator/drive.go:178-219`,
+`tpccctl/internal/consolidate/consolidate.go:72-120`.
 
 Консолидация теперь отклоняет неожиданные каталоги worker и проверяет
 `run_id`, instance, assignment и SHA-256 run-config
-(`tools/tpccctl/internal/consolidate/consolidate.go:67-122,288-328`).
+(`tpccctl/internal/consolidate/consolidate.go:67-122,288-328`).
 
 Остаточный дефект:
 
@@ -278,7 +269,7 @@ Host, database, user и password конкатенируются в keyword conne
 
 **Статус: остаётся.**
 
-**Код:** `tools/tpccctl/internal/orchestrator/orchestrator.go:171-193,264-296`.
+**Код:** `tpccctl/internal/orchestrator/orchestrator.go:171-193,264-296`.
 
 `checks.after_import: false` и `checks.after_run: false` не исключают
 соответствующие шаги. Условие для `AfterImport` содержит только комментарий.
@@ -304,7 +295,7 @@ Host, database, user и password конкатенируются в keyword conne
 
 **Статус: частично устранено.**
 
-**Код:** `tools/tpccctl/internal/consolidate/consolidate.go:72-120,154-193`.
+**Код:** `tpccctl/internal/consolidate/consolidate.go:72-120,154-193`.
 
 Невалидные result JSON, counters и histogram теперь приводят к ошибке, а не
 пропускаются (`consolidate.go:101-122,207-250`). Неожиданные worker также
@@ -324,7 +315,7 @@ engineering aggregate только явной опцией и перечисля
 
 **Статус: остаётся.**
 
-**Код:** `tools/tpccctl/internal/orchestrator/drive.go:178-235`.
+**Код:** `tpccctl/internal/orchestrator/drive.go:178-235`.
 
 Если manifest существует с `finalized: false`, цикл сразу выполняет
 `continue` и не проверяет, жив ли процесс. Падение процесса после публикации
@@ -355,7 +346,7 @@ C++ consumer теперь отклоняет удалённые из форма�
 читает распределённый JSON, который может быть создан вручную или повреждён.
 Кроме того, soft conformance check проверяет минимальную длительность только
 при `measurement_ms > 0`
-(`tools/tpccctl/internal/config/conformance.go:77-82`), поэтому нулевая
+(`tpccctl/internal/config/conformance.go:77-82`), поэтому нулевая
 measurement ошибочно получает `tpcc_settings_conformant=true`.
 
 **Рекомендация:** валидировать materialized run-config повторно в consumer и
@@ -382,7 +373,7 @@ unit test.
 
 **Статус: остаётся.**
 
-**Код:** `tools/tpccctl/internal/config/config.go:112-117,229-248`,
+**Код:** `tpccctl/internal/config/config.go:112-117,229-248`,
 `tpcc/dbms/pgsql/run_config.cpp:137-140`,
 `tpcc/dbms/pgsql/terminal.cpp:207-340`.
 
@@ -403,7 +394,7 @@ unit tests политики.
 
 **Статус: остаётся.**
 
-**Код:** `tools/tpccctl/internal/orchestrator/orchestrator.go:72-135`.
+**Код:** `tpccctl/internal/orchestrator/orchestrator.go:72-135`.
 
 `Materialize()` валидирует текущий profile, но при существующем run ID повторно
 использует старый `run-config.json`. При этом `profile.redacted.yaml`
@@ -428,7 +419,7 @@ Total 46 tests:
     46 - GOOD
 ```
 
-Повторная попытка выполнить `./ya make -t tools/tpccctl` остановилась на том же
+Повторная попытка выполнить `./ya make -t tpccctl` остановилась на том же
 configure error, описанном в IR-003.
 
 Наиболее существенные пробелы:
