@@ -131,7 +131,7 @@ Fence-related symbols are absent from the tree.
 | Capability | Location | Notes |
 | --- | --- | --- |
 | 9-table schema + FKs + PKs | `init.cpp` | Destructive drop-then-create |
-| Secondary index `idx_customer_name` | `init.cpp` | After load in import path |
+| Secondary index `idx_customer_name` | `import.cpp` (`CreateIndexes` from `init.cpp`) | Created after bulk load, before ANALYZE |
 | COPY bulk load (all tables) | `import.cpp` | Warehouse-range + `OwnsGlobalData` for `item` |
 | New-Order | `transaction_neworder.cpp` | 5–15 lines, 1% remote, 1% invalid item + rollback |
 | Payment | `transaction_payment.cpp` | 85/15, 60/40 name/id, median-by-first-name |
