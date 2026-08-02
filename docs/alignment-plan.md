@@ -1,8 +1,9 @@
 # Action Plan: Align Implementation with Specification
 
 Status: **decisions recorded** (2026-07-29). Spec doc updates land with this plan.
-Depends on: [implementation-gap-analysis.md](implementation-gap-analysis.md),
-[specification.md](specification.md), [adapter-api.md](adapter-api.md).
+Depends on: [specification.md](specification.md), [adapter-api.md](adapter-api.md).
+Current module status: [dependencies.md](dependencies.md). TPC-C 5.11 notes:
+[tpcc-5.11-conformance-analysis.md](tpcc-5.11-conformance-analysis.md).
 
 This plan brings `tpcc/` and `tools/tpccctl` to the architecture’s “Done When”
 criteria ([specification.md](specification.md) §13).
@@ -86,7 +87,7 @@ drain when `async_delivery` is true).
 | # | Task | Notes |
 | --- | --- | --- |
 | 0.1 | Align `transactions/session.h` with decisions A/B/C (async + variant ops + batch) | Spec already updated |
-| 0.2 | Document known defects in `dependencies.md` | Point to gap analysis |
+| 0.2 | Document known defects in `dependencies.md` | Done (see Remaining work) |
 | 0.3 | Add/extend unit tests for assignment, histogram merge helpers, run-config parse | Go + C++ as available |
 
 **Exit:** headers and docs agree; no full behavior migration yet.

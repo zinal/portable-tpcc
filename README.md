@@ -12,13 +12,13 @@ Architecture draft:
 - [start-token example](docs/examples/start-token.v1.json);
 - [aggregate example](docs/examples/aggregate.v1.json).
 
-Implementation has started. The initial PostgreSQL port (`tpcc-pgsql`) and
-shared libraries are described in [docs/dependencies.md](docs/dependencies.md)
-and [docs/adapter-api.md](docs/adapter-api.md). A gap analysis versus the design
-documents is in
-[docs/implementation-gap-analysis.md](docs/implementation-gap-analysis.md);
-the alignment plan (with accepted API decisions) is in
-[docs/alignment-plan.md](docs/alignment-plan.md).
+Implementation status and third-party dependencies:
+[docs/dependencies.md](docs/dependencies.md). Shared libraries and adapter API:
+[docs/adapter-api.md](docs/adapter-api.md). Alignment plan (accepted API
+decisions and phase checklist):
+[docs/alignment-plan.md](docs/alignment-plan.md). Engineering vs TPC-C 5.11
+conformance notes:
+[docs/tpcc-5.11-conformance-analysis.md](docs/tpcc-5.11-conformance-analysis.md).
 
 Results MUST NOT be called official TPC-C results without the required TPC
 verification.
