@@ -78,6 +78,9 @@ TPC-C §5.1.2 и §5.4.2 требуют включать в MQTh штатные 
 
 - throughput систематически занижен приблизительно на 1%;
 - штатные rollback отсутствуют в response-time histogram;
+- счётчик `UserAborted` не экспортируется в worker `result.json`, где
+  публикуются только `OK`, `Failed` и `Retried`
+  ([artifacts.cpp:168-184](../tpcc/dbms/pgsql/artifacts.cpp#L168-L184));
 - невозможно проверить ограничения response time на полном наборе New-Order.
 
 Дополнительно §5.4.2 разрешает учитывать только транзакции, response time которых
@@ -270,7 +273,40 @@ TPC-C §4.2.2 требует 10 терминалов на warehouse, а §5.5.2 
 measurement interval не менее 120 минут. Aggregate не сообщает, что конкретная
 конфигурация этим требованиям не соответствует.
 
-### 4.6. Response-time требования не проверяются и неполно отчётны
+### 4.6. O_ALL_LOCAL некорректен при одном warehouse
+
+TPC-C §2.4.1.5 требует при конфигурации с одним warehouse снабжать все позиции
+из home warehouse. Соответственно, создаваемый заказ должен иметь
+`O_ALL_LOCAL = 1`.
+
+В ветке с вероятностью 1% supplier выбирается из единственного warehouse, но
+`AllLocal` всё равно устанавливается в `0`:
+[new_order.cpp:59-70](../tpcc/transactions/new_order.cpp#L59-L70).
+
+В результате часть заказов в односкладской конфигурации содержит неверное
+значение `O_ALL_LOCAL`, хотя все их order lines фактически локальны.
+
+### 4.7. Не проверяются фактические пределы вариативности inputs
+
+TPC-C §5.5.1.5 требует проверять на конкретном measurement interval:
+
+- 0,9-1,1% rollback New-Order;
+- среднее число order lines в диапазоне 9,5-10,5 и равномерность 5-15;
+- 0,95-1,05% remote order lines;
+- 14-16% remote Payment;
+- 57-63% выбора customer по фамилии для Payment и Order-Status.
+
+Генератор задаёт требуемые вероятности, например в
+[new_order.cpp:53-78](../tpcc/transactions/new_order.cpp#L53-L78) и
+[payment.cpp:40-57](../tpcc/transactions/payment.cpp#L40-L57), но runtime не
+собирает business-input counters, необходимые для проверки реально полученной
+выборки. Worker JSON содержит только результаты и retries транзакций
+([artifacts.cpp:168-184](../tpcc/dbms/pgsql/artifacts.cpp#L168-L184)).
+
+Даже корректная вероятность генерации не гарантирует попадание конкретного
+measurement interval в нормативные пределы.
+
+### 4.8. Response-time требования не проверяются и неполно отчётны
 
 TPC-C требует average, maximum и p90 для каждого типа транзакций, menu response
 time, отдельные interactive/deferred Delivery times и response-time
@@ -289,7 +325,7 @@ Average нельзя точно восстановить, поскольку raw
 
 Нарушение этих ограничений не инвалидирует опубликованный throughput.
 
-### 4.7. Проверка синхронизации часов является заглушкой
+### 4.9. Проверка синхронизации часов является заглушкой
 
 Каждый worker всегда записывает нулевые `offset_ms`, `uncertainty_ms` и
 `rtt_ms`:
@@ -301,7 +337,7 @@ Consolidator доверяет этим значениям:
 При реальном clock skew workers могут измерять разные интервалы, но
 `clock_skew_ok` останется равным `true`.
 
-### 4.8. Aggregate считает отсутствие checks успешным результатом
+### 4.10. Aggregate считает отсутствие checks успешным результатом
 
 Если каталог checks отсутствует, `evaluateIntegrity` возвращает `true`:
 [consolidate.go:203-209](../tools/tpccctl/internal/consolidate/consolidate.go#L203-L209).
@@ -309,11 +345,28 @@ Consolidator доверяет этим значениям:
 Это fail-open поведение: непроведённая проверка представляется успешно
 пройденной.
 
-### 4.9. Нет полного TPC-C disclosure/reporting
+### 4.11. Не контролируются sustained operation и checkpoints
+
+TPC-C §5.5.1.2 требует конфигурацию, способную непрерывно поддерживать
+заявленный throughput не менее восьми часов без вмешательства оператора.
+§5.5.2.2 требует для систем с deferred writes checkpoint interval не более
+30 минут и не менее четырёх checkpoints внутри measurement interval.
+
+В run-config и worker artifacts нет сведений о DBMS checkpoints, их длительности
+или доказательства восьмичасовой устойчивости. Поэтому двухчасовой workload,
+даже при корректном throughput, не подтверждает sustained performance
+тестируемой конфигурации.
+
+### 4.12. Нет полного TPC-C disclosure/reporting
 
 Отсутствуют price/tpmC, availability date, Full Disclosure Report, сведения о
-checkpoint, доказательство steady state, обязательные response/think-time
-графики и значительная часть отчётности §8.
+checkpoint, доказательство steady state и значительная часть отчётности §8. В
+частности, не строятся обязательные:
+
+- response-time distributions для каждого transaction type (§5.6.1);
+- New-Order response time versus throughput (§5.6.2);
+- New-Order think-time distribution (§5.6.3);
+- New-Order throughput versus elapsed time (§5.6.4).
 
 Итог намеренно помечается как `engineering`:
 [consolidate.go:157-174](../tools/tpccctl/internal/consolidate/consolidate.go#L157-L174).
@@ -333,18 +386,23 @@ checkpoint, доказательство steady state, обязательные 
 - [tpcc_session.cpp:375-378](../tpcc/dbms/pgsql/tpcc_session.cpp#L375-L378);
 - [tpcc_session.cpp:473-498](../tpcc/dbms/pgsql/tpcc_session.cpp#L473-L498).
 
-Это нарушает end-to-end exact-decimal подход §1.4.12 и внутреннее требование
-проекта. Для текущих диапазонов округление обратно до cents обычно
-восстанавливает значение, поэтому практический риск ограничен.
+Это точно нарушает внутреннее требование проекта об end-to-end exact-decimal
+пути. Считать это самостоятельным доказанным нарушением TPC-C §1.4.12 нельзя:
+колонки DBMS остаются exact `DECIMAL`, а доступной точности `double` достаточно
+для текущих диапазонов. Тем не менее промежуточное binary floating-point
+представление создаёт ненужный риск округления и требует отдельного
+обоснования или устранения.
 
 ### 5.2. Конкурентная Delivery выбирает заказ без блокировки
 
 Oldest new order выбирается без `FOR UPDATE`:
 [tpcc_session.cpp:301-305](../tpcc/dbms/pgsql/tpcc_session.cpp#L301-L305).
 
-Repeatable Read обычно преобразует конфликт в retry, но явной атомарной операции
-«выбрать и удалить» нет, а количество реально изменённых строк не проверяется.
-Это повышает риск повторной обработки и искажения skipped-delivery статистики.
+TPC-C не предписывает использовать именно `FOR UPDATE`: любой механизм,
+обеспечивающий требуемую изоляцию, допустим. Repeatable Read обычно преобразует
+конфликт в retry, однако явной атомарной операции «выбрать и удалить» нет, а
+количество реально изменённых строк не проверяется. Поэтому это риск
+конкурентной реализации, а не само по себе доказанное нарушение спецификации.
 
 ### 5.3. Legacy import не создаёт customer-name index
 
