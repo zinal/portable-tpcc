@@ -42,7 +42,6 @@ TFuture<bool> GetNewOrderTask(
         std::vector<int> SupplierWarehouseIDs;
         std::vector<int> OrderQuantities;
         int AllLocal;
-        bool HasInvalidItem;
     };
 
     const auto& in = FixedTransactionInputs<TInputs>(context, [&] {
@@ -71,10 +70,10 @@ TFuture<bool> GetNewOrderTask(
             generated.OrderQuantities.push_back(RandomNumber(1, 10));
         }
 
-        generated.HasInvalidItem = false;
+        // TPC-C §2.4.1.5: 1% of New-Order inputs use an unused item number
+        // on the last order line, producing the rollback profile in §2.4.2.3.
         if (RandomNumber(1, 100) == 1) {
             generated.ItemIDs[generated.NumItems - 1] = INVALID_ITEM_ID;
-            generated.HasInvalidItem = true;
         }
         return generated;
     });
@@ -120,6 +119,10 @@ TFuture<bool> GetNewOrderTask(
         }
     }
 
+    // TPC-C §2.4.2.3: for the 1% unused-item rollback profile, every valid
+    // order line must still execute ITEM/STOCK/ORDER-LINE work. Knowledge of
+    // the unused item may only skip STOCK/ORDER-LINE steps for that item
+    // itself; the ITEM select that produces "not-found" is still required.
     std::vector<int> validItemIds;
     validItemIds.reserve(in.NumItems);
     for (int id : in.ItemIDs) {
@@ -140,14 +143,12 @@ TFuture<bool> GetNewOrderTask(
         }
     }
 
-    if (in.HasInvalidItem) {
-        co_await SuspendRollback(tx, context);
-        throw TUserAbortedException();
-    }
-
     std::vector<TStockKey> stockKeys;
     std::unordered_map<std::pair<int, int>, bool, TPairHash> seen;
     for (int i = 0; i < in.NumItems; ++i) {
+        if (in.ItemIDs[i] == INVALID_ITEM_ID) {
+            continue;
+        }
         auto key = std::make_pair(in.SupplierWarehouseIDs[i], in.ItemIDs[i]);
         if (seen.count(key)) {
             continue;
@@ -157,7 +158,7 @@ TFuture<bool> GetNewOrderTask(
     }
 
     std::unordered_map<std::pair<int, int>, TStockRow, TPairHash> stocks;
-    {
+    if (!stockKeys.empty()) {
         auto r = co_await SuspendExecute(tx, context, TGetStocksForUpdate{in.DistrictID, stockKeys});
         ThrowIfRetryable(r);
         if (!r.Ok) {
@@ -173,6 +174,17 @@ TFuture<bool> GetNewOrderTask(
         const int supWh = in.SupplierWarehouseIDs[idx];
         const int iid = in.ItemIDs[idx];
         const int qty = in.OrderQuantities[idx];
+
+        if (iid == INVALID_ITEM_ID) {
+            auto r = co_await SuspendExecute(tx, context, TGetItems{{iid}});
+            ThrowIfRetryable(r);
+            if (r.Ok) {
+                co_return FailPermanent(context.TerminalID,
+                    "NewOrder expected unused item to be missing");
+            }
+            co_await SuspendRollback(tx, context);
+            throw TUserAbortedException();
+        }
 
         auto priceIt = itemPrices.find(iid);
         if (priceIt == itemPrices.end()) {
