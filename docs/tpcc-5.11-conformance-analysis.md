@@ -21,9 +21,9 @@
 - NULL-only семантика carrier в consistency checks.
 
 Эти исправления проходят unit tests и в основном корректны. После повторного
-аудита устранены fail-open классификация intentional rollback и неполный учёт
-measurement boundaries; остаются ранее не зафиксированные проблемы консолидации
-worker artifacts.
+аудита устранены fail-open классификация intentional rollback, неполный учёт
+measurement boundaries и слияние лишних/stale worker artifacts при consolidate;
+остаются ранее не зафиксированные проблемы повреждённых counters/histograms.
 
 Документ разделён на:
 
@@ -64,31 +64,7 @@ go test ./...
 
 ## 3. Активные замечания
 
-### 3.1. Consolidator объединяет лишние или stale worker artifacts
-
-**Критичность: высокая. Ранее не зафиксированный дефект.**
-
-`ConsolidateWithOptions` перебирает все каталоги под `raw/worker` и до проверки
-expected set складывает их counters, histograms и clock calibration:
-
-- [consolidate.go:72-119](../tools/tpccctl/internal/consolidate/consolidate.go#L72-L119).
-
-Expected worker list применяется только для поиска отсутствующих workers. Не
-проверяются:
-
-- принадлежность имени каталога expected set;
-- `run_id` и `instance` из `result.json`;
-- `run_config_sha256`;
-- warehouse assignment артефакта.
-
-Оставшийся после повторного collect каталог или вручную добавленный artifact
-может увеличить throughput, хотя `Aggregate.Workers` перечисляет только
-expected workers и status остаётся положительным.
-
-Consolidator должен отвергать unexpected workers и валидировать identity/config
-каждого result до слияния.
-
-### 3.2. Повреждённые counters и histograms обрабатываются fail-open
+### 3.1. Повреждённые counters и histograms обрабатываются fail-open
 
 **Критичность: высокая. Ранее не зафиксированный дефект.**
 
@@ -117,7 +93,7 @@ Histogram merge не проверяет:
 artifact должна делать consolidation неуспешной, а не давать частичный
 aggregate.
 
-### 3.3. Нет TPC-C conformance validation параметров запуска
+### 3.2. Нет TPC-C conformance validation параметров запуска
 
 **Критичность: высокая для официального TPC-C; допустимо для engineering
 profiles.**
@@ -141,7 +117,7 @@ profiles.**
 повторяет districts, и уникальность `(W_ID, D_ID)` Stock-Level из §2.8.1.1
 нарушается.
 
-### 3.4. Unknown YAML fields не отклоняются
+### 3.3. Unknown YAML fields не отклоняются
 
 **Критичность: средняя. Ранее не зафиксированный дефект internal validation.**
 
@@ -154,7 +130,7 @@ Profile parser использует обычный `yaml.Unmarshal`, а не dec
 чего бесшумно применяется default `exponential`. Это противоречит требованию
 internal specification отклонять unknown fields.
 
-### 3.5. Не проверяются фактические пределы variability inputs
+### 3.4. Не проверяются фактические пределы variability inputs
 
 **Критичность: высокая для официального TPC-C.**
 
@@ -169,7 +145,7 @@ TPC-C §5.5.1.5 требует проверять на measurement interval:
 Generator использует требуемые вероятности, но worker artifacts не содержат
 business-input counters для проверки фактической выборки.
 
-### 3.6. Response-time reporting остаётся неполным
+### 3.5. Response-time reporting остаётся неполным
 
 **Критичность: высокая для официального TPC-C.**
 
@@ -185,7 +161,7 @@ Raw histogram не хранит сумму значений, поэтому exac
 невозможно. Reported throughput также не truncates до нуля decimal places, как
 требует TPC-C §5.4.4; для engineering metric сохранение дробной части допустимо.
 
-### 3.7. Histogram settings частично игнорируются
+### 3.6. Histogram settings частично игнорируются
 
 **Критичность: средняя. Ранее не зафиксированный internal defect.**
 
@@ -198,7 +174,7 @@ effective settings, но фактический `THistogram` layout их не и
 Два профиля с разными значениями могут создавать одинаковые buckets, но
 aggregate будет утверждать, что применялись разные настройки.
 
-### 3.8. Initial population остаётся частично несовместимым с §4.3
+### 3.7. Initial population остаётся частично несовместимым с §4.3
 
 **Критичность: высокая для официального TPC-C.**
 
@@ -216,7 +192,7 @@ Post-import suite также не проверяет некоторые корр
 `[1..10]` у delivered orders. Generator создаёт их правильно; это defensive
 coverage gap, а не обнаруженная ошибка normal path.
 
-### 3.9. Нет доказательства sustained operation и полного disclosure
+### 3.8. Нет доказательства sustained operation и полного disclosure
 
 **Критичность: высокая для официального TPC-C.**
 
@@ -398,6 +374,21 @@ affected rows и возвращает retryable abort при конфликте
   ([phase_controller.h](../tpcc/runtime/phase_controller.h),
   [terminal.cpp](../tpcc/dbms/pgsql/terminal.cpp)).
 
+### 5.15. Consolidator объединял лишние или stale worker artifacts
+
+**Устранено:** до слияния counters/histograms consolidator отвергает каталоги
+вне expected worker set и проверяет identity каждого `result.json`:
+
+- `run_id` совпадает с consolidate run;
+- `instance` совпадает с именем каталога;
+- `run_config_sha256` совпадает с hash распределённого `run-config.json`;
+- `assignment.warehouse_ranges` совпадает с assignment из run-config.
+
+`Materialize` больше не перезаписывает существующий `run-config.json`, поэтому
+hash остаётся стабильным между deploy и consolidate
+([consolidate.go](../tools/tpccctl/internal/consolidate/consolidate.go),
+[orchestrator.go](../tools/tpccctl/internal/orchestrator/orchestrator.go)).
+
 ## 6. Итоговая оценка
 
 | Область | Оценка |
@@ -405,7 +396,7 @@ affected rows и возвращает retryable abort при конфликте
 | DB workload core | Основные пять транзакций реализованы; intentional rollback fail-closed по ITEM not-found и подтверждённому rollback |
 | Initial population | Cardinalities и delivery timestamps корректны; synthetic dates приняты; a-string и C constants остаются |
 | Runtime | Think time, Stock-Level и measurement boundaries исправлены для default |
-| Consolidation | Histogram merge работает для корректных однородных artifacts; identity/schema/integrity raw data валидируются недостаточно |
+| Consolidation | Unexpected/stale workers отвергаются; identity/config валидируются до merge; повреждённые histogram/counter payloads ещё fail-open |
 | Delivery | Синхронная модель — принятое отклонение; конкурентная обработка исправлена |
 | RTE / ACID / checkpoints | Внешние или вне области по принятому решению |
 | Reporting | Engineering artifacts, не официальный TPC-C FDR |
@@ -414,7 +405,8 @@ affected rows и возвращает retryable abort при конфликте
 Повторный аудит не обнаружил deadlock или data-corruption регрессий в новых
 ITEM/STOCK locking, Stock-Level binding, think-time sampling, timestamp
 population и carrier checks. Fail-open classification intentional rollback
-устранён (5.13); measurement-boundary учёт §5.4.2 исправлен (5.14). Сравнение
+устранён (5.13); measurement-boundary учёт §5.4.2 исправлен (5.14);
+слияние лишних/stale worker artifacts устранено (5.15). Сравнение
 результатов до и после `884230e` требует учитывать ожидаемые изменения
 workload: tpmC увеличивается примерно на долю intentional rollback, rollback
 New-Order создаёт полную DB-нагрузку, а default think-time distribution теперь

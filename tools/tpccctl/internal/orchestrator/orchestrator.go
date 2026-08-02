@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"portable-tpcc/tools/tpccctl/internal/canonical"
 	"portable-tpcc/tools/tpccctl/internal/config"
 	"portable-tpcc/tools/tpccctl/internal/consolidate"
 	"portable-tpcc/tools/tpccctl/internal/deploy"
@@ -65,6 +66,8 @@ func (o *Orchestrator) Validate() *validate.Result {
 }
 
 // Materialize builds run configuration artifacts on the control host.
+// When run-config.json already exists for the run, it is reused unchanged so
+// worker run_config_sha256 stays valid across later stages (collect/consolidate).
 func (o *Orchestrator) Materialize() (*Context, error) {
 	vr := o.Validate()
 	if !vr.Valid {
@@ -79,23 +82,39 @@ func (o *Orchestrator) Materialize() (*Context, error) {
 		return nil, err
 	}
 
-	rc, err := config.BuildRunConfig(config.BuildInput{
-		Profile:      o.Profile,
-		ProfilePath:  o.Opts.ProfilePath,
-		RunID:        runID,
-		WorkerBinary: o.Opts.WorkerBinary,
-	})
-	if err != nil {
-		return nil, err
-	}
-
 	runDir := o.StateStore.RunDir(runID)
 	if err := os.MkdirAll(runDir, 0755); err != nil {
 		return nil, err
 	}
-	if err := state.WriteJSON(runDir, "run-config.json", rc); err != nil {
+
+	runConfigPath := filepath.Join(runDir, "run-config.json")
+	var rc *config.RunConfig
+	if data, err := os.ReadFile(runConfigPath); err == nil {
+		rc = &config.RunConfig{}
+		if err := json.Unmarshal(data, rc); err != nil {
+			return nil, fmt.Errorf("load existing run-config.json: %w", err)
+		}
+		if rc.RunID != "" && rc.RunID != runID {
+			return nil, fmt.Errorf("existing run-config run_id %q does not match %q", rc.RunID, runID)
+		}
+		rc.RunID = runID
+	} else if os.IsNotExist(err) {
+		rc, err = config.BuildRunConfig(config.BuildInput{
+			Profile:      o.Profile,
+			ProfilePath:  o.Opts.ProfilePath,
+			RunID:        runID,
+			WorkerBinary: o.Opts.WorkerBinary,
+		})
+		if err != nil {
+			return nil, err
+		}
+		if err := state.WriteJSON(runDir, "run-config.json", rc); err != nil {
+			return nil, err
+		}
+	} else {
 		return nil, err
 	}
+
 	redacted, err := redact.RedactYAML(profileBytes)
 	if err != nil {
 		return nil, err
@@ -376,10 +395,15 @@ func (o *Orchestrator) consolidate(ctx *Context) error {
 	if err != nil {
 		return err
 	}
+	runConfigSHA, err := canonical.SHA256File(filepath.Join(ctx.RunDir, "run-config.json"))
+	if err != nil {
+		return fmt.Errorf("hash run-config.json for consolidate: %w", err)
+	}
 	cons := &consolidate.Consolidator{ResultRoot: o.Expanded.ResultRoot}
 	agg, err := cons.ConsolidateWithOptions(ctx.RunID, ctx.RunConfig, consolidate.Options{
-		SkippedSteps:   rs.SkippedSteps,
-		MaxClockSkewMs: ctx.RunConfig.Phases.MaxClockSkewMs,
+		SkippedSteps:            rs.SkippedSteps,
+		MaxClockSkewMs:          ctx.RunConfig.Phases.MaxClockSkewMs,
+		ExpectedRunConfigSHA256: runConfigSHA,
 	})
 	if err != nil {
 		return err
