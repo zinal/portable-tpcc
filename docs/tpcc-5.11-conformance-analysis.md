@@ -20,9 +20,9 @@
 - `OL_DELIVERY_D = O_ENTRY_D` в initial population;
 - NULL-only семантика carrier в consistency checks.
 
-Эти исправления проходят unit tests и в основном корректны. Однако проверка
-выявила новую fail-open ошибку в классификации intentional rollback, неполное
-исправление measurement boundaries и ранее не зафиксированные проблемы
+Эти исправления проходят unit tests и в основном корректны. После повторного
+аудита устранена fail-open ошибка классификации intentional rollback; остаются
+неполное исправление measurement boundaries и ранее не зафиксированные проблемы
 консолидации worker artifacts.
 
 Документ разделён на:
@@ -64,41 +64,7 @@ go test ./...
 
 ## 3. Активные замечания
 
-### 3.1. Ошибка может быть засчитана как intentional rollback New-Order
-
-**Критичность: высокая. Новая ошибка в пути исправления rollback/accounting.**
-
-TPC-C §5.1.2 и §5.4.2 разрешают считать завершённой только предусмотренную
-профилем транзакцию, успешно откатившую изменения после `not-found` последнего
-unused item.
-
-Текущий путь:
-
-1. выполняет `TGetItems` для invalid item;
-2. вызывает `ThrowIfRetryable`, который выбрасывает исключение только для
-   retryable/ambiguous classes;
-3. любой другой `r.Ok == false` воспринимает как ожидаемый `not-found`;
-4. игнорирует результат `Rollback()`;
-5. безусловно выбрасывает `TUserAbortedException`.
-
-Связанный код:
-
-- [new_order.cpp:178-186](../tpcc/transactions/new_order.cpp#L178-L186);
-- [workflow_util.h:16-23](../tpcc/transactions/workflow_util.h#L16-L23);
-- [tpcc_session.cpp:106-124](../tpcc/dbms/pgsql/tpcc_session.cpp#L106-L124);
-- [terminal.cpp:251-258](../tpcc/dbms/pgsql/terminal.cpp#L251-L258).
-
-Следствия:
-
-- permission, schema или permanent adapter error может быть ошибочно принят за
-  штатный unused-item rollback;
-- неподтверждённый rollback также считается успешным;
-- событие увеличивает `UserAborted`, попадает в New-Order histogram и tpmC.
-
-Исправление должно отличать ожидаемый ITEM `not-found` от других error classes
-и проверять `TCommitResult` rollback перед `TUserAbortedException`.
-
-### 3.2. Response time может пересекать measurement boundary
+### 3.1. Response time может пересекать measurement boundary
 
 **Критичность: высокая. Неполное исправление учёта §5.4.2.**
 
@@ -128,7 +94,7 @@ unused item.
 Начало и завершение response time следует сравнивать с абсолютными timestamps
 schedule, а начало `latencyFull` и проверяемая граница должны совпадать.
 
-### 3.3. Consolidator объединяет лишние или stale worker artifacts
+### 3.2. Consolidator объединяет лишние или stale worker artifacts
 
 **Критичность: высокая. Ранее не зафиксированный дефект.**
 
@@ -152,7 +118,7 @@ expected workers и status остаётся положительным.
 Consolidator должен отвергать unexpected workers и валидировать identity/config
 каждого result до слияния.
 
-### 3.4. Повреждённые counters и histograms обрабатываются fail-open
+### 3.3. Повреждённые counters и histograms обрабатываются fail-open
 
 **Критичность: высокая. Ранее не зафиксированный дефект.**
 
@@ -181,7 +147,7 @@ Histogram merge не проверяет:
 artifact должна делать consolidation неуспешной, а не давать частичный
 aggregate.
 
-### 3.5. Нет TPC-C conformance validation параметров запуска
+### 3.4. Нет TPC-C conformance validation параметров запуска
 
 **Критичность: высокая для официального TPC-C; допустимо для engineering
 profiles.**
@@ -205,7 +171,7 @@ profiles.**
 повторяет districts, и уникальность `(W_ID, D_ID)` Stock-Level из §2.8.1.1
 нарушается.
 
-### 3.6. Unknown YAML fields не отклоняются
+### 3.5. Unknown YAML fields не отклоняются
 
 **Критичность: средняя. Ранее не зафиксированный дефект internal validation.**
 
@@ -218,7 +184,7 @@ Profile parser использует обычный `yaml.Unmarshal`, а не dec
 чего бесшумно применяется default `exponential`. Это противоречит требованию
 internal specification отклонять unknown fields.
 
-### 3.7. Не проверяются фактические пределы variability inputs
+### 3.6. Не проверяются фактические пределы variability inputs
 
 **Критичность: высокая для официального TPC-C.**
 
@@ -233,7 +199,7 @@ TPC-C §5.5.1.5 требует проверять на measurement interval:
 Generator использует требуемые вероятности, но worker artifacts не содержат
 business-input counters для проверки фактической выборки.
 
-### 3.8. Response-time reporting остаётся неполным
+### 3.7. Response-time reporting остаётся неполным
 
 **Критичность: высокая для официального TPC-C.**
 
@@ -249,7 +215,7 @@ Raw histogram не хранит сумму значений, поэтому exac
 невозможно. Reported throughput также не truncates до нуля decimal places, как
 требует TPC-C §5.4.4; для engineering metric сохранение дробной части допустимо.
 
-### 3.9. Histogram settings частично игнорируются
+### 3.8. Histogram settings частично игнорируются
 
 **Критичность: средняя. Ранее не зафиксированный internal defect.**
 
@@ -262,7 +228,7 @@ effective settings, но фактический `THistogram` layout их не и
 Два профиля с разными значениями могут создавать одинаковые buckets, но
 aggregate будет утверждать, что применялись разные настройки.
 
-### 3.10. Initial population остаётся частично несовместимым с §4.3
+### 3.9. Initial population остаётся частично несовместимым с §4.3
 
 **Критичность: высокая для официального TPC-C.**
 
@@ -280,7 +246,7 @@ Post-import suite также не проверяет некоторые корр
 `[1..10]` у delivered orders. Generator создаёт их правильно; это defensive
 coverage gap, а не обнаруженная ошибка normal path.
 
-### 3.11. Нет доказательства sustained operation и полного disclosure
+### 3.10. Нет доказательства sustained operation и полного disclosure
 
 **Критичность: высокая для официального TPC-C.**
 
@@ -363,7 +329,7 @@ commit `884230e`.
 [artifacts.cpp](../tpcc/dbms/pgsql/artifacts.cpp),
 [consolidate.go](../tools/tpccctl/internal/consolidate/consolidate.go)).
 
-Активные проблемы fail-open classification и boundaries вынесены в 3.1 и 3.2.
+Fail-open classification устранён в 5.13; measurement boundaries остаются в 3.1.
 
 ### 5.2. Валидные строки rollback New-Order не выполняли DB-профиль
 
@@ -437,11 +403,22 @@ affected rows и возвращает retryable abort при конфликте
 3.3.2.5/7 используют только `O_CARRIER_ID IS NULL`
 ([check.cpp:192-429](../tpcc/dbms/pgsql/check.cpp#L192-L429)).
 
+### 5.13. Ошибка могла быть засчитана как intentional rollback New-Order
+
+**Устранено:** unused-item path принимает только ITEM `not-found`
+(`EErrorClass::Integrity`), проверяет `TCommitResult` rollback через
+`ThrowIfRollbackFailed` и лишь затем бросает `TUserAbortedException`.
+Неуспешный или повторный `Rollback()` в PostgreSQL adapter возвращает
+`OutcomeUnknown`, а не ложный `RolledBack`
+([new_order.cpp](../tpcc/transactions/new_order.cpp),
+[workflow_util.h](../tpcc/transactions/workflow_util.h),
+[tpcc_session.cpp](../tpcc/dbms/pgsql/tpcc_session.cpp)).
+
 ## 6. Итоговая оценка
 
 | Область | Оценка |
 | --- | --- |
-| DB workload core | Основные пять транзакций реализованы; intentional rollback требует fail-closed классификации и проверки rollback outcome |
+| DB workload core | Основные пять транзакций реализованы; intentional rollback fail-closed по ITEM not-found и подтверждённому rollback |
 | Initial population | Cardinalities и delivery timestamps корректны; synthetic dates приняты; a-string и C constants остаются |
 | Runtime | Think time и Stock-Level исправлены для default; measurement boundaries требуют доработки |
 | Consolidation | Histogram merge работает для корректных однородных artifacts; identity/schema/integrity raw data валидируются недостаточно |
@@ -452,9 +429,9 @@ affected rows и возвращает retryable abort при конфликте
 
 Повторный аудит не обнаружил deadlock или data-corruption регрессий в новых
 ITEM/STOCK locking, Stock-Level binding, think-time sampling, timestamp
-population и carrier checks. Но исправления intentional rollback/accounting
-оставили fail-open classification и measurement-boundary риски, перечисленные
-в 3.1 и 3.2. Сравнение результатов до и после `884230e` требует учитывать
-ожидаемые изменения workload: tpmC увеличивается примерно на долю intentional
-rollback, rollback New-Order создаёт полную DB-нагрузку, а default think-time
-distribution теперь экспоненциальное.
+population и carrier checks. Fail-open classification intentional rollback
+устранён (5.13); measurement-boundary риски остаются в 3.1. Сравнение
+результатов до и после `884230e` требует учитывать ожидаемые изменения
+workload: tpmC увеличивается примерно на долю intentional rollback, rollback
+New-Order создаёт полную DB-нагрузку, а default think-time distribution теперь
+экспоненциальное.

@@ -105,8 +105,9 @@ TFuture<TCommitResult> TPgTpccTransaction::Commit() {
 
 TFuture<TCommitResult> TPgTpccTransaction::Rollback() {
     if (Terminal_) {
+        // Already terminal: cannot confirm a fresh successful rollback.
         return ReadyCommit({
-            ECommitOutcome::RolledBack,
+            ECommitOutcome::OutcomeUnknown,
             EErrorClass::Permanent,
             {},
             "Rollback called in terminal state"});
@@ -118,7 +119,7 @@ TFuture<TCommitResult> TPgTpccTransaction::Rollback() {
     } catch (const std::exception& ex) {
         Terminal_ = true;
         return ReadyCommit({
-            ECommitOutcome::RolledBack,
+            ECommitOutcome::OutcomeUnknown,
             Classifier_.ClassifyException(ex),
             PgSqlStateOf(ex),
             ex.what()});
