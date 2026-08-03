@@ -9,7 +9,6 @@ ADDINCL(
 SRCS(
     pg_session.cpp
     pg_connection_pool.cpp
-    transaction_simulation.cpp
     init.cpp
     import.cpp
     load_batch.cpp
@@ -20,15 +19,8 @@ SRCS(
     check.cpp
     pg_admin_adapter.cpp
     path_checker.cpp
-    terminal.cpp
     runner.cpp
-    runner_tui.cpp
-    import_tui.cpp
-    tui_base.cpp
-    scroller.cpp
-    logs_scroller.cpp
     run_config.cpp
-    artifacts.cpp
     clock_calibration.cpp
     worker_loader.cpp
 )
@@ -41,16 +33,11 @@ PEERDIR(
     tpcc/transactions
     tpcc/metrics
     tpcc/runtime
+    tpcc/harness
     contrib/libs/libpqxx
     contrib/libs/fmt
-    contrib/libs/ftxui
     contrib/restricted/nlohmann_json
-    contrib/libs/openssl
     library/cpp/logger
-)
-
-CFLAGS(
-    -DTPCC_HAS_TUI=1
 )
 
 END()

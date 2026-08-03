@@ -1,13 +1,13 @@
 #include "worker_loader.h"
 
 #include "ydb_admin_adapter.h"
-#include "artifacts.h"
 #include "clock_calibration.h"
 #include "import.h"
 #include "path_checker.h"
 #include "run_config.h"
 #include "runner.h"
 
+#include <artifacts.h>
 #include <log.h>
 #include <time_util.h>
 
@@ -28,7 +28,7 @@ int RunLoaderFromRunConfig(const std::string& runConfigPath, const std::string& 
     const auto connection = BuildYdbConnectionConfig(doc);
     CheckDbForImport(connection);
     const auto clockCalibration = MeasureClockCalibration(connection, doc.Endpoint);
-    WriteReadyJson(paths, doc, instance, assign.WarehouseRanges, nonce, clockCalibration);
+    WriteReadyJson(paths, doc, instance, assign.WarehouseRanges, nonce, clockCalibration, "ydb");
 
     TImportConfig importCfg;
     importCfg.Connection = connection;
@@ -36,7 +36,6 @@ int RunLoaderFromRunConfig(const std::string& runConfigPath, const std::string& 
     importCfg.OwnsGlobalData = assign.OwnsGlobalData;
     importCfg.TotalWarehouses = doc.ScaleWarehouses;
     importCfg.LoadThreadCount = 0;
-    importCfg.UseTui = false;
     importCfg.BatchRows = doc.BatchRows;
     if (doc.HasSeed) {
         importCfg.Seed = static_cast<uint64_t>(doc.Seed);
@@ -74,7 +73,7 @@ int RunWorkerFromRunConfig(
     const auto connection = BuildYdbConnectionConfig(doc);
     CheckDbForRun(connection, doc.ScaleWarehouses);
     const auto clockCalibration = MeasureClockCalibration(connection, doc.Endpoint);
-    WriteReadyJson(paths, doc, instance, assign.WarehouseRanges, nonce, clockCalibration);
+    WriteReadyJson(paths, doc, instance, assign.WarehouseRanges, nonce, clockCalibration, "ydb");
     if (!IsClockSkewWithinBudget(clockCalibration, doc.PhasePolicy.MaxClockSkewMs)) {
         LOG_E(instance + ": " + FormatClockSkewViolation(clockCalibration, doc.PhasePolicy.MaxClockSkewMs));
         const bool recordUs = doc.Histogram.Configured && doc.Histogram.Unit == "us";
@@ -88,7 +87,7 @@ int RunWorkerFromRunConfig(
         const auto now = std::chrono::system_clock::now();
         WriteWorkerResultJson(
             paths, doc, instance, assign, emptyStats, false,
-            now, now, now, now, 0.0, 1, nonce);
+            now, now, now, now, 0.0, 1, nonce, "ydb", "tpcc-ydb");
         WriteArtifactManifest(paths, instance, nonce, 1);
         return 1;
     }
@@ -105,7 +104,6 @@ int RunWorkerFromRunConfig(
     runCfg.PhasePolicy = doc.PhasePolicy;
     runCfg.Instance = instance;
     runCfg.InstanceDir = instanceDir;
-    runCfg.UseTui = false;
     runCfg.RetryMaxAttempts = doc.RetryMaxAttempts;
     runCfg.RetryInitialBackoffMs = doc.RetryInitialBackoffMs;
     runCfg.RetryMaxBackoffMs = doc.RetryMaxBackoffMs;
@@ -142,7 +140,8 @@ int RunWorkerFromRunConfig(
     WriteWorkerResultJson(
         paths, doc, instance, assign, aggregated, outcome.HighResHistogram,
         outcome.RampStart, outcome.MeasurementStart, outcome.MeasurementEnd,
-        outcome.DrainDeadline, outcome.MeasurementSeconds, exitCode, nonce);
+        outcome.DrainDeadline, outcome.MeasurementSeconds, exitCode, nonce,
+        "ydb", "tpcc-ydb");
     WriteArtifactManifest(paths, instance, nonce, exitCode);
     return exitCode;
 }

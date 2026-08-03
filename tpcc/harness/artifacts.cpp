@@ -1,4 +1,5 @@
 #include "artifacts.h"
+#include "sha256.h"
 
 #include <nlohmann/json.hpp>
 
@@ -112,14 +113,15 @@ void WriteProcessJson(const TArtifactPaths& paths, const TRunConfigDocument& doc
 
 void WriteReadyJson(const TArtifactPaths& paths, const TRunConfigDocument& doc,
                     const std::string& instance, const std::vector<TWarehouseRange>& ranges,
-                    const std::string& instanceNonce, const TClockCalibration& clockCalibration) {
+                    const std::string& instanceNonce, const TClockCalibration& clockCalibration,
+                    const std::string& adapterName) {
     Json j = {
         {"schema_version", 1},
         {"run_id", doc.RunId},
         {"instance", instance},
         {"instance_nonce", instanceNonce},
         {"run_config_sha256", doc.RunConfigSha256},
-        {"adapter", "ydb"},
+        {"adapter", adapterName},
         {"warehouse_ranges", WarehouseRangesJson(ranges)},
         {"ready_at", FormatTime(SysClock::now())},
         {"clock_calibration", {
@@ -161,7 +163,9 @@ void WriteWorkerResultJson(const TArtifactPaths& paths, const TRunConfigDocument
                            SysClock::time_point measurementEnd,
                            SysClock::time_point drainDeadline,
                            double measureSeconds, int exitCode,
-                           const std::string& instanceNonce) {
+                           const std::string& instanceNonce,
+                           const std::string& adapterName,
+                           const std::string& defaultBinary) {
     Json counters = Json::object();
     Json histograms = Json::object();
     size_t totalFailed = 0;
@@ -255,8 +259,8 @@ void WriteWorkerResultJson(const TArtifactPaths& paths, const TRunConfigDocument
             {"high_res_histogram", highResHistogram},
         }},
         {"versions", {
-            {"adapter", "ydb"},
-            {"binary", doc.Binary.empty() ? "tpcc-ydb" : doc.Binary},
+            {"adapter", adapterName},
+            {"binary", doc.Binary.empty() ? defaultBinary : doc.Binary},
         }},
         {"exit_status", exitCode},
         {"completed_at", FormatTime(SysClock::now())},

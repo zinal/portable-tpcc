@@ -23,7 +23,7 @@ public:
     TFuture<TCommitResult> Rollback() override;
     TFuture<TCommitResult> Cancel() override;
 
-    TFuture<TOperationResult> ExecuteSelect1();
+    TFuture<TOperationResult> ExecuteSelect1() override;
 
 private:
     NYdb::NQuery::TSession Session_;

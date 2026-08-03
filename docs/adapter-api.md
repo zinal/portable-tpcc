@@ -27,13 +27,13 @@ are to be interpreted as described in RFC 2119.
 tpccctl  ──SSH──>  tpcc-<dbms>  (schema | loader | worker | check)
                          │
                          ├─ shared: domain / generator / transactions /
-                         │          runtime / loader / checks / metrics
+                         │          runtime / harness / loader / checks / metrics
                          └─ adapter: tpcc/dbms/<name>/
 ```
 
 | Layer | Owns | MUST NOT own |
 | --- | --- | --- |
-| Shared libraries | Logical schema, generator, workflows, retry policy shape, check catalog IDs, histograms | SQL dialects, SDK types, connection strings with secrets |
+| Shared libraries | Logical schema, generator, workflows, retry policy shape, check catalog IDs, histograms, terminal loop, artifact writers (`tpcc/harness`) | SQL dialects, SDK types, connection strings with secrets |
 | Adapter | DDL, physical keys/partitions, query text, `PutBatch`, error mapping | Workload mix, terminal identity, phase schedule |
 | Binary `tpcc-<dbms>` | CLI roles, wiring factory → runtime | A second copy of the workload model |
 
@@ -232,10 +232,10 @@ IO layer for:
 - bounded executor pool for blocking IO;
 - shutdown cancellation via a shared flag.
 
-The PostgreSQL runner wires terminals through `TPgSessionFactory`
-(`ISessionFactory`); `PgSession` and `PgConnectionPool` stay behind that
-boundary. Shared workflows MUST take the abstract async `ITpccTransaction`
-surface, not `PgSession&`.
+The PostgreSQL runner wires the shared `TTerminal` (`tpcc/harness`) through
+`TPgSessionFactory` (`ISessionFactory`); `PgSession` and `PgConnectionPool`
+stay behind that boundary. Shared workflows MUST take the abstract async
+`ITpccTransaction` surface, not `PgSession&`.
 
 ### 4.4. `ICheckAdapter`
 

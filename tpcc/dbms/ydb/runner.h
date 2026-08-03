@@ -1,9 +1,10 @@
 #pragma once
 
-#include <phase_policy.h>
-#include <warehouse_range.h>
-#include "terminal.h"
 #include "ydb_driver.h"
+
+#include <phase_policy.h>
+#include <terminal.h>
+#include <warehouse_range.h>
 
 #include <workload_config.h>
 
@@ -36,7 +37,6 @@ struct TRunConfig {
     // Simulation mode: replaces real TPC-C transactions with a lightweight
     // SELECT 1 loop. Useful for testing the coroutine/IO stack.
     int SimulateTransactionSelect1 = 0;
-    bool UseTui = false;
 
     // Orchestrated worker fields (portable-tpcc run-config).
     bool Orchestrated = false;

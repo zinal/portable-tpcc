@@ -74,6 +74,10 @@ EErrorClass TYdbErrorClassifier::ClassifyStatus(const NYdb::TStatus& status, boo
     }
 }
 
+EErrorClass TYdbErrorClassifier::ClassifyException(const std::exception& ex) const {
+    return ClassifyException(ex, false);
+}
+
 EErrorClass TYdbErrorClassifier::ClassifyException(const std::exception& ex, bool duringCommit) const {
     if (dynamic_cast<const NYdb::NStatusHelpers::TYdbErrorException*>(&ex)) {
         const auto& ydb = static_cast<const NYdb::NStatusHelpers::TYdbErrorException&>(ex);

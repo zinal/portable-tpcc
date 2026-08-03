@@ -8,6 +8,7 @@ ADDINCL(
 
 SRCS(
     error_classifier.cpp
+    session.cpp
     context.cpp
     new_order.cpp
     payment.cpp

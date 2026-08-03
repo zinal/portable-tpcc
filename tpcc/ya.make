@@ -3,6 +3,7 @@ RECURSE(
     metrics
     runtime
     transactions
+    harness
     generator
     loader
     checks

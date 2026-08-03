@@ -1,10 +1,9 @@
 #include "run_config.h"
 
+#include <sha256.h>
 #include <think_time.h>
 
 #include <nlohmann/json.hpp>
-
-#include <openssl/evp.h>
 
 #include <cstdio>
 #include <cstdlib>
@@ -84,17 +83,6 @@ std::string ReadFile(const std::string& path) {
     std::ostringstream ss;
     ss << in.rdbuf();
     return ss.str();
-}
-
-std::string HexEncode(const unsigned char* data, size_t len) {
-    static const char* kHex = "0123456789abcdef";
-    std::string out;
-    out.resize(len * 2);
-    for (size_t i = 0; i < len; ++i) {
-        out[i * 2] = kHex[(data[i] >> 4) & 0xf];
-        out[i * 2 + 1] = kHex[data[i] & 0xf];
-    }
-    return out;
 }
 
 std::string ParentDir(const std::string& path) {
@@ -500,52 +488,6 @@ std::string BuildPgConnectionString(const TRunConfigDocument& doc) {
         " dbname=" + LibpqQuoteValue(doc.Database) +
         " user=" + LibpqQuoteValue(user) +
         " password=" + LibpqQuoteValue(password);
-}
-
-TLoaderAssignment FindLoaderAssignment(const TRunConfigDocument& doc, const std::string& instance) {
-    for (const auto& a : doc.LoadAssignments) {
-        if (a.Instance == instance) {
-            return a;
-        }
-    }
-    throw std::runtime_error("loader instance not found in run-config: " + instance);
-}
-
-TWorkerAssignment FindWorkerAssignment(const TRunConfigDocument& doc, const std::string& instance) {
-    for (const auto& a : doc.WorkerAssignments) {
-        if (a.Instance == instance) {
-            return a;
-        }
-    }
-    throw std::runtime_error("worker instance not found in run-config: " + instance);
-}
-
-std::string InstanceWorkDir(const TRunConfigDocument& doc, const std::string& role, const std::string& instance) {
-    if (doc.RunDir.empty()) {
-        throw std::runtime_error("run_dir is empty");
-    }
-    return doc.RunDir + "/" + role + "/" + instance;
-}
-
-std::string ComputeBytesSha256Hex(const std::string& data) {
-    unsigned char hash[EVP_MAX_MD_SIZE];
-    unsigned int hashLen = 0;
-    EVP_MD_CTX* ctx = EVP_MD_CTX_new();
-    if (!ctx) {
-        throw std::runtime_error("EVP_MD_CTX_new failed");
-    }
-    if (EVP_DigestInit_ex(ctx, EVP_sha256(), nullptr) != 1 ||
-        EVP_DigestUpdate(ctx, data.data(), data.size()) != 1 ||
-        EVP_DigestFinal_ex(ctx, hash, &hashLen) != 1) {
-        EVP_MD_CTX_free(ctx);
-        throw std::runtime_error("SHA-256 digest failed");
-    }
-    EVP_MD_CTX_free(ctx);
-    return HexEncode(hash, hashLen);
-}
-
-std::string ComputeFileSha256Hex(const std::string& path) {
-    return ComputeBytesSha256Hex(ReadFile(path));
 }
 
 } // namespace NTpcc
