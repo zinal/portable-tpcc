@@ -7,54 +7,43 @@
 #include "run_config.h"
 #include "runner.h"
 
-#include <artifacts.h>
+#include <orchestrated_roles.h>
 #include <log.h>
-#include <time_util.h>
-
-#include <unistd.h>
+#include <warehouse_range.h>
 
 namespace NTpcc {
 
+namespace {
+
+const TAdapterIdentity kPgIdentity{"pgsql", "tpcc-pgsql"};
+
+} // anonymous
+
 int RunLoaderFromRunConfig(const std::string& runConfigPath, const std::string& instance) {
     const auto doc = LoadRunConfigDocument(runConfigPath);
-    const auto assign = FindLoaderAssignment(doc, instance);
-    const std::string instanceDir = InstanceWorkDir(doc, "loader", instance);
-    EnsureInstanceDir(instanceDir);
-    const auto paths = MakeArtifactPaths(instanceDir);
-    const std::string nonce = GenerateInstanceNonce();
-
-    WriteProcessJson(paths, doc, instance, "loader", static_cast<int>(::getpid()), nonce);
-
-    const std::string connection = BuildPgConnectionString(doc);
-    CheckDbForImport(connection, doc.Path);
-    const auto clockCalibration = MeasureClockCalibration(connection, doc.Endpoint);
-    WriteReadyJson(paths, doc, instance, assign.WarehouseRanges, nonce, clockCalibration, "pgsql");
-
-    TImportConfig importCfg;
-    importCfg.ConnectionString = connection;
-    importCfg.Path = doc.Path;
-    importCfg.WarehouseRanges = assign.WarehouseRanges;
-    importCfg.OwnsGlobalData = assign.OwnsGlobalData;
-    importCfg.TotalWarehouses = doc.ScaleWarehouses;
-    importCfg.LoadThreadCount = 0;
-    importCfg.BatchRows = doc.BatchRows;
-    if (doc.HasSeed) {
-        importCfg.Seed = static_cast<uint64_t>(doc.Seed);
-    }
-    importCfg.RunId = doc.RunId;
-
-    int exitCode = 0;
-    try {
+    TLoaderRoleHooks hooks;
+    hooks.Calibrate = [](const TRunConfigDocument& d) {
+        const std::string connection = BuildPgConnectionString(d);
+        CheckDbForImport(connection, d.Path);
+        return MeasureClockCalibration(connection, d.Endpoint);
+    };
+    hooks.Import = [](const TRunConfigDocument& d, const TLoaderAssignment& assign) {
+        const std::string connection = BuildPgConnectionString(d);
+        TImportConfig importCfg;
+        importCfg.ConnectionString = connection;
+        importCfg.Path = d.Path;
+        importCfg.WarehouseRanges = assign.WarehouseRanges;
+        importCfg.OwnsGlobalData = assign.OwnsGlobalData;
+        importCfg.TotalWarehouses = d.ScaleWarehouses;
+        importCfg.LoadThreadCount = 0;
+        importCfg.BatchRows = d.BatchRows;
+        if (d.HasSeed) {
+            importCfg.Seed = static_cast<uint64_t>(d.Seed);
+        }
+        importCfg.RunId = d.RunId;
         ImportSync(importCfg);
-        // ImportSync creates secondary indexes and runs ANALYZE.
-    } catch (const std::exception& ex) {
-        LOG_E("Loader failed: " << ex.what());
-        exitCode = 1;
-    }
-
-    WriteLoaderResultJson(paths, doc, instance, assign, exitCode);
-    WriteArtifactManifest(paths, instance, nonce, exitCode);
-    return exitCode;
+    };
+    return RunOrchestratedLoader(doc, instance, kPgIdentity, hooks);
 }
 
 int RunWorkerFromRunConfig(
@@ -63,115 +52,57 @@ int RunWorkerFromRunConfig(
     const std::optional<std::string>& startAtRfc3339)
 {
     const auto doc = LoadRunConfigDocument(runConfigPath);
-    const auto assign = FindWorkerAssignment(doc, instance);
-    const std::string instanceDir = InstanceWorkDir(doc, "worker", instance);
-    EnsureInstanceDir(instanceDir);
-    const auto paths = MakeArtifactPaths(instanceDir);
-    const std::string nonce = GenerateInstanceNonce();
-
-    WriteProcessJson(paths, doc, instance, "worker", static_cast<int>(::getpid()), nonce);
-
-    const std::string connection = BuildPgConnectionString(doc);
-    CheckDbForRun(connection, doc.ScaleWarehouses, doc.Path);
-    const auto clockCalibration = MeasureClockCalibration(connection, doc.Endpoint);
-    WriteReadyJson(paths, doc, instance, assign.WarehouseRanges, nonce, clockCalibration, "pgsql");
-    if (!IsClockSkewWithinBudget(clockCalibration, doc.PhasePolicy.MaxClockSkewMs)) {
-        LOG_E(instance + ": " + FormatClockSkewViolation(clockCalibration, doc.PhasePolicy.MaxClockSkewMs));
-        const bool recordUs = doc.Histogram.Configured && doc.Histogram.Unit == "us";
-        const uint64_t histHdr = doc.Histogram.Configured
-            ? doc.Histogram.HdrTill()
-            : 4096ull;
-        const uint64_t histMax = doc.Histogram.Configured
-            ? doc.Histogram.MaxValue()
-            : 32768ull;
-        TTerminalStats emptyStats(histHdr, histMax, recordUs);
-        const auto now = std::chrono::system_clock::now();
-        WriteWorkerResultJson(
-            paths, doc, instance, assign, emptyStats, false,
-            now, now, now, now, 0.0, 1, nonce, "pgsql", "tpcc-pgsql");
-        WriteArtifactManifest(paths, instance, nonce, 1);
-        return 1;
-    }
-
-    TRunConfig runCfg;
-    runCfg.ConnectionString = connection;
-    runCfg.Path = doc.Path;
-    runCfg.WarehouseRanges = assign.WarehouseRanges;
-    runCfg.WarehouseCount = CountWarehouses(assign.WarehouseRanges);
-    runCfg.ScaleWarehouses = doc.ScaleWarehouses;
-    runCfg.ThreadCount = assign.Threads;
-    runCfg.MaxInflight = assign.MaxInflight;
-    runCfg.NoDelays = !doc.PacingEnabled;
-    runCfg.Orchestrated = true;
-    runCfg.PhasePolicy = doc.PhasePolicy;
-    runCfg.Instance = instance;
-    runCfg.InstanceDir = instanceDir;
-    runCfg.RetryMaxAttempts = doc.RetryMaxAttempts;
-    runCfg.RetryInitialBackoffMs = doc.RetryInitialBackoffMs;
-    runCfg.RetryMaxBackoffMs = doc.RetryMaxBackoffMs;
-    runCfg.RetryJitter = doc.RetryJitter;
-    runCfg.RetryAmbiguousCommit = doc.RetryAmbiguousCommit;
-    runCfg.Workload = doc.Workload;
-    runCfg.Histogram = doc.Histogram;
-    runCfg.ThinkTimeDistribution = doc.ThinkTimeDistribution;
-
-    if (startAtRfc3339.has_value()) {
-        runCfg.StartAt = ParseRfc3339Utc(*startAtRfc3339);
-    } else {
-        throw std::runtime_error("orchestrated worker requires --start-at=<RFC3339-UTC>");
-    }
-
-    const bool recordUs = doc.Histogram.Configured && doc.Histogram.Unit == "us";
-    const uint64_t histHdr = doc.Histogram.Configured
-        ? doc.Histogram.HdrTill()
-        : 4096ull;
-    const uint64_t histMax = doc.Histogram.Configured
-        ? doc.Histogram.MaxValue()
-        : 32768ull;
-    TTerminalStats aggregated(histHdr, histMax, recordUs);
-    TRunOutcome outcome;
-    int exitCode = 0;
-    try {
-        outcome = RunSync(runCfg, &aggregated);
-        exitCode = outcome.ExitCode;
-    } catch (const std::exception& ex) {
-        LOG_E("Worker failed: " << ex.what());
-        exitCode = 1;
-    }
-
-    WriteWorkerResultJson(
-        paths, doc, instance, assign, aggregated, outcome.HighResHistogram,
-        outcome.RampStart, outcome.MeasurementStart, outcome.MeasurementEnd,
-        outcome.DrainDeadline, outcome.MeasurementSeconds, exitCode, nonce,
-        "pgsql", "tpcc-pgsql");
-    WriteArtifactManifest(paths, instance, nonce, exitCode);
-    return exitCode;
+    TWorkerRoleHooks hooks;
+    hooks.Calibrate = [](const TRunConfigDocument& d) {
+        const std::string connection = BuildPgConnectionString(d);
+        CheckDbForRun(connection, d.ScaleWarehouses, d.Path);
+        return MeasureClockCalibration(connection, d.Endpoint);
+    };
+    hooks.Run = [instance](
+        const TRunConfigDocument& d,
+        const TWorkerAssignment& assign,
+        const std::string& instanceDir,
+        std::chrono::system_clock::time_point startAt,
+        TTerminalStats& aggregated)
+    {
+        TRunConfig runCfg;
+        runCfg.ConnectionString = BuildPgConnectionString(d);
+        runCfg.Path = d.Path;
+        runCfg.WarehouseRanges = assign.WarehouseRanges;
+        runCfg.WarehouseCount = CountWarehouses(assign.WarehouseRanges);
+        runCfg.ScaleWarehouses = d.ScaleWarehouses;
+        runCfg.ThreadCount = assign.Threads;
+        runCfg.MaxInflight = assign.MaxInflight;
+        runCfg.NoDelays = !d.PacingEnabled;
+        runCfg.Orchestrated = true;
+        runCfg.PhasePolicy = d.PhasePolicy;
+        runCfg.Instance = instance;
+        runCfg.InstanceDir = instanceDir;
+        runCfg.RetryMaxAttempts = d.RetryMaxAttempts;
+        runCfg.RetryInitialBackoffMs = d.RetryInitialBackoffMs;
+        runCfg.RetryMaxBackoffMs = d.RetryMaxBackoffMs;
+        runCfg.RetryJitter = d.RetryJitter;
+        runCfg.RetryAmbiguousCommit = d.RetryAmbiguousCommit;
+        runCfg.Workload = d.Workload;
+        runCfg.Histogram = d.Histogram;
+        runCfg.ThinkTimeDistribution = d.ThinkTimeDistribution;
+        runCfg.StartAt = startAt;
+        return RunSync(runCfg, &aggregated);
+    };
+    return RunOrchestratedWorker(doc, instance, startAtRfc3339, kPgIdentity, hooks);
 }
 
 int RunSchemaFromRunConfig(const std::string& runConfigPath, const std::string& instance) {
     const auto doc = LoadRunConfigDocument(runConfigPath);
-    const std::string instanceDir = InstanceWorkDir(doc, "schema", instance);
-    EnsureInstanceDir(instanceDir);
-    const auto paths = MakeArtifactPaths(instanceDir);
-    const std::string nonce = GenerateInstanceNonce();
-
-    WriteProcessJson(paths, doc, instance, "schema", static_cast<int>(::getpid()), nonce);
-
-    const std::string connection = BuildPgConnectionString(doc);
-    int exitCode = 0;
-    try {
-        CheckDbForInit(connection, doc.Path);
-        TPgAdminAdapter admin(connection, doc.Path);
+    return RunOrchestratedSchema(doc, instance, [instance](const TRunConfigDocument& d) {
+        const std::string connection = BuildPgConnectionString(d);
+        CheckDbForInit(connection, d.Path);
+        TPgAdminAdapter admin(connection, d.Path);
         admin.EnsureSchema();
         auto desc = admin.Describe();
-        LOG_I("Schema ready (server=" << desc.ServerVersion << ", client=" << desc.ClientVersion << ", instance=" << instance << ")");
-    } catch (const std::exception& ex) {
-        LOG_E("Schema failed: " << ex.what());
-        exitCode = 1;
-    }
-
-    WriteArtifactManifest(paths, instance, nonce, exitCode);
-    return exitCode;
+        LOG_I("Schema ready (server=" << desc.ServerVersion << ", client=" << desc.ClientVersion
+              << ", instance=" << instance << ")");
+    });
 }
 
 } // namespace NTpcc
