@@ -145,19 +145,17 @@ TFuture<bool> GetPaymentTask(
         historyData.resize(24);
     }
 
+    LOG_T("Terminal " << context.TerminalID << " committing Payment");
     {
-        auto r = co_await SuspendExecute(tx, context, TInsertPaymentHistory{
+        auto finalResult = co_await SuspendExecuteFinalAndCommit(tx, context, TInsertPaymentHistory{
             in.CustomerWarehouseID, in.CustomerDistrictID, customer.CustomerID,
             in.WarehouseID, in.DistrictID, in.PaymentAmount, historyData});
-        ThrowIfRetryable(r);
-        if (!r.Ok) {
+        ThrowIfRetryable(finalResult.Operation);
+        if (!finalResult.Operation.Ok) {
             co_return FailPermanent(context.TerminalID, "Payment insert history failed");
         }
+        ThrowIfCommitFailed(finalResult.Commit);
     }
-
-    LOG_T("Terminal " << context.TerminalID << " committing Payment");
-    auto commit = co_await SuspendCommit(tx, context);
-    ThrowIfCommitFailed(commit);
 
     latency = std::chrono::duration_cast<std::chrono::microseconds>(
         std::chrono::steady_clock::now() - startTs);

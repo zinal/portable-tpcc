@@ -35,18 +35,16 @@ TFuture<bool> GetStockLevelTask(
 
     LOG_T("Terminal " << context.TerminalID << " started StockLevel: W=" << in.WarehouseID << ", D=" << in.DistrictID);
 
+    LOG_T("Terminal " << context.TerminalID << " committing StockLevel");
     {
-        auto r = co_await SuspendExecute(tx, context, TCountRecentLowStock{
+        auto finalResult = co_await SuspendExecuteFinalAndCommit(tx, context, TCountRecentLowStock{
             in.WarehouseID, in.DistrictID, in.Threshold, 20});
-        ThrowIfRetryable(r);
-        if (!r.Ok) {
+        ThrowIfRetryable(finalResult.Operation);
+        if (!finalResult.Operation.Ok) {
             co_return FailPermanent(context.TerminalID, "StockLevel count failed");
         }
+        ThrowIfCommitFailed(finalResult.Commit);
     }
-
-    LOG_T("Terminal " << context.TerminalID << " committing StockLevel");
-    auto commit = co_await SuspendCommit(tx, context);
-    ThrowIfCommitFailed(commit);
 
     latency = std::chrono::duration_cast<std::chrono::microseconds>(
         std::chrono::steady_clock::now() - startTs);

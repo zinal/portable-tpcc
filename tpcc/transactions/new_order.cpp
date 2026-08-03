@@ -222,7 +222,18 @@ TFuture<bool> GetNewOrderTask(
             }
         }
 
-        {
+        const bool lastLine = (olNum == in.NumItems);
+        if (lastLine) {
+            LOG_T("Terminal " << context.TerminalID << " committing NewOrder");
+            auto finalResult = co_await SuspendExecuteFinalAndCommit(tx, context, TInsertOrderLine{
+                in.WarehouseID, in.DistrictID, nextOrderID, olNum, iid,
+                supWh, qty, olAmount, stock.DistInfo});
+            ThrowIfRetryable(finalResult.Operation);
+            if (!finalResult.Operation.Ok) {
+                co_return FailPermanent(context.TerminalID, "NewOrder insert order line failed");
+            }
+            ThrowIfCommitFailed(finalResult.Commit);
+        } else {
             auto r = co_await SuspendExecute(tx, context, TInsertOrderLine{
                 in.WarehouseID, in.DistrictID, nextOrderID, olNum, iid,
                 supWh, qty, olAmount, stock.DistInfo});
@@ -232,10 +243,6 @@ TFuture<bool> GetNewOrderTask(
             }
         }
     }
-
-    LOG_T("Terminal " << context.TerminalID << " committing NewOrder");
-    auto commit = co_await SuspendCommit(tx, context);
-    ThrowIfCommitFailed(commit);
 
     latency = std::chrono::duration_cast<std::chrono::microseconds>(
         std::chrono::steady_clock::now() - startTs);

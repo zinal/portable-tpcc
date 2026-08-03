@@ -84,6 +84,13 @@ TFuture<bool> GetDeliveryTask(
         }
     }
 
+    int lastDistrictWithOrder = -1;
+    for (int districtID = DISTRICT_LOW_ID; districtID <= DISTRICT_HIGH_ID; ++districtID) {
+        if (orders[districtID - DISTRICT_LOW_ID]) {
+            lastDistrictWithOrder = districtID;
+        }
+    }
+
     for (int districtID = DISTRICT_LOW_ID; districtID <= DISTRICT_HIGH_ID; ++districtID) {
         if (!orders[districtID - DISTRICT_LOW_ID]) {
             continue;
@@ -99,7 +106,16 @@ TFuture<bool> GetDeliveryTask(
             }
         }
 
-        {
+        if (districtID == lastDistrictWithOrder) {
+            LOG_T("Terminal " << context.TerminalID << " committing Delivery");
+            auto finalResult = co_await SuspendExecuteFinalAndCommit(tx, context, TApplyDeliveryToCustomer{
+                in.WarehouseID, districtID, order.CustomerId, order.TotalAmount});
+            ThrowIfRetryable(finalResult.Operation);
+            if (!finalResult.Operation.Ok) {
+                co_return FailPermanent(context.TerminalID, "Delivery apply customer failed");
+            }
+            ThrowIfCommitFailed(finalResult.Commit);
+        } else {
             auto r = co_await SuspendExecute(tx, context, TApplyDeliveryToCustomer{
                 in.WarehouseID, districtID, order.CustomerId, order.TotalAmount});
             ThrowIfRetryable(r);
@@ -109,9 +125,11 @@ TFuture<bool> GetDeliveryTask(
         }
     }
 
-    LOG_T("Terminal " << context.TerminalID << " committing Delivery");
-    auto commit = co_await SuspendCommit(tx, context);
-    ThrowIfCommitFailed(commit);
+    if (lastDistrictWithOrder < 0) {
+        LOG_T("Terminal " << context.TerminalID << " committing Delivery");
+        auto commit = co_await SuspendCommit(tx, context);
+        ThrowIfCommitFailed(commit);
+    }
 
     latency = std::chrono::duration_cast<std::chrono::microseconds>(
         std::chrono::steady_clock::now() - startTs);

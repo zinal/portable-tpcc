@@ -10,6 +10,7 @@ SRCS(
     task_queue.cpp
     log_backend.cpp
     time_util.cpp
+    warehouse_range.cpp
 )
 
 PEERDIR(

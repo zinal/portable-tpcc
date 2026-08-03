@@ -55,12 +55,31 @@ inline auto SuspendExecute(
     return TSuspendWithFuture(tx.Execute(op), context.TaskQueue, context.TerminalID);
 }
 
+inline auto SuspendExecuteFinalAndCommit(
+    ITpccTransaction& tx,
+    TTransactionContext& context,
+    const TSemanticOp& op)
+{
+    return TSuspendWithFuture(tx.ExecuteFinalAndCommit(op), context.TaskQueue, context.TerminalID);
+}
+
 inline auto SuspendCommit(ITpccTransaction& tx, TTransactionContext& context) {
     return TSuspendWithFuture(tx.Commit(), context.TaskQueue, context.TerminalID);
 }
 
 inline auto SuspendRollback(ITpccTransaction& tx, TTransactionContext& context) {
     return TSuspendWithFuture(tx.Rollback(), context.TaskQueue, context.TerminalID);
+}
+
+inline void ThrowIfFinalCommitFailed(const TFinalCommitResult& r) {
+    ThrowIfRetryable(r.Operation);
+    if (!r.Operation.Ok) {
+        throw TClassifiedError(
+            r.Operation.ErrorClass,
+            r.Operation.NativeCode,
+            r.Operation.Message.empty() ? "final operation failed" : r.Operation.Message);
+    }
+    ThrowIfCommitFailed(r.Commit);
 }
 
 inline bool FailPermanent(size_t terminalId, const char* msg) {
