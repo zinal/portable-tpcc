@@ -338,7 +338,7 @@ Adapters MUST:
   `ANALYZE`.
 - Blocking libpqxx: IO MUST run on a bounded pool (current `IExecutor` pattern).
 - Partitioning is currently `none`; the proposed large-scale design is
-  warehouse `RANGE` on local tables — see
+  warehouse `HASH` on local tables — see
   [pgsql-partitioning-design.md](pgsql-partitioning-design.md).
 
 ### 5.2. YDB

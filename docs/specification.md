@@ -370,7 +370,7 @@ visible in the result settings/options.
   `ExecuteFinalAndCommit` for the last statement.
 - **PostgreSQL:** prepared statements, `COPY`, DECIMAL, SQLSTATE mapping,
   bounded IO if using blocking libpqxx, `ANALYZE` after indexes. Proposed
-  large-scale physical layout: warehouse `RANGE` partitions (see
+  large-scale physical layout: warehouse `HASH` partitions (see
   [pgsql-partitioning-design.md](pgsql-partitioning-design.md)).
 - **OceanBase:** warehouse partitioning, cached statements, clear error
   classes, optional FKs as a recorded physical option.

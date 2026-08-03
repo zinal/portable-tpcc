@@ -15,21 +15,23 @@ partitions), [specification.md](specification.md) §11.
    `order_line`, `oorder`, `new_order`, `history`) at high warehouse counts.
 2. Ensure every main-scenario query that touches a partitioned table supplies
    an equality predicate on the partition key so PostgreSQL can prune to one
-   (or a small set of) partitions — no full partition fan-out in the hot path.
+   partition — no full partition fan-out in the hot path.
 3. Keep primary keys and secondary indexes meaningful **inside** each
    partition (local B-trees stay compact and selective).
 4. Preserve logical TPC-C semantics, loader idempotency
    (`DELETE warehouse … CASCADE` + `COPY`), and optional foreign keys.
-5. Record the physical choice in capabilities / run settings
-   (`PartitioningStyle`), consistent with YDB’s `warehouse_range`.
+5. Keep schema setup simple: choose a partition **count**, not a list of
+   warehouse id bounds.
+6. Record the physical choice in capabilities / run settings
+   (`PartitioningStyle`).
 
 Non-goals for the first iteration:
 
 - Changing shared transaction logic or semantic ops.
-- Auto-attaching partitions when scale grows after schema creation.
+- Resharding (changing modulus) without clean + recreate.
 - Subpartitioning by district (see §7).
 
-## 2. Workload access patterns (why warehouse RANGE)
+## 2. Workload access patterns (why warehouse key)
 
 All five TPC-C transactions bind SQL in
 `tpcc/dbms/pgsql/tpcc_session.cpp`. Warehouse-scoped tables are always
@@ -45,31 +47,45 @@ filtered by a warehouse id column (and usually district):
 
 Queries **without** a warehouse predicate: only `item` by `i_id` (global
 catalog, 100 000 rows). Everything else is point or short-range access with
-an equality filter on `*_w_id` / `w_id`.
+an **equality** filter on `*_w_id` / `w_id`.
 
-Therefore the natural partition key for warehouse-local tables is the leading
-warehouse column already present in every local primary key — the same axis
-YDB uses (`PartitioningStyle = "warehouse_range"`).
+Equality on the partition key is exactly what PostgreSQL hash partition
+pruning needs: each such lookup touches **one** partition.
 
-## 3. Recommended scheme
+## 3. Recommended scheme: HASH by warehouse id
 
-### 3.1. Style
+### 3.1. Why HASH over RANGE
+
+| | HASH | RANGE |
+| --- | --- | --- |
+| Schema input | single integer: modulus `N` | explicit `FROM … TO …` bound list |
+| Bound generation | none | must derive splits from `W` and per-table sizing |
+| Pruning on `w_id = $1` | yes (one partition) | yes (one partition) |
+| New warehouses within same modulus | no DDL change | may miss coverage without DEFAULT / recreate |
+| Contiguous WH ranges co-located | no | yes |
+| Alignment with YDB splitter | different mechanism, same key axis | closer to YDB `warehouse_range` |
+
+For the TPC-C mix, pruning quality is the same: every hot path uses equality on
+warehouse id. HASH wins on operational simplicity — no bound generator, no
+catch-all / `MAXVALUE` policy, no failure mode when `W` at load exceeds the
+bounds chosen at schema time (as long as modulus stays fixed).
+
+Loader warehouse ranges are no longer disk-contiguous; that is acceptable:
+load uses `COPY` per warehouse with CASCADE delete by `w_id`, not range scans
+across adjacent warehouses.
+
+### 3.2. Style
 
 | Setting | Value |
 | --- | --- |
-| Method | Declarative **`PARTITION BY RANGE (warehouse_id)`** |
-| Capability string | `warehouse_range` (align with YDB) |
-| Bounds | Fixed at schema time from `scale.warehouses` / `--warehouses` |
-| Granularity | Multiple warehouses per partition (not 1:1) |
+| Method | Declarative **`PARTITION BY HASH (warehouse_id)`** |
+| Capability string | `warehouse_hash` |
+| Schema knob | `database.options.partition_count` (modulus `N`) |
+| Optional helper | derive `N` from `scale.warehouses` when count is omitted |
 | `item` | **Not partitioned** (global, point lookup by `i_id`) |
 | `warehouse`, `district` | **Not partitioned** in v1 (tiny; simplify FK roots) |
 
-Hash partitioning was considered: it also prunes on equality and does not need
-bounds up front, but RANGE matches the YDB splitter mental model, keeps
-loader warehouse ranges contiguous on disk, and makes “warehouses per
-partition” an explicit tunable.
-
-### 3.2. Tables to partition
+### 3.3. Tables to partition
 
 | Table | Partition key | Notes |
 | --- | --- | --- |
@@ -82,31 +98,35 @@ partition” an explicit tunable.
 
 `ol_supply_w_id` is **not** the partition key for `order_line`: lines are always
 written and read under the **home** order warehouse (`ol_w_id`). Remote stock
-is accessed via `stock.s_w_id`, which is partitioned correctly.
+is accessed via `stock.s_w_id`, which is hashed correctly on its own.
 
-### 3.3. Partition sizing
+Use the **same modulus `N`** for all partitioned tables so planning and ops
+stay uniform.
 
-Reuse the YDB heuristics from `tpcc/dbms/ydb/data_splitter.cpp` (or extract a
-tiny shared helper under `tpcc/domain/` / adapter-local copy to avoid coupling):
+### 3.4. Choosing `N` (partition count)
 
-- Target ~2 GiB per partition using approximate MB/warehouse:
-  - `stock` ≈ 45 MB/WH
-  - `order_line` ≈ 35 MB/WH (grows during run; initial sizing is a lower bound)
-  - `customer` ≈ 20 MB/WH
-  - `history` ≈ 2.4 MB/WH initial (grows)
-  - `oorder` ≈ 1.5 MB/WH
-- Floor: `max(50, warehouses / 100)` partitions for large tables when the MB
-  heuristic would create fewer.
-- Emit bounds `FOR VALUES FROM (lo) TO (hi)` covering `[1, warehouses+1)`.
-- Always create a final catch-all partition
-  `FOR VALUES FROM (warehouses+1) TO (MAXVALUE)` (and optionally
-  `FROM (MINVALUE) TO (1)`) so misconfiguration fails loudly on insert rather
-  than aborting with “no partition found” only after partial load — or omit
-  catch-all and fail fast; prefer **fail fast** for TPC-C fixed scale.
+Only `N` must be decided at schema time. Suggested policy:
 
-Example for `W = 1000`, ~45 MB/WH stock → ~45 WH/partition → ~23 partitions.
+1. If `database.options.partition_count` is set → use it (must be ≥ 1).
+2. Else if `scale.warehouses` / `--warehouses` is known → derive `N` from a
+   simple size heuristic (optional convenience, not required for correctness):
+   - Target roughly ~2 GiB per partition using `stock` ≈ 45 MB/WH as the
+     dominant table → about 45 warehouses per partition.
+   - Floor: `max(16, ceil(W / 100))` (avoid tiny modulus on large `W`).
+   - Cap: e.g. 1024 (catalog / planning cost).
+3. Else → reject schema with partitioning enabled (need either explicit
+   `partition_count` or warehouses).
 
-### 3.4. DDL sketch
+Same `N` for every partitioned table. Powers of two are fine but **not**
+required by PostgreSQL.
+
+Example: `W = 1000` → ~45 WH/partition → `N ≈ 23` (or round to 32 if a
+power-of-two preference is added later).
+
+Changing `N` later requires clean + recreate (hash modulus is part of the
+physical layout). Document that; TPC-C scale is normally fixed for a run.
+
+### 3.5. DDL sketch
 
 ```sql
 CREATE TABLE stock (
@@ -114,27 +134,29 @@ CREATE TABLE stock (
     s_i_id int NOT NULL,
     -- … columns …
     PRIMARY KEY (s_w_id, s_i_id)
-) PARTITION BY RANGE (s_w_id);
+) PARTITION BY HASH (s_w_id);
 
-CREATE TABLE stock_p001 PARTITION OF stock
-    FOR VALUES FROM (1) TO (46);
--- … more partitions …
+CREATE TABLE stock_p0 PARTITION OF stock
+    FOR VALUES WITH (MODULUS 32, REMAINDER 0);
+-- … remainder 1 .. 31 …
 ```
+
+Generation is a trivial loop `for r in 0 .. N-1`, with no bound arithmetic.
 
 Primary keys already contain the partition column, satisfying PostgreSQL’s
 rule that unique constraints on partitioned tables include the partition key.
 The existing unique constraint `idx_order (o_w_id, o_d_id, o_c_id, o_id)` is
 likewise valid.
 
-`InitSync` must become warehouse-count-aware (YDB already is):
+`InitSync` needs the modulus (and optionally warehouses only to derive it):
 
 ```text
-TPgAdminAdapter(connection, path, warehouseCount)
-  → InitSync(connection, path, warehouseCount)
+TPgAdminAdapter(connection, path, partitionCount)
+  → InitSync(connection, path, partitionCount)
 ```
 
-CLI `tpcc schema` and the orchestrated schema role must pass
-`scale.warehouses` / `--warehouses` (today schema ignores warehouse count).
+CLI `tpcc schema` accepts `--partition_count` and/or `--warehouses` when
+`partitioning=warehouse_hash`.
 
 ## 4. Indexes after partitioning
 
@@ -142,24 +164,19 @@ Partitioning does not replace indexes; it makes them local and smaller.
 
 | Index | Definition | Role after partitioning |
 | --- | --- | --- |
-| PK per table | unchanged, warehouse-leading | Local unique index per partition; point lookups prune then seek |
+| PK per table | unchanged, warehouse-leading | Local unique index per partition; prune by hash then seek |
 | `idx_order` | `UNIQUE (o_w_id, o_d_id, o_c_id, o_id)` | Order-Status “latest order for customer”; still local |
 | `idx_customer_name` | `(c_w_id, c_d_id, c_last, c_first)` | Payment / Order-Status by last name; prune on `c_w_id` then local scan |
 
 Optional follow-ups (not required for correctness):
 
-1. **Delivery assist** — if `EXPLAIN` shows a suboptimal plan for
-   `WHERE no_w_id=$1 AND no_d_id=$2 ORDER BY no_o_id LIMIT 1 FOR UPDATE`,
-   the PK `(no_w_id, no_d_id, no_o_id)` already matches; partitioning mainly
-   shrinks the leaf pages scanned. No extra index expected.
-2. **Stock-Level** — range on `order_line (ol_w_id, ol_d_id, ol_o_id)` is the
-   PK prefix; join to `stock` is point by `(s_w_id, s_i_id)`. Partition pruning
-   on both sides is the main win; avoid a global GIN/hash on `ol_i_id`.
-3. Do **not** drop leading `*_w_id` from secondary index definitions on the
-   parent table: PostgreSQL attaches the same key to each partition, and the
-   leading column documents the access path used by shared SQL. Compact
-   per-partition keys like `(c_d_id, c_last, c_first)` are a later micro-opt
-   only if measured.
+1. **Delivery** — PK `(no_w_id, no_d_id, no_o_id)` already matches
+   `WHERE no_w_id=$1 AND no_d_id=$2 ORDER BY no_o_id LIMIT 1 FOR UPDATE`.
+   Hash pruning shrinks the leaf pages; no extra index expected.
+2. **Stock-Level** — PK prefix on `order_line` + point PK on `stock`; both
+   prune on warehouse equality. Avoid indexes that ignore `*_w_id`.
+3. Keep leading `*_w_id` in secondary index definitions on the parent table
+   (documents the access path used by shared SQL).
 
 Index creation timing stays as today: defer `idx_customer_name` until after
 `COPY` (`CreateIndexes`); keep `idx_order` with table DDL (or move both
@@ -175,30 +192,26 @@ PostgreSQL allows foreign keys **to** and **between** partitioned tables when
 referenced unique keys include the partition columns. Proposed FK matrix for
 v1:
 
-| From | To | OK with warehouse RANGE? |
+| From | To | OK with warehouse HASH? |
 | --- | --- | --- |
 | `stock(s_w_id)` → `warehouse(w_id)` | unpartitioned parent | yes |
 | `stock(s_i_id)` → `item(i_id)` | unpartitioned | yes |
 | `district` → `warehouse` | both unpartitioned | yes |
 | `customer` → `district` | partitioned → unpartitioned | yes |
-| `oorder` → `customer` | both partitioned on same WH key | yes (keys align) |
+| `oorder` → `customer` | both hashed on same WH key | yes (keys align) |
 | `new_order` → `oorder` | same | yes |
 | `order_line` → `oorder` | same home WH | yes |
-| `order_line(ol_supply_w_id, ol_i_id)` → `stock` | supply WH may ≠ home WH | yes: FK columns are exactly `stock` PK; pruning uses referenced side |
+| `order_line(ol_supply_w_id, ol_i_id)` → `stock` | supply WH may ≠ home WH | yes: FK columns are exactly `stock` PK |
 | `history` → `customer` / `district` | see below | yes with care |
 
 **`history` partition key:** use `h_w_id` (payment / home warehouse). Runtime
-only inserts history; measurement never selects it. Loader CASCADE from
-`warehouse` / `district` / `customer` may touch rows whose `h_c_w_id` differs
-from `h_w_id` (15% remote payments). CASCADE delete from a remote customer
-then has to find history rows by `h_c_w_id` **without** the partition key —
-PostgreSQL may scan all history partitions for that delete. That cost hits
-**load/reload**, not the measurement mix. Acceptable for v1; document it.
+only inserts history; measurement never selects it. Loader CASCADE from a
+remote customer (`h_c_w_id`) may scan all history partitions when deleting —
+load/reload cost only. Acceptable for v1; document it.
 
 If FK maintenance on partitioned tables proves too expensive at load time,
 expose `database.options.foreign_keys` (bool, default `true`) analogous to
-OceanBase’s optional FKs, and record `ForeignKeys` in capabilities. Prefer
-keeping FKs on for conformance/debugging unless benchmarks show a clear loss.
+OceanBase’s optional FKs, and record `ForeignKeys` in capabilities.
 
 ## 6. Code touch points (implementation plan)
 
@@ -208,45 +221,44 @@ to protected infrastructure trees (`build/`, `contrib/`, `devtools/`,
 
 | Step | Files | Change |
 | --- | --- | --- |
-| 1 | `init.cpp` / `init.h` | Generate partitioned DDL from `warehouseCount`; CREATE TABLE … PARTITION BY; CREATE PARTITION OF … |
-| 2 | `pg_admin_adapter.*` | Pass warehouse count into `EnsureSchema` / `InitSync` |
-| 3 | `app/pgsql/main.cpp`, `worker_loader.cpp` | Require warehouses for `schema` / schema role (same as import) |
-| 4 | New `partition_splitter.cpp` (or shared with YDB later) | Bounds calculation |
-| 5 | `run_config.cpp` | Accept `database.options.partitioning` = `none` \| `warehouse_range` (default `warehouse_range` once implemented, or `none` until validated) |
-| 6 | `pg_capabilities.cpp` | `PartitioningStyle = "warehouse_range"` when enabled |
-| 7 | `path_checker.cpp` / clean | Treat partitions as part of parent; `DROP TABLE … CASCADE` already drops partitions |
-| 8 | `docs/adapter-api.md` §5.1, `specification.md` §11 | Document PG warehouse RANGE |
-| 9 | Tests | Schema smoke test: create with W partitions, verify `pg_partition_tree`, run a short workload or `EXPLAIN` checks for pruning |
+| 1 | `init.cpp` / `init.h` | `PARTITION BY HASH (…)`; loop `MODULUS N, REMAINDER r` |
+| 2 | `pg_admin_adapter.*` | Pass partition count into `EnsureSchema` / `InitSync` |
+| 3 | `app/pgsql/main.cpp`, `worker_loader.cpp` | Wire `--partition_count` / derive from warehouses |
+| 4 | Small helper (adapter-local) | `DerivePartitionCount(warehouses)` — optional |
+| 5 | `run_config.cpp` | `options.partitioning` = `none` \| `warehouse_hash`; `options.partition_count` |
+| 6 | `pg_capabilities.cpp` | `PartitioningStyle = "warehouse_hash"` when enabled |
+| 7 | `path_checker.cpp` / clean | Parent `DROP … CASCADE` drops hash partitions |
+| 8 | `docs/adapter-api.md` §5.1, `specification.md` §11 | Document PG warehouse HASH |
+| 9 | Tests | Create with `N` partitions; `pg_partition_tree`; `EXPLAIN` pruning |
 
 Suggested rollout:
 
-1. **Flag-gated DDL** (`options.partitioning=warehouse_range`) with default
+1. **Flag-gated DDL** (`options.partitioning=warehouse_hash`) with default
    `none` until soak-tested.
 2. Verify partition pruning with `EXPLAIN (ANALYZE, BUFFERS)` on Stock-Level,
    Delivery oldest-new-order, Payment-by-name, New-Order stock RMW.
-3. Flip default to `warehouse_range` for orchestrated large-scale runs.
+3. Flip default to `warehouse_hash` for orchestrated large-scale runs.
 4. Only then consider district subpartitioning (§7).
 
 ## 7. Alternatives considered
 
-### 7.1. HASH by warehouse
+### 7.1. RANGE by warehouse
 
-Pros: no bound list; easy attach of new warehouses. Cons: weaker locality for
-contiguous loader ranges; diverges from YDB; harder to reason about “N WH per
-shard”. Rejected for v1; keep as escape hatch if RANGE bound management becomes
-painful.
+Pros: contiguous WH ranges co-located; closer to YDB `PARTITION_AT_KEYS`.
+Cons: must generate and maintain explicit bounds; schema depends tightly on
+`W`; easy to get “no partition for row” if scale grows. Rejected for v1 in
+favor of HASH simplicity; revisit only if measured locality of contiguous
+ranges matters for a specific PG deployment.
 
 ### 7.2. LIST one partition per warehouse
 
 Pros: perfect pruning. Cons: catalog bloat and planning cost at W ≥ 10k.
 Rejected except possibly for tiny demo scales.
 
-### 7.3. Subpartition by district (`RANGE` WH + `LIST` d_id)
+### 7.3. Subpartition by district
 
-Pros: Delivery/Stock-Level locality within a warehouse; even smaller local
-indexes. Cons: 10× partition count; `stock` has no district; Payment remote
-customer still crosses WH. Defer until warehouse RANGE is proven and W is so
-large that per-WH indexes are still hot.
+Pros: even smaller local indexes for Delivery/Stock-Level. Cons: 10×
+partition count; `stock` has no district. Defer until warehouse HASH is proven.
 
 ### 7.4. Partition `item` by `i_id`
 
@@ -268,38 +280,43 @@ for CASCADE reload.
 | Oldest new_order | `no_w_id,no_d_id` | 1 |
 | Order lines by order | `ol_w_id,ol_d_id,ol_o_id` | 1 |
 | Stock-Level join | `ol_w_id` + `s_w_id` (same home) | 1 + 1 |
-| New-Order remote stock | `s_w_id = remote` | 1 (different partition, still point) |
+| New-Order remote stock | `s_w_id = remote` | 1 (possibly another remainder) |
 | Payment remote customer | `c_w_id = remote` | 1 |
 | Item lookup | unpartitioned | n/a |
 
 No measurement query should plan as “Append of all partitions” for these
-tables when `enable_partition_pruning` is on (default).
+tables when `enable_partition_pruning` is on (default). Hash pruning requires
+an equality (or `IS NULL`) constraining the hash key — which the mix already
+has.
 
 ## 9. Risks and mitigations
 
 | Risk | Mitigation |
 | --- | --- |
-| Schema created with wrong W | Require warehouses at schema time; refuse `partitioning=warehouse_range` without positive scale |
-| Scale increased after schema | Document as unsupported for RANGE v1; clean + recreate (TPC-C fixed scale) |
+| Bad / missing `N` | Require `partition_count` or warehouses when hashing enabled |
+| Skew (uneven WH per remainder) | Accept statistical skew; TPC-C WH ids are dense integers — hash distributes well enough |
+| Changing `N` after load | Unsupported; clean + recreate |
 | FK / CASCADE load slowdown | Optional `foreign_keys=false`; measure COPY+DELETE paths |
-| Planner still scans all partitions | Add regression `EXPLAIN` tests; ensure params are typed (no coercion hiding consts) |
-| COPY into parent | Supported for partitioned tables; keep current `COPY` path; verify per major PG version used in CI |
-| Too many partitions | Cap via warehouses-per-partition heuristic; document max recommended W |
+| Planner still scans all partitions | `EXPLAIN` regression tests; keep params typed as `int` |
+| COPY into parent | Supported; verify on the PG major used in CI |
+| Too large `N` | Cap (e.g. 1024); document guidance |
 
 ## 10. Success criteria
 
-1. `PartitioningStyle` reported as `warehouse_range` when enabled.
-2. For W ≥ 500, Stock-Level and Delivery show single-partition prune in
-   `EXPLAIN`.
+1. `PartitioningStyle` reported as `warehouse_hash` when enabled.
+2. For W ≥ 500 with sensible `N`, Stock-Level and Delivery show
+   single-partition prune in `EXPLAIN`.
 3. Logical checks / consistency checks still pass with FKs enabled.
 4. Idempotent warehouse reload still works via CASCADE.
-5. No shared-layer transaction code changes.
+5. Schema path does not generate warehouse id ranges — only modulus/remainder
+   children.
+6. No shared-layer transaction code changes.
 
 ## 11. Summary recommendation
 
-Implement **RANGE partitioning by warehouse id** on
+Implement **HASH partitioning by warehouse id** on
 `stock`, `customer`, `oorder`, `new_order`, `order_line`, and `history`; leave
-`item`, `warehouse`, and `district` unpartitioned; size partitions with the
-existing YDB-style MB/warehouse heuristic; keep current PKs and secondary
-indexes; gate with `database.options.partitioning` until validated, then align
-capabilities with YDB’s `warehouse_range`.
+`item`, `warehouse`, and `district` unpartitioned; configure with a single
+`partition_count` (optionally derived from `W`); keep current PKs and
+secondary indexes; gate with `database.options.partitioning=warehouse_hash`
+until validated.
