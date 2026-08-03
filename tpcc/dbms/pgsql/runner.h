@@ -34,8 +34,7 @@ struct TRunConfig {
     bool HighResHistogram = false;
 
     // Simulation mode: replaces real TPC-C transactions with a lightweight
-    // SELECT 1 loop or pure sleep. Useful for testing the coroutine/IO stack.
-    int SimulateTransactionMs = 0;
+    // SELECT 1 loop. Useful for testing the coroutine/IO stack.
     int SimulateTransactionSelect1 = 0;
     bool UseTui = false;
 
@@ -64,7 +63,7 @@ struct TRunConfig {
     bool RetryAmbiguousCommit = false;
 
     bool IsSimulationMode() const {
-        return SimulateTransactionMs > 0 || SimulateTransactionSelect1 > 0;
+        return SimulateTransactionSelect1 > 0;
     }
 
     static constexpr auto SleepMsEveryIterationMainLoop = std::chrono::milliseconds(50);

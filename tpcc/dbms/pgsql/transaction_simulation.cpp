@@ -25,14 +25,6 @@ TFuture<bool> GetSimulationTask(
         RandomNumber(DISTRICT_LOW_ID, DISTRICT_HIGH_ID);
     }
 
-    if (context.SimulateTransactionMs != 0) {
-        std::chrono::milliseconds delay(context.SimulateTransactionMs);
-        co_await TSuspend(context.TaskQueue, context.TerminalID, delay);
-        auto endTs = std::chrono::steady_clock::now();
-        latency = std::chrono::duration_cast<std::chrono::microseconds>(endTs - startTs);
-        co_return true;
-    }
-
     for (int i = 0; i < context.SimulateTransactionSelect1; ++i) {
         auto result = co_await TSuspendWithFuture(
             tx.ExecuteSelect1(),

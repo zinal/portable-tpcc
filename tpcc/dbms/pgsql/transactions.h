@@ -11,7 +11,7 @@ namespace NTpcc {
 
 class TPgTpccTransaction;
 
-// PG-only simulation path (SELECT 1 / sleep). Not part of the semantic session API.
+// PG-only simulation path (SELECT 1). Not part of the semantic session API.
 TFuture<bool> GetSimulationTask(
     TTransactionContext& context,
     std::chrono::microseconds& latency,

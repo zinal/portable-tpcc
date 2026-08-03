@@ -199,7 +199,6 @@ public:
         TPhaseController& phaseController,
         std::shared_ptr<TTerminalStats>& stats,
         const TWorkloadConfig& workload,
-        int simulateTransactionMs = 0,
         int simulateTransactionSelect1 = 0,
         size_t retryMaxAttempts = 4,
         int64_t retryInitialBackoffMs = 10,

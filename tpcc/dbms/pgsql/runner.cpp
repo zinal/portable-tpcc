@@ -290,27 +290,17 @@ TRunOutcome RunSync(const TRunConfig& config, TTerminalStats* aggregatedStats) {
     }
 
     if (config.IsSimulationMode()) {
-        if (config.SimulateTransactionMs > 0) {
-            LOG_I("SIMULATION MODE: sleep " << config.SimulateTransactionMs << "ms per transaction (no DB queries)");
-        } else {
-            LOG_I("SIMULATION MODE: " << config.SimulateTransactionSelect1 << " SELECT 1 queries per transaction");
-        }
+        LOG_I("SIMULATION MODE: " << config.SimulateTransactionSelect1 << " SELECT 1 queries per transaction");
     }
-
-    const bool needsConnections = !config.IsSimulationMode() || config.SimulateTransactionSelect1 > 0;
 
     LOG_I("Starting TPC-C benchmark: " << warehouseCount << " warehouses, " << terminalCount
           << " terminals, " << threadCount << " threads, "
-          << (needsConnections ? poolSize : 0) << " connections, "
+          << poolSize << " connections, "
           << maxInflight << " max inflight");
 
-    std::unique_ptr<PgConnectionPool> connectionPool;
-    std::unique_ptr<TPgSessionFactory> sessionFactory;
-    if (needsConnections) {
-        connectionPool = std::make_unique<PgConnectionPool>(
-            config.ConnectionString, poolSize, ioThreads, config.Path);
-        sessionFactory = std::make_unique<TPgSessionFactory>(*connectionPool);
-    }
+    auto connectionPool = std::make_unique<PgConnectionPool>(
+        config.ConnectionString, poolSize, ioThreads, config.Path);
+    auto sessionFactory = std::make_unique<TPgSessionFactory>(*connectionPool);
 
     auto taskQueue = CreateTaskQueue(threadCount, maxInflight, terminalCount, terminalCount);
 
@@ -353,7 +343,6 @@ TRunOutcome RunSync(const TRunConfig& config, TTerminalStats* aggregatedStats) {
                     phaseController,
                     perThreadStats[threadIndex],
                     config.Workload,
-                    config.SimulateTransactionMs,
                     config.SimulateTransactionSelect1,
                     config.RetryMaxAttempts,
                     config.RetryInitialBackoffMs,
@@ -435,9 +424,7 @@ TRunOutcome RunSync(const TRunConfig& config, TTerminalStats* aggregatedStats) {
             LOG_E("Missed --start-at deadline " << FormatRfc3339Utc(rampStart) << ": prepare finished at " << FormatRfc3339Utc(preparedAt));
             GetGlobalErrorVariable().store(true);
             GetGlobalInterruptSource().request_stop();
-            if (connectionPool) {
-                connectionPool->CancelAll();
-            }
+            connectionPool->CancelAll();
             taskQueue->WakeupAndNeverSleep();
             taskQueue->Join();
             outcome.ExitCode = 1;
@@ -458,9 +445,7 @@ TRunOutcome RunSync(const TRunConfig& config, TTerminalStats* aggregatedStats) {
         if (stopToken.stop_requested()) {
             phaseController.SetPhase(ERunPhase::Stop);
             GetGlobalInterruptSource().request_stop();
-            if (connectionPool) {
-                connectionPool->CancelAll();
-            }
+            connectionPool->CancelAll();
             taskQueue->WakeupAndNeverSleep();
             taskQueue->Join();
             outcome.ExitCode = GetGlobalErrorVariable().load() ? 1 : 0;
@@ -574,9 +559,7 @@ TRunOutcome RunSync(const TRunConfig& config, TTerminalStats* aggregatedStats) {
 
     LOG_I("Stopping terminals...");
     GetGlobalInterruptSource().request_stop();
-    if (connectionPool) {
-        connectionPool->CancelAll();
-    }
+    connectionPool->CancelAll();
     taskQueue->WakeupAndNeverSleep();
     taskQueue->Join();
 
