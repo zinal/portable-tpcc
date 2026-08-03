@@ -21,6 +21,7 @@ TPC-C 5.11 conformance notes:
 | ftxui | `contrib/libs/ftxui` | Removed / no longer used by tpcc (vendored copy retained) |
 | googletest | `contrib/restricted/googletest` | Unit and integration tests |
 | nlohmann_json | `contrib/restricted/nlohmann_json` | JSON for run-config and metrics |
+| OceanBase Connector/C | `contrib/restricted/obconnector-c` | OceanBase adapter (`TObSession`, prepared statements, multi-row insert loader) |
 | abseil-cpp | `contrib/restricted/abseil-cpp` | optional utilities |
 | tcmalloc | `contrib/libs/tcmalloc` | optional allocator |
 | util | `util/` | strings, threading, system, random |
@@ -62,13 +63,9 @@ required for the current port.
 | `tpcc/app/pgsql` (`tpcc-pgsql`) | transitional | normative roles + legacy aliases; orchestrated `check`/`schema` |
 | `tpcc/dbms/ydb` | in progress | YDB query/table SDK adapter; shared workflows via `ITpccSession`; BulkUpsert loader |
 | `tpcc/app/ydb` (`tpcc-ydb`) | in progress | normative roles + legacy aliases for YDB |
+| `tpcc/dbms/oceanbase` | done | Connector/C transport, admin/load/session/check adapters, terminal runtime |
+| `tpcc/app/oceanbase` (`tpcc-oceanbase`) | done | normative roles + legacy aliases for OceanBase |
 | `tpccctl` | done (Phase 5) | SSH/local remote drive, `--start-at`, collect/consolidate |
-
-### Not yet started / blocked
-
-| Module | Notes |
-| --- | --- |
-| `tpcc/dbms/oceanbase` | external SDK; Phase 6 |
 
 ## Remaining work (tracked)
 
@@ -80,7 +77,7 @@ Architecture / product (see [alignment-plan.md](alignment-plan.md) Phase 6):
    row bytes, minimum PG version). Histogram layout resolved as `linear_exp`
    (`unit` + `highest`).
 3. Broader unit/integration test coverage.
-4. OceanBase adapter (blocked on SDK packaging below).
+4. OceanBase integration validation against real multi-node deployments.
 
 TPC-C 5.11 engineering deviations and open defects:
 [tpcc-5.11-conformance-analysis.md](tpcc-5.11-conformance-analysis.md).
@@ -90,8 +87,8 @@ TPC-C 5.11 engineering deviations and open defects:
 | SDK | Adapter |
 | --- | --- |
 | YDB C++ SDK | `tpcc/dbms/ydb` |
-| OceanBase / MariaDB connector | `tpcc/dbms/oceanbase` |
+| OceanBase Connector/C | `tpcc/dbms/oceanbase` |
 
-OceanBase requires separate vendoring or environment setup; implementation is paused
-until an explicit decision on SDK packaging is made. The YDB C++ SDK is already
-available in this repository and is used by `tpcc/dbms/ydb`.
+OceanBase Connector/C is vendored at `contrib/restricted/obconnector-c` and is
+used by `tpcc/dbms/oceanbase`. The YDB C++ SDK is already available in this
+repository and is used by `tpcc/dbms/ydb`.

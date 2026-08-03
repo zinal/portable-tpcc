@@ -424,7 +424,8 @@ comes from shared libraries and the distributed `run-config.json`.
 | `tpcc/transactions` | Async `ITpccSession` + `TSemanticOp`; five shared workflows |
 | `tpcc/generator`, `loader`, `checks` | Present; PG PutBatch still regenerates rows from seed |
 | `tpcc/dbms/pgsql` | Concrete admin/load/session/check + terminal runtime |
-| `tpcc/dbms/ydb`, `tpcc/dbms/oceanbase` | Not started |
+| `tpcc/dbms/ydb` | In progress |
+| `tpcc/dbms/oceanbase` | Connector/C admin/load/session/check + terminal runtime |
 | `tpccctl` | Phase 5 remote drive / consolidate present |
 
 Alignment sequencing and accepted API decisions:

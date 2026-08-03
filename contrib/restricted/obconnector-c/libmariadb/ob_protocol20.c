@@ -284,7 +284,7 @@ uint16_t const ob_crc16_table[256] = {0x0000,
     0x8081,
     0x4040};
 
-inline uint16_t ob_crc16_byte(uint16_t crc, const uint8_t data)
+static inline uint16_t ob_crc16_byte(uint16_t crc, const uint8_t data)
 {
 	return (uint16_t)((crc >> 8) ^ ob_crc16_table[(crc ^ data) & 0xff]);
 }
@@ -297,7 +297,7 @@ inline uint16_t ob_crc16_byte(uint16_t crc, const uint8_t data)
  *
  * Returns the updated CRC value.
  */
-inline uint16_t ob_crc16(uint16_t crc, uint8_t const *buffer, int64_t len)
+static inline uint16_t ob_crc16(uint16_t crc, uint8_t const *buffer, int64_t len)
 {
 	while (len--) {
 		crc = ob_crc16_byte(crc, *buffer++);

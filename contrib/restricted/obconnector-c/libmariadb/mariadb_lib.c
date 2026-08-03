@@ -1335,7 +1335,7 @@ ulong calculate_new_time_length_with_nls(MYSQL *mysql, uchar *cp, ulong len, enu
 
 //The search starts with a short gallop favoring small numbers,
 //after which it goes into a hand-woven binary search.
-inline uint fast_digits10(ulong v)
+static inline uint fast_digits10(ulong v)
 {
   static const ulong MAX_INTEGER[13] = {
     0,

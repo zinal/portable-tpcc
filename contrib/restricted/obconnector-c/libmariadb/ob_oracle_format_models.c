@@ -462,7 +462,7 @@ int validate_oracle_date(const struct ObTime *ob_time)
  * if the time part is omitted.
  * The day
  */
-inline my_bool is_element_can_omit(const struct ObDFMElem *elem)
+static inline my_bool is_element_can_omit(const struct ObDFMElem *elem)
 {
   int ret_bool = TRUE;
   int64_t flag = elem->elem_flag_;
