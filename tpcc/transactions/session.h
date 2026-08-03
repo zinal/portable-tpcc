@@ -71,6 +71,9 @@ public:
     virtual TFuture<TCommitResult> Commit() = 0;
     virtual TFuture<TCommitResult> Rollback() = 0;
     virtual TFuture<TCommitResult> Cancel() = 0;
+
+    // Probe used by --simulate-select1 only. Default fails; adapters override.
+    virtual TFuture<TOperationResult> ExecuteSelect1();
 };
 
 class ITpccSession {

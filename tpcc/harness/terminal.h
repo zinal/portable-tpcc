@@ -5,8 +5,9 @@
 #include <histogram.h>
 #include <phase_controller.h>
 #include <workload_config.h>
+#include <error_classifier.h>
 #include <session.h>
-#include "transactions.h"
+#include <workflows.h>
 
 #include <future.h>
 #include <spinlock.h>
@@ -194,6 +195,8 @@ public:
         size_t warehouseCount,
         ITaskQueue& taskQueue,
         ISessionFactory* sessionFactory,
+        IErrorClassifier* errorClassifier,
+        EIsolationLevel isolation,
         bool noDelays,
         std::stop_token stopToken,
         TPhaseController& phaseController,
@@ -223,6 +226,8 @@ private:
 private:
     ITaskQueue& TaskQueue;
     ISessionFactory* SessionFactory;
+    IErrorClassifier* ErrorClassifier;
+    EIsolationLevel Isolation;
     TTransactionContext Context;
     bool NoDelays;
     std::stop_token StopToken;

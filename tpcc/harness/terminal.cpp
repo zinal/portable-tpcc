@@ -1,9 +1,6 @@
 #include "terminal.h"
 #include <coro_traits.h>
 #include <log.h>
-#include "transactions.h"
-#include "tpcc_session.h"
-#include "pg_error_classifier.h"
 #include <domain_util.h>
 #include <constants.h>
 #include <rng.h>
@@ -116,6 +113,43 @@ bool ShouldRetryClass(EErrorClass cls, bool retryAmbiguousCommit) {
     return cls == EErrorClass::AmbiguousCommit && retryAmbiguousCommit;
 }
 
+TFuture<bool> RunSimulationTask(
+    TTransactionContext& context,
+    std::chrono::microseconds& latency,
+    ITpccTransaction& tx)
+{
+    auto startTs = std::chrono::steady_clock::now();
+
+    TTransactionInflightGuard guard;
+    co_await TTaskReady(context.TaskQueue, context.TerminalID);
+
+    LOG_T("Terminal " << context.TerminalID << " started simulated transaction");
+
+    for (size_t i = 0; i < 10; ++i) {
+        RandomNumber(DISTRICT_LOW_ID, DISTRICT_HIGH_ID);
+    }
+
+    for (int i = 0; i < context.SimulateTransactionSelect1; ++i) {
+        auto result = co_await TSuspendWithFuture(
+            tx.ExecuteSelect1(),
+            context.TaskQueue, context.TerminalID);
+        if (!result.Ok) {
+            co_return false;
+        }
+        LOG_T("Terminal " << context.TerminalID << " select1 iteration " << i);
+    }
+
+    auto commit = co_await TSuspendWithFuture(tx.Commit(), context.TaskQueue, context.TerminalID);
+    if (commit.Outcome != ECommitOutcome::Committed) {
+        co_return false;
+    }
+
+    auto endTs = std::chrono::steady_clock::now();
+    latency = std::chrono::duration_cast<std::chrono::microseconds>(endTs - startTs);
+
+    co_return true;
+}
+
 } // anonymous
 
 TTerminal::TTerminal(size_t terminalID,
@@ -124,6 +158,8 @@ TTerminal::TTerminal(size_t terminalID,
                      size_t warehouseCount,
                      ITaskQueue& taskQueue,
                      ISessionFactory* sessionFactory,
+                     IErrorClassifier* errorClassifier,
+                     EIsolationLevel isolation,
                      bool noDelays,
                      std::stop_token stopToken,
                      TPhaseController& phaseController,
@@ -138,6 +174,8 @@ TTerminal::TTerminal(size_t terminalID,
                      EThinkTimeDistribution thinkTimeDistribution)
     : TaskQueue(taskQueue)
     , SessionFactory(sessionFactory)
+    , ErrorClassifier(errorClassifier)
+    , Isolation(isolation)
     , Context{terminalID, warehouseID, districtID, warehouseCount, taskQueue,
               simulateTransactionSelect1, {}}
     , NoDelays(noDelays)
@@ -165,7 +203,6 @@ TFuture<void> TTerminal::Run() {
 
     LOG_D("Terminal " << Context.TerminalID << " started");
 
-    TPgErrorClassifier classifier;
     const auto transactions = BuildTransactions(Workload);
 
     while (!StopToken.stop_requested()) {
@@ -244,17 +281,13 @@ TFuture<void> TTerminal::Run() {
             bool shouldRetry = false;
             try {
                 auto tpccSession = SessionFactory->CreateSession();
-                auto beginFuture = tpccSession->Begin(EIsolationLevel::RepeatableRead);
+                auto beginFuture = tpccSession->Begin(Isolation);
                 auto tx = co_await TSuspendWithFuture(
                     std::move(beginFuture), Context.TaskQueue, Context.TerminalID);
 
                 latencyPure = std::chrono::microseconds{0};
                 if (simulationMode) {
-                    auto* pgTx = dynamic_cast<TPgTpccTransaction*>(tx.get());
-                    if (!pgTx) {
-                        throw std::runtime_error("PG simulation requires TPgTpccTransaction");
-                    }
-                    auto future = GetSimulationTask(Context, latencyPure, *pgTx);
+                    auto future = RunSimulationTask(Context, latencyPure, *tx);
                     auto result = co_await TSuspendWithFuture(
                         std::move(future), Context.TaskQueue, Context.TerminalID);
                     auto endTime = std::chrono::steady_clock::now();
@@ -333,7 +366,7 @@ TFuture<void> TTerminal::Run() {
                     break;
                 }
 
-                const EErrorClass cls = classifier.ClassifyException(ex);
+                const EErrorClass cls = ErrorClassifier->ClassifyException(ex);
                 const bool attemptsRemain = (attempt + 1) < RetryMaxAttempts;
                 const auto endWall = std::chrono::system_clock::now();
 

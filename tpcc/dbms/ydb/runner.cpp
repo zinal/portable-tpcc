@@ -1,17 +1,17 @@
 #include "runner.h"
 
-#include <warehouse_range.h>
+#include "ydb_capabilities.h"
+#include "ydb_error_classifier.h"
+#include "ydb_session.h"
 
 #include <constants.h>
+#include <domain_util.h>
 #include <log.h>
-#include "ydb_capabilities.h"
-#include "ydb_session.h"
 #include <phase_controller.h>
 #include <task_queue.h>
-#include "terminal.h"
-#include "transactions.h"
-#include <domain_util.h>
+#include <terminal.h>
 #include <time_util.h>
+#include <warehouse_range.h>
 
 #include <fmt/format.h>
 
@@ -259,6 +259,8 @@ TRunOutcome RunSync(const TRunConfig& config, TTerminalStats* aggregatedStats) {
     std::vector<std::unique_ptr<TTerminal>> terminals;
     terminals.reserve(terminalCount);
 
+    TYdbErrorClassifier errorClassifier;
+
     size_t terminalIndex = 0;
     for (const auto& range : ranges) {
         for (int wh = range.Start; wh < range.End; ++wh) {
@@ -273,6 +275,8 @@ TRunOutcome RunSync(const TRunConfig& config, TTerminalStats* aggregatedStats) {
                     scaleWarehouses,
                     *taskQueue,
                     &sessionFactory,
+                    &errorClassifier,
+                    EIsolationLevel::Serializable,
                     config.NoDelays,
                     stopToken,
                     phaseController,

@@ -4,6 +4,7 @@
 
 #include <pqxx/pqxx>
 
+#include <exception>
 #include <string>
 
 namespace NTpcc {
@@ -15,7 +16,7 @@ public:
         std::string_view message = {}) const override;
 
     // Classify a caught libpqxx exception (SQLSTATE when available).
-    EErrorClass ClassifyException(const std::exception& ex) const;
+    EErrorClass ClassifyException(const std::exception& ex) const override;
 
     // When a failure happens around Commit(), connection loss is AmbiguousCommit.
     EErrorClass ClassifyCommitException(const std::exception& ex) const;

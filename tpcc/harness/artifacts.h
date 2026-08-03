@@ -1,7 +1,7 @@
 #pragma once
 
-#include "clock_calibration.h"
-#include "run_config.h"
+#include "clock_skew.h"
+#include "run_config_document.h"
 #include "terminal.h"
 
 #include <chrono>
@@ -28,7 +28,8 @@ void WriteProcessJson(const TArtifactPaths& paths, const TRunConfigDocument& doc
                       const std::string& instanceNonce);
 void WriteReadyJson(const TArtifactPaths& paths, const TRunConfigDocument& doc,
                     const std::string& instance, const std::vector<TWarehouseRange>& ranges,
-                    const std::string& instanceNonce, const TClockCalibration& clockCalibration);
+                    const std::string& instanceNonce, const TClockCalibration& clockCalibration,
+                    const std::string& adapterName);
 void WriteLoaderResultJson(const TArtifactPaths& paths, const TRunConfigDocument& doc,
                            const std::string& instance, const TLoaderAssignment& assign, int exitCode);
 void WriteWorkerResultJson(const TArtifactPaths& paths, const TRunConfigDocument& doc,
@@ -39,7 +40,9 @@ void WriteWorkerResultJson(const TArtifactPaths& paths, const TRunConfigDocument
                            std::chrono::system_clock::time_point measurementEnd,
                            std::chrono::system_clock::time_point drainDeadline,
                            double measureSeconds, int exitCode,
-                           const std::string& instanceNonce);
+                           const std::string& instanceNonce,
+                           const std::string& adapterName,
+                           const std::string& defaultBinary);
 void WriteArtifactManifest(const TArtifactPaths& paths, const std::string& instance,
                            const std::string& instanceNonce, int exitCode);
 

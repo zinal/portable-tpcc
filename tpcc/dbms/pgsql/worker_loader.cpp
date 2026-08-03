@@ -1,13 +1,13 @@
 #include "worker_loader.h"
 
 #include "pg_admin_adapter.h"
-#include "artifacts.h"
 #include "clock_calibration.h"
 #include "import.h"
 #include "path_checker.h"
 #include "run_config.h"
 #include "runner.h"
 
+#include <artifacts.h>
 #include <log.h>
 #include <time_util.h>
 
@@ -28,7 +28,7 @@ int RunLoaderFromRunConfig(const std::string& runConfigPath, const std::string& 
     const std::string connection = BuildPgConnectionString(doc);
     CheckDbForImport(connection, doc.Path);
     const auto clockCalibration = MeasureClockCalibration(connection, doc.Endpoint);
-    WriteReadyJson(paths, doc, instance, assign.WarehouseRanges, nonce, clockCalibration);
+    WriteReadyJson(paths, doc, instance, assign.WarehouseRanges, nonce, clockCalibration, "pgsql");
 
     TImportConfig importCfg;
     importCfg.ConnectionString = connection;
@@ -74,7 +74,7 @@ int RunWorkerFromRunConfig(
     const std::string connection = BuildPgConnectionString(doc);
     CheckDbForRun(connection, doc.ScaleWarehouses, doc.Path);
     const auto clockCalibration = MeasureClockCalibration(connection, doc.Endpoint);
-    WriteReadyJson(paths, doc, instance, assign.WarehouseRanges, nonce, clockCalibration);
+    WriteReadyJson(paths, doc, instance, assign.WarehouseRanges, nonce, clockCalibration, "pgsql");
     if (!IsClockSkewWithinBudget(clockCalibration, doc.PhasePolicy.MaxClockSkewMs)) {
         LOG_E(instance + ": " + FormatClockSkewViolation(clockCalibration, doc.PhasePolicy.MaxClockSkewMs));
         const bool recordUs = doc.Histogram.Configured && doc.Histogram.Unit == "us";
@@ -88,7 +88,7 @@ int RunWorkerFromRunConfig(
         const auto now = std::chrono::system_clock::now();
         WriteWorkerResultJson(
             paths, doc, instance, assign, emptyStats, false,
-            now, now, now, now, 0.0, 1, nonce);
+            now, now, now, now, 0.0, 1, nonce, "pgsql", "tpcc-pgsql");
         WriteArtifactManifest(paths, instance, nonce, 1);
         return 1;
     }
@@ -142,7 +142,8 @@ int RunWorkerFromRunConfig(
     WriteWorkerResultJson(
         paths, doc, instance, assign, aggregated, outcome.HighResHistogram,
         outcome.RampStart, outcome.MeasurementStart, outcome.MeasurementEnd,
-        outcome.DrainDeadline, outcome.MeasurementSeconds, exitCode, nonce);
+        outcome.DrainDeadline, outcome.MeasurementSeconds, exitCode, nonce,
+        "pgsql", "tpcc-pgsql");
     WriteArtifactManifest(paths, instance, nonce, exitCode);
     return exitCode;
 }

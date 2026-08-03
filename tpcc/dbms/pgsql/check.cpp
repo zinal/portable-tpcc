@@ -1,6 +1,6 @@
 #include "check.h"
 
-#include "artifacts.h"
+#include <artifacts.h>
 #include "path_checker.h"
 #include "run_config.h"
 

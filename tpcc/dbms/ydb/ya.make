@@ -11,7 +11,6 @@ SRCS(
     ydb_error_classifier.cpp
     ydb_capabilities.cpp
     ydb_session.cpp
-    transaction_simulation.cpp
     init.cpp
     data_splitter.cpp
     import.cpp
@@ -20,10 +19,8 @@ SRCS(
     check.cpp
     ydb_admin_adapter.cpp
     path_checker.cpp
-    terminal.cpp
     runner.cpp
     run_config.cpp
-    artifacts.cpp
     clock_calibration.cpp
     worker_loader.cpp
 )
@@ -36,6 +33,7 @@ PEERDIR(
     tpcc/transactions
     tpcc/metrics
     tpcc/runtime
+    tpcc/harness
     ydb/public/api/grpc
     ydb/public/api/protos
     ydb/public/sdk/cpp/src/client/driver
@@ -49,7 +47,6 @@ PEERDIR(
     ydb/public/sdk/cpp/src/client/types/credentials/login
     contrib/libs/fmt
     contrib/restricted/nlohmann_json
-    contrib/libs/openssl
     library/cpp/logger
 )
 

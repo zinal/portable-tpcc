@@ -2,6 +2,7 @@
 
 #include "session.h"
 
+#include <exception>
 #include <string>
 #include <string_view>
 
@@ -15,6 +16,11 @@ public:
     virtual EErrorClass Classify(
         std::string_view nativeCode,
         std::string_view message = {}) const = 0;
+
+    // Classify a caught std::exception (adapter maps native SDK exceptions).
+    virtual EErrorClass ClassifyException(const std::exception& ex) const {
+        return Classify({}, ex.what());
+    }
 };
 
 // Shared helper: classify by SQLSTATE class/code (usable by PG and compatible adapters).

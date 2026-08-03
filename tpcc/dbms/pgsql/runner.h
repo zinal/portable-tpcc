@@ -2,7 +2,8 @@
 
 #include "phase_policy.h"
 #include "warehouse_range.h"
-#include "terminal.h"
+
+#include <terminal.h>
 
 #include <workload_config.h>
 
