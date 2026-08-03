@@ -11,6 +11,8 @@ SRCS(
     artifacts.cpp
     clock_skew.cpp
     sha256.cpp
+    run_loop.cpp
+    orchestrated_roles.cpp
 )
 
 PEERDIR(
@@ -18,6 +20,7 @@ PEERDIR(
     tpcc/metrics
     tpcc/runtime
     tpcc/transactions
+    contrib/libs/fmt
     contrib/restricted/nlohmann_json
     contrib/libs/openssl
 )

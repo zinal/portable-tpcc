@@ -3,6 +3,7 @@
 #include "ydb_driver.h"
 
 #include <phase_policy.h>
+#include <run_loop.h>
 #include <terminal.h>
 #include <warehouse_range.h>
 
@@ -66,17 +67,7 @@ struct TRunConfig {
         return SimulateTransactionSelect1 > 0;
     }
 
-    static constexpr auto SleepMsEveryIterationMainLoop = std::chrono::milliseconds(50);
-};
-
-struct TRunOutcome {
-    std::chrono::system_clock::time_point RampStart;
-    std::chrono::system_clock::time_point MeasurementStart;
-    std::chrono::system_clock::time_point MeasurementEnd;
-    std::chrono::system_clock::time_point DrainDeadline;
-    double MeasurementSeconds = 0.0;
-    int ExitCode = 0;
-    bool HighResHistogram = false;
+    static constexpr auto SleepMsEveryIterationMainLoop = kRunLoopSleepEvery;
 };
 
 TRunOutcome RunSync(const TRunConfig& config, TTerminalStats* aggregatedStats = nullptr);
