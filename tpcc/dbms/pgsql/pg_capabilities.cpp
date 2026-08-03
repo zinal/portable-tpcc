@@ -2,6 +2,14 @@
 
 namespace NTpcc {
 
+TPgCapabilities::TPgCapabilities(std::string partitioningStyle)
+    : PartitioningStyle_(std::move(partitioningStyle))
+{
+    if (PartitioningStyle_.empty()) {
+        PartitioningStyle_ = "none";
+    }
+}
+
 TCapabilities TPgCapabilities::Get() const {
     TCapabilities c;
     c.IsolationLevels = {
@@ -15,7 +23,7 @@ TCapabilities TPgCapabilities::Get() const {
     c.BulkLoadMechanism = "copy";
     c.ExactDecimalType = "DECIMAL";
     c.ForeignKeys = true;
-    c.PartitioningStyle = "none";
+    c.PartitioningStyle = PartitioningStyle_;
     return c;
 }
 

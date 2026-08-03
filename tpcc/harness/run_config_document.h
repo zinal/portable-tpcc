@@ -47,6 +47,12 @@ struct TRunConfigDocument {
     std::string SaKeyFile;
     std::string CaFile;
 
+    // PostgreSQL physical options (ignored by other adapters).
+    // partitioning: "none" | "warehouse_hash"
+    std::string Partitioning = "none";
+    // Hash modulus; 0 = derive from ScaleWarehouses when partitioning=warehouse_hash.
+    int PartitionCount = 0;
+
     int ScaleWarehouses = 0;
     int64_t Seed = 0;
     bool HasSeed = false;

@@ -5,7 +5,8 @@ This document proposes physical partitioning for the PostgreSQL adapter
 partition pruning aligned with the main workload queries and enabling useful
 local indexes.
 
-Status: **design proposal** (not yet implemented).
+Status: **implemented** behind `database.options.partitioning=warehouse_hash`
+(default remains `none`).
 Related contract: [adapter-api.md](adapter-api.md) §5 (adapters MAY add
 partitions), [specification.md](specification.md) §11.
 
@@ -213,28 +214,27 @@ If FK maintenance on partitioned tables proves too expensive at load time,
 expose `database.options.foreign_keys` (bool, default `true`) analogous to
 OceanBase’s optional FKs, and record `ForeignKeys` in capabilities.
 
-## 6. Code touch points (implementation plan)
+## 6. Implementation status
 
-All changes stay under `tpcc/dbms/pgsql/` (+ docs / thin CLI wiring). No edits
-to protected infrastructure trees (`build/`, `contrib/`, `devtools/`,
+Implemented under `tpcc/dbms/pgsql/` (+ CLI / harness document fields / docs).
+No edits to protected infrastructure trees (`build/`, `contrib/`, `devtools/`,
 `library/`, `util/`).
 
-| Step | Files | Change |
-| --- | --- | --- |
-| 1 | `init.cpp` / `init.h` | `PARTITION BY HASH (…)`; loop `MODULUS N, REMAINDER r` |
-| 2 | `pg_admin_adapter.*` | Pass partition count into `EnsureSchema` / `InitSync` |
-| 3 | `app/pgsql/main.cpp`, `worker_loader.cpp` | Wire `--partition_count` / derive from warehouses |
-| 4 | Small helper (adapter-local) | `DerivePartitionCount(warehouses)` — optional |
-| 5 | `run_config.cpp` | `options.partitioning` = `none` \| `warehouse_hash`; `options.partition_count` |
-| 6 | `pg_capabilities.cpp` | `PartitioningStyle = "warehouse_hash"` when enabled |
-| 7 | `path_checker.cpp` / clean | Parent `DROP … CASCADE` drops hash partitions |
-| 8 | `docs/adapter-api.md` §5.1, `specification.md` §11 | Document PG warehouse HASH |
-| 9 | Tests | Create with `N` partitions; `pg_partition_tree`; `EXPLAIN` pruning |
+| Area | Location |
+| --- | --- |
+| Config / derive `N` | `partition_config.{h,cpp}` |
+| DDL | `init.cpp` (`BuildTpccSchemaDdl`) |
+| Admin / schema role | `pg_admin_adapter.*`, `worker_loader.cpp` |
+| CLI | `app/pgsql/main.cpp` (`--partitioning`, `--partition-count`) |
+| run-config | `database.options.partitioning`, `partition_count` |
+| Capabilities | `TPgCapabilities` reports configured style |
+| Preflight | `path_checker.cpp` recognizes `PARTITIONED TABLE` |
+| Unit tests | `tpcc/dbms/pgsql/ut/partition_config_ut.cpp` |
 
-Suggested rollout:
+Rollout:
 
 1. **Flag-gated DDL** (`options.partitioning=warehouse_hash`) with default
-   `none` until soak-tested.
+   `none` until soak-tested. ✅
 2. Verify partition pruning with `EXPLAIN (ANALYZE, BUFFERS)` on Stock-Level,
    Delivery oldest-new-order, Payment-by-name, New-Order stock RMW.
 3. Flip default to `warehouse_hash` for orchestrated large-scale runs.

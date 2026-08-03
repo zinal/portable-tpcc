@@ -3,6 +3,7 @@
 #include "runner.h"
 #include "clean.h"
 #include "check.h"
+#include "partition_config.h"
 #include "pg_admin_adapter.h"
 #include "path_checker.h"
 #include "worker_loader.h"
@@ -22,6 +23,10 @@
 
 DEFINE_string(connection, "host=localhost dbname=tpcc user=postgres", "PostgreSQL connection string");
 DEFINE_string(path, "", "PostgreSQL schema for benchmark tables (default: empty, uses server search_path)");
+DEFINE_string(partitioning, "none",
+    "Schema partitioning: none or warehouse_hash (HASH by warehouse id)");
+DEFINE_int32(partition_count, 0,
+    "Hash partition modulus for warehouse_hash; 0 = derive from --warehouses");
 
 DEFINE_int32(warehouses, 1, "Number of warehouses");
 DEFINE_uint64(seed, 1, "Deterministic data generation seed");
@@ -63,6 +68,8 @@ void PrintHelp() {
         "  --connection          PostgreSQL connection string\n"
         "                        (default: \"host=localhost dbname=tpcc user=postgres\")\n"
         "  -p, --path            PostgreSQL schema for benchmark tables (default: empty, uses server search_path)\n"
+        "  --partitioning        Schema partitioning: none | warehouse_hash (default: none)\n"
+        "  --partition-count     Hash modulus for warehouse_hash; 0 = derive from -w (default: 0)\n"
         "  -w, --warehouses      Number of warehouses (default: 1)\n"
         "  --warmup              Warmup duration in minutes, 0 = adaptive (default: 0)\n"
         "  --skip-warmup         Skip warmup entirely (default: false)\n"
@@ -88,6 +95,7 @@ void PrintHelp() {
         "\n"
         "Examples:\n"
         "  tpcc schema --connection=\"host=localhost dbname=tpcc\"\n"
+        "  tpcc schema -w 1000 --partitioning=warehouse_hash\n"
         "  tpcc import -w 10 -t 8\n"
         "  tpcc run -w 10 --duration=5 -t 4\n"
         "  tpcc check -w 10 --after-run\n"
@@ -278,8 +286,15 @@ std::string PreprocessArgs(
 }
 
 void RunSchema() {
+    NTpcc::TPgPartitionConfig partCfg;
+    partCfg.Partitioning = FLAGS_partitioning;
+    partCfg.PartitionCount = FLAGS_partition_count;
+    partCfg.WarehouseCount = FLAGS_warehouses;
+    // Validates flags early (including derive-from-warehouses).
+    NTpcc::ResolvePgPartitionCount(partCfg);
+
     NTpcc::CheckDbForInit(FLAGS_connection, FLAGS_path);
-    NTpcc::TPgAdminAdapter admin(FLAGS_connection, FLAGS_path);
+    NTpcc::TPgAdminAdapter admin(FLAGS_connection, FLAGS_path, partCfg);
     admin.EnsureSchema();
 }
 
@@ -301,6 +316,7 @@ void RunBenchmark() {
     NTpcc::TRunConfig config;
     config.ConnectionString = FLAGS_connection;
     config.Path = FLAGS_path;
+    config.Partitioning = FLAGS_partitioning;
     config.WarehouseCount = FLAGS_warehouses;
     config.WarmupDuration = std::chrono::minutes(FLAGS_warmup);
     config.RunDuration = std::chrono::minutes(FLAGS_duration);
