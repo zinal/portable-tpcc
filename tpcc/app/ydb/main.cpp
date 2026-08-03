@@ -43,7 +43,6 @@ DEFINE_bool(no_delays, false, "Disable keying and think time delays");
 DEFINE_string(think_time_distribution, "exponential",
     "Think time distribution: exponential (TPC-C default) or compatibility/constant");
 DEFINE_bool(high_res_histogram, false, "Use high resolution histograms");
-DEFINE_int32(simulate_ms, 0, "Simulation mode: sleep N ms per transaction instead of real TPC-C (0 = disabled)");
 DEFINE_int32(simulate_select1, 0, "Simulation mode: run N SELECT 1 queries per transaction instead of real TPC-C (0 = disabled)");
 DEFINE_string(log_level, "info", "Log level: trace, debug, info, warn, error");
 DEFINE_bool(no_tui, false, "Disable terminal UI");
@@ -103,7 +102,6 @@ void PrintHelp() {
         "  check  --run-config <path> --instance <name> --after-import|--after-run\n"
         "\n"
         "Simulation (for testing without real TPC-C transactions):\n"
-        "  --simulate-ms         Sleep N ms per transaction (default: 0 = disabled)\n"
         "  --simulate-select1    Run N SELECT 1 queries per transaction (default: 0 = disabled)\n"
         "\n"
         "Examples:\n"
@@ -366,7 +364,6 @@ void RunBenchmark() {
     config.MaxInflight = FLAGS_max_inflight;
     config.NoDelays = FLAGS_no_delays;
     config.HighResHistogram = FLAGS_high_res_histogram;
-    config.SimulateTransactionMs = FLAGS_simulate_ms;
     config.SimulateTransactionSelect1 = FLAGS_simulate_select1;
     config.UseTui = !FLAGS_no_tui;
     if (!NTpcc::ParseThinkTimeDistribution(FLAGS_think_time_distribution, config.ThinkTimeDistribution)) {

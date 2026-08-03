@@ -89,6 +89,18 @@ bool TPgTpccTransaction::TerminalState() const {
     return Terminal_;
 }
 
+TFuture<TOperationResult> TPgTpccTransaction::ExecuteSelect1() {
+    if (Terminal_) {
+        return ReadyOp(FailOp(EErrorClass::Permanent, "ExecuteSelect1 called in terminal state"));
+    }
+    try {
+        Session_.ExecuteQuery("SELECT $1::int", 1).Get();
+        return ReadyOp(OkOp(1, 1));
+    } catch (const std::exception& ex) {
+        return ReadyOp(FailOp(Classifier_.ClassifyException(ex), ex.what(), PgSqlStateOf(ex)));
+    }
+}
+
 TFuture<TCommitResult> TPgTpccTransaction::Commit() {
     if (Terminal_) {
         return ReadyCommit({

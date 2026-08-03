@@ -37,7 +37,6 @@ struct TTransactionContext {
     size_t WarehouseCount = 0;
     ITaskQueue& TaskQueue;
 
-    int SimulateTransactionMs = 0;
     int SimulateTransactionSelect1 = 0;
 
     // Generated once per business transaction; reused across retry attempts.

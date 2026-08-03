@@ -289,11 +289,7 @@ TRunOutcome RunSync(const TRunConfig& config, TTerminalStats* aggregatedStats) {
     }
 
     if (config.IsSimulationMode()) {
-        if (config.SimulateTransactionMs > 0) {
-            LOG_I("SIMULATION MODE: sleep " << config.SimulateTransactionMs << "ms per transaction (no DB queries)");
-        } else {
-            LOG_I("SIMULATION MODE: " << config.SimulateTransactionSelect1 << " SELECT 1 queries per transaction");
-        }
+        LOG_I("SIMULATION MODE: " << config.SimulateTransactionSelect1 << " SELECT 1 queries per transaction");
     }
 
     LOG_I("Starting TPC-C benchmark: " << warehouseCount << " warehouses, " << terminalCount
@@ -345,7 +341,6 @@ TRunOutcome RunSync(const TRunConfig& config, TTerminalStats* aggregatedStats) {
                     phaseController,
                     perThreadStats[threadIndex],
                     config.Workload,
-                    config.SimulateTransactionMs,
                     config.SimulateTransactionSelect1,
                     config.RetryMaxAttempts,
                     config.RetryInitialBackoffMs,

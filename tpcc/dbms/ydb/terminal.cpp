@@ -129,7 +129,6 @@ TTerminal::TTerminal(size_t terminalID,
                      TPhaseController& phaseController,
                      std::shared_ptr<TTerminalStats>& stats,
                      const TWorkloadConfig& workload,
-                     int simulateTransactionMs,
                      int simulateTransactionSelect1,
                      size_t retryMaxAttempts,
                      int64_t retryInitialBackoffMs,
@@ -140,7 +139,7 @@ TTerminal::TTerminal(size_t terminalID,
     : TaskQueue(taskQueue)
     , SessionFactory(sessionFactory)
     , Context{terminalID, warehouseID, districtID, warehouseCount, taskQueue,
-              simulateTransactionMs, simulateTransactionSelect1, {}}
+              simulateTransactionSelect1, {}}
     , NoDelays(noDelays)
     , StopToken(stopToken)
     , PhaseController(phaseController)
@@ -180,8 +179,7 @@ TFuture<void> TTerminal::Run() {
             break;
         }
 
-        const bool simulationMode =
-            Context.SimulateTransactionMs > 0 || Context.SimulateTransactionSelect1 > 0;
+        const bool simulationMode = Context.SimulateTransactionSelect1 > 0;
 
         size_t txIndex = simulationMode ? 0 : ChooseRandomTransactionIndex(transactions);
         const char* txName = simulationMode ? "Simulation" : transactions[txIndex].Name.c_str();

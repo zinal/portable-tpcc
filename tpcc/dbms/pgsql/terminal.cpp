@@ -11,8 +11,7 @@
 
 #include <array>
 #include <algorithm>
-#include <optional>
-#include <pqxx/pqxx>
+#include <stdexcept>
 #include <utility>
 
 namespace NTpcc {
@@ -124,13 +123,12 @@ TTerminal::TTerminal(size_t terminalID,
                      size_t districtID,
                      size_t warehouseCount,
                      ITaskQueue& taskQueue,
-                     PgConnectionPool* connectionPool,
+                     ISessionFactory* sessionFactory,
                      bool noDelays,
                      std::stop_token stopToken,
                      TPhaseController& phaseController,
                      std::shared_ptr<TTerminalStats>& stats,
                      const TWorkloadConfig& workload,
-                     int simulateTransactionMs,
                      int simulateTransactionSelect1,
                      size_t retryMaxAttempts,
                      int64_t retryInitialBackoffMs,
@@ -139,9 +137,9 @@ TTerminal::TTerminal(size_t terminalID,
                      bool retryAmbiguousCommit,
                      EThinkTimeDistribution thinkTimeDistribution)
     : TaskQueue(taskQueue)
-    , ConnectionPool(connectionPool)
+    , SessionFactory(sessionFactory)
     , Context{terminalID, warehouseID, districtID, warehouseCount, taskQueue,
-              simulateTransactionMs, simulateTransactionSelect1, {}}
+              simulateTransactionSelect1, {}}
     , NoDelays(noDelays)
     , StopToken(stopToken)
     , PhaseController(phaseController)
@@ -181,8 +179,7 @@ TFuture<void> TTerminal::Run() {
             break;
         }
 
-        const bool simulationMode =
-            Context.SimulateTransactionMs > 0 || Context.SimulateTransactionSelect1 > 0;
+        const bool simulationMode = Context.SimulateTransactionSelect1 > 0;
 
         size_t txIndex = simulationMode ? 0 : ChooseRandomTransactionIndex(transactions);
         const char* txName = simulationMode ? "Simulation" : transactions[txIndex].Name.c_str();
@@ -246,17 +243,18 @@ TFuture<void> TTerminal::Run() {
         for (size_t attempt = 0; attempt < RetryMaxAttempts; ++attempt) {
             bool shouldRetry = false;
             try {
-                std::optional<PgConnectionPool::SessionGuard> guard;
-                if (ConnectionPool) {
-                    guard.emplace(ConnectionPool->AcquireGuard());
-                }
-
-                PgSession dummySession;
-                PgSession& session = guard ? **guard : dummySession;
+                auto tpccSession = SessionFactory->CreateSession();
+                auto beginFuture = tpccSession->Begin(EIsolationLevel::RepeatableRead);
+                auto tx = co_await TSuspendWithFuture(
+                    std::move(beginFuture), Context.TaskQueue, Context.TerminalID);
 
                 latencyPure = std::chrono::microseconds{0};
                 if (simulationMode) {
-                    auto future = GetSimulationTask(Context, latencyPure, session);
+                    auto* pgTx = dynamic_cast<TPgTpccTransaction*>(tx.get());
+                    if (!pgTx) {
+                        throw std::runtime_error("PG simulation requires TPgTpccTransaction");
+                    }
+                    auto future = GetSimulationTask(Context, latencyPure, *pgTx);
                     auto result = co_await TSuspendWithFuture(
                         std::move(future), Context.TaskQueue, Context.TerminalID);
                     auto endTime = std::chrono::steady_clock::now();
@@ -271,10 +269,6 @@ TFuture<void> TTerminal::Run() {
                         LOG_D("Terminal " << Context.TerminalID << " " << txName << " failed");
                     }
                 } else {
-                    TPgTpccSession tpccSession(session);
-                    auto beginFuture = tpccSession.Begin(EIsolationLevel::RepeatableRead);
-                    auto tx = co_await TSuspendWithFuture(
-                        std::move(beginFuture), Context.TaskQueue, Context.TerminalID);
                     auto future = transactions[txIndex].TaskFunc(Context, latencyPure, *tx);
                     auto result = co_await TSuspendWithFuture(
                         std::move(future), Context.TaskQueue, Context.TerminalID);
