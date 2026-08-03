@@ -15,10 +15,10 @@ TPC-C 5.11 conformance notes:
 | --- | --- | --- |
 | libpq | `contrib/libs/libpq` | PostgreSQL wire protocol (C API) |
 | libpqxx | `contrib/libs/libpqxx` (7.2.0) | PostgreSQL adapter (`PgSession`, COPY, transactions) |
-| fmt | `contrib/libs/fmt` | String formatting for logs and TUI |
+| fmt | `contrib/libs/fmt` | String formatting for logs and console output |
 | library/cpp/logger | `library/cpp/logger` | Structured logging (shared with YDB SDK) |
 | gflags | `contrib/libs/gflags` | CLI for `tpcc-pgsql` |
-| ftxui | `contrib/libs/ftxui` | Terminal UI (optional, enabled in `tpcc-pgsql`) |
+| ftxui | `contrib/libs/ftxui` | Removed / no longer used by tpcc (vendored copy retained) |
 | googletest | `contrib/restricted/googletest` | Unit and integration tests |
 | nlohmann_json | `contrib/restricted/nlohmann_json` | JSON for run-config and metrics |
 | abseil-cpp | `contrib/restricted/abseil-cpp` | optional utilities |

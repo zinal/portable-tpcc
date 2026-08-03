@@ -16,7 +16,6 @@ struct TImportConfig {
     std::string Path;
     size_t WarehouseCount = 1;
     size_t LoadThreadCount = 0;
-    bool UseTui = true;
 
     // Orchestrated loader: half-open warehouse ranges from run-config assignment.
     std::vector<TWarehouseRange> WarehouseRanges;

@@ -4,10 +4,8 @@
 
 #include <constants.h>
 #include <log.h>
-#include <log_backend.h>
 #include "pg_connection_pool.h"
 #include "pg_capabilities.h"
-#include "runner_display_data.h"
 #include <phase_controller.h>
 #include <task_queue.h>
 #include "terminal.h"
@@ -15,10 +13,6 @@
 #include "transactions.h"
 #include <domain_util.h>
 #include <time_util.h>
-
-#ifdef TPCC_HAS_TUI
-#include "runner_tui.h"
-#endif
 
 #include <fmt/format.h>
 
@@ -49,63 +43,6 @@ const char* TransactionTypeName(ETransactionType type) {
         default: return "Unknown";
     }
 }
-
-#ifdef TPCC_HAS_TUI
-std::shared_ptr<TRunDisplayData> CollectDisplayData(
-    const TRunConfig& config,
-    size_t threadCount,
-    size_t terminalCount,
-    ITaskQueue& taskQueue,
-    const std::vector<std::shared_ptr<TTerminalStats>>& perThreadStats,
-    Clock::time_point startTs,
-    Clock::time_point warmupEnd,
-    Clock::time_point runEnd,
-    bool warmupDone)
-{
-    auto now = Clock::now();
-    auto data = std::make_shared<TRunDisplayData>(threadCount, now, config.HighResHistogram);
-    data->WarehouseCount = config.WarehouseCount;
-
-    for (size_t i = 0; i < threadCount; ++i) {
-        taskQueue.CollectStats(i, *data->Statistics.StatVec[i].TaskThreadStats);
-        perThreadStats[i]->Collect(*data->Statistics.StatVec[i].TerminalStats);
-    }
-
-    auto& status = data->StatusData;
-    auto totalElapsed = std::chrono::duration<double>(now - startTs);
-    auto remaining = std::chrono::duration<double>(runEnd - now);
-    auto totalDuration = std::chrono::duration<double>(runEnd - startTs);
-
-    int elapsedSec = static_cast<int>(totalElapsed.count());
-    int remainSec = std::max(0, static_cast<int>(remaining.count()));
-
-    status.ElapsedMinutesTotal = elapsedSec / 60;
-    status.ElapsedSecondsTotal = elapsedSec % 60;
-    status.RemainingMinutesTotal = remainSec / 60;
-    status.RemainingSecondsTotal = remainSec % 60;
-
-    double totalSec = totalDuration.count();
-    status.ProgressPercentTotal = totalSec > 0 ? std::min(100.0, totalElapsed.count() / totalSec * 100.0) : 100.0;
-
-    status.Phase = warmupDone ? "Measuring" : "Warmup";
-    status.RunningTerminals = terminalCount;
-    status.RunningTransactions = TransactionsInflight.load(std::memory_order_relaxed);
-
-    size_t totalNewOrderCompleted = 0;
-    for (auto& stats : perThreadStats) {
-        const auto& no = stats->GetStats(ETransactionType::NewOrder);
-        totalNewOrderCompleted += no.OK.load(std::memory_order_relaxed)
-            + no.UserAborted.load(std::memory_order_relaxed);
-    }
-
-    double measureSeconds = warmupDone ? std::chrono::duration<double>(now - warmupEnd).count() : 0.0;
-    status.Tpmc = measureSeconds > 0 ? (totalNewOrderCompleted / measureSeconds * 60.0) : 0.0;
-    status.Efficiency = config.WarehouseCount > 0
-        ? (status.Tpmc / (MAX_TPMC_PER_WAREHOUSE * config.WarehouseCount) * 100.0) : 0.0;
-
-    return data;
-}
-#endif
 
 void PrintConsoleStats(
     const TRunConfig& config,
@@ -479,46 +416,15 @@ TRunOutcome RunSync(const TRunConfig& config, TTerminalStats* aggregatedStats) {
     auto warmupEnd = startTs + std::chrono::milliseconds(durations.RampUpMs);
     auto runEnd = warmupEnd + std::chrono::milliseconds(durations.MeasurementMs);
 
-#ifdef TPCC_HAS_TUI
-    std::unique_ptr<TRunnerTui> tui;
-    if (config.UseTui) {
-        StartLogCapture();
-        auto initData = CollectDisplayData(
-            config, threadCount, terminalCount, *taskQueue,
-            perThreadStats, startTs, warmupEnd, runEnd, durations.RampUpMs <= 0);
-        tui = std::make_unique<TRunnerTui>(*GetLogBackend(), initData);
-    }
-#endif
-
     Clock::time_point lastDisplayUpdate = startTs;
-    std::shared_ptr<TRunDisplayData> prevData;
 
     auto maybeUpdateDisplay = [&](Clock::time_point now, bool warmupDone) {
         auto sinceLast = std::chrono::duration_cast<std::chrono::seconds>(now - lastDisplayUpdate);
-        const auto updateInterval = std::chrono::seconds(
-#ifdef TPCC_HAS_TUI
-            tui ? 1 :
-#endif
-            5);
-        if (sinceLast < updateInterval) {
+        if (sinceLast < std::chrono::seconds(5)) {
             return;
         }
-#ifdef TPCC_HAS_TUI
-        if (tui) {
-            auto displayData = CollectDisplayData(
-                config, threadCount, terminalCount, *taskQueue,
-                perThreadStats, startTs, warmupEnd, runEnd, warmupDone);
-            if (prevData) {
-                displayData->Statistics.CalculateDerivativeAndTotal(prevData->Statistics);
-            }
-            tui->Update(displayData);
-            prevData = displayData;
-        } else
-#endif
-        {
-            auto measureStart = warmupDone ? warmupEnd : startTs;
-            PrintConsoleStats(config, perThreadStats, measureStart, runEnd);
-        }
+        auto measureStart = warmupDone ? warmupEnd : startTs;
+        PrintConsoleStats(config, perThreadStats, measureStart, runEnd);
         lastDisplayUpdate = now;
     };
 
@@ -548,11 +454,6 @@ TRunOutcome RunSync(const TRunConfig& config, TTerminalStats* aggregatedStats) {
     }
 
     phaseController.SetPhase(ERunPhase::Stop);
-
-#ifdef TPCC_HAS_TUI
-    tui.reset();
-    StopLogCapture();
-#endif
 
     auto measureElapsed = std::chrono::duration<double>(
         schedule.MeasurementEnd - schedule.MeasurementStart);

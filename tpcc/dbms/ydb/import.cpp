@@ -7,11 +7,6 @@
 #include <domain_util.h>
 #include <log.h>
 
-#ifdef TPCC_HAS_TUI
-#include "import_tui.h"
-#include <log_backend.h>
-#endif
-
 #include <algorithm>
 #include <chrono>
 #include <stdexcept>
@@ -134,51 +129,10 @@ void ImportSync(const TImportConfig& config) {
         });
     }
 
-#ifdef TPCC_HAS_TUI
-    std::unique_ptr<TImportTui> tui;
-    if (config.UseTui) {
-        StartLogCapture();
-        TImportDisplayData initData(state);
-        tui = std::make_unique<TImportTui>(
-            *GetLogBackend(), assignedWarehouses, threadCount, initData);
-    }
-#endif
-
+    while (state.WarehousesLoaded.load(std::memory_order_relaxed) < assignedWarehouses
+           && !state.StopToken.stop_requested())
     {
-        size_t prevLoaded = state.DataSizeLoaded.load(std::memory_order_relaxed);
-        auto prevTime = Clock::now();
-        while (state.WarehousesLoaded.load(std::memory_order_relaxed) < assignedWarehouses
-               && !state.StopToken.stop_requested())
-        {
-            std::this_thread::sleep_for(std::chrono::milliseconds(500));
-            auto now = Clock::now();
-            size_t loaded = state.DataSizeLoaded.load(std::memory_order_relaxed);
-#ifdef TPCC_HAS_TUI
-            if (tui) {
-                TImportDisplayData data(state);
-                auto& s = data.StatusData;
-                s.CurrentDataSizeLoaded = loaded;
-                s.PercentLoaded = state.ApproximateDataSize > 0
-                    ? 100.0 * loaded / state.ApproximateDataSize : 0;
-                auto elapsed = std::chrono::duration<double>(now - startTime);
-                auto sincePrev = std::chrono::duration<double>(now - prevTime);
-                if (sincePrev.count() > 0.01) {
-                    s.InstantSpeedMiBs = (loaded - prevLoaded) / (1024.0 * 1024.0) / sincePrev.count();
-                }
-                if (elapsed.count() > 0.01) {
-                    s.AvgSpeedMiBs = loaded / (1024.0 * 1024.0) / elapsed.count();
-                }
-                int totalSec = static_cast<int>(elapsed.count());
-                s.ElapsedMinutes = totalSec / 60;
-                s.ElapsedSeconds = totalSec % 60;
-                tui->Update(data);
-            }
-#else
-            (void)now;
-#endif
-            prevLoaded = loaded;
-            prevTime = now;
-        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
     }
 
     for (auto& t : threads) {

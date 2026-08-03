@@ -16,7 +16,6 @@ struct TImportConfig {
     TYdbConnectionConfig Connection;
     size_t WarehouseCount = 1;
     size_t LoadThreadCount = 0;
-    bool UseTui = true;
 
     std::vector<TWarehouseRange> WarehouseRanges;
     bool OwnsGlobalData = true;

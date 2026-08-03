@@ -36,7 +36,6 @@ DEFINE_string(think_time_distribution, "exponential",
 DEFINE_bool(high_res_histogram, false, "Use high resolution histograms");
 DEFINE_int32(simulate_select1, 0, "Simulation mode: run N SELECT 1 queries per transaction instead of real TPC-C (0 = disabled)");
 DEFINE_string(log_level, "info", "Log level: trace, debug, info, warn, error");
-DEFINE_bool(no_tui, false, "Disable terminal UI");
 DEFINE_bool(after_import, false, "Check mode: verify freshly loaded data (stricter invariants)");
 DEFINE_bool(after_run, false, "Check mode: verify data after a measurement run");
 
@@ -75,7 +74,6 @@ void PrintHelp() {
         "  --think-time-distribution  exponential (TPC-C default) or compatibility/constant\n"
         "  --high-res-histogram  Use high resolution histograms (default: false)\n"
         "  --log-level           Log level: trace, debug, info, warn, error (default: \"info\")\n"
-        "  --no-tui              Disable terminal UI (default: false)\n"
         "  --after-import        check: verify freshly loaded data\n"
         "  --after-run           check: verify data after a measurement run\n"
         "\n"
@@ -294,7 +292,6 @@ void RunImport() {
     config.Path = FLAGS_path;
     config.WarehouseCount = FLAGS_warehouses;
     config.LoadThreadCount = FLAGS_threads;
-    config.UseTui = !FLAGS_no_tui;
     config.Seed = FLAGS_seed;
     NTpcc::ImportSync(config);
 }
@@ -313,7 +310,6 @@ void RunBenchmark() {
     config.NoDelays = FLAGS_no_delays;
     config.HighResHistogram = FLAGS_high_res_histogram;
     config.SimulateTransactionSelect1 = FLAGS_simulate_select1;
-    config.UseTui = !FLAGS_no_tui;
     if (!NTpcc::ParseThinkTimeDistribution(FLAGS_think_time_distribution, config.ThinkTimeDistribution)) {
         throw std::runtime_error(
             "--think-time-distribution must be \"exponential\", \"compatibility\", or \"constant\"");

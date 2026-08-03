@@ -36,7 +36,6 @@ struct TRunConfig {
     // Simulation mode: replaces real TPC-C transactions with a lightweight
     // SELECT 1 loop. Useful for testing the coroutine/IO stack.
     int SimulateTransactionSelect1 = 0;
-    bool UseTui = false;
 
     // Orchestrated worker fields (portable-tpcc run-config).
     bool Orchestrated = false;
