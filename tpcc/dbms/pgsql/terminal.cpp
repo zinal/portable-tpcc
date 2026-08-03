@@ -11,8 +11,7 @@
 
 #include <array>
 #include <algorithm>
-#include <optional>
-#include <pqxx/pqxx>
+#include <stdexcept>
 #include <utility>
 
 namespace NTpcc {
@@ -124,7 +123,7 @@ TTerminal::TTerminal(size_t terminalID,
                      size_t districtID,
                      size_t warehouseCount,
                      ITaskQueue& taskQueue,
-                     PgConnectionPool* connectionPool,
+                     ISessionFactory* sessionFactory,
                      bool noDelays,
                      std::stop_token stopToken,
                      TPhaseController& phaseController,
@@ -139,7 +138,7 @@ TTerminal::TTerminal(size_t terminalID,
                      bool retryAmbiguousCommit,
                      EThinkTimeDistribution thinkTimeDistribution)
     : TaskQueue(taskQueue)
-    , ConnectionPool(connectionPool)
+    , SessionFactory(sessionFactory)
     , Context{terminalID, warehouseID, districtID, warehouseCount, taskQueue,
               simulateTransactionMs, simulateTransactionSelect1, {}}
     , NoDelays(noDelays)
@@ -246,17 +245,43 @@ TFuture<void> TTerminal::Run() {
         for (size_t attempt = 0; attempt < RetryMaxAttempts; ++attempt) {
             bool shouldRetry = false;
             try {
-                std::optional<PgConnectionPool::SessionGuard> guard;
-                if (ConnectionPool) {
-                    guard.emplace(ConnectionPool->AcquireGuard());
+                // Sleep-only simulation may run without a connection pool / factory.
+                if (!SessionFactory) {
+                    if (!simulationMode || Context.SimulateTransactionSelect1 > 0) {
+                        throw std::runtime_error("PostgreSQL terminal requires ISessionFactory");
+                    }
+                    PgSession dummySession;
+                    TPgTpccTransaction dummyTx(dummySession);
+                    latencyPure = std::chrono::microseconds{0};
+                    auto future = GetSimulationTask(Context, latencyPure, dummyTx);
+                    auto result = co_await TSuspendWithFuture(
+                        std::move(future), Context.TaskQueue, Context.TerminalID);
+                    auto endTime = std::chrono::steady_clock::now();
+                    const auto endWall = std::chrono::system_clock::now();
+                    auto latencyFull = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime);
+                    auto latencyTransaction = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTimeTransaction);
+                    if (result) {
+                        recordOk(latencyTransaction, latencyFull, endWall);
+                        LOG_T("Terminal " << Context.TerminalID << " " << txName << " succeeded");
+                    } else {
+                        recordFailed(endWall);
+                        LOG_D("Terminal " << Context.TerminalID << " " << txName << " failed");
+                    }
+                    break;
                 }
 
-                PgSession dummySession;
-                PgSession& session = guard ? **guard : dummySession;
+                auto tpccSession = SessionFactory->CreateSession();
+                auto beginFuture = tpccSession->Begin(EIsolationLevel::RepeatableRead);
+                auto tx = co_await TSuspendWithFuture(
+                    std::move(beginFuture), Context.TaskQueue, Context.TerminalID);
 
                 latencyPure = std::chrono::microseconds{0};
                 if (simulationMode) {
-                    auto future = GetSimulationTask(Context, latencyPure, session);
+                    auto* pgTx = dynamic_cast<TPgTpccTransaction*>(tx.get());
+                    if (!pgTx) {
+                        throw std::runtime_error("PG simulation requires TPgTpccTransaction");
+                    }
+                    auto future = GetSimulationTask(Context, latencyPure, *pgTx);
                     auto result = co_await TSuspendWithFuture(
                         std::move(future), Context.TaskQueue, Context.TerminalID);
                     auto endTime = std::chrono::steady_clock::now();
@@ -271,10 +296,6 @@ TFuture<void> TTerminal::Run() {
                         LOG_D("Terminal " << Context.TerminalID << " " << txName << " failed");
                     }
                 } else {
-                    TPgTpccSession tpccSession(session);
-                    auto beginFuture = tpccSession.Begin(EIsolationLevel::RepeatableRead);
-                    auto tx = co_await TSuspendWithFuture(
-                        std::move(beginFuture), Context.TaskQueue, Context.TerminalID);
                     auto future = transactions[txIndex].TaskFunc(Context, latencyPure, *tx);
                     auto result = co_await TSuspendWithFuture(
                         std::move(future), Context.TaskQueue, Context.TerminalID);

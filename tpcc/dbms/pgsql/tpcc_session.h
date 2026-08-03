@@ -21,6 +21,8 @@ public:
     TFuture<TCommitResult> Rollback() override;
     TFuture<TCommitResult> Cancel() override;
 
+    TFuture<TOperationResult> ExecuteSelect1();
+
 private:
     bool TerminalState() const;
 

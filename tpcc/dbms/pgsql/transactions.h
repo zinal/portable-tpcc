@@ -1,9 +1,7 @@
 #pragma once
 
-#include "pg_session.h"
-
-#include <context.h>
 #include <workflows.h>
+#include <context.h>
 
 #include <future.h>
 
@@ -11,10 +9,12 @@
 
 namespace NTpcc {
 
+class TPgTpccTransaction;
+
 // PG-only simulation path (SELECT 1 / sleep). Not part of the semantic session API.
 TFuture<bool> GetSimulationTask(
     TTransactionContext& context,
     std::chrono::microseconds& latency,
-    PgSession& session);
+    TPgTpccTransaction& tx);
 
 } // namespace NTpcc

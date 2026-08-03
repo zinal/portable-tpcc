@@ -5,8 +5,8 @@
 #include <histogram.h>
 #include <phase_controller.h>
 #include <workload_config.h>
+#include <session.h>
 #include "transactions.h"
-#include "pg_connection_pool.h"
 
 #include <future.h>
 #include <spinlock.h>
@@ -193,7 +193,7 @@ public:
         size_t districtID,
         size_t warehouseCount,
         ITaskQueue& taskQueue,
-        PgConnectionPool* connectionPool,
+        ISessionFactory* sessionFactory,
         bool noDelays,
         std::stop_token stopToken,
         TPhaseController& phaseController,
@@ -223,7 +223,7 @@ private:
 
 private:
     ITaskQueue& TaskQueue;
-    PgConnectionPool* ConnectionPool;
+    ISessionFactory* SessionFactory;
     TTransactionContext Context;
     bool NoDelays;
     std::stop_token StopToken;

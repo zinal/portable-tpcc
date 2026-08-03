@@ -222,19 +222,20 @@ MUST NOT assume fusion always happens: semantics after success equal
 the effective choice in capabilities / result settings. PostgreSQL currently
 uses repeatable-read snapshot transactions in `PgSession`.
 
-#### 4.3.4. PostgreSQL transitional API
+#### 4.3.4. PostgreSQL `PgSession` implementation detail
 
 `PgSession` exposes coroutine-friendly `ExecuteQuery` / `ExecuteModify` /
-`Commit` / `Rollback` / `ExecuteCopy` over libpqxx. It is the concrete
-reference for:
+`Commit` / `Rollback` / `ExecuteCopy` over libpqxx. It remains the concrete
+IO layer for:
 
 - lazy transaction start on first statement;
 - bounded executor pool for blocking IO;
 - shutdown cancellation via a shared flag.
 
-New shared workflows MUST NOT take `PgSession&`; they take the abstract
-async `ITpccTransaction` surface above. `PgSession` becomes an implementation
-detail behind the PostgreSQL adapter’s `ISessionFactory`.
+The PostgreSQL runner wires terminals through `TPgSessionFactory`
+(`ISessionFactory`); `PgSession` and `PgConnectionPool` stay behind that
+boundary. Shared workflows MUST take the abstract async `ITpccTransaction`
+surface, not `PgSession&`.
 
 ### 4.4. `ICheckAdapter`
 

@@ -11,6 +11,7 @@
 #include <phase_controller.h>
 #include <task_queue.h>
 #include "terminal.h"
+#include "tpcc_session.h"
 #include "transactions.h"
 #include <domain_util.h>
 #include <time_util.h>
@@ -304,9 +305,11 @@ TRunOutcome RunSync(const TRunConfig& config, TTerminalStats* aggregatedStats) {
           << maxInflight << " max inflight");
 
     std::unique_ptr<PgConnectionPool> connectionPool;
+    std::unique_ptr<TPgSessionFactory> sessionFactory;
     if (needsConnections) {
         connectionPool = std::make_unique<PgConnectionPool>(
             config.ConnectionString, poolSize, ioThreads, config.Path);
+        sessionFactory = std::make_unique<TPgSessionFactory>(*connectionPool);
     }
 
     auto taskQueue = CreateTaskQueue(threadCount, maxInflight, terminalCount, terminalCount);
@@ -344,7 +347,7 @@ TRunOutcome RunSync(const TRunConfig& config, TTerminalStats* aggregatedStats) {
                     districtID,
                     scaleWarehouses,
                     *taskQueue,
-                    connectionPool.get(),
+                    sessionFactory.get(),
                     config.NoDelays,
                     stopToken,
                     phaseController,
@@ -587,6 +590,7 @@ TRunOutcome RunSync(const TRunConfig& config, TTerminalStats* aggregatedStats) {
     }
     outcome.HighResHistogram = config.HighResHistogram;
 
+    sessionFactory.reset();
     connectionPool.reset();
 
     outcome.ExitCode = GetGlobalErrorVariable().load() ? 1 : 0;
