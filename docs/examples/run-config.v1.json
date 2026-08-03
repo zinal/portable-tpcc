@@ -9,11 +9,10 @@
     "endpoint": "grpcs://ydb.example.net:2135",
     "database": "/Root/tpcc",
     "path": "portable_tpcc",
+    "auth_scheme": "login",
+    "user": "root",
     "password_env": "YDB_PASSWORD",
-    "options": {
-      "compact_after_load": true,
-      "tx_mode": "serializable-rw"
-    }
+    "ca_file": "ca.pem"
   },
   "scale": {
     "warehouses": 200

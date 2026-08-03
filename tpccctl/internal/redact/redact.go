@@ -55,7 +55,10 @@ func isSecretKey(key string) bool {
 			return true
 		}
 	}
-	if lower == "password_env" {
+	// Env-var *names* and credential *file paths* are not secret literals.
+	if lower == "password_env" || lower == "token_env" ||
+		strings.HasSuffix(lower, "_file") || strings.HasSuffix(lower, "_path")
+	{
 		return false
 	}
 	return false

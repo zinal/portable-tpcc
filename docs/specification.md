@@ -149,7 +149,8 @@ loaders and workers.
 `run-config.json` includes concrete values, not hash stand-ins for other
 documents:
 
-- `run_id`, DBMS settings (no passwords or tokens — only `password_env`);
+- `run_id`, DBMS settings (no passwords or tokens — only `password_env` /
+  worker-local paths such as `sa_key_file` / `ca_file`);
 - scale, seed, workload (mix, think/keying times, terminals per warehouse);
 - loader/worker instance lists and computed warehouse ranges;
 - phase durations and runtime/retry/histogram settings;

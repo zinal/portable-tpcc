@@ -49,6 +49,9 @@ PEERDIR(
     ydb/public/sdk/cpp/src/client/scheme
     ydb/public/sdk/cpp/src/client/operation
     ydb/public/sdk/cpp/src/client/proto
+    ydb/public/sdk/cpp/src/client/iam
+    ydb/public/sdk/cpp/src/client/types/credentials
+    ydb/public/sdk/cpp/src/client/types/credentials/login
     contrib/libs/fmt
     contrib/libs/ftxui
     contrib/restricted/nlohmann_json

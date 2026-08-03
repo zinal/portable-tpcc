@@ -7,9 +7,16 @@ import (
 
 	"portable-tpcc/tpccctl/internal/assignment"
 	"portable-tpcc/tpccctl/internal/config"
+	"portable-tpcc/tpccctl/internal/paths"
 	"portable-tpcc/tpccctl/internal/profile"
 	"portable-tpcc/tpccctl/internal/remote"
 )
+
+var allowedYdbAuthSchemes = map[string]bool{
+	"anonymous": true,
+	"login":     true,
+	"sa_key":    true,
+}
 
 var allowedDBMS = map[string]bool{
 	"ydb":       true,
@@ -70,16 +77,10 @@ func Profile(p *profile.Profile) *Result {
 	if p.Database.Endpoint == "" {
 		res.Add("database.endpoint is required")
 	}
-	if p.Database.PasswordEnv == "" {
-		res.Add("database.password_env is required")
-	} else if looksLikeSecret(p.Database.PasswordEnv) {
-		res.Add("database.password_env must be an environment variable name, not a secret literal")
-	} else if !remote.ValidEnvName(p.Database.PasswordEnv) {
-		res.Add("database.password_env must match [A-Za-z_][A-Za-z0-9_]*")
-	}
 	if containsCredential(p.Database.Endpoint) {
 		res.Add("credentials must not appear in database.endpoint")
 	}
+	validateDatabaseAuth(p, res)
 	if p.Scale.Warehouses <= 0 {
 		res.Add("scale.warehouses must be positive")
 	}
@@ -256,6 +257,74 @@ func validateInstances(
 			res.Add(fmt.Sprintf("duplicate remote (host, run_dir, instance): %s", key))
 		}
 		remoteKeys[key] = true
+	}
+}
+
+func validateDatabaseAuth(p *profile.Profile, res *Result) {
+	db := p.Database
+	switch db.DBMS {
+	case "ydb":
+		validateYdbAuth(db, res)
+	default:
+		if db.AuthScheme != "" {
+			res.Add("database.auth_scheme is only supported for dbms=ydb")
+		}
+		if db.User != "" {
+			res.Add("database.user is only supported for dbms=ydb")
+		}
+		if db.SaKeyFile != "" {
+			res.Add("database.sa_key_file is only supported for dbms=ydb")
+		}
+		if db.CaFile != "" {
+			res.Add("database.ca_file is only supported for dbms=ydb")
+		}
+		validatePasswordEnvRequired(db.PasswordEnv, res)
+	}
+}
+
+func validateYdbAuth(db profile.Database, res *Result) {
+	scheme := config.InferYdbAuthScheme(db)
+	if db.AuthScheme != "" && !allowedYdbAuthSchemes[db.AuthScheme] {
+		res.Add(`database.auth_scheme must be "anonymous", "login", or "sa_key"`)
+		return
+	}
+	if db.CaFile != "" {
+		if _, err := paths.ExpandHome(db.CaFile); err != nil {
+			res.Add("database.ca_file: " + err.Error())
+		}
+	}
+	switch scheme {
+	case "anonymous":
+		if db.User != "" || db.PasswordEnv != "" || db.SaKeyFile != "" {
+			res.Add("database.auth_scheme=anonymous does not accept user, password_env, or sa_key_file")
+		}
+	case "login":
+		if db.User == "" {
+			res.Add("database.user is required for auth_scheme=login")
+		}
+		validatePasswordEnvRequired(db.PasswordEnv, res)
+		if db.SaKeyFile != "" {
+			res.Add("database.auth_scheme=login does not accept sa_key_file")
+		}
+	case "sa_key":
+		if db.SaKeyFile == "" {
+			res.Add("database.sa_key_file is required for auth_scheme=sa_key")
+		} else if _, err := paths.ExpandHome(db.SaKeyFile); err != nil {
+			res.Add("database.sa_key_file: " + err.Error())
+		}
+		if db.User != "" || db.PasswordEnv != "" {
+			res.Add("database.auth_scheme=sa_key does not accept user or password_env")
+		}
+	}
+}
+
+func validatePasswordEnvRequired(name string, res *Result) {
+	if name == "" {
+		res.Add("database.password_env is required")
+	} else if looksLikeSecret(name) {
+		res.Add("database.password_env must be an environment variable name, not a secret literal")
+	} else if !remote.ValidEnvName(name) {
+		res.Add("database.password_env must match [A-Za-z_][A-Za-z0-9_]*")
 	}
 }
 

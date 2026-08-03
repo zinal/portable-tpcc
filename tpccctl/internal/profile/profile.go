@@ -71,7 +71,11 @@ type Database struct {
 	Endpoint    string                 `yaml:"endpoint"`
 	Database    string                 `yaml:"database"`
 	Path        string                 `yaml:"path"`
+	AuthScheme  string                 `yaml:"auth_scheme"`
+	User        string                 `yaml:"user"`
 	PasswordEnv string                 `yaml:"password_env"`
+	SaKeyFile   string                 `yaml:"sa_key_file"`
+	CaFile      string                 `yaml:"ca_file"`
 	Options     map[string]interface{} `yaml:"options"`
 }
 
