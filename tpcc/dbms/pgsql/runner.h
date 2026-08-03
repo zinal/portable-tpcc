@@ -25,6 +25,8 @@ constexpr int DEFAULT_IO_THREADS = 0;
 struct TRunConfig {
     std::string ConnectionString;
     std::string Path;
+    // Physical partitioning style used at schema time ("none" | "warehouse_hash").
+    std::string Partitioning = "none";
     size_t WarehouseCount = DEFAULT_WAREHOUSE_COUNT;
     std::chrono::seconds WarmupDuration{0};
     std::chrono::seconds RunDuration{600};

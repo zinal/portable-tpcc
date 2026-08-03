@@ -369,7 +369,9 @@ visible in the result settings/options.
   exact values as `Double`; no hidden SDK retries; prefer
   `ExecuteFinalAndCommit` for the last statement.
 - **PostgreSQL:** prepared statements, `COPY`, DECIMAL, SQLSTATE mapping,
-  bounded IO if using blocking libpqxx, `ANALYZE` after indexes.
+  bounded IO if using blocking libpqxx, `ANALYZE` after indexes. Optional
+  warehouse `HASH` partitions (see
+  [pgsql-partitioning-design.md](pgsql-partitioning-design.md)).
 - **OceanBase:** warehouse partitioning, cached statements, clear error
   classes, optional FKs as a recorded physical option.
 

@@ -24,14 +24,18 @@ void SetSearchPath(pqxx::connection& conn, const std::string& path) {
 
 } // anonymous
 
-TPgAdminAdapter::TPgAdminAdapter(std::string connectionString, std::string path)
+TPgAdminAdapter::TPgAdminAdapter(
+    std::string connectionString,
+    std::string path,
+    TPgPartitionConfig partitionConfig)
     : ConnectionString_(std::move(connectionString))
     , Path_(std::move(path))
+    , PartitionConfig_(std::move(partitionConfig))
 {
 }
 
 void TPgAdminAdapter::EnsureSchema() {
-    InitSync(ConnectionString_, Path_);
+    InitSync(ConnectionString_, Path_, PartitionConfig_);
 }
 
 void TPgAdminAdapter::EnsureIndexes() {

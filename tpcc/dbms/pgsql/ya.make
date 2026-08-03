@@ -12,6 +12,7 @@ SRCS(
     init.cpp
     import.cpp
     load_batch.cpp
+    partition_config.cpp
     pg_error_classifier.cpp
     pg_capabilities.cpp
     tpcc_session.cpp
@@ -41,3 +42,7 @@ PEERDIR(
 )
 
 END()
+
+RECURSE_FOR_TESTS(
+    ut
+)

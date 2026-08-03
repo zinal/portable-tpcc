@@ -1,5 +1,7 @@
 #pragma once
 
+#include "partition_config.h"
+
 #include <admin_adapter.h>
 
 #include <string>
@@ -8,7 +10,10 @@ namespace NTpcc {
 
 class TPgAdminAdapter final : public IAdminAdapter {
 public:
-    TPgAdminAdapter(std::string connectionString, std::string path);
+    TPgAdminAdapter(
+        std::string connectionString,
+        std::string path,
+        TPgPartitionConfig partitionConfig = {});
 
     void EnsureSchema() override;
     void EnsureIndexes() override;
@@ -19,6 +24,7 @@ public:
 private:
     std::string ConnectionString_;
     std::string Path_;
+    TPgPartitionConfig PartitionConfig_;
 };
 
 } // namespace NTpcc

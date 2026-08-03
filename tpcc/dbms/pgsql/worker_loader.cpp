@@ -3,6 +3,7 @@
 #include "pg_admin_adapter.h"
 #include "clock_calibration.h"
 #include "import.h"
+#include "partition_config.h"
 #include "path_checker.h"
 #include "run_config.h"
 #include "runner.h"
@@ -68,6 +69,7 @@ int RunWorkerFromRunConfig(
         TRunConfig runCfg;
         runCfg.ConnectionString = BuildPgConnectionString(d);
         runCfg.Path = d.Path;
+        runCfg.Partitioning = d.Partitioning.empty() ? "none" : d.Partitioning;
         runCfg.WarehouseRanges = assign.WarehouseRanges;
         runCfg.WarehouseCount = CountWarehouses(assign.WarehouseRanges);
         runCfg.ScaleWarehouses = d.ScaleWarehouses;
@@ -97,11 +99,15 @@ int RunSchemaFromRunConfig(const std::string& runConfigPath, const std::string& 
     return RunOrchestratedSchema(doc, instance, [instance](const TRunConfigDocument& d) {
         const std::string connection = BuildPgConnectionString(d);
         CheckDbForInit(connection, d.Path);
-        TPgAdminAdapter admin(connection, d.Path);
+        TPgPartitionConfig partCfg;
+        partCfg.Partitioning = d.Partitioning.empty() ? PG_PARTITIONING_NONE : d.Partitioning;
+        partCfg.PartitionCount = d.PartitionCount;
+        partCfg.WarehouseCount = d.ScaleWarehouses;
+        TPgAdminAdapter admin(connection, d.Path, partCfg);
         admin.EnsureSchema();
         auto desc = admin.Describe();
         LOG_I("Schema ready (server=" << desc.ServerVersion << ", client=" << desc.ClientVersion
-              << ", instance=" << instance << ")");
+              << ", instance=" << instance << ", partitioning=" << partCfg.Partitioning << ")");
     });
 }
 

@@ -1,5 +1,7 @@
 #include "run_config.h"
 
+#include "partition_config.h"
+
 #include <sha256.h>
 #include <think_time.h>
 
@@ -170,6 +172,14 @@ void ValidateRunConfigDocument(const TRunConfigDocument& doc, const Json& root) 
     if (doc.ScaleWarehouses <= 0) {
         throw std::runtime_error("scale.warehouses must be greater than zero");
     }
+    {
+        TPgPartitionConfig partCfg;
+        partCfg.Partitioning = doc.Partitioning.empty() ? PG_PARTITIONING_NONE : doc.Partitioning;
+        partCfg.PartitionCount = doc.PartitionCount;
+        partCfg.WarehouseCount = doc.ScaleWarehouses;
+        // Validates combination; result unused until schema role.
+        ResolvePgPartitionCount(partCfg);
+    }
     if (doc.BatchRows < 0) {
         throw std::runtime_error("data.batch_rows must not be negative");
     }
@@ -291,10 +301,30 @@ TRunConfigDocument LoadRunConfigDocument(const std::string& path) {
             if (!db["options"].is_object()) {
                 throw std::runtime_error("database.options must be an object");
             }
-            // PostgreSQL currently accepts no adapter options; reject unknowns.
-            for (const auto& item : db["options"].items()) {
-                throw std::runtime_error(
-                    "unknown database.options." + item.key() + " for dbms=pgsql");
+            const auto& options = db["options"];
+            for (const auto& item : options.items()) {
+                const std::string& key = item.key();
+                if (key == "partitioning") {
+                    if (!item.value().is_string()) {
+                        throw std::runtime_error(
+                            "database.options.partitioning must be a string");
+                    }
+                    doc.Partitioning = item.value().get<std::string>();
+                    if (doc.Partitioning != "none" && doc.Partitioning != "warehouse_hash") {
+                        throw std::runtime_error(
+                            "database.options.partitioning must be \"none\" or \"warehouse_hash\"");
+                    }
+                } else if (key == "partition_count") {
+                    doc.PartitionCount = ReadIntNonNegative(
+                        options, "partition_count", 0, "database.options.partition_count");
+                    if (doc.PartitionCount == 0) {
+                        throw std::runtime_error(
+                            "database.options.partition_count must be greater than zero when set");
+                    }
+                } else {
+                    throw std::runtime_error(
+                        "unknown database.options." + key + " for dbms=pgsql");
+                }
             }
         }
     }

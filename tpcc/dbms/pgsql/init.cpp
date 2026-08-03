@@ -7,14 +7,45 @@
 #include <pqxx/pqxx>
 #include <fmt/format.h>
 
+#include <sstream>
 #include <stdexcept>
 
 namespace NTpcc {
 
 namespace {
 
-const char* DDL = R"(
+std::string HashPartitionClause(const char* column, int partitionCount) {
+    if (partitionCount <= 0) {
+        return {};
+    }
+    return fmt::format(" PARTITION BY HASH ({})", column);
+}
 
+std::string HashPartitionChildren(const char* table, int partitionCount) {
+    if (partitionCount <= 0) {
+        return {};
+    }
+    std::ostringstream out;
+    for (int r = 0; r < partitionCount; ++r) {
+        out << fmt::format(
+            "CREATE TABLE {}_p{} PARTITION OF {} FOR VALUES WITH (MODULUS {}, REMAINDER {});\n",
+            table, r, table, partitionCount, r);
+    }
+    return out.str();
+}
+
+} // anonymous
+
+std::string BuildTpccSchemaDdl(int hashPartitionCount) {
+    const std::string stockPart = HashPartitionClause("s_w_id", hashPartitionCount);
+    const std::string customerPart = HashPartitionClause("c_w_id", hashPartitionCount);
+    const std::string oorderPart = HashPartitionClause("o_w_id", hashPartitionCount);
+    const std::string newOrderPart = HashPartitionClause("no_w_id", hashPartitionCount);
+    const std::string orderLinePart = HashPartitionClause("ol_w_id", hashPartitionCount);
+    const std::string historyPart = HashPartitionClause("h_w_id", hashPartitionCount);
+
+    std::ostringstream ddl;
+    ddl << R"(
 DROP TABLE IF EXISTS history CASCADE;
 DROP TABLE IF EXISTS new_order CASCADE;
 DROP TABLE IF EXISTS order_line CASCADE;
@@ -68,7 +99,8 @@ CREATE TABLE stock (
     FOREIGN KEY (s_w_id) REFERENCES warehouse (w_id) ON DELETE CASCADE,
     FOREIGN KEY (s_i_id) REFERENCES item (i_id) ON DELETE CASCADE,
     PRIMARY KEY (s_w_id, s_i_id)
-);
+)
+)" << stockPart << R"(;
 
 CREATE TABLE district (
     d_w_id      int            NOT NULL,
@@ -110,7 +142,8 @@ CREATE TABLE customer (
     c_data         varchar(500)   NOT NULL,
     FOREIGN KEY (c_w_id, c_d_id) REFERENCES district (d_w_id, d_id) ON DELETE CASCADE,
     PRIMARY KEY (c_w_id, c_d_id, c_id)
-);
+)
+)" << customerPart << R"(;
 
 CREATE TABLE history (
     h_c_id   int           NOT NULL,
@@ -123,7 +156,8 @@ CREATE TABLE history (
     h_data   varchar(24)   NOT NULL,
     FOREIGN KEY (h_c_w_id, h_c_d_id, h_c_id) REFERENCES customer (c_w_id, c_d_id, c_id) ON DELETE CASCADE,
     FOREIGN KEY (h_w_id, h_d_id) REFERENCES district (d_w_id, d_id) ON DELETE CASCADE
-);
+)
+)" << historyPart << R"(;
 
 CREATE TABLE oorder (
     o_w_id       int       NOT NULL,
@@ -137,7 +171,8 @@ CREATE TABLE oorder (
     PRIMARY KEY (o_w_id, o_d_id, o_id),
     FOREIGN KEY (o_w_id, o_d_id, o_c_id) REFERENCES customer (c_w_id, c_d_id, c_id) ON DELETE CASCADE,
     CONSTRAINT idx_order UNIQUE (o_w_id, o_d_id, o_c_id, o_id)
-);
+)
+)" << oorderPart << R"(;
 
 CREATE TABLE new_order (
     no_w_id int NOT NULL,
@@ -145,7 +180,8 @@ CREATE TABLE new_order (
     no_o_id int NOT NULL,
     FOREIGN KEY (no_w_id, no_d_id, no_o_id) REFERENCES oorder (o_w_id, o_d_id, o_id) ON DELETE CASCADE,
     PRIMARY KEY (no_w_id, no_d_id, no_o_id)
-);
+)
+)" << newOrderPart << R"(;
 
 CREATE TABLE order_line (
     ol_w_id        int           NOT NULL,
@@ -161,15 +197,22 @@ CREATE TABLE order_line (
     FOREIGN KEY (ol_w_id, ol_d_id, ol_o_id) REFERENCES oorder (o_w_id, o_d_id, o_id) ON DELETE CASCADE,
     FOREIGN KEY (ol_supply_w_id, ol_i_id) REFERENCES stock (s_w_id, s_i_id) ON DELETE CASCADE,
     PRIMARY KEY (ol_w_id, ol_d_id, ol_o_id, ol_number)
-);
+)
+)" << orderLinePart << ";\n";
 
-)";
+    ddl << HashPartitionChildren(TABLE_STOCK, hashPartitionCount);
+    ddl << HashPartitionChildren(TABLE_CUSTOMER, hashPartitionCount);
+    ddl << HashPartitionChildren(TABLE_HISTORY, hashPartitionCount);
+    ddl << HashPartitionChildren(TABLE_OORDER, hashPartitionCount);
+    ddl << HashPartitionChildren(TABLE_NEW_ORDER, hashPartitionCount);
+    ddl << HashPartitionChildren(TABLE_ORDER_LINE, hashPartitionCount);
+
+    return ddl.str();
+}
 
 const char* INDEX_DDL = R"(
 CREATE INDEX IF NOT EXISTS idx_customer_name ON customer (c_w_id, c_d_id, c_last, c_first);
 )";
-
-} // anonymous
 
 void SetSearchPath(pqxx::connection& conn, const std::string& path) {
     if (!path.empty()) {
@@ -178,8 +221,19 @@ void SetSearchPath(pqxx::connection& conn, const std::string& path) {
     }
 }
 
-void InitSync(const std::string& connectionString, const std::string& path) {
-    LOG_I("Initializing TPC-C schema...");
+void InitSync(
+    const std::string& connectionString,
+    const std::string& path,
+    const TPgPartitionConfig& partitionConfig)
+{
+    const int hashPartitions = ResolvePgPartitionCount(partitionConfig);
+
+    if (hashPartitions > 0) {
+        LOG_I("Initializing TPC-C schema with warehouse_hash partitioning ("
+              << hashPartitions << " partitions)...");
+    } else {
+        LOG_I("Initializing TPC-C schema...");
+    }
 
     try {
         pqxx::connection conn(connectionString);
@@ -192,8 +246,9 @@ void InitSync(const std::string& connectionString, const std::string& path) {
 
         SetSearchPath(conn, path);
 
+        const std::string ddl = BuildTpccSchemaDdl(hashPartitions);
         pqxx::nontransaction ntx(conn);
-        ntx.exec(DDL);
+        ntx.exec(ddl);
         LOG_I("All TPC-C tables created successfully");
     } catch (const std::exception& e) {
         LOG_E("Failed to create TPC-C tables: " << e.what());

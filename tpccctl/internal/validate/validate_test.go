@@ -266,3 +266,61 @@ func TestValidate_ydbAuthSchemes(t *testing.T) {
 		}
 	})
 }
+
+func TestValidate_pgsqlPartitioningOptions(t *testing.T) {
+	path := filepath.Join("..", "..", "testdata", "profile.valid.yaml")
+	base, err := profile.ParseFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("accepts_warehouse_hash", func(t *testing.T) {
+		p := *base
+		p.Database.Options = map[string]interface{}{
+			"partitioning":    "warehouse_hash",
+			"partition_count": 32,
+		}
+		res := validate.Profile(&p)
+		if !res.Valid {
+			t.Fatalf("expected valid partitioning options, errors: %v", res.Errors)
+		}
+	})
+
+	t.Run("accepts_hash_without_count", func(t *testing.T) {
+		p := *base
+		p.Database.Options = map[string]interface{}{
+			"partitioning": "warehouse_hash",
+		}
+		res := validate.Profile(&p)
+		if !res.Valid {
+			t.Fatalf("expected derive-from-warehouses to be valid, errors: %v", res.Errors)
+		}
+	})
+
+	t.Run("rejects_unknown_option", func(t *testing.T) {
+		p := *base
+		p.Database.Options = map[string]interface{}{"tx_mode": "serializable"}
+		res := validate.Profile(&p)
+		if res.Valid {
+			t.Fatal("expected unknown pgsql option to fail")
+		}
+	})
+
+	t.Run("rejects_count_without_hash", func(t *testing.T) {
+		p := *base
+		p.Database.Options = map[string]interface{}{"partition_count": 16}
+		res := validate.Profile(&p)
+		if res.Valid {
+			t.Fatal("expected partition_count without warehouse_hash to fail")
+		}
+	})
+
+	t.Run("rejects_invalid_partitioning", func(t *testing.T) {
+		p := *base
+		p.Database.Options = map[string]interface{}{"partitioning": "warehouse_range"}
+		res := validate.Profile(&p)
+		if res.Valid {
+			t.Fatal("expected invalid partitioning value to fail")
+		}
+	})
+}

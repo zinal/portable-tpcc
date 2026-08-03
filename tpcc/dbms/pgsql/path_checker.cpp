@@ -26,7 +26,7 @@ std::unordered_set<std::string> ListTables(pqxx::connection& conn, const std::st
     pqxx::nontransaction ntx(conn);
     auto result = ntx.exec_params(
         "SELECT table_name FROM information_schema.tables "
-        "WHERE table_schema = $1 AND table_type = 'BASE TABLE'",
+        "WHERE table_schema = $1 AND table_type IN ('BASE TABLE', 'PARTITIONED TABLE')",
         schema);
 
     std::unordered_set<std::string> tables;
