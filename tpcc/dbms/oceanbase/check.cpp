@@ -1,0 +1,607 @@
+#include "check.h"
+
+#include "ob_connection.h"
+#include "path_checker.h"
+#include "run_config.h"
+
+#include <artifacts.h>
+#include <catalog.h>
+#include <constants.h>
+#include <log.h>
+#include <report.h>
+
+#include <fmt/format.h>
+
+#include <algorithm>
+#include <iostream>
+#include <stdexcept>
+#include <string>
+#include <unistd.h>
+
+namespace NTpcc {
+
+namespace {
+
+QueryResult QueryOne(TObConnection& conn, const std::string& sql) {
+    auto result = conn.QuerySimple(sql);
+    if (!result.TryNextRow()) {
+        throw std::runtime_error("Expected one row, got none: " + sql);
+    }
+    return result;
+}
+
+void CheckNoRows(TObConnection& conn, const std::string& sql, const std::string& description = {}) {
+    auto result = conn.QuerySimple(sql);
+    if (result.TryNextRow()) {
+        throw std::runtime_error(description.empty() ? "Unexpected rows returned" : description);
+    }
+}
+
+void BaseCheckWarehouseTable(TObConnection& conn, int expectedWhNumber) {
+    auto r = QueryOne(conn, fmt::format(
+        "SELECT COUNT(*) AS cnt, MAX(w_id) AS max_id, MIN(w_id) AS min_id FROM {}", TABLE_WAREHOUSE));
+    if (r.GetInt64("cnt") != expectedWhNumber ||
+        r.GetInt32("min_id") != 1 ||
+        r.GetInt32("max_id") != expectedWhNumber)
+    {
+        throw std::runtime_error(fmt::format(
+            "Inconsistent warehouse: count={}, min={}, max={}, expected={}",
+            r.GetInt64("cnt"), r.GetInt32("min_id"), r.GetInt32("max_id"), expectedWhNumber));
+    }
+}
+
+void BaseCheckDistrictTable(TObConnection& conn, int expectedWhNumber) {
+    auto r = QueryOne(conn, fmt::format(
+        "SELECT COUNT(*) AS cnt, MAX(d_w_id) AS max_w, MIN(d_w_id) AS min_w, "
+        "MAX(d_id) AS max_d, MIN(d_id) AS min_d FROM {}", TABLE_DISTRICT));
+    const int expectedCount = expectedWhNumber * DISTRICT_COUNT;
+    if (r.GetInt64("cnt") != expectedCount ||
+        r.GetInt32("min_w") != 1 || r.GetInt32("max_w") != expectedWhNumber ||
+        r.GetInt32("min_d") != DISTRICT_LOW_ID || r.GetInt32("max_d") != DISTRICT_HIGH_ID)
+    {
+        throw std::runtime_error("District cardinality/range mismatch");
+    }
+}
+
+void BaseCheckCustomerTable(TObConnection& conn, int expectedWhNumber) {
+    auto r = QueryOne(conn, fmt::format(
+        "SELECT COUNT(*) AS cnt, MAX(c_w_id) AS max_w, MIN(c_w_id) AS min_w, "
+        "MAX(c_d_id) AS max_d, MIN(c_d_id) AS min_d, MAX(c_id) AS max_c, MIN(c_id) AS min_c "
+        "FROM {}", TABLE_CUSTOMER));
+    const int expectedCount = expectedWhNumber * CUSTOMERS_PER_DISTRICT * DISTRICT_COUNT;
+    if (r.GetInt64("cnt") != expectedCount ||
+        r.GetInt32("min_w") != 1 || r.GetInt32("max_w") != expectedWhNumber ||
+        r.GetInt32("min_d") != DISTRICT_LOW_ID || r.GetInt32("max_d") != DISTRICT_HIGH_ID ||
+        r.GetInt32("min_c") != 1 || r.GetInt32("max_c") != CUSTOMERS_PER_DISTRICT)
+    {
+        throw std::runtime_error("Customer cardinality/range mismatch");
+    }
+}
+
+void BaseCheckItemTable(TObConnection& conn) {
+    auto r = QueryOne(conn, fmt::format(
+        "SELECT COUNT(*) AS cnt, MAX(i_id) AS max_id, MIN(i_id) AS min_id FROM {}", TABLE_ITEM));
+    if (r.GetInt64("cnt") != ITEM_COUNT ||
+        r.GetInt32("min_id") != 1 ||
+        r.GetInt32("max_id") != ITEM_COUNT)
+    {
+        throw std::runtime_error("Item cardinality/range mismatch");
+    }
+}
+
+void BaseCheckStockTable(TObConnection& conn, int expectedWhNumber) {
+    auto r = QueryOne(conn, fmt::format(
+        "SELECT COUNT(*) AS cnt, COUNT(DISTINCT s_w_id) AS wh_cnt, "
+        "MAX(s_w_id) AS max_w, MIN(s_w_id) AS min_w, MAX(s_i_id) AS max_i, MIN(s_i_id) AS min_i "
+        "FROM {}", TABLE_STOCK));
+    const int expectedCount = expectedWhNumber * ITEM_COUNT;
+    if (r.GetInt64("cnt") != expectedCount ||
+        r.GetInt32("wh_cnt") != expectedWhNumber ||
+        r.GetInt32("min_w") != 1 || r.GetInt32("max_w") != expectedWhNumber ||
+        r.GetInt32("min_i") != 1 || r.GetInt32("max_i") != ITEM_COUNT)
+    {
+        throw std::runtime_error("Stock cardinality/range mismatch");
+    }
+}
+
+void BaseCheckOorderTable(TObConnection& conn, int expectedWhNumber) {
+    auto r = QueryOne(conn, fmt::format(
+        "SELECT COUNT(*) AS cnt, MAX(o_w_id) AS max_w, MIN(o_w_id) AS min_w, "
+        "MAX(o_d_id) AS max_d, MIN(o_d_id) AS min_d, MAX(o_id) AS max_o, MIN(o_id) AS min_o "
+        "FROM {}", TABLE_OORDER));
+    const int expectedCount = expectedWhNumber * CUSTOMERS_PER_DISTRICT * DISTRICT_COUNT;
+    if (r.GetInt64("cnt") != expectedCount ||
+        r.GetInt32("min_w") != 1 || r.GetInt32("max_w") != expectedWhNumber ||
+        r.GetInt32("min_d") != DISTRICT_LOW_ID || r.GetInt32("max_d") != DISTRICT_HIGH_ID ||
+        r.GetInt32("min_o") != 1 || r.GetInt32("max_o") != CUSTOMERS_PER_DISTRICT)
+    {
+        throw std::runtime_error("Order cardinality/range mismatch");
+    }
+}
+
+void BaseCheckNewOrderTable(TObConnection& conn, int expectedWhNumber) {
+    auto r = QueryOne(conn, fmt::format(
+        "SELECT COUNT(*) AS cnt, MAX(no_w_id) AS max_w, MIN(no_w_id) AS min_w, "
+        "MAX(no_d_id) AS max_d, MIN(no_d_id) AS min_d, MAX(no_o_id) AS max_o, MIN(no_o_id) AS min_o "
+        "FROM {}", TABLE_NEW_ORDER));
+    const int expectedCount = expectedWhNumber *
+        (CUSTOMERS_PER_DISTRICT - FIRST_UNPROCESSED_O_ID + 1) * DISTRICT_COUNT;
+    if (r.GetInt64("cnt") != expectedCount ||
+        r.GetInt32("min_w") != 1 || r.GetInt32("max_w") != expectedWhNumber ||
+        r.GetInt32("min_d") != DISTRICT_LOW_ID || r.GetInt32("max_d") != DISTRICT_HIGH_ID ||
+        r.GetInt32("min_o") < FIRST_UNPROCESSED_O_ID ||
+        r.GetInt32("max_o") != CUSTOMERS_PER_DISTRICT)
+    {
+        throw std::runtime_error("New-order cardinality/range mismatch");
+    }
+}
+
+void BaseCheckOrderLineTable(TObConnection& conn, int expectedWhNumber) {
+    auto r = QueryOne(conn, fmt::format(
+        "SELECT MIN(order_count) AS min_orders, MAX(order_count) AS max_orders, COUNT(*) AS district_count "
+        "FROM (SELECT ol_w_id, ol_d_id, COUNT(DISTINCT ol_o_id) AS order_count "
+        "FROM {} GROUP BY ol_w_id, ol_d_id) sub", TABLE_ORDER_LINE));
+    const int expectedDistrictCount = expectedWhNumber * DISTRICT_COUNT;
+    if (r.GetInt64("district_count") != expectedDistrictCount ||
+        r.GetInt64("min_orders") != CUSTOMERS_PER_DISTRICT ||
+        r.GetInt64("max_orders") != CUSTOMERS_PER_DISTRICT)
+    {
+        throw std::runtime_error("Order-line cardinality/range mismatch");
+    }
+}
+
+void BaseCheckHistoryTable(TObConnection& conn, int expectedWhNumber) {
+    auto r = QueryOne(conn, fmt::format(
+        "SELECT COUNT(*) AS cnt, MAX(h_c_w_id) AS max_w, MIN(h_c_w_id) AS min_w FROM {}",
+        TABLE_HISTORY));
+    const int expectedCount = expectedWhNumber * CUSTOMERS_PER_DISTRICT * DISTRICT_COUNT;
+    if (r.GetInt64("cnt") != expectedCount ||
+        r.GetInt32("min_w") != 1 ||
+        r.GetInt32("max_w") != expectedWhNumber)
+    {
+        throw std::runtime_error("History cardinality/range mismatch");
+    }
+}
+
+void ConsistencyCheck3321(TObConnection& conn) {
+    CheckNoRows(conn, fmt::format(
+        "SELECT w.w_id FROM {} AS w "
+        "LEFT JOIN (SELECT d_w_id, SUM(d_ytd) AS sum_d_ytd FROM {} GROUP BY d_w_id) AS d "
+        "ON w.w_id = d.d_w_id WHERE ABS(w.w_ytd - COALESCE(d.sum_d_ytd, 0)) > 1e-3 LIMIT 1",
+        TABLE_WAREHOUSE, TABLE_DISTRICT));
+}
+
+void ConsistencyCheck3322(TObConnection& conn) {
+    CheckNoRows(conn, fmt::format(
+        "SELECT d.d_w_id FROM {} AS d "
+        "LEFT JOIN (SELECT o_w_id, o_d_id, MAX(o_id) AS max_o_id FROM {} GROUP BY o_w_id, o_d_id) AS o "
+        "ON d.d_w_id = o.o_w_id AND d.d_id = o.o_d_id "
+        "LEFT JOIN (SELECT no_w_id, no_d_id, MAX(no_o_id) AS max_no_o_id FROM {} GROUP BY no_w_id, no_d_id) AS n "
+        "ON d.d_w_id = n.no_w_id AND d.d_id = n.no_d_id "
+        "WHERE o.max_o_id IS NULL OR (d.d_next_o_id - 1) != o.max_o_id "
+        "OR (n.max_no_o_id IS NOT NULL AND n.max_no_o_id != o.max_o_id) LIMIT 1",
+        TABLE_DISTRICT, TABLE_OORDER, TABLE_NEW_ORDER));
+}
+
+void ConsistencyCheck3323(TObConnection& conn) {
+    CheckNoRows(conn, fmt::format(
+        "SELECT no_w_id FROM {} GROUP BY no_w_id, no_d_id "
+        "HAVING COUNT(*) - (MAX(no_o_id) - MIN(no_o_id) + 1) != 0 LIMIT 1",
+        TABLE_NEW_ORDER));
+}
+
+void ConsistencyCheck3324(TObConnection& conn, int warehouseCount) {
+    constexpr int RANGE_SIZE = 50;
+    for (int startWh = 1; startWh <= warehouseCount; startWh += RANGE_SIZE) {
+        const int endWh = std::min(startWh + RANGE_SIZE - 1, warehouseCount);
+        CheckNoRows(conn, fmt::format(
+            "SELECT * FROM ("
+            "SELECT o.o_w_id, o.o_d_id FROM (SELECT o_w_id, o_d_id, SUM(o_ol_cnt) AS sum_ol_cnt "
+            "FROM {0} WHERE o_w_id >= {1} AND o_w_id <= {2} GROUP BY o_w_id, o_d_id) AS o "
+            "LEFT JOIN (SELECT ol_w_id, ol_d_id, COUNT(*) AS ol_count FROM {3} "
+            "WHERE ol_w_id >= {1} AND ol_w_id <= {2} GROUP BY ol_w_id, ol_d_id) AS ol "
+            "ON o.o_w_id = ol.ol_w_id AND o.o_d_id = ol.ol_d_id "
+            "WHERE COALESCE(o.sum_ol_cnt, -1) != COALESCE(ol.ol_count, -1) "
+            "UNION ALL "
+            "SELECT ol2.ol_w_id, ol2.ol_d_id FROM (SELECT ol_w_id, ol_d_id, COUNT(*) AS ol_count "
+            "FROM {3} WHERE ol_w_id >= {1} AND ol_w_id <= {2} GROUP BY ol_w_id, ol_d_id) AS ol2 "
+            "LEFT JOIN (SELECT o_w_id, o_d_id, SUM(o_ol_cnt) AS sum_ol_cnt FROM {0} "
+            "WHERE o_w_id >= {1} AND o_w_id <= {2} GROUP BY o_w_id, o_d_id) AS o2 "
+            "ON o2.o_w_id = ol2.ol_w_id AND o2.o_d_id = ol2.ol_d_id WHERE o2.o_w_id IS NULL"
+            ") sub LIMIT 1", TABLE_OORDER, startWh, endWh, TABLE_ORDER_LINE),
+            fmt::format("3.3.2.4 w_id [{},{}]", startWh, endWh));
+    }
+}
+
+void ConsistencyCheck3325(TObConnection& conn, int warehouseCount) {
+    constexpr int RANGE_SIZE = 50;
+    for (int startWh = 1; startWh <= warehouseCount; startWh += RANGE_SIZE) {
+        const int endWh = std::min(startWh + RANGE_SIZE - 1, warehouseCount);
+        CheckNoRows(conn, fmt::format(
+            "SELECT * FROM ("
+            "SELECT no.no_w_id, no.no_d_id, no.no_o_id FROM {0} AS no LEFT JOIN {1} AS o "
+            "ON no.no_w_id = o.o_w_id AND no.no_d_id = o.o_d_id AND no.no_o_id = o.o_id "
+            "WHERE no.no_w_id >= {2} AND no.no_w_id <= {3} AND (o.o_w_id IS NULL OR o.o_carrier_id IS NOT NULL) "
+            "UNION ALL "
+            "SELECT o2.o_w_id, o2.o_d_id, o2.o_id FROM {1} AS o2 LEFT JOIN {0} AS no2 "
+            "ON o2.o_w_id = no2.no_w_id AND o2.o_d_id = no2.no_d_id AND o2.o_id = no2.no_o_id "
+            "WHERE o2.o_w_id >= {2} AND o2.o_w_id <= {3} AND o2.o_carrier_id IS NULL AND no2.no_w_id IS NULL"
+            ") sub LIMIT 1", TABLE_NEW_ORDER, TABLE_OORDER, startWh, endWh),
+            fmt::format("3.3.2.5 w_id [{},{}]", startWh, endWh));
+    }
+}
+
+void ConsistencyCheck3326(TObConnection& conn, int warehouseCount) {
+    constexpr int RANGE_SIZE = 50;
+    for (int startWh = 1; startWh <= warehouseCount; startWh += RANGE_SIZE) {
+        const int endWh = std::min(startWh + RANGE_SIZE - 1, warehouseCount);
+        CheckNoRows(conn, fmt::format(
+            "SELECT * FROM ("
+            "SELECT o.o_w_id, o.o_d_id, o.o_id FROM {0} AS o "
+            "LEFT JOIN (SELECT ol_w_id, ol_d_id, ol_o_id, COUNT(*) AS cnt FROM {1} "
+            "WHERE ol_w_id >= {2} AND ol_w_id <= {3} GROUP BY ol_w_id, ol_d_id, ol_o_id) AS l "
+            "ON o.o_w_id = l.ol_w_id AND o.o_d_id = l.ol_d_id AND o.o_id = l.ol_o_id "
+            "WHERE o.o_w_id >= {2} AND o.o_w_id <= {3} AND o.o_ol_cnt != COALESCE(l.cnt, 0) "
+            "UNION ALL "
+            "SELECT l2.ol_w_id, l2.ol_d_id, l2.ol_o_id FROM "
+            "(SELECT DISTINCT ol_w_id, ol_d_id, ol_o_id FROM {1} WHERE ol_w_id >= {2} AND ol_w_id <= {3}) AS l2 "
+            "LEFT JOIN {0} AS o2 ON l2.ol_w_id = o2.o_w_id AND l2.ol_d_id = o2.o_d_id AND l2.ol_o_id = o2.o_id "
+            "WHERE o2.o_w_id IS NULL"
+            ") sub LIMIT 1", TABLE_OORDER, TABLE_ORDER_LINE, startWh, endWh),
+            fmt::format("3.3.2.6 w_id [{},{}]", startWh, endWh));
+    }
+}
+
+void ConsistencyCheck3327(TObConnection& conn, int warehouseCount) {
+    constexpr int RANGE_SIZE = 10;
+    for (int startWh = 1; startWh <= warehouseCount; startWh += RANGE_SIZE) {
+        const int endWh = std::min(startWh + RANGE_SIZE - 1, warehouseCount);
+        CheckNoRows(conn, fmt::format(
+            "SELECT l.ol_w_id FROM (SELECT ol_w_id, ol_d_id, ol_o_id, "
+            "MIN(CASE WHEN ol_delivery_d IS NOT NULL THEN 1 ELSE 0 END) AS all_delivered, "
+            "MAX(CASE WHEN ol_delivery_d IS NULL THEN 1 ELSE 0 END) AS some_null, "
+            "MAX(CASE WHEN ol_delivery_d IS NOT NULL THEN 1 ELSE 0 END) AS some_delivered "
+            "FROM {} WHERE ol_w_id >= {} AND ol_w_id <= {} GROUP BY ol_w_id, ol_d_id, ol_o_id) AS l "
+            "JOIN {} AS o ON l.ol_w_id = o.o_w_id AND l.ol_d_id = o.o_d_id AND l.ol_o_id = o.o_id "
+            "WHERE (l.some_null = 1 AND l.some_delivered = 1) "
+            "OR (o.o_carrier_id IS NULL AND l.some_delivered = 1) "
+            "OR (o.o_carrier_id IS NOT NULL AND l.some_null = 1) LIMIT 1",
+            TABLE_ORDER_LINE, startWh, endWh, TABLE_OORDER),
+            fmt::format("3.3.2.7 w_id [{},{}]", startWh, endWh));
+    }
+}
+
+void ConsistencyCheck3328(TObConnection& conn) {
+    CheckNoRows(conn, fmt::format(
+        "SELECT w.w_id FROM {} AS w LEFT JOIN "
+        "(SELECT h_w_id, SUM(h_amount) AS sum_h FROM {} GROUP BY h_w_id) AS h "
+        "ON w.w_id = h.h_w_id WHERE ABS(w.w_ytd - COALESCE(h.sum_h, 0)) > 1e-3 LIMIT 1",
+        TABLE_WAREHOUSE, TABLE_HISTORY));
+}
+
+void ConsistencyCheck3329(TObConnection& conn) {
+    CheckNoRows(conn, fmt::format(
+        "SELECT d.d_w_id FROM {} AS d LEFT JOIN "
+        "(SELECT h_w_id, h_d_id, SUM(h_amount) AS sum_h FROM {} GROUP BY h_w_id, h_d_id) AS h "
+        "ON d.d_w_id = h.h_w_id AND d.d_id = h.h_d_id "
+        "WHERE ABS(d.d_ytd - COALESCE(h.sum_h, 0)) > 1e-3 LIMIT 1",
+        TABLE_DISTRICT, TABLE_HISTORY));
+}
+
+void ConsistencyCheck33210(TObConnection& conn, int warehouseCount) {
+    constexpr int RANGE_SIZE = 10;
+    for (int startWh = 1; startWh <= warehouseCount; startWh += RANGE_SIZE) {
+        const int endWh = std::min(startWh + RANGE_SIZE - 1, warehouseCount);
+        CheckNoRows(conn, fmt::format(
+            "SELECT c.c_w_id FROM {0} AS c "
+            "LEFT JOIN (SELECT o.o_w_id AS w_id, o.o_d_id AS d_id, o.o_c_id AS c_id, SUM(ol.ol_amount) AS ol_sum "
+            "FROM {1} AS o JOIN {2} AS ol ON ol.ol_w_id = o.o_w_id AND ol.ol_d_id = o.o_d_id AND ol.ol_o_id = o.o_id "
+            "WHERE ol.ol_delivery_d IS NOT NULL AND o.o_w_id >= {3} AND o.o_w_id <= {4} GROUP BY o.o_w_id, o.o_d_id, o.o_c_id) AS ols "
+            "ON c.c_w_id = ols.w_id AND c.c_d_id = ols.d_id AND c.c_id = ols.c_id "
+            "LEFT JOIN (SELECT h_c_w_id, h_c_d_id, h_c_id, SUM(h_amount) AS h_sum FROM {5} "
+            "WHERE h_c_w_id >= {3} AND h_c_w_id <= {4} GROUP BY h_c_w_id, h_c_d_id, h_c_id) AS hs "
+            "ON c.c_w_id = hs.h_c_w_id AND c.c_d_id = hs.h_c_d_id AND c.c_id = hs.h_c_id "
+            "WHERE c.c_w_id >= {3} AND c.c_w_id <= {4} "
+            "AND ABS(c.c_balance - (COALESCE(ols.ol_sum, 0) - COALESCE(hs.h_sum, 0))) > 1e-3 LIMIT 1",
+            TABLE_CUSTOMER, TABLE_OORDER, TABLE_ORDER_LINE, startWh, endWh, TABLE_HISTORY),
+            fmt::format("3.3.2.10 w_id [{},{}]", startWh, endWh));
+    }
+}
+
+void ConsistencyCheck33211(TObConnection& conn, int warehouseCount) {
+    constexpr int RANGE_SIZE = 50;
+    for (int startWh = 1; startWh <= warehouseCount; startWh += RANGE_SIZE) {
+        const int endWh = std::min(startWh + RANGE_SIZE - 1, warehouseCount);
+        CheckNoRows(conn, fmt::format(
+            "SELECT o.o_w_id FROM (SELECT o_w_id, o_d_id, COUNT(*) AS order_cnt FROM {} "
+            "WHERE o_w_id >= {} AND o_w_id <= {} GROUP BY o_w_id, o_d_id) AS o "
+            "JOIN (SELECT no_w_id, no_d_id, COUNT(*) AS new_order_cnt FROM {} "
+            "WHERE no_w_id >= {} AND no_w_id <= {} GROUP BY no_w_id, no_d_id) AS n "
+            "ON o.o_w_id = n.no_w_id AND o.o_d_id = n.no_d_id "
+            "WHERE (o.order_cnt - n.new_order_cnt) != {} LIMIT 1",
+            TABLE_OORDER, startWh, endWh, TABLE_NEW_ORDER, startWh, endWh,
+            FIRST_UNPROCESSED_O_ID - 1),
+            fmt::format("3.3.2.11 w_id [{},{}]", startWh, endWh));
+    }
+}
+
+void ConsistencyCheck33212(TObConnection& conn, int warehouseCount) {
+    constexpr int RANGE_SIZE = 10;
+    for (int startWh = 1; startWh <= warehouseCount; startWh += RANGE_SIZE) {
+        const int endWh = std::min(startWh + RANGE_SIZE - 1, warehouseCount);
+        CheckNoRows(conn, fmt::format(
+            "SELECT c.c_w_id FROM {0} AS c LEFT JOIN ("
+            "SELECT o.o_w_id AS w_id, o.o_d_id AS d_id, o.o_c_id AS c_id, SUM(ol.ol_amount) AS ol_sum "
+            "FROM {1} AS o JOIN {2} AS ol ON ol.ol_w_id = o.o_w_id AND ol.ol_d_id = o.o_d_id AND ol.ol_o_id = o.o_id "
+            "WHERE ol.ol_delivery_d IS NOT NULL AND o.o_w_id >= {3} AND o.o_w_id <= {4} GROUP BY o.o_w_id, o.o_d_id, o.o_c_id) AS l "
+            "ON c.c_w_id = l.w_id AND c.c_d_id = l.d_id AND c.c_id = l.c_id "
+            "WHERE c.c_w_id >= {3} AND c.c_w_id <= {4} "
+            "AND ABS(c.c_balance + c.c_ytd_payment - COALESCE(l.ol_sum, 0)) > 1e-3 LIMIT 1",
+            TABLE_CUSTOMER, TABLE_OORDER, TABLE_ORDER_LINE, startWh, endWh),
+            fmt::format("3.3.2.12 w_id [{},{}]", startWh, endWh));
+    }
+}
+
+void PostImportCheckNextOrderId(TObConnection& conn) {
+    CheckNoRows(conn, fmt::format(
+        "SELECT d_w_id FROM {} WHERE d_next_o_id != {} LIMIT 1",
+        TABLE_DISTRICT, CUSTOMERS_PER_DISTRICT + 1));
+}
+
+void PostImportCheckWarehouseYtd(TObConnection& conn) {
+    CheckNoRows(conn, fmt::format(
+        "SELECT w_id FROM {} WHERE ABS(w_ytd - {}) > 1e-3 LIMIT 1",
+        TABLE_WAREHOUSE, WAREHOUSE_INITIAL_YTD.ToString()));
+}
+
+void PostImportCheckDistrictYtd(TObConnection& conn) {
+    CheckNoRows(conn, fmt::format(
+        "SELECT d_w_id FROM {} WHERE ABS(d_ytd - {}) > 1e-3 LIMIT 1",
+        TABLE_DISTRICT, DISTRICT_INITIAL_YTD.ToString()));
+}
+
+void PostImportCheckNoCarriers(TObConnection& conn) {
+    CheckNoRows(conn, fmt::format(
+        "SELECT o_w_id FROM {} WHERE o_id >= {} AND o_carrier_id IS NOT NULL LIMIT 1",
+        TABLE_OORDER, FIRST_UNPROCESSED_O_ID));
+}
+
+void PostImportCheckCarrierRange(TObConnection& conn) {
+    CheckNoRows(conn, fmt::format(
+        "SELECT o_w_id FROM {} WHERE o_id < {} "
+        "AND (o_carrier_id IS NULL OR o_carrier_id < 1 OR o_carrier_id > 10) LIMIT 1",
+        TABLE_OORDER, FIRST_UNPROCESSED_O_ID));
+}
+
+void PostImportCheckNoDeliveryDates(TObConnection& conn) {
+    CheckNoRows(conn, fmt::format(
+        "SELECT ol_w_id FROM {} WHERE ol_o_id >= {} AND ol_delivery_d IS NOT NULL LIMIT 1",
+        TABLE_ORDER_LINE, FIRST_UNPROCESSED_O_ID));
+}
+
+void PostImportCheckDeliveryEqualsEntry(TObConnection& conn) {
+    CheckNoRows(conn, fmt::format(
+        "SELECT ol.ol_w_id FROM {} AS ol JOIN {} AS o "
+        "ON o.o_w_id = ol.ol_w_id AND o.o_d_id = ol.ol_d_id AND o.o_id = ol.ol_o_id "
+        "WHERE ol.ol_o_id < {} AND (ol.ol_delivery_d IS NULL OR ol.ol_delivery_d <> o.o_entry_d) LIMIT 1",
+        TABLE_ORDER_LINE, TABLE_OORDER, FIRST_UNPROCESSED_O_ID));
+}
+
+void PostImportCheckDeliveredAmountZero(TObConnection& conn) {
+    CheckNoRows(conn, fmt::format(
+        "SELECT ol_w_id FROM {} WHERE ol_o_id < {} AND ABS(ol_amount - 0.00) > 1e-3 LIMIT 1",
+        TABLE_ORDER_LINE, FIRST_UNPROCESSED_O_ID));
+}
+
+void RecordResult(TCheckReport& report, const std::string& id, ECheckStatus status,
+                  const std::string& detail, bool print) {
+    TCheckResult r;
+    r.Id = id;
+    if (const auto* entry = FindCheckCatalogEntry(id)) {
+        r.Title = std::string(entry->Title);
+    } else {
+        r.Title = id;
+    }
+    r.Status = status;
+    r.Detail = detail;
+    switch (status) {
+        case ECheckStatus::Passed: ++report.PassedCount; break;
+        case ECheckStatus::Failed: ++report.FailedCount; break;
+        case ECheckStatus::Skipped: ++report.SkippedCount; break;
+        case ECheckStatus::Error: ++report.ErrorCount; break;
+    }
+    if (print) {
+        const char* tag = "[OK]";
+        if (status == ECheckStatus::Failed || status == ECheckStatus::Error) {
+            tag = "[Failed]";
+        } else if (status == ECheckStatus::Skipped) {
+            tag = "[Skipped]";
+        }
+        std::cout << "Checking " << r.Title << " " << tag;
+        if (!detail.empty() && status != ECheckStatus::Passed) {
+            std::cout << ": " << detail;
+        }
+        std::cout << std::endl;
+    }
+    report.Results.push_back(std::move(r));
+}
+
+void RunOne(TCheckReport& report, const std::string& id, bool print, auto&& fn) {
+    try {
+        fn();
+        RecordResult(report, id, ECheckStatus::Passed, {}, print);
+    } catch (const std::exception& ex) {
+        RecordResult(report, id, ECheckStatus::Failed, ex.what(), print);
+    }
+}
+
+} // namespace
+
+TCheckReport RunObChecks(const std::string& connectionString, const TCheckRequest& request) {
+    TCheckReport report;
+    report.RunId = request.RunId;
+    report.Instance = request.Instance;
+    report.Phase = request.Phase == ECheckPhase::AfterImport ? "after-import" : "after-run";
+    report.WarehouseCount = request.WarehouseCount;
+
+    const bool print = true;
+    const bool afterImport = request.Phase == ECheckPhase::AfterImport;
+
+    if (request.WarehouseCount <= 0) {
+        RecordResult(report, "cardinality.warehouse", ECheckStatus::Error,
+                     "Zero warehouses specified", print);
+        return report;
+    }
+
+    try {
+        auto conn = ConnectToTargetDatabase(ConfigWithPath(connectionString, request.Path));
+
+        RunOne(report, "cardinality.warehouse", print,
+               [&] { BaseCheckWarehouseTable(*conn, request.WarehouseCount); });
+        RunOne(report, "cardinality.district", print,
+               [&] { BaseCheckDistrictTable(*conn, request.WarehouseCount); });
+        RunOne(report, "cardinality.customer", print,
+               [&] { BaseCheckCustomerTable(*conn, request.WarehouseCount); });
+        RunOne(report, "cardinality.item", print,
+               [&] { BaseCheckItemTable(*conn); });
+        RunOne(report, "cardinality.stock", print,
+               [&] { BaseCheckStockTable(*conn, request.WarehouseCount); });
+
+        if (afterImport) {
+            RunOne(report, "cardinality.oorder", print,
+                   [&] { BaseCheckOorderTable(*conn, request.WarehouseCount); });
+            RunOne(report, "cardinality.new_order", print,
+                   [&] { BaseCheckNewOrderTable(*conn, request.WarehouseCount); });
+            RunOne(report, "cardinality.order_line", print,
+                   [&] { BaseCheckOrderLineTable(*conn, request.WarehouseCount); });
+            RunOne(report, "cardinality.history", print,
+                   [&] { BaseCheckHistoryTable(*conn, request.WarehouseCount); });
+        }
+
+        bool baseFailed = false;
+        for (const auto& r : report.Results) {
+            if (r.Id.rfind("cardinality.", 0) == 0 &&
+                (r.Status == ECheckStatus::Failed || r.Status == ECheckStatus::Error)) {
+                baseFailed = true;
+                break;
+            }
+        }
+        if (baseFailed) {
+            std::cout << "Base checks failed, aborting consistency checks!" << std::endl;
+            for (const auto& entry : CheckCatalog()) {
+                if (std::string(entry.Id).rfind("cardinality.", 0) == 0) {
+                    continue;
+                }
+                if (!CheckAppliesToPhase(entry.Phase, request.Phase)) {
+                    continue;
+                }
+                RecordResult(report, std::string(entry.Id), ECheckStatus::Skipped,
+                             "skipped: base cardinality failed", print);
+            }
+            return report;
+        }
+
+        RunOne(report, "consistency.3.3.2.1", print, [&] { ConsistencyCheck3321(*conn); });
+        RunOne(report, "consistency.3.3.2.2", print, [&] { ConsistencyCheck3322(*conn); });
+        RunOne(report, "consistency.3.3.2.3", print, [&] { ConsistencyCheck3323(*conn); });
+        RunOne(report, "consistency.3.3.2.4", print,
+               [&] { ConsistencyCheck3324(*conn, request.WarehouseCount); });
+        RunOne(report, "consistency.3.3.2.5", print,
+               [&] { ConsistencyCheck3325(*conn, request.WarehouseCount); });
+        RunOne(report, "consistency.3.3.2.6", print,
+               [&] { ConsistencyCheck3326(*conn, request.WarehouseCount); });
+        RunOne(report, "consistency.3.3.2.7", print,
+               [&] { ConsistencyCheck3327(*conn, request.WarehouseCount); });
+        RunOne(report, "consistency.3.3.2.8", print, [&] { ConsistencyCheck3328(*conn); });
+        RunOne(report, "consistency.3.3.2.9", print, [&] { ConsistencyCheck3329(*conn); });
+        RunOne(report, "consistency.3.3.2.10", print,
+               [&] { ConsistencyCheck33210(*conn, request.WarehouseCount); });
+        RunOne(report, "consistency.3.3.2.12", print,
+               [&] { ConsistencyCheck33212(*conn, request.WarehouseCount); });
+
+        if (afterImport) {
+            RunOne(report, "consistency.3.3.2.11", print,
+                   [&] { ConsistencyCheck33211(*conn, request.WarehouseCount); });
+            RunOne(report, "post_import.d_next_o_id", print, [&] { PostImportCheckNextOrderId(*conn); });
+            RunOne(report, "post_import.w_ytd", print, [&] { PostImportCheckWarehouseYtd(*conn); });
+            RunOne(report, "post_import.d_ytd", print, [&] { PostImportCheckDistrictYtd(*conn); });
+            RunOne(report, "post_import.o_carrier_id", print, [&] { PostImportCheckNoCarriers(*conn); });
+            RunOne(report, "post_import.o_carrier_id_range", print, [&] { PostImportCheckCarrierRange(*conn); });
+            RunOne(report, "post_import.ol_delivery_d", print, [&] { PostImportCheckNoDeliveryDates(*conn); });
+            RunOne(report, "post_import.ol_delivery_eq_entry", print, [&] { PostImportCheckDeliveryEqualsEntry(*conn); });
+            RunOne(report, "post_import.ol_amount_delivered", print, [&] { PostImportCheckDeliveredAmountZero(*conn); });
+        }
+    } catch (const std::exception& ex) {
+        RecordResult(report, "connection", ECheckStatus::Error, ex.what(), print);
+    }
+
+    if (report.Ok()) {
+        std::cout << "Everything is good!" << std::endl;
+    }
+    return report;
+}
+
+void CheckSync(
+    const std::string& connectionString,
+    int warehouseCount,
+    bool afterImport,
+    const std::string& path)
+{
+    TCheckRequest req;
+    req.WarehouseCount = warehouseCount;
+    req.Phase = afterImport ? ECheckPhase::AfterImport : ECheckPhase::AfterRun;
+    req.Path = path;
+    auto report = RunObChecks(connectionString, req);
+    if (!report.Ok()) {
+        throw std::runtime_error(fmt::format("{} checks failed", report.FailedCount + report.ErrorCount));
+    }
+}
+
+TObCheckAdapter::TObCheckAdapter(std::string connectionString)
+    : ConnectionString_(std::move(connectionString))
+{}
+
+TCheckReport TObCheckAdapter::Run(const TCheckRequest& request) {
+    return RunObChecks(ConnectionString_, request);
+}
+
+int RunCheckFromRunConfig(
+    const std::string& runConfigPath,
+    const std::string& instance,
+    bool afterImport,
+    bool afterRun)
+{
+    if (afterImport == afterRun) {
+        throw std::runtime_error("check requires exactly one of --after-import or --after-run");
+    }
+
+    const auto doc = LoadRunConfigDocument(runConfigPath);
+    const std::string connection = BuildObConnectionString(doc);
+    CheckDbForRun(connection, doc.ScaleWarehouses, doc.Path);
+
+    TCheckRequest req;
+    req.WarehouseCount = doc.ScaleWarehouses;
+    req.Phase = afterImport ? ECheckPhase::AfterImport : ECheckPhase::AfterRun;
+    req.Path = doc.Path;
+    req.RunId = doc.RunId;
+    req.Instance = instance;
+
+    TObCheckAdapter adapter(connection);
+    const auto report = adapter.Run(req);
+
+    const std::string checksDir = doc.RunDir + "/checks";
+    const std::string reportPath = checksDir + "/" + report.Phase + ".json";
+    WriteCheckReportJson(reportPath, report);
+
+    const std::string instanceDir = InstanceWorkDir(doc, "check", instance);
+    EnsureInstanceDir(instanceDir);
+    const auto paths = MakeArtifactPaths(instanceDir);
+    const std::string nonce = GenerateInstanceNonce();
+    WriteProcessJson(paths, doc, instance, "check", static_cast<int>(::getpid()), nonce);
+    WriteArtifactManifest(paths, instance, nonce, report.Ok() ? 0 : 1);
+
+    LOG_I("Check report written to " << reportPath);
+    return report.Ok() ? 0 : 1;
+}
+
+} // namespace NTpcc

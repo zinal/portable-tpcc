@@ -1,4 +1,5 @@
 RECURSE(
     pgsql
     ydb
+    oceanbase
 )

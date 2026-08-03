@@ -13,6 +13,7 @@ build/export_generators/gradle/.gradle
 *.tar.xz
 /tpcc/app/pgsql/tpcc-pgsql
 /tpcc/app/ydb/tpcc-ydb
+/tpcc/app/oceanbase/tpcc-oceanbase
 
 # ya make test artifacts
 tpcc/**/ut/test-results
