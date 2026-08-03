@@ -171,3 +171,98 @@ func TestValidate_thinkTimeDistribution(t *testing.T) {
 		t.Fatal("expected invalid think_time_distribution")
 	}
 }
+
+func TestValidate_ydbAuthSchemes(t *testing.T) {
+	path := filepath.Join("..", "..", "testdata", "profile.valid.yaml")
+	base, err := profile.ParseFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("anonymous", func(t *testing.T) {
+		p := *base
+		p.Database = profile.Database{
+			DBMS:       "ydb",
+			Endpoint:   "grpcs://ydb.example.net:2135",
+			Database:   "/Root/tpcc",
+			Path:       "tpcc",
+			AuthScheme: "anonymous",
+		}
+		res := validate.Profile(&p)
+		if !res.Valid {
+			t.Fatalf("expected valid anonymous ydb profile, errors: %v", res.Errors)
+		}
+	})
+
+	t.Run("login", func(t *testing.T) {
+		p := *base
+		p.Database = profile.Database{
+			DBMS:        "ydb",
+			Endpoint:    "grpcs://ydb.example.net:2135",
+			Database:    "/Root/tpcc",
+			AuthScheme:  "login",
+			User:        "root",
+			PasswordEnv: "YDB_PASSWORD",
+		}
+		res := validate.Profile(&p)
+		if !res.Valid {
+			t.Fatalf("expected valid login ydb profile, errors: %v", res.Errors)
+		}
+	})
+
+	t.Run("sa_key", func(t *testing.T) {
+		p := *base
+		p.Database = profile.Database{
+			DBMS:       "ydb",
+			Endpoint:   "grpcs://ydb.example.net:2135",
+			Database:   "/Root/tpcc",
+			AuthScheme: "sa_key",
+			SaKeyFile:  "./sa-key.json",
+			CaFile:     "./ca.pem",
+		}
+		res := validate.Profile(&p)
+		if !res.Valid {
+			t.Fatalf("expected valid sa_key ydb profile, errors: %v", res.Errors)
+		}
+	})
+
+	t.Run("login_requires_user", func(t *testing.T) {
+		p := *base
+		p.Database = profile.Database{
+			DBMS:        "ydb",
+			Endpoint:    "localhost:2136",
+			Database:    "/local",
+			AuthScheme:  "login",
+			PasswordEnv: "YDB_PASSWORD",
+		}
+		res := validate.Profile(&p)
+		if res.Valid {
+			t.Fatal("expected login without user to fail")
+		}
+	})
+
+	t.Run("anonymous_rejects_password", func(t *testing.T) {
+		p := *base
+		p.Database = profile.Database{
+			DBMS:        "ydb",
+			Endpoint:    "localhost:2136",
+			Database:    "/local",
+			AuthScheme:  "anonymous",
+			PasswordEnv: "YDB_PASSWORD",
+		}
+		res := validate.Profile(&p)
+		if res.Valid {
+			t.Fatal("expected anonymous with password_env to fail")
+		}
+	})
+
+	t.Run("pgsql_rejects_ydb_fields", func(t *testing.T) {
+		p := *base
+		p.Database.AuthScheme = "login"
+		p.Database.User = "root"
+		res := validate.Profile(&p)
+		if res.Valid {
+			t.Fatal("expected pgsql profile with ydb auth fields to fail")
+		}
+	})
+}

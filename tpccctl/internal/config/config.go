@@ -36,12 +36,22 @@ type RunConfig struct {
 	Runtime          RunRuntime             `json:"runtime"`
 }
 
+// Remote credential filenames placed next to run-config.json on worker hosts.
+const (
+	RemoteCAFileName    = "ca.pem"
+	RemoteSAKeyFileName = "sa-key.json"
+)
+
 type RunDatabase struct {
 	DBMS        string                 `json:"dbms"`
 	Endpoint    string                 `json:"endpoint"`
 	Database    string                 `json:"database"`
 	Path        string                 `json:"path"`
-	PasswordEnv string                 `json:"password_env"`
+	AuthScheme  string                 `json:"auth_scheme,omitempty"`
+	User        string                 `json:"user,omitempty"`
+	PasswordEnv string                 `json:"password_env,omitempty"`
+	SaKeyFile   string                 `json:"sa_key_file,omitempty"`
+	CaFile      string                 `json:"ca_file,omitempty"`
 	Options     map[string]interface{} `json:"options,omitempty"`
 }
 
@@ -278,20 +288,35 @@ func BuildRunConfig(in BuildInput) (*RunConfig, error) {
 		data.Seed = *p.Data.Seed
 	}
 
+	db := RunDatabase{
+		DBMS:        p.Database.DBMS,
+		Endpoint:    p.Database.Endpoint,
+		Database:    p.Database.Database,
+		Path:        p.Database.Path,
+		AuthScheme:  p.Database.AuthScheme,
+		User:        p.Database.User,
+		PasswordEnv: p.Database.PasswordEnv,
+		Options:     p.Database.Options,
+	}
+	// Rewrite control-host credential paths to fixed names under the remote
+	// run directory. Orchestrator deploy uploads the local files there.
+	if p.Database.CaFile != "" {
+		db.CaFile = RemoteCAFileName
+	}
+	if p.Database.SaKeyFile != "" {
+		db.SaKeyFile = RemoteSAKeyFileName
+	}
+	if db.AuthScheme == "" && p.Database.DBMS == "ydb" {
+		db.AuthScheme = InferYdbAuthScheme(p.Database)
+	}
+
 	return &RunConfig{
-		SchemaVersion: 1,
-		RunID:         in.RunID,
-		CreatedAt:     time.Now().UTC().Format(time.RFC3339),
-		ProfileName:   p.Metadata.Name,
-		Binary:        binary,
-		Database: RunDatabase{
-			DBMS:        p.Database.DBMS,
-			Endpoint:    p.Database.Endpoint,
-			Database:    p.Database.Database,
-			Path:        p.Database.Path,
-			PasswordEnv: p.Database.PasswordEnv,
-			Options:     p.Database.Options,
-		},
+		SchemaVersion:    1,
+		RunID:            in.RunID,
+		CreatedAt:        time.Now().UTC().Format(time.RFC3339),
+		ProfileName:      p.Metadata.Name,
+		Binary:           binary,
+		Database:         db,
 		Scale:            ScaleBlock{Warehouses: p.Scale.Warehouses},
 		Data:             data,
 		Workload:         ResolveWorkload(p.Workload),
@@ -313,6 +338,20 @@ func BuildRunConfig(in BuildInput) (*RunConfig, error) {
 			Histogram:             hist,
 		},
 	}, nil
+}
+
+// InferYdbAuthScheme picks anonymous/login/sa_key from populated profile fields.
+func InferYdbAuthScheme(db profile.Database) string {
+	if db.AuthScheme != "" {
+		return db.AuthScheme
+	}
+	if db.SaKeyFile != "" {
+		return "sa_key"
+	}
+	if db.PasswordEnv != "" || db.User != "" {
+		return "login"
+	}
+	return "anonymous"
 }
 
 func toLoadJSON(assign []assignment.LoaderAssignment) []LoadAssignmentJSON {
@@ -350,16 +389,29 @@ func GenerateRunID(profileName string) string {
 
 // SettingsForAggregate returns concrete settings for aggregate.json (no secrets).
 func SettingsForAggregate(rc *RunConfig) map[string]interface{} {
+	db := map[string]interface{}{
+		"dbms":     rc.Database.DBMS,
+		"endpoint": rc.Database.Endpoint,
+		"database": rc.Database.Database,
+		"path":     rc.Database.Path,
+		"options":  rc.Database.Options,
+	}
+	if rc.Database.AuthScheme != "" {
+		db["auth_scheme"] = rc.Database.AuthScheme
+	}
+	if rc.Database.User != "" {
+		db["user"] = rc.Database.User
+	}
+	if rc.Database.CaFile != "" {
+		db["ca_file"] = rc.Database.CaFile
+	}
+	if rc.Database.SaKeyFile != "" {
+		db["sa_key_file"] = rc.Database.SaKeyFile
+	}
 	return map[string]interface{}{
-		"profile_name": rc.ProfileName,
-		"binary":       rc.Binary,
-		"database": map[string]interface{}{
-			"dbms":     rc.Database.DBMS,
-			"endpoint": rc.Database.Endpoint,
-			"database": rc.Database.Database,
-			"path":     rc.Database.Path,
-			"options":  rc.Database.Options,
-		},
+		"profile_name":      rc.ProfileName,
+		"binary":            rc.Binary,
+		"database":          db,
 		"scale":             rc.Scale,
 		"data":              rc.Data,
 		"workload":          rc.Workload,

@@ -20,12 +20,17 @@
 #include <string>
 #include <vector>
 
-DEFINE_string(endpoint, "localhost:2136", "YDB endpoint");
+DEFINE_string(endpoint, "localhost:2136", "YDB endpoint (host:port, grpc://, or grpcs://)");
 DEFINE_string(database, "/local", "YDB database");
 DEFINE_string(path, "tpcc", "YDB table path prefix inside database");
-DEFINE_string(token, "", "YDB auth token (prefer --token-env for secrets)");
+DEFINE_string(auth_scheme, "",
+    "YDB auth scheme: anonymous, login, sa_key, token (default: inferred)");
+DEFINE_string(user, "", "YDB login user (auth_scheme=login)");
+DEFINE_string(password_env, "", "Env var with YDB login password (auth_scheme=login)");
+DEFINE_string(token, "", "YDB auth token (prefer --token-env; auth_scheme=token)");
 DEFINE_string(token_env, "", "Environment variable containing YDB auth token");
-DEFINE_string(sa_key_file, "", "YDB service account key file (accepted for config compatibility)");
+DEFINE_string(sa_key_file, "", "YDB service account key JSON file (auth_scheme=sa_key)");
+DEFINE_string(ca_file, "", "PEM file with CA certificates for TLS (grpcs)");
 
 DEFINE_int32(warehouses, 1, "Number of warehouses");
 DEFINE_uint64(seed, 1, "Deterministic data generation seed");
@@ -66,12 +71,16 @@ void PrintHelp() {
         "  clean     Drop all TPC-C tables (local admin)\n"
         "\n"
         "Options:\n"
-        "  --endpoint            YDB endpoint (default: localhost:2136)\n"
+        "  --endpoint            YDB endpoint host:port | grpc:// | grpcs:// (default: localhost:2136)\n"
         "  --database            YDB database (default: /local)\n"
         "  -p, --path            YDB table path prefix (default: tpcc)\n"
-        "  --token               YDB auth token (prefer --token-env for secrets)\n"
+        "  --auth-scheme         anonymous | login | sa_key | token (default: inferred)\n"
+        "  --user                YDB login user (with auth_scheme=login)\n"
+        "  --password-env        Env var with login password (auth_scheme=login)\n"
+        "  --token               YDB auth token (prefer --token-env)\n"
         "  --token-env           Environment variable containing YDB auth token\n"
-        "  --sa-key-file         YDB service account key file (accepted for config compatibility)\n"
+        "  --sa-key-file         Service account key JSON file (auth_scheme=sa_key)\n"
+        "  --ca-file             PEM CA certificates file for TLS\n"
         "  -w, --warehouses      Number of warehouses (default: 1)\n"
         "  --warmup              Warmup duration in minutes, 0 = adaptive (default: 0)\n"
         "  --skip-warmup         Skip warmup entirely (default: false)\n"
@@ -210,14 +219,39 @@ int RunOrchestrated(
     return 1;
 }
 
+NTpcc::EYdbAuthScheme InferStandaloneAuthScheme() {
+    if (!FLAGS_auth_scheme.empty()) {
+        NTpcc::EYdbAuthScheme scheme;
+        if (!NTpcc::ParseYdbAuthScheme(FLAGS_auth_scheme, scheme)) {
+            throw std::runtime_error(
+                "--auth-scheme must be anonymous, login, sa_key, or token");
+        }
+        return scheme;
+    }
+    if (!FLAGS_sa_key_file.empty()) {
+        return NTpcc::EYdbAuthScheme::SaKey;
+    }
+    if (!FLAGS_password_env.empty() || !FLAGS_user.empty()) {
+        return NTpcc::EYdbAuthScheme::Login;
+    }
+    if (!FLAGS_token.empty() || !FLAGS_token_env.empty()) {
+        return NTpcc::EYdbAuthScheme::Token;
+    }
+    return NTpcc::EYdbAuthScheme::Anonymous;
+}
+
 NTpcc::TYdbConnectionConfig BuildConnectionConfig() {
     NTpcc::TYdbConnectionConfig config;
     config.Endpoint = FLAGS_endpoint;
     config.Database = FLAGS_database;
     config.Path = FLAGS_path;
+    config.AuthScheme = InferStandaloneAuthScheme();
+    config.User = FLAGS_user;
+    config.PasswordEnv = FLAGS_password_env;
     config.Token = FLAGS_token;
     config.TokenEnv = FLAGS_token_env;
     config.SaKeyFile = FLAGS_sa_key_file;
+    config.CaFile = FLAGS_ca_file;
     return config;
 }
 

@@ -33,10 +33,15 @@ database:
   endpoint: grpcs://ydb.example.net:2135
   database: /Root/tpcc
   path: portable_tpcc
+  # Auth: anonymous | login | sa_key
+  auth_scheme: login
+  user: root
   password_env: YDB_PASSWORD
-  options:
-    tx_mode: serializable-rw
-    compact_after_load: true
+  # Optional TLS trust anchors (delivered to workers as ca.pem):
+  # ca_file: ./certs/ydb-ca.pem
+  # For service-account auth instead of login:
+  # auth_scheme: sa_key
+  # sa_key_file: ./secrets/sa-key.json
 
 scale:
   warehouses: 200

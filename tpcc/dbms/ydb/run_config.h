@@ -40,8 +40,12 @@ struct TRunConfigDocument {
     std::string Endpoint;
     std::string Database;
     std::string Path;
+    std::string AuthScheme;
+    std::string User;
+    std::string PasswordEnv;
     std::string TokenEnv;
     std::string SaKeyFile;
+    std::string CaFile;
 
     int ScaleWarehouses = 0;
     int64_t Seed = 0;

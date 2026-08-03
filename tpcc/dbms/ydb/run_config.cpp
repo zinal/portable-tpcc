@@ -172,6 +172,91 @@ void ValidateNonNegative(int64_t value, const std::string& path) {
     }
 }
 
+std::string ResolveUnderRunDir(const std::string& path, const std::string& runDir) {
+    if (path.empty() || runDir.empty()) {
+        return path;
+    }
+    if (path.front() == '/' || (path.size() >= 2 && path[1] == ':')) {
+        return path;
+    }
+    return runDir + "/" + path;
+}
+
+EYdbAuthScheme ResolveAuthScheme(const TRunConfigDocument& doc) {
+    if (!doc.AuthScheme.empty()) {
+        EYdbAuthScheme scheme;
+        if (!ParseYdbAuthScheme(doc.AuthScheme, scheme)) {
+            throw std::runtime_error(
+                "database.auth_scheme must be \"anonymous\", \"login\", or \"sa_key\"");
+        }
+        if (scheme == EYdbAuthScheme::Token) {
+            throw std::runtime_error(
+                "database.auth_scheme \"token\" is not supported in orchestrated mode");
+        }
+        return scheme;
+    }
+    if (!doc.SaKeyFile.empty()) {
+        return EYdbAuthScheme::SaKey;
+    }
+    if (!doc.PasswordEnv.empty() || !doc.User.empty()) {
+        return EYdbAuthScheme::Login;
+    }
+    if (!doc.TokenEnv.empty()) {
+        return EYdbAuthScheme::Token;
+    }
+    return EYdbAuthScheme::Anonymous;
+}
+
+void ValidateYdbAuth(const TRunConfigDocument& doc) {
+    const EYdbAuthScheme scheme = ResolveAuthScheme(doc);
+    switch (scheme) {
+        case EYdbAuthScheme::Anonymous:
+            if (!doc.User.empty() || !doc.PasswordEnv.empty() || !doc.SaKeyFile.empty() ||
+                !doc.TokenEnv.empty())
+            {
+                throw std::runtime_error(
+                    "database.auth_scheme=anonymous does not accept user, password_env, "
+                    "sa_key_file, or token_env");
+            }
+            break;
+        case EYdbAuthScheme::Login:
+            if (doc.User.empty()) {
+                throw std::runtime_error("database.user is required for auth_scheme=login");
+            }
+            if (doc.PasswordEnv.empty()) {
+                throw std::runtime_error(
+                    "database.password_env is required for auth_scheme=login");
+            }
+            if (!doc.SaKeyFile.empty() || !doc.TokenEnv.empty()) {
+                throw std::runtime_error(
+                    "database.auth_scheme=login does not accept sa_key_file or token_env");
+            }
+            break;
+        case EYdbAuthScheme::SaKey:
+            if (doc.SaKeyFile.empty()) {
+                throw std::runtime_error(
+                    "database.sa_key_file is required for auth_scheme=sa_key");
+            }
+            if (!doc.User.empty() || !doc.PasswordEnv.empty() || !doc.TokenEnv.empty()) {
+                throw std::runtime_error(
+                    "database.auth_scheme=sa_key does not accept user, password_env, "
+                    "or token_env");
+            }
+            break;
+        case EYdbAuthScheme::Token:
+            if (doc.TokenEnv.empty()) {
+                throw std::runtime_error(
+                    "database.token_env is required for auth_scheme=token");
+            }
+            if (!doc.User.empty() || !doc.PasswordEnv.empty() || !doc.SaKeyFile.empty()) {
+                throw std::runtime_error(
+                    "database.auth_scheme=token does not accept user, password_env, "
+                    "or sa_key_file");
+            }
+            break;
+    }
+}
+
 void ValidateRunConfigDocument(const TRunConfigDocument& doc, const Json& root) {
     if (doc.RunId.empty()) {
         throw std::runtime_error("run-config missing run_id");
@@ -264,6 +349,8 @@ void ValidateRunConfigDocument(const TRunConfigDocument& doc, const Json& root) 
     if (doc.RetryJitter != "none" && doc.RetryJitter != "full") {
         throw std::runtime_error("runtime.retry.jitter must be \"none\" or \"full\"");
     }
+
+    ValidateYdbAuth(doc);
 }
 
 } // anonymous
@@ -286,8 +373,12 @@ TRunConfigDocument LoadRunConfigDocument(const std::string& path) {
         doc.Endpoint = db.value("endpoint", "");
         doc.Database = db.value("database", "");
         doc.Path = db.value("path", "");
+        doc.AuthScheme = db.value("auth_scheme", "");
+        doc.User = db.value("user", "");
+        doc.PasswordEnv = db.value("password_env", "");
         doc.TokenEnv = db.value("token_env", "");
         doc.SaKeyFile = db.value("sa_key_file", "");
+        doc.CaFile = db.value("ca_file", "");
         if (db.contains("options")) {
             if (!db["options"].is_object()) {
                 throw std::runtime_error("database.options must be an object");
@@ -456,8 +547,12 @@ TYdbConnectionConfig BuildYdbConnectionConfig(const TRunConfigDocument& doc) {
     config.Endpoint = doc.Endpoint;
     config.Database = doc.Database;
     config.Path = doc.Path;
+    config.AuthScheme = ResolveAuthScheme(doc);
+    config.User = doc.User;
+    config.PasswordEnv = doc.PasswordEnv;
     config.TokenEnv = doc.TokenEnv;
-    config.SaKeyFile = doc.SaKeyFile;
+    config.SaKeyFile = ResolveUnderRunDir(doc.SaKeyFile, doc.RunDir);
+    config.CaFile = ResolveUnderRunDir(doc.CaFile, doc.RunDir);
     return config;
 }
 

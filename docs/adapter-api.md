@@ -295,8 +295,13 @@ embedded result settings (specification §5 / §8), not only in logs.
 Adapters parse the `database` object from `run-config.json`:
 
 - `dbms`, `endpoint`, `database`, `path`, `password_env`, `options`;
+- YDB additionally: `auth_scheme` (`anonymous` | `login` | `sa_key`),
+  `user`, `sa_key_file`, `ca_file`;
 - passwords and tokens **only** via environment variables named in
-  `password_env` (and similar option keys), never in argv or stored configs.
+  `password_env` (and similar option keys), never in argv or stored configs;
+- file secrets (`sa_key_file`, `ca_file`) are delivered by the orchestrator;
+  run-config carries worker-local paths only (for example `sa-key.json`,
+  `ca.pem` next to `run-config.json`).
 
 `options` is adapter-specific (e.g. YDB `tx_mode`, PostgreSQL schema/`search_path`
 policy, OceanBase FK enablement). Unknown options MUST be rejected at

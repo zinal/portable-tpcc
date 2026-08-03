@@ -71,6 +71,16 @@ func (o *Orchestrator) passwordEnv() map[string]string {
 	return map[string]string{name: val}
 }
 
+func (o *Orchestrator) requiresPasswordEnv() bool {
+	if o.Profile.Database.PasswordEnv == "" {
+		return false
+	}
+	if o.Profile.Database.DBMS == "ydb" {
+		return config.InferYdbAuthScheme(o.Profile.Database) == "login"
+	}
+	return true
+}
+
 func (o *Orchestrator) binaryLocalPath() (string, error) {
 	name := o.Opts.WorkerBinary
 	if name == "" {
@@ -100,6 +110,10 @@ func (o *Orchestrator) deployToHosts(ctx *Context, sessions map[string]remote.Se
 		return fmt.Errorf("worker binary not found at %s: %w", binLocal, err)
 	}
 	runConfigLocal := filepath.Join(ctx.RunDir, "run-config.json")
+	credFiles, err := o.credentialFilesForDeploy()
+	if err != nil {
+		return err
+	}
 	binName := filepath.Base(binLocal)
 	for hostKey, sess := range sessions {
 		runDir := remoteRunDir(o.Expanded.RemoteRoot, ctx.RunID)
@@ -115,8 +129,60 @@ func (o *Orchestrator) deployToHosts(ctx *Context, sessions map[string]remote.Se
 		if err := sess.Upload(runConfigLocal, remoteCfg); err != nil {
 			return fmt.Errorf("host %s upload run-config: %w", hostKey, err)
 		}
+		for _, f := range credFiles {
+			remotePath := filepath.Join(runDir, f.RemoteName)
+			if err := sess.Upload(f.LocalPath, remotePath); err != nil {
+				return fmt.Errorf("host %s upload %s: %w", hostKey, f.RemoteName, err)
+			}
+		}
 	}
 	return nil
+}
+
+type credentialFile struct {
+	LocalPath  string
+	RemoteName string
+}
+
+// credentialFilesForDeploy resolves control-host CA / SA-key paths that must be
+// uploaded beside run-config.json. Remote names match rewritten run-config fields.
+func (o *Orchestrator) credentialFilesForDeploy() ([]credentialFile, error) {
+	var out []credentialFile
+	if o.Profile.Database.CaFile != "" {
+		local, err := paths.ExpandHome(o.Profile.Database.CaFile)
+		if err != nil {
+			return nil, fmt.Errorf("database.ca_file: %w", err)
+		}
+		if !filepath.IsAbs(local) {
+			abs, err := filepath.Abs(local)
+			if err != nil {
+				return nil, fmt.Errorf("database.ca_file: %w", err)
+			}
+			local = abs
+		}
+		if _, err := os.Stat(local); err != nil {
+			return nil, fmt.Errorf("database.ca_file not found at %s: %w", local, err)
+		}
+		out = append(out, credentialFile{LocalPath: local, RemoteName: config.RemoteCAFileName})
+	}
+	if o.Profile.Database.SaKeyFile != "" {
+		local, err := paths.ExpandHome(o.Profile.Database.SaKeyFile)
+		if err != nil {
+			return nil, fmt.Errorf("database.sa_key_file: %w", err)
+		}
+		if !filepath.IsAbs(local) {
+			abs, err := filepath.Abs(local)
+			if err != nil {
+				return nil, fmt.Errorf("database.sa_key_file: %w", err)
+			}
+			local = abs
+		}
+		if _, err := os.Stat(local); err != nil {
+			return nil, fmt.Errorf("database.sa_key_file not found at %s: %w", local, err)
+		}
+		out = append(out, credentialFile{LocalPath: local, RemoteName: config.RemoteSAKeyFileName})
+	}
+	return out, nil
 }
 
 type launchedProc struct {
@@ -151,9 +217,12 @@ func (o *Orchestrator) launchRole(
 	remoteBin := filepath.Join(runDir, binName)
 	stdout := filepath.Join(instanceDir, "stdout.log")
 	stderr := filepath.Join(instanceDir, "stderr.log")
-	env := o.passwordEnv()
-	if env == nil && o.Profile.Database.PasswordEnv != "" {
-		return nil, fmt.Errorf("environment variable %s is not set", o.Profile.Database.PasswordEnv)
+	var env map[string]string
+	if o.requiresPasswordEnv() {
+		env = o.passwordEnv()
+		if env == nil {
+			return nil, fmt.Errorf("environment variable %s is not set", o.Profile.Database.PasswordEnv)
+		}
 	}
 	pid, err := sess.StartDetached(runDir, remoteBin, argv, env, stdout, stderr)
 	if err != nil {

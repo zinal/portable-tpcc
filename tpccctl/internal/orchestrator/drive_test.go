@@ -18,6 +18,7 @@ import (
 
 type fakeSession struct {
 	files     map[string][]byte
+	uploads   []string
 	alive     bool
 	downloads int
 	signals   int
@@ -26,6 +27,7 @@ type fakeSession struct {
 func (f *fakeSession) Key() string     { return "host-a" }
 func (f *fakeSession) Address() string { return "127.0.0.1" }
 func (f *fakeSession) Upload(localPath, remotePath string) error {
+	f.uploads = append(f.uploads, remotePath)
 	return nil
 }
 func (f *fakeSession) Download(remotePath, localPath string) error {
@@ -373,5 +375,89 @@ func TestCollectArtifactsRejectsLocalSymlinkPayloadEscape(t *testing.T) {
 	err = o.collectArtifacts(ctx, map[string]remote.Session{"host-a": sess})
 	if err == nil || !strings.Contains(err.Error(), "escapes base") {
 		t.Fatalf("expected symlink escape error, got %v", err)
+	}
+}
+
+func TestCredentialFilesForDeploy(t *testing.T) {
+	root := t.TempDir()
+	caPath := filepath.Join(root, "root.pem")
+	saPath := filepath.Join(root, "sa.json")
+	if err := os.WriteFile(caPath, []byte("CA"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(saPath, []byte("{}"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	o := &Orchestrator{
+		Profile: &profile.Profile{
+			Database: profile.Database{
+				DBMS:      "ydb",
+				CaFile:    caPath,
+				SaKeyFile: saPath,
+			},
+		},
+	}
+	files, err := o.credentialFilesForDeploy()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 2 {
+		t.Fatalf("got %d files", len(files))
+	}
+	byName := map[string]string{}
+	for _, f := range files {
+		byName[f.RemoteName] = f.LocalPath
+	}
+	if byName[config.RemoteCAFileName] != caPath {
+		t.Fatalf("ca local=%q", byName[config.RemoteCAFileName])
+	}
+	if byName[config.RemoteSAKeyFileName] != saPath {
+		t.Fatalf("sa local=%q", byName[config.RemoteSAKeyFileName])
+	}
+}
+
+func TestDeployToHostsUploadsCredentialFiles(t *testing.T) {
+	root := t.TempDir()
+	caPath := filepath.Join(root, "root.pem")
+	saPath := filepath.Join(root, "sa.json")
+	binPath := filepath.Join(root, "tpcc-ydb")
+	runDir := filepath.Join(root, "run")
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []struct {
+		path string
+		data string
+	}{
+		{caPath, "CA"},
+		{saPath, "{}"},
+		{binPath, "bin"},
+		{filepath.Join(runDir, "run-config.json"), "{}"},
+	} {
+		if err := os.WriteFile(p.path, []byte(p.data), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	o := &Orchestrator{
+		Profile: &profile.Profile{
+			Database: profile.Database{
+				DBMS:      "ydb",
+				CaFile:    caPath,
+				SaKeyFile: saPath,
+			},
+		},
+		Expanded: config.ExpandedPaths{RemoteRoot: filepath.Join(root, "remote")},
+		Opts:     Options{WorkerBinary: binPath},
+	}
+	ctx := &Context{RunID: "run-1", RunDir: runDir}
+	sess := &fakeSession{}
+	if err := o.deployToHosts(ctx, map[string]remote.Session{"host-a": sess}); err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(sess.uploads, "\n")
+	for _, want := range []string{"tpcc-ydb", "run-config.json", config.RemoteCAFileName, config.RemoteSAKeyFileName} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("missing upload %q in %v", want, sess.uploads)
+		}
 	}
 }
