@@ -50,16 +50,15 @@ func redactNode(n *yaml.Node) {
 
 func isSecretKey(key string) bool {
 	lower := strings.ToLower(key)
+	// Env-var *names* and credential *file paths* are not secret literals.
+	if lower == "password_env" || lower == "token_env" ||
+		strings.HasSuffix(lower, "_file") || strings.HasSuffix(lower, "_path") {
+		return false
+	}
 	for _, s := range secretKeys {
 		if strings.Contains(lower, s) {
 			return true
 		}
-	}
-	// Env-var *names* and credential *file paths* are not secret literals.
-	if lower == "password_env" || lower == "token_env" ||
-		strings.HasSuffix(lower, "_file") || strings.HasSuffix(lower, "_path")
-	{
-		return false
 	}
 	return false
 }
