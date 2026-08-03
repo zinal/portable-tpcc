@@ -70,9 +70,7 @@ func Profile(p *profile.Profile) *Result {
 		res.Add(fmt.Sprintf("unknown database.dbms %q", p.Database.DBMS))
 	}
 	if p.Database.DBMS == "pgsql" {
-		for key := range p.Database.Options {
-			res.Add(fmt.Sprintf("unknown database.options.%s for dbms=pgsql", key))
-		}
+		validatePgsqlOptions(p.Database.Options, res)
 	}
 	if p.Database.Endpoint == "" {
 		res.Add("database.endpoint is required")
@@ -257,6 +255,60 @@ func validateInstances(
 			res.Add(fmt.Sprintf("duplicate remote (host, run_dir, instance): %s", key))
 		}
 		remoteKeys[key] = true
+	}
+}
+
+func validatePgsqlOptions(options map[string]interface{}, res *Result) {
+	for key, value := range options {
+		switch key {
+		case "partitioning":
+			s, ok := value.(string)
+			if !ok || (s != "none" && s != "warehouse_hash") {
+				res.Add(`database.options.partitioning must be "none" or "warehouse_hash"`)
+			}
+		case "partition_count":
+			n, ok := asPositiveInt(value)
+			if !ok {
+				res.Add("database.options.partition_count must be a positive integer")
+			} else if n > 1024 {
+				res.Add("database.options.partition_count must not exceed 1024")
+			}
+		default:
+			res.Add(fmt.Sprintf("unknown database.options.%s for dbms=pgsql", key))
+		}
+	}
+	if partitioning, has := options["partitioning"]; has {
+		if s, ok := partitioning.(string); ok && s == "none" {
+			if _, hasCount := options["partition_count"]; hasCount {
+				res.Add("database.options.partition_count is only valid when partitioning=warehouse_hash")
+			}
+		}
+	} else if _, hasCount := options["partition_count"]; hasCount {
+		res.Add("database.options.partition_count is only valid when partitioning=warehouse_hash")
+	}
+}
+
+func asPositiveInt(value interface{}) (int, bool) {
+	switch v := value.(type) {
+	case int:
+		return v, v > 0
+	case int32:
+		return int(v), v > 0
+	case int64:
+		return int(v), v > 0
+	case uint:
+		return int(v), v > 0 && v <= uint(^uint(0)>>1)
+	case uint32:
+		return int(v), v > 0
+	case uint64:
+		return int(v), v > 0 && v <= uint64(^uint(0)>>1)
+	case float64:
+		if v != float64(int(v)) || v <= 0 {
+			return 0, false
+		}
+		return int(v), true
+	default:
+		return 0, false
 	}
 }
 
