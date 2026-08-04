@@ -15,6 +15,7 @@
 #include <filesystem>
 #include <iostream>
 #include <stdexcept>
+#include <string_view>
 #include <unordered_map>
 #include <unistd.h>
 
@@ -44,10 +45,6 @@ void AddResult(TCheckReport& report, TCheckResult result) {
     report.Results.push_back(std::move(result));
 }
 
-std::string CardinalityQuery(const std::string& table, int64_t expected) {
-    return fmt::format("SELECT COUNT(*) = {} AS ok FROM `{}`;", expected, table);
-}
-
 // Zero money literal matching the Decimal(22,9) physical type.
 constexpr const char* kZeroMoney = "CAST('0.00' AS Decimal(22,9))";
 
@@ -63,14 +60,41 @@ std::unordered_map<std::string, std::string> BuildQueries(int warehouses) {
     const std::string districtYtd = DISTRICT_INITIAL_YTD.ToString();
 
     std::unordered_map<std::string, std::string> q;
-    q["cardinality.warehouse"] = CardinalityQuery(TABLE_WAREHOUSE, warehouses);
-    q["cardinality.district"] = CardinalityQuery(TABLE_DISTRICT, districts);
-    q["cardinality.customer"] = CardinalityQuery(TABLE_CUSTOMER, customers);
-    q["cardinality.item"] = CardinalityQuery(TABLE_ITEM, ITEM_COUNT);
-    q["cardinality.stock"] = CardinalityQuery(TABLE_STOCK, stock);
-    q["cardinality.oorder"] = CardinalityQuery(TABLE_OORDER, customers);
-    q["cardinality.new_order"] = CardinalityQuery(TABLE_NEW_ORDER, newOrders);
-    q["cardinality.history"] = CardinalityQuery(TABLE_HISTORY, customers);
+    // Cardinality + id ranges (same strength as PostgreSQL / OceanBase base checks).
+    q["cardinality.warehouse"] = fmt::format(
+        "SELECT (COUNT(*) = {0} AND MIN(w_id) = 1 AND MAX(w_id) = {0}) AS ok FROM `warehouse`;",
+        warehouses);
+    q["cardinality.district"] = fmt::format(
+        "SELECT (COUNT(*) = {0} AND MIN(d_w_id) = 1 AND MAX(d_w_id) = {1} "
+        "AND MIN(d_id) = {2} AND MAX(d_id) = {3}) AS ok FROM `district`;",
+        districts, warehouses, DISTRICT_LOW_ID, DISTRICT_HIGH_ID);
+    q["cardinality.customer"] = fmt::format(
+        "SELECT (COUNT(*) = {0} AND MIN(c_w_id) = 1 AND MAX(c_w_id) = {1} "
+        "AND MIN(c_d_id) = {2} AND MAX(c_d_id) = {3} "
+        "AND MIN(c_id) = 1 AND MAX(c_id) = {4}) AS ok FROM `customer`;",
+        customers, warehouses, DISTRICT_LOW_ID, DISTRICT_HIGH_ID, CUSTOMERS_PER_DISTRICT);
+    q["cardinality.item"] = fmt::format(
+        "SELECT (COUNT(*) = {0} AND MIN(i_id) = 1 AND MAX(i_id) = {0}) AS ok FROM `item`;",
+        ITEM_COUNT);
+    q["cardinality.stock"] = fmt::format(
+        "SELECT (COUNT(*) = {0} AND COUNT(DISTINCT s_w_id) = {1} "
+        "AND MIN(s_w_id) = 1 AND MAX(s_w_id) = {1} "
+        "AND MIN(s_i_id) = 1 AND MAX(s_i_id) = {2}) AS ok FROM `stock`;",
+        stock, warehouses, ITEM_COUNT);
+    q["cardinality.oorder"] = fmt::format(
+        "SELECT (COUNT(*) = {0} AND MIN(o_w_id) = 1 AND MAX(o_w_id) = {1} "
+        "AND MIN(o_d_id) = {2} AND MAX(o_d_id) = {3} "
+        "AND MIN(o_id) = 1 AND MAX(o_id) = {4}) AS ok FROM `oorder`;",
+        customers, warehouses, DISTRICT_LOW_ID, DISTRICT_HIGH_ID, CUSTOMERS_PER_DISTRICT);
+    q["cardinality.new_order"] = fmt::format(
+        "SELECT (COUNT(*) = {0} AND MIN(no_w_id) = 1 AND MAX(no_w_id) = {1} "
+        "AND MIN(no_d_id) = {2} AND MAX(no_d_id) = {3} "
+        "AND MIN(no_o_id) >= {4} AND MAX(no_o_id) = {5}) AS ok FROM `new_order`;",
+        newOrders, warehouses, DISTRICT_LOW_ID, DISTRICT_HIGH_ID,
+        FIRST_UNPROCESSED_O_ID, CUSTOMERS_PER_DISTRICT);
+    q["cardinality.history"] = fmt::format(
+        "SELECT (COUNT(*) = {0} AND MIN(h_c_w_id) = 1 AND MAX(h_c_w_id) = {1}) AS ok FROM `history`;",
+        customers, warehouses);
     // Every district must have exactly CUSTOMERS_PER_DISTRICT distinct order ids in order_line.
     q["cardinality.order_line"] = fmt::format(R"(
         SELECT COUNT(*) = {} AS ok FROM (
@@ -339,6 +363,8 @@ TCheckReport RunYdbChecks(const TYdbConnectionConfig& connectionConfig, const TC
     TYdbConnection connection(connectionConfig);
     auto queries = BuildQueries(request.WarehouseCount);
 
+    // Match PG/OceanBase: abort consistency/post-import suite if base cardinality failed.
+    bool baseFailed = false;
     for (const auto& entry : CheckCatalog()) {
         if (!CheckAppliesToPhase(entry.Phase, request.Phase)) {
             continue;
@@ -347,6 +373,15 @@ TCheckReport RunYdbChecks(const TYdbConnectionConfig& connectionConfig, const TC
         TCheckResult result;
         result.Id = entry.Id;
         result.Title = entry.Title;
+        const bool isCardinality = std::string_view(entry.Id).rfind("cardinality.", 0) == 0;
+
+        if (baseFailed && !isCardinality) {
+            result.Status = ECheckStatus::Skipped;
+            result.Detail = "skipped: base cardinality failed";
+            AddResult(report, std::move(result));
+            continue;
+        }
+
         auto it = queries.find(std::string(entry.Id));
         if (it == queries.end()) {
             result.Status = ECheckStatus::Skipped;
@@ -361,10 +396,16 @@ TCheckReport RunYdbChecks(const TYdbConnectionConfig& connectionConfig, const TC
             } else {
                 result.Status = ECheckStatus::Failed;
                 result.Detail = "query returned false";
+                if (isCardinality) {
+                    baseFailed = true;
+                }
             }
         } catch (const std::exception& ex) {
             result.Status = ECheckStatus::Error;
             result.Detail = ex.what();
+            if (isCardinality) {
+                baseFailed = true;
+            }
         }
         AddResult(report, std::move(result));
     }

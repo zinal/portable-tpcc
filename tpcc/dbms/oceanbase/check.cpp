@@ -164,10 +164,11 @@ void BaseCheckHistoryTable(TObConnection& conn, int expectedWhNumber) {
 }
 
 void ConsistencyCheck3321(TObConnection& conn) {
+    // Exact DECIMAL compare (null-safe <=>); epsilon is not allowed (PG reference / §5.12).
     CheckNoRows(conn, fmt::format(
         "SELECT w.w_id FROM {} AS w "
         "LEFT JOIN (SELECT d_w_id, SUM(d_ytd) AS sum_d_ytd FROM {} GROUP BY d_w_id) AS d "
-        "ON w.w_id = d.d_w_id WHERE ABS(w.w_ytd - COALESCE(d.sum_d_ytd, 0)) > 1e-3 LIMIT 1",
+        "ON w.w_id = d.d_w_id WHERE NOT (w.w_ytd <=> COALESCE(d.sum_d_ytd, 0)) LIMIT 1",
         TABLE_WAREHOUSE, TABLE_DISTRICT));
 }
 
@@ -275,7 +276,7 @@ void ConsistencyCheck3328(TObConnection& conn) {
     CheckNoRows(conn, fmt::format(
         "SELECT w.w_id FROM {} AS w LEFT JOIN "
         "(SELECT h_w_id, SUM(h_amount) AS sum_h FROM {} GROUP BY h_w_id) AS h "
-        "ON w.w_id = h.h_w_id WHERE ABS(w.w_ytd - COALESCE(h.sum_h, 0)) > 1e-3 LIMIT 1",
+        "ON w.w_id = h.h_w_id WHERE NOT (w.w_ytd <=> COALESCE(h.sum_h, 0)) LIMIT 1",
         TABLE_WAREHOUSE, TABLE_HISTORY));
 }
 
@@ -284,7 +285,7 @@ void ConsistencyCheck3329(TObConnection& conn) {
         "SELECT d.d_w_id FROM {} AS d LEFT JOIN "
         "(SELECT h_w_id, h_d_id, SUM(h_amount) AS sum_h FROM {} GROUP BY h_w_id, h_d_id) AS h "
         "ON d.d_w_id = h.h_w_id AND d.d_id = h.h_d_id "
-        "WHERE ABS(d.d_ytd - COALESCE(h.sum_h, 0)) > 1e-3 LIMIT 1",
+        "WHERE NOT (d.d_ytd <=> COALESCE(h.sum_h, 0)) LIMIT 1",
         TABLE_DISTRICT, TABLE_HISTORY));
 }
 
@@ -302,24 +303,34 @@ void ConsistencyCheck33210(TObConnection& conn, int warehouseCount) {
             "WHERE h_c_w_id >= {3} AND h_c_w_id <= {4} GROUP BY h_c_w_id, h_c_d_id, h_c_id) AS hs "
             "ON c.c_w_id = hs.h_c_w_id AND c.c_d_id = hs.h_c_d_id AND c.c_id = hs.h_c_id "
             "WHERE c.c_w_id >= {3} AND c.c_w_id <= {4} "
-            "AND ABS(c.c_balance - (COALESCE(ols.ol_sum, 0) - COALESCE(hs.h_sum, 0))) > 1e-3 LIMIT 1",
+            "AND NOT (c.c_balance <=> (COALESCE(ols.ol_sum, 0) - COALESCE(hs.h_sum, 0))) LIMIT 1",
             TABLE_CUSTOMER, TABLE_OORDER, TABLE_ORDER_LINE, startWh, endWh, TABLE_HISTORY),
             fmt::format("3.3.2.10 w_id [{},{}]", startWh, endWh));
     }
 }
 
 void ConsistencyCheck33211(TObConnection& conn, int warehouseCount) {
+    // FULL OUTER JOIN via LEFT+UNION ALL (MySQL mode); matches PG 3.3.2.11.
     constexpr int RANGE_SIZE = 50;
     for (int startWh = 1; startWh <= warehouseCount; startWh += RANGE_SIZE) {
         const int endWh = std::min(startWh + RANGE_SIZE - 1, warehouseCount);
         CheckNoRows(conn, fmt::format(
-            "SELECT o.o_w_id FROM (SELECT o_w_id, o_d_id, COUNT(*) AS order_cnt FROM {} "
-            "WHERE o_w_id >= {} AND o_w_id <= {} GROUP BY o_w_id, o_d_id) AS o "
-            "JOIN (SELECT no_w_id, no_d_id, COUNT(*) AS new_order_cnt FROM {} "
-            "WHERE no_w_id >= {} AND no_w_id <= {} GROUP BY no_w_id, no_d_id) AS n "
+            "SELECT * FROM ("
+            "SELECT o.o_w_id, o.o_d_id FROM (SELECT o_w_id, o_d_id, COUNT(*) AS order_cnt FROM {0} "
+            "WHERE o_w_id >= {1} AND o_w_id <= {2} GROUP BY o_w_id, o_d_id) AS o "
+            "LEFT JOIN (SELECT no_w_id, no_d_id, COUNT(*) AS new_order_cnt FROM {3} "
+            "WHERE no_w_id >= {1} AND no_w_id <= {2} GROUP BY no_w_id, no_d_id) AS n "
             "ON o.o_w_id = n.no_w_id AND o.o_d_id = n.no_d_id "
-            "WHERE (o.order_cnt - n.new_order_cnt) != {} LIMIT 1",
-            TABLE_OORDER, startWh, endWh, TABLE_NEW_ORDER, startWh, endWh,
+            "WHERE (COALESCE(o.order_cnt, 0) - COALESCE(n.new_order_cnt, 0)) != {4} "
+            "UNION ALL "
+            "SELECT n2.no_w_id, n2.no_d_id FROM (SELECT no_w_id, no_d_id, COUNT(*) AS new_order_cnt FROM {3} "
+            "WHERE no_w_id >= {1} AND no_w_id <= {2} GROUP BY no_w_id, no_d_id) AS n2 "
+            "LEFT JOIN (SELECT o_w_id, o_d_id, COUNT(*) AS order_cnt FROM {0} "
+            "WHERE o_w_id >= {1} AND o_w_id <= {2} GROUP BY o_w_id, o_d_id) AS o2 "
+            "ON o2.o_w_id = n2.no_w_id AND o2.o_d_id = n2.no_d_id "
+            "WHERE o2.o_w_id IS NULL"
+            ") sub LIMIT 1",
+            TABLE_OORDER, startWh, endWh, TABLE_NEW_ORDER,
             FIRST_UNPROCESSED_O_ID - 1),
             fmt::format("3.3.2.11 w_id [{},{}]", startWh, endWh));
     }
@@ -336,7 +347,7 @@ void ConsistencyCheck33212(TObConnection& conn, int warehouseCount) {
             "WHERE ol.ol_delivery_d IS NOT NULL AND o.o_w_id >= {3} AND o.o_w_id <= {4} GROUP BY o.o_w_id, o.o_d_id, o.o_c_id) AS l "
             "ON c.c_w_id = l.w_id AND c.c_d_id = l.d_id AND c.c_id = l.c_id "
             "WHERE c.c_w_id >= {3} AND c.c_w_id <= {4} "
-            "AND ABS(c.c_balance + c.c_ytd_payment - COALESCE(l.ol_sum, 0)) > 1e-3 LIMIT 1",
+            "AND NOT ((c.c_balance + c.c_ytd_payment) <=> COALESCE(l.ol_sum, 0)) LIMIT 1",
             TABLE_CUSTOMER, TABLE_OORDER, TABLE_ORDER_LINE, startWh, endWh),
             fmt::format("3.3.2.12 w_id [{},{}]", startWh, endWh));
     }
@@ -350,13 +361,13 @@ void PostImportCheckNextOrderId(TObConnection& conn) {
 
 void PostImportCheckWarehouseYtd(TObConnection& conn) {
     CheckNoRows(conn, fmt::format(
-        "SELECT w_id FROM {} WHERE ABS(w_ytd - {}) > 1e-3 LIMIT 1",
+        "SELECT w_id FROM {} WHERE NOT (w_ytd <=> {}) LIMIT 1",
         TABLE_WAREHOUSE, WAREHOUSE_INITIAL_YTD.ToString()));
 }
 
 void PostImportCheckDistrictYtd(TObConnection& conn) {
     CheckNoRows(conn, fmt::format(
-        "SELECT d_w_id FROM {} WHERE ABS(d_ytd - {}) > 1e-3 LIMIT 1",
+        "SELECT d_w_id FROM {} WHERE NOT (d_ytd <=> {}) LIMIT 1",
         TABLE_DISTRICT, DISTRICT_INITIAL_YTD.ToString()));
 }
 
@@ -389,7 +400,7 @@ void PostImportCheckDeliveryEqualsEntry(TObConnection& conn) {
 
 void PostImportCheckDeliveredAmountZero(TObConnection& conn) {
     CheckNoRows(conn, fmt::format(
-        "SELECT ol_w_id FROM {} WHERE ol_o_id < {} AND ABS(ol_amount - 0.00) > 1e-3 LIMIT 1",
+        "SELECT ol_w_id FROM {} WHERE ol_o_id < {} AND NOT (ol_amount <=> 0.00) LIMIT 1",
         TABLE_ORDER_LINE, FIRST_UNPROCESSED_O_ID));
 }
 
