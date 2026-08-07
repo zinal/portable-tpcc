@@ -14,6 +14,7 @@ SRCS(
     init.cpp
     data_splitter.cpp
     import.cpp
+    arrow_upsert.cpp
     load_batch.cpp
     clean.cpp
     check.cpp
@@ -45,6 +46,7 @@ PEERDIR(
     ydb/public/sdk/cpp/src/client/iam
     ydb/public/sdk/cpp/src/client/types/credentials
     ydb/public/sdk/cpp/src/client/types/credentials/login
+    contrib/libs/apache/arrow
     contrib/libs/fmt
     contrib/restricted/nlohmann_json
     library/cpp/logger
