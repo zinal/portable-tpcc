@@ -232,4 +232,27 @@ std::string TYdbConnection::TablePath(const std::string& table) const {
     return Config_.Database + "/" + Config_.Path + "/" + table;
 }
 
+std::string TYdbConnection::RelativeTablePath(const std::string& table) const {
+    std::string prefix = Config_.Path;
+    if (!prefix.empty() && prefix.front() == '/') {
+        const std::string& database = Config_.Database;
+        if (prefix == database) {
+            prefix.clear();
+        } else if (prefix.size() > database.size()
+                   && prefix.compare(0, database.size(), database) == 0
+                   && prefix[database.size()] == '/')
+        {
+            prefix = prefix.substr(database.size() + 1);
+        } else {
+            throw std::runtime_error(
+                "YDB path must be inside the database: path=" + Config_.Path
+                + ", database=" + database);
+        }
+    }
+    if (prefix.empty()) {
+        return table;
+    }
+    return prefix + "/" + table;
+}
+
 } // namespace NTpcc
