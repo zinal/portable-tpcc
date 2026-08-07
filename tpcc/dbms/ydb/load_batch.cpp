@@ -4,7 +4,6 @@
 #include <log.h>
 #include <populate.h>
 
-#include <fmt/format.h>
 #include <util/datetime/base.h>
 #include <ydb/public/sdk/cpp/include/ydb-cpp-sdk/client/value/value.h>
 
@@ -60,39 +59,6 @@ void BulkUpsert(TYdbConnection& connection, const std::string& table, TValue row
     ThrowIfFailed(status, "bulk upsert " + table);
 }
 
-void DeleteWarehouseRows(TYdbConnection& connection, int wh) {
-    auto params = NYdb::TParamsBuilder()
-        .AddParam("$w_id").Int32(wh).Build()
-        .Build();
-    // YQL without TablePathPrefix: use database-relative table paths.
-    const std::string query = fmt::format(R"(
-        DECLARE $w_id AS Int32;
-        DELETE FROM `{0}` WHERE ol_w_id = $w_id;
-        DELETE FROM `{1}` WHERE no_w_id = $w_id;
-        DELETE FROM `{2}` WHERE o_w_id = $w_id;
-        DELETE FROM `{3}` WHERE h_c_w_id = $w_id;
-        DELETE FROM `{4}` WHERE c_w_id = $w_id;
-        DELETE FROM `{5}` WHERE d_w_id = $w_id;
-        DELETE FROM `{6}` WHERE s_w_id = $w_id;
-        DELETE FROM `{7}` WHERE w_id = $w_id;
-    )",
-        connection.RelativeTablePath(TABLE_ORDER_LINE),
-        connection.RelativeTablePath(TABLE_NEW_ORDER),
-        connection.RelativeTablePath(TABLE_OORDER),
-        connection.RelativeTablePath(TABLE_HISTORY),
-        connection.RelativeTablePath(TABLE_CUSTOMER),
-        connection.RelativeTablePath(TABLE_DISTRICT),
-        connection.RelativeTablePath(TABLE_STOCK),
-        connection.RelativeTablePath(TABLE_WAREHOUSE));
-    auto status = connection.QueryClient().RetryQuerySync([&](NYdb::NQuery::TSession session) {
-        return session.ExecuteQuery(
-            query,
-            NYdb::NQuery::TTxControl::BeginTx(NYdb::NQuery::TTxSettings::SerializableRW()).CommitTx(),
-            params).GetValueSync();
-    });
-    ThrowIfFailed(status, "delete warehouse rows");
-}
-
 } // anonymous
 
 TPutBatchResult PutItemsIdempotent(
@@ -141,8 +107,6 @@ TPutBatchResult PutWarehouseIdempotent(
         LOG_I("YDB idempotent load of warehouse " << warehouseId << " (seed=" << seed
               << ", run_id=" << (runId.empty() ? "-" : runId)
               << ", batch_rows=" << batchRows << ")");
-
-        DeleteWarehouseRows(connection, warehouseId);
 
         {
             TValueBuilder rows;
