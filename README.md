@@ -59,18 +59,15 @@ string (standalone) or an environment variable named in `password_env`
 ```bash
 CONN='host=localhost port=5432 dbname=tpcc user=postgres password=YOUR_PASSWORD'
 
-# schema (unpartitioned by default)
-./tpcc-pgsql schema --connection="$CONN" --path=portable_tpcc -w 10
-
-# schema with HASH partitions by warehouse id
-./tpcc-pgsql schema --connection="$CONN" --path=portable_tpcc -w 10 \
-  --partitioning=warehouse_hash
-# optional explicit modulus (otherwise derived from -w):
-#   --partition-count=64
-
-# schema without FOREIGN KEY constraints (faster load; default is on)
+# schema (unpartitioned; --foreign_keys=off omits FKs, default is on)
 ./tpcc-pgsql schema --connection="$CONN" --path=portable_tpcc -w 10 \
   --foreign_keys=off
+
+# schema with HASH partitions by warehouse id (also without FKs)
+./tpcc-pgsql schema --connection="$CONN" --path=portable_tpcc -w 10 \
+  --partitioning=warehouse_hash --foreign_keys=off
+# optional explicit modulus (otherwise derived from -w):
+#   --partition-count=64
 
 # load
 ./tpcc-pgsql import --connection="$CONN" --path=portable_tpcc -w 10 -t 8
@@ -118,7 +115,7 @@ database:
   options:
     partitioning: warehouse_hash    # omit or "none" for unpartitioned tables
     # partition_count: 64           # optional; else derived from scale.warehouses
-    # foreign_keys: off             # optional; default on
+    foreign_keys: off               # omit FKs at schema time; default on
 ```
 
 For PostgreSQL, `database.user` is not set in the profile. The client user
