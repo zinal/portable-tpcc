@@ -58,6 +58,14 @@ TEST(PgPartitionConfig, SchemaDdlHashAndPlain) {
     EXPECT_NE(hashed.find("FOR VALUES WITH (MODULUS 4, REMAINDER 0)"), std::string::npos);
     EXPECT_NE(hashed.find("FOR VALUES WITH (MODULUS 4, REMAINDER 3)"), std::string::npos);
     EXPECT_EQ(hashed.find("FOR VALUES WITH (MODULUS 4, REMAINDER 4)"), std::string::npos);
+    // PARTITION BY must follow the CREATE TABLE closing ')'.
+    EXPECT_NE(hashed.find(")\n PARTITION BY HASH (s_w_id)"), std::string::npos);
+    EXPECT_NE(hashed.find(")\n PARTITION BY HASH (c_w_id)"), std::string::npos);
+    EXPECT_NE(hashed.find(")\n PARTITION BY HASH (h_w_id)"), std::string::npos);
+    EXPECT_NE(hashed.find(")\n PARTITION BY HASH (o_w_id)"), std::string::npos);
+    EXPECT_NE(hashed.find(")\n PARTITION BY HASH (no_w_id)"), std::string::npos);
+    EXPECT_NE(hashed.find(")\n PARTITION BY HASH (ol_w_id)"), std::string::npos);
+    EXPECT_EQ(hashed.find("PRIMARY KEY (s_w_id, s_i_id)\n PARTITION BY"), std::string::npos);
 }
 
 TEST(PgPartitionConfig, SchemaDdlWithoutForeignKeys) {
@@ -69,7 +77,9 @@ TEST(PgPartitionConfig, SchemaDdlWithoutForeignKeys) {
 
     const std::string hashedNoFk = BuildTpccSchemaDdl(4, false);
     EXPECT_EQ(hashedNoFk.find("FOREIGN KEY"), std::string::npos);
-    EXPECT_NE(hashedNoFk.find("PARTITION BY HASH (s_w_id)"), std::string::npos);
+    EXPECT_NE(hashedNoFk.find(")\n PARTITION BY HASH (s_w_id)"), std::string::npos);
+    EXPECT_NE(hashedNoFk.find(")\n PARTITION BY HASH (ol_w_id)"), std::string::npos);
+    EXPECT_EQ(hashedNoFk.find("PRIMARY KEY (s_w_id, s_i_id)\n PARTITION BY"), std::string::npos);
 }
 
 TEST(PgPartitionConfig, ParseForeignKeysMode) {

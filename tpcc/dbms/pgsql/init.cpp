@@ -129,6 +129,7 @@ CREATE TABLE stock (
     s_dist_09    char(24)      NOT NULL,
     s_dist_10    char(24)      NOT NULL,
 )" << fkStockWarehouse << fkStockItem << R"(    PRIMARY KEY (s_w_id, s_i_id)
+)
 )" << stockPart << R"(;
 
 CREATE TABLE district (
@@ -169,6 +170,7 @@ CREATE TABLE customer (
     c_middle       char(2)        NOT NULL,
     c_data         varchar(500)   NOT NULL,
 )" << fkCustomer << R"(    PRIMARY KEY (c_w_id, c_d_id, c_id)
+)
 )" << customerPart << R"(;
 
 CREATE TABLE history (
@@ -195,6 +197,7 @@ CREATE TABLE oorder (
     o_entry_d    timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (o_w_id, o_d_id, o_id),
 )" << fkOorder << R"(    CONSTRAINT idx_order UNIQUE (o_w_id, o_d_id, o_c_id, o_id)
+)
 )" << oorderPart << R"(;
 
 CREATE TABLE new_order (
@@ -202,6 +205,7 @@ CREATE TABLE new_order (
     no_d_id int NOT NULL,
     no_o_id int NOT NULL,
 )" << fkNewOrder << R"(    PRIMARY KEY (no_w_id, no_d_id, no_o_id)
+)
 )" << newOrderPart << R"(;
 
 CREATE TABLE order_line (
@@ -216,6 +220,7 @@ CREATE TABLE order_line (
     ol_quantity    decimal(6, 2) NOT NULL,
     ol_dist_info   char(24)      NOT NULL,
 )" << fkOrderLineOorder << fkOrderLineStock << R"(    PRIMARY KEY (ol_w_id, ol_d_id, ol_o_id, ol_number)
+)
 )" << orderLinePart << ";\n";
 
     ddl << HashPartitionChildren(TABLE_STOCK, hashPartitionCount);
