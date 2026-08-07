@@ -4,7 +4,6 @@
 #include <log.h>
 #include <populate.h>
 
-#include <fmt/format.h>
 #include <util/datetime/base.h>
 #include <ydb/public/sdk/cpp/include/ydb-cpp-sdk/client/value/value.h>
 
@@ -60,31 +59,6 @@ void BulkUpsert(TYdbConnection& connection, const std::string& table, TValue row
     ThrowIfFailed(status, "bulk upsert " + table);
 }
 
-void DeleteWarehouseRows(TYdbConnection& connection, int wh) {
-    auto params = NYdb::TParamsBuilder()
-        .AddParam("$w_id").Int32(wh).Build()
-        .Build();
-    const std::string pragma = fmt::format("PRAGMA TablePathPrefix(\"{}\");\n", connection.Config().Path);
-    const std::string query = pragma + R"(
-        DECLARE $w_id AS Int32;
-        DELETE FROM `order_line` WHERE ol_w_id = $w_id;
-        DELETE FROM `new_order` WHERE no_w_id = $w_id;
-        DELETE FROM `oorder` WHERE o_w_id = $w_id;
-        DELETE FROM `history` WHERE h_c_w_id = $w_id;
-        DELETE FROM `customer` WHERE c_w_id = $w_id;
-        DELETE FROM `district` WHERE d_w_id = $w_id;
-        DELETE FROM `stock` WHERE s_w_id = $w_id;
-        DELETE FROM `warehouse` WHERE w_id = $w_id;
-    )";
-    auto status = connection.QueryClient().RetryQuerySync([&](NYdb::NQuery::TSession session) {
-        return session.ExecuteQuery(
-            query,
-            NYdb::NQuery::TTxControl::BeginTx(NYdb::NQuery::TTxSettings::SerializableRW()).CommitTx(),
-            params).GetValueSync();
-    });
-    ThrowIfFailed(status, "delete warehouse rows");
-}
-
 } // anonymous
 
 TPutBatchResult PutItemsIdempotent(
@@ -133,8 +107,6 @@ TPutBatchResult PutWarehouseIdempotent(
         LOG_I("YDB idempotent load of warehouse " << warehouseId << " (seed=" << seed
               << ", run_id=" << (runId.empty() ? "-" : runId)
               << ", batch_rows=" << batchRows << ")");
-
-        DeleteWarehouseRows(connection, warehouseId);
 
         {
             TValueBuilder rows;
