@@ -1,6 +1,7 @@
 #include "init.h"
 
 #include "data_splitter.h"
+#include "scheme_path.h"
 
 #include <constants.h>
 #include <log.h>
@@ -56,27 +57,16 @@ void EnsurePath(NYdb::TDriver& driver, const TYdbConnectionConfig& config) {
         return;
     }
 
+    // Absolute --path values must stay under --database. Walking from "/" would
+    // attempt MakeDirectory on parents outside the database (e.g. /rnd-ydb when
+    // database is /rnd-ydb/db1), which YDB rejects with "Table path not in database".
+    const std::string path = ResolveYdbAbsolutePath(config.Database, config.Path);
     NYdb::NScheme::TSchemeClient scheme(driver);
-    std::string path = config.Path;
-    if (!path.empty() && path.front() != '/') {
-        path = config.Database + "/" + path;
-    }
-
-    std::string current;
-    size_t pos = 0;
-    while (pos < path.size()) {
-        size_t next = path.find('/', pos + (path[pos] == '/' ? 1 : 0));
-        current = path.substr(0, next == std::string::npos ? path.size() : next);
-        if (!current.empty() && current != config.Database) {
-            auto status = scheme.MakeDirectory(current).GetValueSync();
-            if (!status.IsSuccess() && status.GetStatus() != NYdb::EStatus::ALREADY_EXISTS) {
-                ThrowIfFailed(status, "failed to create YDB directory " + current);
-            }
+    for (const auto& current : YdbDirectoriesToCreate(config.Database, path)) {
+        auto status = scheme.MakeDirectory(current).GetValueSync();
+        if (!status.IsSuccess() && status.GetStatus() != NYdb::EStatus::ALREADY_EXISTS) {
+            ThrowIfFailed(status, "failed to create YDB directory " + current);
         }
-        if (next == std::string::npos) {
-            break;
-        }
-        pos = next;
     }
 }
 
