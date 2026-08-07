@@ -64,18 +64,26 @@ void DeleteWarehouseRows(TYdbConnection& connection, int wh) {
     auto params = NYdb::TParamsBuilder()
         .AddParam("$w_id").Int32(wh).Build()
         .Build();
-    const std::string pragma = fmt::format("PRAGMA TablePathPrefix(\"{}\");\n", connection.Config().Path);
-    const std::string query = pragma + R"(
+    // YQL without TablePathPrefix: use database-relative table paths.
+    const std::string query = fmt::format(R"(
         DECLARE $w_id AS Int32;
-        DELETE FROM `order_line` WHERE ol_w_id = $w_id;
-        DELETE FROM `new_order` WHERE no_w_id = $w_id;
-        DELETE FROM `oorder` WHERE o_w_id = $w_id;
-        DELETE FROM `history` WHERE h_c_w_id = $w_id;
-        DELETE FROM `customer` WHERE c_w_id = $w_id;
-        DELETE FROM `district` WHERE d_w_id = $w_id;
-        DELETE FROM `stock` WHERE s_w_id = $w_id;
-        DELETE FROM `warehouse` WHERE w_id = $w_id;
-    )";
+        DELETE FROM `{0}` WHERE ol_w_id = $w_id;
+        DELETE FROM `{1}` WHERE no_w_id = $w_id;
+        DELETE FROM `{2}` WHERE o_w_id = $w_id;
+        DELETE FROM `{3}` WHERE h_c_w_id = $w_id;
+        DELETE FROM `{4}` WHERE c_w_id = $w_id;
+        DELETE FROM `{5}` WHERE d_w_id = $w_id;
+        DELETE FROM `{6}` WHERE s_w_id = $w_id;
+        DELETE FROM `{7}` WHERE w_id = $w_id;
+    )",
+        connection.RelativeTablePath(TABLE_ORDER_LINE),
+        connection.RelativeTablePath(TABLE_NEW_ORDER),
+        connection.RelativeTablePath(TABLE_OORDER),
+        connection.RelativeTablePath(TABLE_HISTORY),
+        connection.RelativeTablePath(TABLE_CUSTOMER),
+        connection.RelativeTablePath(TABLE_DISTRICT),
+        connection.RelativeTablePath(TABLE_STOCK),
+        connection.RelativeTablePath(TABLE_WAREHOUSE));
     auto status = connection.QueryClient().RetryQuerySync([&](NYdb::NQuery::TSession session) {
         return session.ExecuteQuery(
             query,

@@ -222,16 +222,6 @@ const TYdbConnectionConfig& TYdbConnection::Config() const {
     return Config_;
 }
 
-std::string TYdbConnection::TablePath(const std::string& table) const {
-    if (Config_.Path.empty()) {
-        return Config_.Database + "/" + table;
-    }
-    if (!Config_.Path.empty() && Config_.Path.front() == '/') {
-        return Config_.Path + "/" + table;
-    }
-    return Config_.Database + "/" + Config_.Path + "/" + table;
-}
-
 std::string TYdbConnection::RelativeTablePath(const std::string& table) const {
     std::string prefix = Config_.Path;
     if (!prefix.empty() && prefix.front() == '/') {
@@ -253,6 +243,11 @@ std::string TYdbConnection::RelativeTablePath(const std::string& table) const {
         return table;
     }
     return prefix + "/" + table;
+}
+
+std::string TYdbConnection::TablePath(const std::string& table) const {
+    // BulkUpsert / scheme APIs require the absolute path including the database.
+    return Config_.Database + "/" + RelativeTablePath(table);
 }
 
 } // namespace NTpcc

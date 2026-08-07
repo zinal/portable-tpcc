@@ -47,9 +47,9 @@ public:
     NYdb::NTable::TTableClient& TableClient();
 
     const TYdbConnectionConfig& Config() const;
-    // Absolute scheme path (database + optional --path + table).
+    // Absolute path including database (required by BulkUpsert / scheme APIs).
     std::string TablePath(const std::string& table) const;
-    // Path relative to the connected database for YQL DDL (no TablePathPrefix).
+    // Path relative to the connected database for YQL without TablePathPrefix.
     std::string RelativeTablePath(const std::string& table) const;
 
 private:
