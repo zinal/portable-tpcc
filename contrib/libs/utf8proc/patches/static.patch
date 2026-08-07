@@ -1,0 +1,21 @@
+--- a/utf8proc.h
++++ b/utf8proc.h
+@@ -120,17 +120,1 @@ typedef bool utf8proc_bool;
+-#ifdef UTF8PROC_STATIC
+-#  ifndef UTF8PROC_DLLEXPORT
+-#    define UTF8PROC_DLLEXPORT
+-#  endif
+-#else
+-#  ifdef _WIN32
+-#    ifdef UTF8PROC_EXPORTS
+-#      define UTF8PROC_DLLEXPORT __declspec(dllexport)
+-#    else
+-#      define UTF8PROC_DLLEXPORT __declspec(dllimport)
+-#    endif
+-#  elif __GNUC__ >= 4
+-#    define UTF8PROC_DLLEXPORT __attribute__ ((visibility("default")))
+-#  else
+-#    define UTF8PROC_DLLEXPORT
+-#  endif
+-#endif
++#define UTF8PROC_DLLEXPORT

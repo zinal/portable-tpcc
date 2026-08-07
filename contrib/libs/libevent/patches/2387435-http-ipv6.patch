@@ -1,0 +1,12 @@
+--- contrib/libs/libevent/bufferevent_sock.c	(index)
++++ contrib/libs/libevent/bufferevent_sock.c	(working tree)
+@@ -490,6 +490,9 @@ bufferevent_connect_getaddrinfo_cb(int result, struct evutil_addrinfo *ai,
+ 		return;
+ 	}
+ 
++	while (ai->ai_addr->sa_family != AF_INET6 && ai->ai_next != NULL) {
++		ai = ai->ai_next;
++	}
+ 	r = bufferevent_socket_connect(bev, ai->ai_addr, (int)ai->ai_addrlen);
+ 	if (r < 0)
+ 		bufferevent_run_eventcb_(bev, BEV_EVENT_ERROR, 0);
