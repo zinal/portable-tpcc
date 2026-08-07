@@ -82,10 +82,20 @@ void InitSync(const TYdbConnectionConfig& connectionConfig, int warehouseCount) 
         splitter.GetSplitKeys(TABLE_ORDER_LINE), minParts,
         std::max(minParts, static_cast<int>(splitter.GetSplitKeys(TABLE_ORDER_LINE).size()) + 1) * 2);
 
-    const std::string pragma = fmt::format("PRAGMA TablePathPrefix(\"{}\");\n", connectionConfig.Path);
+    // CREATE TABLE must use a database-relative path in the table name.
+    // TablePathPrefix is not applied correctly for CREATE TABLE.
+    const std::string warehousePath = connection.RelativeTablePath(TABLE_WAREHOUSE);
+    const std::string itemPath = connection.RelativeTablePath(TABLE_ITEM);
+    const std::string stockPath = connection.RelativeTablePath(TABLE_STOCK);
+    const std::string districtPath = connection.RelativeTablePath(TABLE_DISTRICT);
+    const std::string customerPath = connection.RelativeTablePath(TABLE_CUSTOMER);
+    const std::string historyPath = connection.RelativeTablePath(TABLE_HISTORY);
+    const std::string oorderPath = connection.RelativeTablePath(TABLE_OORDER);
+    const std::string newOrderPath = connection.RelativeTablePath(TABLE_NEW_ORDER);
+    const std::string orderLinePath = connection.RelativeTablePath(TABLE_ORDER_LINE);
 
-    Exec(client, pragma + fmt::format(R"(
-        CREATE TABLE `warehouse` (
+    Exec(client, fmt::format(R"(
+        CREATE TABLE `{}` (
             w_id Int32 NOT NULL,
             w_ytd Decimal(22,9),
             w_tax Decimal(22,9),
@@ -97,10 +107,10 @@ void InitSync(const TYdbConnectionConfig& connectionConfig, int warehouseCount) 
             w_zip Utf8,
             PRIMARY KEY (w_id)
         ) {};
-    )", small), "create warehouse");
+    )", warehousePath, small), "create warehouse");
 
-    Exec(client, pragma + fmt::format(R"(
-        CREATE TABLE `item` (
+    Exec(client, fmt::format(R"(
+        CREATE TABLE `{}` (
             i_id Int32 NOT NULL,
             i_name Utf8,
             i_price Decimal(22,9),
@@ -108,10 +118,10 @@ void InitSync(const TYdbConnectionConfig& connectionConfig, int warehouseCount) 
             i_im_id Int32,
             PRIMARY KEY (i_id)
         ) {};
-    )", item), "create item");
+    )", itemPath, item), "create item");
 
-    Exec(client, pragma + fmt::format(R"(
-        CREATE TABLE `stock` (
+    Exec(client, fmt::format(R"(
+        CREATE TABLE `{}` (
             s_w_id Int32 NOT NULL,
             s_i_id Int32 NOT NULL,
             s_quantity Int32,
@@ -131,10 +141,10 @@ void InitSync(const TYdbConnectionConfig& connectionConfig, int warehouseCount) 
             s_dist_10 Utf8,
             PRIMARY KEY (s_w_id, s_i_id)
         ) {};
-    )", stock), "create stock");
+    )", stockPath, stock), "create stock");
 
-    Exec(client, pragma + fmt::format(R"(
-        CREATE TABLE `district` (
+    Exec(client, fmt::format(R"(
+        CREATE TABLE `{}` (
             d_w_id Int32 NOT NULL,
             d_id Int32 NOT NULL,
             d_ytd Decimal(22,9),
@@ -148,10 +158,10 @@ void InitSync(const TYdbConnectionConfig& connectionConfig, int warehouseCount) 
             d_zip Utf8,
             PRIMARY KEY (d_w_id, d_id)
         ) {};
-    )", small), "create district");
+    )", districtPath, small), "create district");
 
-    Exec(client, pragma + fmt::format(R"(
-        CREATE TABLE `customer` (
+    Exec(client, fmt::format(R"(
+        CREATE TABLE `{}` (
             c_w_id Int32 NOT NULL,
             c_d_id Int32 NOT NULL,
             c_id Int32 NOT NULL,
@@ -175,10 +185,10 @@ void InitSync(const TYdbConnectionConfig& connectionConfig, int warehouseCount) 
             c_data Utf8,
             PRIMARY KEY (c_w_id, c_d_id, c_id)
         ) {};
-    )", customer), "create customer");
+    )", customerPath, customer), "create customer");
 
-    Exec(client, pragma + fmt::format(R"(
-        CREATE TABLE `history` (
+    Exec(client, fmt::format(R"(
+        CREATE TABLE `{}` (
             h_c_w_id Int32 NOT NULL,
             h_c_d_id Int32 NOT NULL,
             h_c_id Int32 NOT NULL,
@@ -190,10 +200,10 @@ void InitSync(const TYdbConnectionConfig& connectionConfig, int warehouseCount) 
             h_data Utf8,
             PRIMARY KEY (h_c_w_id, h_c_d_id, h_c_id, h_c_nano_ts)
         ) {};
-    )", history), "create history");
+    )", historyPath, history), "create history");
 
-    Exec(client, pragma + fmt::format(R"(
-        CREATE TABLE `oorder` (
+    Exec(client, fmt::format(R"(
+        CREATE TABLE `{}` (
             o_w_id Int32 NOT NULL,
             o_d_id Int32 NOT NULL,
             o_id Int32 NOT NULL,
@@ -204,19 +214,19 @@ void InitSync(const TYdbConnectionConfig& connectionConfig, int warehouseCount) 
             o_entry_d Timestamp,
             PRIMARY KEY (o_w_id, o_d_id, o_id)
         ) {};
-    )", oorder), "create oorder");
+    )", oorderPath, oorder), "create oorder");
 
-    Exec(client, pragma + fmt::format(R"(
-        CREATE TABLE `new_order` (
+    Exec(client, fmt::format(R"(
+        CREATE TABLE `{}` (
             no_w_id Int32 NOT NULL,
             no_d_id Int32 NOT NULL,
             no_o_id Int32 NOT NULL,
             PRIMARY KEY (no_w_id, no_d_id, no_o_id)
         ) {};
-    )", small), "create new_order");
+    )", newOrderPath, small), "create new_order");
 
-    Exec(client, pragma + fmt::format(R"(
-        CREATE TABLE `order_line` (
+    Exec(client, fmt::format(R"(
+        CREATE TABLE `{}` (
             ol_w_id Int32 NOT NULL,
             ol_d_id Int32 NOT NULL,
             ol_o_id Int32 NOT NULL,
@@ -229,7 +239,7 @@ void InitSync(const TYdbConnectionConfig& connectionConfig, int warehouseCount) 
             ol_dist_info Utf8,
             PRIMARY KEY (ol_w_id, ol_d_id, ol_o_id, ol_number)
         ) {};
-    )", orderLine), "create order_line");
+    )", orderLinePath, orderLine), "create order_line");
 
     LOG_I("All YDB TPC-C tables created successfully");
 }
@@ -238,13 +248,12 @@ void CreateIndexes(const TYdbConnectionConfig& connectionConfig) {
     LOG_I("Creating YDB secondary indexes...");
     TYdbConnection connection(connectionConfig);
     auto& client = connection.QueryClient();
-    const std::string pragma = fmt::format("PRAGMA TablePathPrefix(\"{}\");\n", connectionConfig.Path);
-    Exec(client, pragma + R"(
-        ALTER TABLE `customer` ADD INDEX `idx_customer_name` GLOBAL ON (c_w_id, c_d_id, c_last, c_first);
-    )", "create idx_customer_name");
-    Exec(client, pragma + R"(
-        ALTER TABLE `oorder` ADD INDEX `idx_order` GLOBAL ON (o_w_id, o_d_id, o_c_id, o_id);
-    )", "create idx_order");
+    Exec(client, fmt::format(R"(
+        ALTER TABLE `{}` ADD INDEX `idx_customer_name` GLOBAL ON (c_w_id, c_d_id, c_last, c_first);
+    )", connection.RelativeTablePath(TABLE_CUSTOMER)), "create idx_customer_name");
+    Exec(client, fmt::format(R"(
+        ALTER TABLE `{}` ADD INDEX `idx_order` GLOBAL ON (o_w_id, o_d_id, o_c_id, o_id);
+    )", connection.RelativeTablePath(TABLE_OORDER)), "create idx_order");
 }
 
 } // namespace NTpcc

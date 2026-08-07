@@ -47,7 +47,10 @@ public:
     NYdb::NTable::TTableClient& TableClient();
 
     const TYdbConnectionConfig& Config() const;
+    // Absolute scheme path (database + optional --path + table).
     std::string TablePath(const std::string& table) const;
+    // Path relative to the connected database for YQL DDL (no TablePathPrefix).
+    std::string RelativeTablePath(const std::string& table) const;
 
 private:
     TYdbConnectionConfig Config_;
