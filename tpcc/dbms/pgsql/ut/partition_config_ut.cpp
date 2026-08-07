@@ -44,6 +44,7 @@ TEST(PgPartitionConfig, SchemaDdlHashAndPlain) {
     const std::string plain = BuildTpccSchemaDdl(0);
     EXPECT_EQ(plain.find("PARTITION BY"), std::string::npos);
     EXPECT_NE(plain.find("CREATE TABLE stock"), std::string::npos);
+    EXPECT_NE(plain.find("FOREIGN KEY"), std::string::npos);
 
     const std::string hashed = BuildTpccSchemaDdl(4);
     EXPECT_NE(hashed.find("PARTITION BY HASH (s_w_id)"), std::string::npos);
@@ -57,4 +58,29 @@ TEST(PgPartitionConfig, SchemaDdlHashAndPlain) {
     EXPECT_NE(hashed.find("FOR VALUES WITH (MODULUS 4, REMAINDER 0)"), std::string::npos);
     EXPECT_NE(hashed.find("FOR VALUES WITH (MODULUS 4, REMAINDER 3)"), std::string::npos);
     EXPECT_EQ(hashed.find("FOR VALUES WITH (MODULUS 4, REMAINDER 4)"), std::string::npos);
+}
+
+TEST(PgPartitionConfig, SchemaDdlWithoutForeignKeys) {
+    const std::string noFk = BuildTpccSchemaDdl(0, false);
+    EXPECT_EQ(noFk.find("FOREIGN KEY"), std::string::npos);
+    EXPECT_NE(noFk.find("CREATE TABLE stock"), std::string::npos);
+    EXPECT_NE(noFk.find("PRIMARY KEY (s_w_id, s_i_id)"), std::string::npos);
+    EXPECT_NE(noFk.find("CONSTRAINT idx_order UNIQUE"), std::string::npos);
+
+    const std::string hashedNoFk = BuildTpccSchemaDdl(4, false);
+    EXPECT_EQ(hashedNoFk.find("FOREIGN KEY"), std::string::npos);
+    EXPECT_NE(hashedNoFk.find("PARTITION BY HASH (s_w_id)"), std::string::npos);
+}
+
+TEST(PgPartitionConfig, ParseForeignKeysMode) {
+    bool enabled = true;
+    EXPECT_TRUE(ParseForeignKeysMode("off", enabled));
+    EXPECT_FALSE(enabled);
+    EXPECT_TRUE(ParseForeignKeysMode("on", enabled));
+    EXPECT_TRUE(enabled);
+    EXPECT_TRUE(ParseForeignKeysMode("false", enabled));
+    EXPECT_FALSE(enabled);
+    EXPECT_FALSE(ParseForeignKeysMode("maybe", enabled));
+    EXPECT_EQ(ForeignKeysModeLabel(true), "on");
+    EXPECT_EQ(ForeignKeysModeLabel(false), "off");
 }

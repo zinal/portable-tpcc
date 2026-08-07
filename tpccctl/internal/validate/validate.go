@@ -273,6 +273,10 @@ func validatePgsqlOptions(options map[string]interface{}, res *Result) {
 			} else if n > 1024 {
 				res.Add("database.options.partition_count must not exceed 1024")
 			}
+		case "foreign_keys":
+			if !asForeignKeysOption(value) {
+				res.Add(`database.options.foreign_keys must be a boolean or "on"/"off"`)
+			}
 		default:
 			res.Add(fmt.Sprintf("unknown database.options.%s for dbms=pgsql", key))
 		}
@@ -285,6 +289,22 @@ func validatePgsqlOptions(options map[string]interface{}, res *Result) {
 		}
 	} else if _, hasCount := options["partition_count"]; hasCount {
 		res.Add("database.options.partition_count is only valid when partitioning=warehouse_hash")
+	}
+}
+
+func asForeignKeysOption(value interface{}) bool {
+	switch v := value.(type) {
+	case bool:
+		return true
+	case string:
+		switch v {
+		case "on", "off", "true", "false", "1", "0":
+			return true
+		default:
+			return false
+		}
+	default:
+		return false
 	}
 }
 

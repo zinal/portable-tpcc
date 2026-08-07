@@ -210,9 +210,11 @@ only inserts history; measurement never selects it. Loader CASCADE from a
 remote customer (`h_c_w_id`) may scan all history partitions when deleting —
 load/reload cost only. Acceptable for v1; document it.
 
-If FK maintenance on partitioned tables proves too expensive at load time,
-expose `database.options.foreign_keys` (bool, default `true`) analogous to
-OceanBase’s optional FKs, and record `ForeignKeys` in capabilities.
+Optional `database.options.foreign_keys` (bool / `"on"`|`"off"`, default
+`true` / `"on"`) omits FOREIGN KEY clauses at schema time, analogous to
+OceanBase. CLI: `--foreign_keys=off`. Capabilities record `ForeignKeys`.
+Idempotent warehouse reload uses explicit per-table deletes so load works
+with either setting.
 
 ## 6. Implementation status
 
@@ -225,8 +227,8 @@ No edits to protected infrastructure trees (`build/`, `contrib/`, `devtools/`,
 | Config / derive `N` | `partition_config.{h,cpp}` |
 | DDL | `init.cpp` (`BuildTpccSchemaDdl`) |
 | Admin / schema role | `pg_admin_adapter.*`, `worker_loader.cpp` |
-| CLI | `app/pgsql/main.cpp` (`--partitioning`, `--partition-count`) |
-| run-config / tpccctl | `database.options.partitioning`, `partition_count` (profile → run-config.json → schema role) |
+| CLI | `app/pgsql/main.cpp` (`--partitioning`, `--partition-count`, `--foreign_keys`) |
+| run-config / tpccctl | `database.options.partitioning`, `partition_count`, `foreign_keys` (profile → run-config.json → schema role) |
 | Capabilities | `TPgCapabilities` reports configured style |
 | Preflight | `path_checker.cpp` recognizes `PARTITIONED TABLE` |
 | Unit tests | `tpcc/dbms/pgsql/ut/partition_config_ut.cpp` |

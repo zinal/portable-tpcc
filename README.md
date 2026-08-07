@@ -59,12 +59,13 @@ string (standalone) or an environment variable named in `password_env`
 ```bash
 CONN='host=localhost port=5432 dbname=tpcc user=postgres password=YOUR_PASSWORD'
 
-# schema (unpartitioned by default)
-./tpcc-pgsql schema --connection="$CONN" --path=portable_tpcc -w 10
-
-# schema with HASH partitions by warehouse id
+# schema (unpartitioned; --foreign_keys=off omits FKs, default is on)
 ./tpcc-pgsql schema --connection="$CONN" --path=portable_tpcc -w 10 \
-  --partitioning=warehouse_hash
+  --foreign_keys=off
+
+# schema with HASH partitions by warehouse id (also without FKs)
+./tpcc-pgsql schema --connection="$CONN" --path=portable_tpcc -w 10 \
+  --partitioning=warehouse_hash --foreign_keys=off
 # optional explicit modulus (otherwise derived from -w):
 #   --partition-count=64
 
@@ -93,6 +94,9 @@ Useful flags:
   Optional `--partition-count=N` sets the modulus; if omitted, `N` is
   derived from `-w` / `--warehouses`. See
   [docs/pgsql-partitioning-design.md](docs/pgsql-partitioning-design.md).
+- `--foreign_keys=off` — omit FOREIGN KEY constraints at schema time
+  (default `on`). Idempotent load still replaces warehouse ranges via
+  explicit deletes.
 - `--no-delays` — disable keying/think time (engineering runs);
 - `--help` — full command list.
 
@@ -111,6 +115,7 @@ database:
   options:
     partitioning: warehouse_hash    # omit or "none" for unpartitioned tables
     # partition_count: 64           # optional; else derived from scale.warehouses
+    foreign_keys: off               # omit FKs at schema time; default on
 ```
 
 For PostgreSQL, `database.user` is not set in the profile. The client user

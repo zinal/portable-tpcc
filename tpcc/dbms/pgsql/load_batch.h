@@ -11,8 +11,8 @@ namespace NTpcc {
 
 // Idempotent population helpers (specification §6):
 // - item: staging COPY + INSERT ... ON CONFLICT DO UPDATE
-// - warehouse range: DELETE warehouse (CASCADE children) + COPY in FK order,
-//   all in one transaction per warehouse id
+// - warehouse range: explicit DELETE of warehouse-scoped tables + COPY in
+//   dependency order, all in one transaction per warehouse id
 
 TPutBatchResult PutItemsIdempotent(
     pqxx::connection& conn,

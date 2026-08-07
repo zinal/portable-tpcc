@@ -2,8 +2,9 @@
 
 namespace NTpcc {
 
-TPgCapabilities::TPgCapabilities(std::string partitioningStyle)
+TPgCapabilities::TPgCapabilities(std::string partitioningStyle, bool foreignKeys)
     : PartitioningStyle_(std::move(partitioningStyle))
+    , ForeignKeys_(foreignKeys)
 {
     if (PartitioningStyle_.empty()) {
         PartitioningStyle_ = "none";
@@ -22,7 +23,7 @@ TCapabilities TPgCapabilities::Get() const {
     c.MaxRecommendedInflight = 256;
     c.BulkLoadMechanism = "copy";
     c.ExactDecimalType = "DECIMAL";
-    c.ForeignKeys = true;
+    c.ForeignKeys = ForeignKeys_;
     c.PartitioningStyle = PartitioningStyle_;
     return c;
 }

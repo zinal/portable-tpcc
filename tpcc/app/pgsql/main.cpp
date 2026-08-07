@@ -27,6 +27,7 @@ DEFINE_string(partitioning, "none",
     "Schema partitioning: none or warehouse_hash (HASH by warehouse id)");
 DEFINE_int32(partition_count, 0,
     "Hash partition modulus for warehouse_hash; 0 = derive from --warehouses");
+DEFINE_string(foreign_keys, "on", "Foreign keys: on or off");
 
 DEFINE_int32(warehouses, 1, "Number of warehouses");
 DEFINE_uint64(seed, 1, "Deterministic data generation seed");
@@ -70,6 +71,7 @@ void PrintHelp() {
         "  -p, --path            PostgreSQL schema for benchmark tables (default: empty, uses server search_path)\n"
         "  --partitioning        Schema partitioning: none | warehouse_hash (default: none)\n"
         "  --partition-count     Hash modulus for warehouse_hash; 0 = derive from -w (default: 0)\n"
+        "  --foreign_keys        Foreign keys: on | off (default: on)\n"
         "  -w, --warehouses      Number of warehouses (default: 1)\n"
         "  --warmup              Warmup duration in minutes, 0 = adaptive (default: 0)\n"
         "  --skip-warmup         Skip warmup entirely (default: false)\n"
@@ -96,6 +98,7 @@ void PrintHelp() {
         "Examples:\n"
         "  tpcc schema --connection=\"host=localhost dbname=tpcc\"\n"
         "  tpcc schema -w 1000 --partitioning=warehouse_hash\n"
+        "  tpcc schema --foreign_keys=off\n"
         "  tpcc import -w 10 -t 8\n"
         "  tpcc run -w 10 --duration=5 -t 4\n"
         "  tpcc check -w 10 --after-run\n"
@@ -290,6 +293,9 @@ void RunSchema() {
     partCfg.Partitioning = FLAGS_partitioning;
     partCfg.PartitionCount = FLAGS_partition_count;
     partCfg.WarehouseCount = FLAGS_warehouses;
+    if (!NTpcc::ParseForeignKeysMode(FLAGS_foreign_keys, partCfg.EnableForeignKeys)) {
+        throw std::runtime_error("--foreign_keys must be \"on\" or \"off\"");
+    }
     // Validates flags early (including derive-from-warehouses).
     NTpcc::ResolvePgPartitionCount(partCfg);
 

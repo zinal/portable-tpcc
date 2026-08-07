@@ -310,7 +310,16 @@ TPutBatchResult PutWarehouseIdempotent(
 
         pqxx::work txn(conn);
 
-        // ON DELETE CASCADE clears district/stock/customer/history/orders for this WH.
+        // Explicit deletes keep reload idempotent whether or not FOREIGN KEYs
+        // with ON DELETE CASCADE were created at schema time (foreign_keys=off).
+        txn.exec_params("DELETE FROM order_line WHERE ol_w_id = $1", warehouseId);
+        txn.exec_params("DELETE FROM new_order WHERE no_w_id = $1", warehouseId);
+        txn.exec_params("DELETE FROM oorder WHERE o_w_id = $1", warehouseId);
+        txn.exec_params(
+            "DELETE FROM history WHERE h_w_id = $1 OR h_c_w_id = $1", warehouseId);
+        txn.exec_params("DELETE FROM customer WHERE c_w_id = $1", warehouseId);
+        txn.exec_params("DELETE FROM district WHERE d_w_id = $1", warehouseId);
+        txn.exec_params("DELETE FROM stock WHERE s_w_id = $1", warehouseId);
         txn.exec_params("DELETE FROM warehouse WHERE w_id = $1", warehouseId);
 
         CopyWarehouse(txn, seed, warehouseId);

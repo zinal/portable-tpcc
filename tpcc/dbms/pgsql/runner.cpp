@@ -142,7 +142,8 @@ TRunOutcome RunSync(const TRunConfig& config, TTerminalStats* aggregatedStats) {
     const TPhaseDurations& durations = phaseResult.Durations;
 
     // async_delivery=false (PG): drain waits for in-flight only; no async queue.
-    const bool asyncDelivery = TPgCapabilities{config.Partitioning}.Get().AsyncDelivery;
+    const bool asyncDelivery =
+        TPgCapabilities{config.Partitioning, config.ForeignKeys}.Get().AsyncDelivery;
     if (!asyncDelivery) {
         // Keep TransactionDrainMs as the max wait for in-flight to finish.
     }

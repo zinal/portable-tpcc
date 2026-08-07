@@ -70,6 +70,7 @@ int RunWorkerFromRunConfig(
         runCfg.ConnectionString = BuildPgConnectionString(d);
         runCfg.Path = d.Path;
         runCfg.Partitioning = d.Partitioning.empty() ? "none" : d.Partitioning;
+        runCfg.ForeignKeys = d.ForeignKeys;
         runCfg.WarehouseRanges = assign.WarehouseRanges;
         runCfg.WarehouseCount = CountWarehouses(assign.WarehouseRanges);
         runCfg.ScaleWarehouses = d.ScaleWarehouses;
@@ -103,11 +104,13 @@ int RunSchemaFromRunConfig(const std::string& runConfigPath, const std::string& 
         partCfg.Partitioning = d.Partitioning.empty() ? PG_PARTITIONING_NONE : d.Partitioning;
         partCfg.PartitionCount = d.PartitionCount;
         partCfg.WarehouseCount = d.ScaleWarehouses;
+        partCfg.EnableForeignKeys = d.ForeignKeys;
         TPgAdminAdapter admin(connection, d.Path, partCfg);
         admin.EnsureSchema();
         auto desc = admin.Describe();
         LOG_I("Schema ready (server=" << desc.ServerVersion << ", client=" << desc.ClientVersion
-              << ", instance=" << instance << ", partitioning=" << partCfg.Partitioning << ")");
+              << ", instance=" << instance << ", partitioning=" << partCfg.Partitioning
+              << ", foreign_keys=" << ForeignKeysModeLabel(partCfg.EnableForeignKeys) << ")");
     });
 }
 
