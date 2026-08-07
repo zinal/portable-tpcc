@@ -1,13 +1,11 @@
 #include "init.h"
 
 #include "data_splitter.h"
-#include "scheme_path.h"
 
 #include <constants.h>
 #include <log.h>
 
 #include <fmt/format.h>
-#include <ydb/public/sdk/cpp/include/ydb-cpp-sdk/client/scheme/scheme.h>
 
 #include <algorithm>
 #include <sstream>
@@ -52,31 +50,12 @@ void Exec(NYdb::NQuery::TQueryClient& client, const std::string& sql, const std:
     ThrowIfFailed(status, what);
 }
 
-void EnsurePath(NYdb::TDriver& driver, const TYdbConnectionConfig& config) {
-    if (config.Path.empty()) {
-        return;
-    }
-
-    // Absolute --path values must stay under --database. Walking from "/" would
-    // attempt MakeDirectory on parents outside the database (e.g. /rnd-ydb when
-    // database is /rnd-ydb/db1), which YDB rejects with "Table path not in database".
-    const std::string path = ResolveYdbAbsolutePath(config.Database, config.Path);
-    NYdb::NScheme::TSchemeClient scheme(driver);
-    for (const auto& current : YdbDirectoriesToCreate(config.Database, path)) {
-        auto status = scheme.MakeDirectory(current).GetValueSync();
-        if (!status.IsSuccess() && status.GetStatus() != NYdb::EStatus::ALREADY_EXISTS) {
-            ThrowIfFailed(status, "failed to create YDB directory " + current);
-        }
-    }
-}
-
 } // anonymous
 
 void InitSync(const TYdbConnectionConfig& connectionConfig, int warehouseCount) {
     LOG_I("Initializing YDB TPC-C schema...");
 
     TYdbConnection connection(connectionConfig);
-    EnsurePath(connection.Driver(), connectionConfig);
     auto& client = connection.QueryClient();
 
     TDataSplitter splitter(warehouseCount);
