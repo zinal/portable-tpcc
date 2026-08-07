@@ -297,6 +297,37 @@ func TestValidate_pgsqlPartitioningOptions(t *testing.T) {
 		}
 	})
 
+	t.Run("accepts_foreign_keys_off", func(t *testing.T) {
+		p := *base
+		p.Database.Options = map[string]interface{}{
+			"foreign_keys": "off",
+		}
+		res := validate.Profile(&p)
+		if !res.Valid {
+			t.Fatalf("expected foreign_keys=off to be valid, errors: %v", res.Errors)
+		}
+	})
+
+	t.Run("accepts_foreign_keys_bool", func(t *testing.T) {
+		p := *base
+		p.Database.Options = map[string]interface{}{
+			"foreign_keys": false,
+		}
+		res := validate.Profile(&p)
+		if !res.Valid {
+			t.Fatalf("expected foreign_keys=false to be valid, errors: %v", res.Errors)
+		}
+	})
+
+	t.Run("rejects_invalid_foreign_keys", func(t *testing.T) {
+		p := *base
+		p.Database.Options = map[string]interface{}{"foreign_keys": "maybe"}
+		res := validate.Profile(&p)
+		if res.Valid {
+			t.Fatal("expected invalid foreign_keys to fail")
+		}
+	})
+
 	t.Run("rejects_unknown_option", func(t *testing.T) {
 		p := *base
 		p.Database.Options = map[string]interface{}{"tx_mode": "serializable"}

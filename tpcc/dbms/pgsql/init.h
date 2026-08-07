@@ -14,7 +14,7 @@ void InitSync(
 void CreateIndexes(const std::string& connectionString, const std::string& path = {});
 
 // Exposed for unit tests: build CREATE TABLE DDL for the given hash modulus
-// (0 = unpartitioned tables).
-std::string BuildTpccSchemaDdl(int hashPartitionCount);
+// (0 = unpartitioned tables). enableForeignKeys controls FOREIGN KEY clauses.
+std::string BuildTpccSchemaDdl(int hashPartitionCount, bool enableForeignKeys = true);
 
 } // namespace NTpcc

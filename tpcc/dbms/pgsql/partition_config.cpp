@@ -68,4 +68,20 @@ int ResolvePgPartitionCount(const TPgPartitionConfig& config) {
     return DerivePgHashPartitionCount(config.WarehouseCount);
 }
 
+std::string ForeignKeysModeLabel(bool enabled) {
+    return enabled ? "on" : "off";
+}
+
+bool ParseForeignKeysMode(const std::string& value, bool& enabled) {
+    if (value == "on" || value == "true" || value == "1") {
+        enabled = true;
+        return true;
+    }
+    if (value == "off" || value == "false" || value == "0") {
+        enabled = false;
+        return true;
+    }
+    return false;
+}
+
 } // namespace NTpcc

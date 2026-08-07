@@ -321,6 +321,18 @@ TRunConfigDocument LoadRunConfigDocument(const std::string& path) {
                         throw std::runtime_error(
                             "database.options.partition_count must be greater than zero when set");
                     }
+                } else if (key == "foreign_keys") {
+                    if (item.value().is_boolean()) {
+                        doc.ForeignKeys = item.value().get<bool>();
+                    } else if (item.value().is_string()) {
+                        if (!ParseForeignKeysMode(item.value().get<std::string>(), doc.ForeignKeys)) {
+                            throw std::runtime_error(
+                                "database.options.foreign_keys must be on or off");
+                        }
+                    } else {
+                        throw std::runtime_error(
+                            "database.options.foreign_keys must be a string or boolean");
+                    }
                 } else {
                     throw std::runtime_error(
                         "unknown database.options." + key + " for dbms=pgsql");

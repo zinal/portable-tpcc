@@ -27,6 +27,8 @@ struct TRunConfig {
     std::string Path;
     // Physical partitioning style used at schema time ("none" | "warehouse_hash").
     std::string Partitioning = "none";
+    // Whether schema was created with FOREIGN KEY constraints.
+    bool ForeignKeys = true;
     size_t WarehouseCount = DEFAULT_WAREHOUSE_COUNT;
     std::chrono::seconds WarmupDuration{0};
     std::chrono::seconds RunDuration{600};
