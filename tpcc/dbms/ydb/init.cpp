@@ -6,7 +6,6 @@
 #include <log.h>
 
 #include <fmt/format.h>
-#include <ydb/public/sdk/cpp/include/ydb-cpp-sdk/client/scheme/scheme.h>
 
 #include <algorithm>
 #include <sstream>
@@ -51,42 +50,12 @@ void Exec(NYdb::NQuery::TQueryClient& client, const std::string& sql, const std:
     ThrowIfFailed(status, what);
 }
 
-void EnsurePath(NYdb::TDriver& driver, const TYdbConnectionConfig& config) {
-    if (config.Path.empty()) {
-        return;
-    }
-
-    NYdb::NScheme::TSchemeClient scheme(driver);
-    std::string path = config.Path;
-    if (!path.empty() && path.front() != '/') {
-        path = config.Database + "/" + path;
-    }
-
-    std::string current;
-    size_t pos = 0;
-    while (pos < path.size()) {
-        size_t next = path.find('/', pos + (path[pos] == '/' ? 1 : 0));
-        current = path.substr(0, next == std::string::npos ? path.size() : next);
-        if (!current.empty() && current != config.Database) {
-            auto status = scheme.MakeDirectory(current).GetValueSync();
-            if (!status.IsSuccess() && status.GetStatus() != NYdb::EStatus::ALREADY_EXISTS) {
-                ThrowIfFailed(status, "failed to create YDB directory " + current);
-            }
-        }
-        if (next == std::string::npos) {
-            break;
-        }
-        pos = next;
-    }
-}
-
 } // anonymous
 
 void InitSync(const TYdbConnectionConfig& connectionConfig, int warehouseCount) {
     LOG_I("Initializing YDB TPC-C schema...");
 
     TYdbConnection connection(connectionConfig);
-    EnsurePath(connection.Driver(), connectionConfig);
     auto& client = connection.QueryClient();
 
     TDataSplitter splitter(warehouseCount);
