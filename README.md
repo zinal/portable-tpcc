@@ -40,9 +40,16 @@ From the repository root:
 go -C tpccctl build ./cmd/tpccctl
 ```
 
-Or build everything with `./build.sh`. The worker/loader binary is
-`tpcc-pgsql`. For orchestration, place it under the profile's
-`paths.local_artifacts` directory (for example `./dist/tpcc-pgsql`).
+The YDB binary requires CUDA to be disabled in ya make:
+
+```bash
+./ya make -r -DHAVE_CUDA=no -DCUDA_VERSION=11.4 tpcc/app/ydb
+```
+
+Or build everything with `./build.sh` (it always passes the CUDA defines
+above). The PostgreSQL worker/loader binary is `tpcc-pgsql`. For
+orchestration, place it under the profile's `paths.local_artifacts`
+directory (for example `./dist/tpcc-pgsql`).
 
 ### Prepare PostgreSQL
 

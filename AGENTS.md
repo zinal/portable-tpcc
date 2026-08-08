@@ -38,6 +38,23 @@ The build system is invoked via the **`./ya` launcher script in the repository r
 
 On first use the script may download the ya binary; subsequent builds reuse it. Do not assume `ya` is on `PATH` — always use `./ya`.
 
+### Building the YDB variant
+
+The YDB app (`tpcc/app/ydb`, binary `tpcc-ydb`) **must** be built with CUDA
+disabled. Use these defines (release build shown; drop `-r` for the ya
+default/debug configuration):
+
+```bash
+./ya make -r -DHAVE_CUDA=no -DCUDA_VERSION=11.4 tpcc/app/ydb
+```
+
+When building the full `tpcc/` tree (which includes YDB), pass the same
+`-DHAVE_CUDA=no -DCUDA_VERSION=11.4` flags. The root convenience script
+`./build.sh` always adds them for C++ targets.
+
+Do not omit these flags for YDB builds: the ya make graph otherwise expects
+a CUDA toolchain that is not part of the portable-tpcc development setup.
+
 ### Building tpccctl with Go
 
 `tpccctl/` is a standalone Go module and **must not** be added to the `ya make`
