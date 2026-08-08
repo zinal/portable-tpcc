@@ -11,6 +11,7 @@
 
 #include <fmt/format.h>
 #include <ydb/public/sdk/cpp/include/ydb-cpp-sdk/client/params/params.h>
+#include <ydb/public/sdk/cpp/include/ydb-cpp-sdk/client/value/value.h>
 
 #include <filesystem>
 #include <iostream>
@@ -352,7 +353,17 @@ bool QueryBool(TYdbConnection& connection, const std::string& query) {
     if (!parser.TryNextRow()) {
         throw std::runtime_error("check query returned no rows");
     }
-    return parser.ColumnParser("ok").GetBool();
+    // YQL types comparisons involving MIN/MAX as Optional<Bool>; plain
+    // COUNT(*) comparisons stay Bool. Accept both.
+    auto& okParser = parser.ColumnParser("ok");
+    if (okParser.GetKind() == NYdb::TTypeParser::ETypeKind::Optional) {
+        const auto ok = okParser.GetOptionalBool();
+        if (!ok.has_value()) {
+            throw std::runtime_error("check query returned null ok");
+        }
+        return *ok;
+    }
+    return okParser.GetBool();
 }
 
 } // anonymous
