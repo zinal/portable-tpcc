@@ -337,7 +337,11 @@ std::unordered_map<std::string, std::string> BuildQueries(int warehouses) {
 }
 
 bool QueryBool(TYdbConnection& connection, const std::string& query) {
-    const std::string sql = fmt::format("PRAGMA TablePathPrefix(\"{}\");\n{}", connection.Config().Path, query);
+    // TablePathPrefix requires the absolute path including the database name.
+    const std::string sql = fmt::format(
+        "PRAGMA TablePathPrefix(\"{}\");\n{}",
+        connection.AbsolutePathPrefix(),
+        query);
     auto result = connection.QueryClient().RetryQuery([&](NYdb::NQuery::TSession session) {
         return session.ExecuteQuery(sql, NYdb::NQuery::TTxControl::NoTx());
     }).GetValueSync();
