@@ -10,6 +10,8 @@ namespace NTpcc {
 struct TCheckRequest {
     int WarehouseCount = 0;
     ECheckPhase Phase = ECheckPhase::AfterRun;
+    // Parallel DBMS sessions for check queries. 1 = serial (default).
+    int CheckConcurrency = 1;
     std::string Path; // DBMS schema / search_path qualifier
     std::string RunId;
     std::string Instance;
