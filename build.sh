@@ -4,6 +4,12 @@
 #   - C++ shared libraries, DBMS adapters, and app binaries via ./ya make
 #   - Go orchestrator via the standard Go toolchain (not ya make)
 #
+# The YDB adapter/binary (tpcc/app/ydb) requires CUDA to be disabled in the
+# ya make graph; this script always passes:
+#   -DHAVE_CUDA=no -DCUDA_VERSION=11.4
+# Equivalent standalone command:
+#   ./ya make -r -DHAVE_CUDA=no -DCUDA_VERSION=11.4 tpcc/app/ydb
+#
 # This script is a thin convenience wrapper. It does not introduce an
 # alternate root build system; see docs/specification.md §12 and AGENTS.md.
 
@@ -18,14 +24,20 @@ BUILD_TPCCCTL=1
 YA_BUILD_FLAG=()
 YA_THREADS=()
 YA_EXTRA=()
+# Required for tpcc/app/ydb (and thus for the full tpcc/ recurse).
+YA_CUDA_FLAGS=(-DHAVE_CUDA=no -DCUDA_VERSION=11.4)
 
 usage() {
   cat <<'EOF'
 Usage: ./build.sh [options] [-- ya-make-args...]
 
 Build all portable-tpcc components:
-  ./ya make tpcc
+  ./ya make -DHAVE_CUDA=no -DCUDA_VERSION=11.4 tpcc
   go -C tpccctl build ./cmd/tpccctl
+
+The CUDA defines are always passed: the YDB target (tpcc/app/ydb) must be
+built without CUDA. Standalone equivalent:
+  ./ya make -r -DHAVE_CUDA=no -DCUDA_VERSION=11.4 tpcc/app/ydb
 
 Options:
   -r, --release       Release build for C++ targets (-r)
@@ -119,6 +131,7 @@ fi
 build_tpcc() {
   local -a ya_args=(make tpcc)
   ya_args+=("${YA_BUILD_FLAG[@]}")
+  ya_args+=("${YA_CUDA_FLAGS[@]}")
   ya_args+=("${YA_THREADS[@]}")
   if [[ "$RUN_TESTS" -eq 1 ]]; then
     ya_args+=(-t)
