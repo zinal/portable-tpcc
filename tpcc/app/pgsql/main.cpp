@@ -34,7 +34,9 @@ DEFINE_uint64(seed, 1, "Deterministic data generation seed");
 DEFINE_int32(warmup, 0, "Warmup duration in minutes (0 = adaptive)");
 DEFINE_bool(skip_warmup, false, "Skip warmup entirely and start measurement immediately");
 DEFINE_int32(duration, 10, "Benchmark run duration in minutes");
-DEFINE_int32(threads, 0, "Number of threads (coroutines for run, importers for import); 0 = auto");
+DEFINE_int32(threads, 0,
+    "Number of threads (coroutines for run, importers for import, parallel DB sessions for check); "
+    "0 = auto for run/import, serial for check");
 DEFINE_int32(max_inflight, NTpcc::DEFAULT_MAX_INFLIGHT, "Max inflight transactions");
 DEFINE_bool(no_delays, false, "Disable keying and think time delays");
 DEFINE_string(think_time_distribution, "exponential",
@@ -76,8 +78,9 @@ void PrintHelp() {
         "  --warmup              Warmup duration in minutes, 0 = adaptive (default: 0)\n"
         "  --skip-warmup         Skip warmup entirely (default: false)\n"
         "  --duration            Benchmark run duration in minutes (default: 10)\n"
-        "  -t, --threads         Number of threads (coroutines for run, importers for import);\n"
-        "                        0 = auto (default: 0)\n"
+        "  -t, --threads         Number of threads (coroutines for run, importers for import,\n"
+        "                        parallel DB sessions for check); 0 = auto for run/import,\n"
+        "                        serial (1 session) for check (default: 0)\n"
         "  -m, --max-inflight    Max inflight transactions (default: 100)\n"
         "  --no-delays           Disable keying and think time delays (default: false)\n"
         "  --think-time-distribution  exponential (TPC-C default) or compatibility/constant\n"
@@ -102,7 +105,8 @@ void PrintHelp() {
         "  tpcc import -w 10 -t 8\n"
         "  tpcc run -w 10 --duration=5 -t 4\n"
         "  tpcc check -w 10 --after-run\n"
-        "  tpcc check -w 10 --after-import\n";
+        "  tpcc check -w 10 --after-import\n"
+        "  tpcc check -w 100 --after-import -t 8\n";
 }
 
 ELogPriority ParseLogLevel(const std::string& level) {
@@ -156,10 +160,12 @@ bool ParseOrchestratedArgs(
     std::string& instance,
     std::optional<std::string>& startAt,
     bool& afterImport,
-    bool& afterRun)
+    bool& afterRun,
+    int& threads)
 {
     afterImport = false;
     afterRun = false;
+    threads = 0;
     for (int i = 2; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "--run-config" && i + 1 < argc) {
@@ -174,6 +180,10 @@ bool ParseOrchestratedArgs(
             afterImport = true;
         } else if (arg == "--after-run" || arg == "--after_run") {
             afterRun = true;
+        } else if (arg.rfind("--threads=", 0) == 0) {
+            threads = std::stoi(arg.substr(std::string("--threads=").size()));
+        } else if ((arg == "--threads" || arg == "-t") && i + 1 < argc) {
+            threads = std::stoi(argv[++i]);
         }
     }
     return !runConfig.empty() && !instance.empty();
@@ -189,7 +199,8 @@ int RunOrchestrated(
     const std::string& instance,
     const std::optional<std::string>& startAt,
     bool afterImport,
-    bool afterRun)
+    bool afterRun,
+    int threads)
 {
     if (command == "worker") {
         LOG_I("Starting orchestrated worker " << instance << "...");
@@ -204,8 +215,11 @@ int RunOrchestrated(
         return RunOrchestratedSchema(runConfig, instance);
     }
     if (command == "check") {
-        LOG_I("Starting orchestrated check " << instance << "...");
-        return NTpcc::RunCheckFromRunConfig(runConfig, instance, afterImport, afterRun);
+        const int checkConcurrency = threads <= 0 ? 1 : threads;
+        LOG_I("Starting orchestrated check " << instance
+              << " (concurrency=" << checkConcurrency << ")...");
+        return NTpcc::RunCheckFromRunConfig(
+            runConfig, instance, afterImport, afterRun, checkConcurrency);
     }
     return 1;
 }
@@ -351,13 +365,16 @@ void RunClean() {
 
 void RunCheck() {
     ValidateWarehouseFlag();
+    ValidateThreadsFlag();
     if (FLAGS_after_import && FLAGS_after_run) {
         throw std::runtime_error("specify only one of --after-import or --after-run");
     }
     // Default standalone check is after-run semantics (cardinality relaxed).
+    // threads <= 0 keeps historical single-session behavior.
     const bool afterImport = FLAGS_after_import;
+    const int checkConcurrency = FLAGS_threads <= 0 ? 1 : FLAGS_threads;
     NTpcc::CheckDbForRun(FLAGS_connection, FLAGS_warehouses, FLAGS_path);
-    NTpcc::CheckSync(FLAGS_connection, FLAGS_warehouses, afterImport, FLAGS_path);
+    NTpcc::CheckSync(FLAGS_connection, FLAGS_warehouses, afterImport, FLAGS_path, checkConcurrency);
 }
 
 } // anonymous
@@ -379,8 +396,9 @@ int main(int argc, char* argv[]) {
             std::optional<std::string> startAt;
             bool afterImport = false;
             bool afterRun = false;
+            int threads = 0;
             const bool hasOrchestrated = ParseOrchestratedArgs(
-                argc, argv, runConfig, instance, startAt, afterImport, afterRun);
+                argc, argv, runConfig, instance, startAt, afterImport, afterRun, threads);
             // schema/check/loader/worker with --run-config take the orchestrated path.
             // schema/check without run-config fall through to standalone gflags parsing.
             if (hasOrchestrated) {
@@ -395,7 +413,7 @@ int main(int argc, char* argv[]) {
                 NTpcc::InitLogging(TLOG_INFO);
                 try {
                     return RunOrchestrated(
-                        earlyCommand, runConfig, instance, startAt, afterImport, afterRun);
+                        earlyCommand, runConfig, instance, startAt, afterImport, afterRun, threads);
                 } catch (const std::exception& ex) {
                     LOG_E("Fatal error: " << ex.what());
                     return 1;
@@ -455,7 +473,9 @@ int main(int argc, char* argv[]) {
             std::optional<std::string> startAt;
             bool afterImport = false;
             bool afterRun = false;
-            if (!ParseOrchestratedArgs(argc, argv, runConfig, instance, startAt, afterImport, afterRun)) {
+            int threads = 0;
+            if (!ParseOrchestratedArgs(
+                    argc, argv, runConfig, instance, startAt, afterImport, afterRun, threads)) {
                 std::cerr << "Error: worker/loader require --run-config and --instance\n";
                 return 1;
             }
@@ -463,7 +483,8 @@ int main(int argc, char* argv[]) {
                 std::cerr << "Error: worker requires --start-at=<RFC3339-UTC>\n";
                 return 1;
             }
-            return RunOrchestrated(command, runConfig, instance, startAt, afterImport, afterRun);
+            return RunOrchestrated(
+                command, runConfig, instance, startAt, afterImport, afterRun, threads);
         }
     } catch (const std::exception& ex) {
         LOG_E("Fatal error: " << ex.what());
