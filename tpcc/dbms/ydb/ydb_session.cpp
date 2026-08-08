@@ -900,7 +900,7 @@ std::unique_ptr<ITpccSession> TYdbSessionFactory::CreateSession() {
         throw NYdb::NStatusHelpers::TYdbErrorException(std::move(result));
     }
     return std::make_unique<TYdbTpccSession>(
-        result.GetSession(), Connection_.Config().Path);
+        result.GetSession(), Connection_.AbsolutePathPrefix());
 }
 
 } // namespace NTpcc

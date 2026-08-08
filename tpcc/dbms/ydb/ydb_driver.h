@@ -51,6 +51,8 @@ public:
     std::string TablePath(const std::string& table) const;
     // Path relative to the connected database for YQL without TablePathPrefix.
     std::string RelativeTablePath(const std::string& table) const;
+    // Absolute directory path including database for PRAGMA TablePathPrefix.
+    std::string AbsolutePathPrefix() const;
 
 private:
     TYdbConnectionConfig Config_;

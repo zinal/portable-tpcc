@@ -35,6 +35,26 @@ std::string ReadPasswordFromEnv(const std::string& envName) {
     return value;
 }
 
+std::string NormalizeRelativePrefix(const TYdbConnectionConfig& config) {
+    std::string prefix = config.Path;
+    if (!prefix.empty() && prefix.front() == '/') {
+        const std::string& database = config.Database;
+        if (prefix == database) {
+            prefix.clear();
+        } else if (prefix.size() > database.size()
+                   && prefix.compare(0, database.size(), database) == 0
+                   && prefix[database.size()] == '/')
+        {
+            prefix = prefix.substr(database.size() + 1);
+        } else {
+            throw std::runtime_error(
+                "YDB path must be inside the database: path=" + config.Path
+                + ", database=" + database);
+        }
+    }
+    return prefix;
+}
+
 // Strip grpc(s):// and detect TLS. Endpoint forms:
 //   host:port | grpc://host:port | grpcs://host:port
 void ApplyEndpoint(NYdb::TDriverConfig& driverConfig, const std::string& endpoint, bool& enableSsl) {
@@ -223,22 +243,7 @@ const TYdbConnectionConfig& TYdbConnection::Config() const {
 }
 
 std::string TYdbConnection::RelativeTablePath(const std::string& table) const {
-    std::string prefix = Config_.Path;
-    if (!prefix.empty() && prefix.front() == '/') {
-        const std::string& database = Config_.Database;
-        if (prefix == database) {
-            prefix.clear();
-        } else if (prefix.size() > database.size()
-                   && prefix.compare(0, database.size(), database) == 0
-                   && prefix[database.size()] == '/')
-        {
-            prefix = prefix.substr(database.size() + 1);
-        } else {
-            throw std::runtime_error(
-                "YDB path must be inside the database: path=" + Config_.Path
-                + ", database=" + database);
-        }
-    }
+    const std::string prefix = NormalizeRelativePrefix(Config_);
     if (prefix.empty()) {
         return table;
     }
@@ -248,6 +253,15 @@ std::string TYdbConnection::RelativeTablePath(const std::string& table) const {
 std::string TYdbConnection::TablePath(const std::string& table) const {
     // BulkUpsert / scheme APIs require the absolute path including the database.
     return Config_.Database + "/" + RelativeTablePath(table);
+}
+
+std::string TYdbConnection::AbsolutePathPrefix() const {
+    // PRAGMA TablePathPrefix requires the full path including the database name.
+    const std::string prefix = NormalizeRelativePrefix(Config_);
+    if (prefix.empty()) {
+        return Config_.Database;
+    }
+    return Config_.Database + "/" + prefix;
 }
 
 } // namespace NTpcc
