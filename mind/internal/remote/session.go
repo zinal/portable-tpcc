@@ -7,7 +7,8 @@ import (
 
 // Session is a control-plane connection to one runtime host.
 type Session interface {
-	// Key is the profile host key (e.g. "worker-a").
+	// Key is the profile host address (session identity; co-located
+	// loaders/workers share the same key).
 	Key() string
 	// Address is the network address used to reach the host.
 	Address() string

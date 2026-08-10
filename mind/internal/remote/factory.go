@@ -15,15 +15,17 @@ func IsLoopback(address string) bool {
 	return a == "127.0.0.1" || a == "localhost" || a == "::1" || a == "[::1]"
 }
 
-// Dial opens a Session for a profile host entry.
-func Dial(hostKey string, entry profile.HostEntry, cfg DialConfig) (Session, error) {
-	if entry.Address == "" {
-		return nil, fmt.Errorf("host %s has empty address", hostKey)
+// Dial opens a Session for a loader/worker host address.
+// host is both the session key and the network address; identical host strings
+// across profile instances share one session (co-location).
+func Dial(host string, cfg DialConfig) (Session, error) {
+	if host == "" {
+		return nil, fmt.Errorf("host address is empty")
 	}
-	if IsLoopback(entry.Address) {
-		return NewLocal(hostKey, entry.Address, cfg.LocalRoot)
+	if IsLoopback(host) {
+		return NewLocal(host, host, cfg.LocalRoot)
 	}
-	return DialSSH(hostKey, entry.Address, cfg)
+	return DialSSH(host, host, cfg)
 }
 
 // DialConfigFromProfile builds DialConfig from profile + expanded paths.
@@ -46,8 +48,9 @@ func DialConfigFromProfile(p *profile.Profile, knownHosts, localRoot string) (Di
 	}, nil
 }
 
-// UniqueHostKeys returns host keys referenced by loaders and workers.
-func UniqueHostKeys(p *profile.Profile) []string {
+// UniqueHosts returns distinct host addresses referenced by loaders and workers.
+// Duplicate addresses (co-located instances) appear once.
+func UniqueHosts(p *profile.Profile) []string {
 	seen := map[string]bool{}
 	var out []string
 	add := func(host string) {

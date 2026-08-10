@@ -10,14 +10,6 @@ ssh:
   known_hosts: ~/.ssh/known_hosts
   connect_timeout: 10s
 
-hosts:
-  control:
-    address: 127.0.0.1
-  load-a:
-    address: 127.0.0.1
-  worker-a:
-    address: 127.0.0.1
-
 paths:
   local_artifacts: ./dist
   remote_root: ./remote
@@ -49,11 +41,11 @@ workload:
 
 loaders:
   - name: loader-a
-    host: load-a
+    host: 127.0.0.1
 
 workers:
   - name: worker-a
-    host: worker-a
+    host: 127.0.0.1
 
 phases:
   start_lead: 45s
