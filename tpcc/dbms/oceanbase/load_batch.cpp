@@ -1,4 +1,5 @@
 #include "load_batch.h"
+#include "ob_errors.h"
 
 #include <constants.h>
 #include <log.h>
@@ -12,6 +13,7 @@
 #include <optional>
 #include <sstream>
 #include <stdexcept>
+#include <string_view>
 #include <vector>
 
 namespace NTpcc {
@@ -268,6 +270,32 @@ void DeleteWarehouseChildren(TObConnection& conn, int warehouseId) {
     conn.Execute("DELETE FROM warehouse WHERE w_id = ?", MakeParams(warehouseId));
 }
 
+void PopulateWarehouse(
+    TObConnection& conn,
+    uint64_t seed,
+    int warehouseId,
+    int batchRows)
+{
+    InsertWarehouse(conn, seed, warehouseId);
+    InsertDistricts(conn, seed, warehouseId);
+    InsertStock(conn, seed, warehouseId, batchRows);
+    for (int d = DISTRICT_LOW_ID; d <= DISTRICT_HIGH_ID; ++d) {
+        InsertCustomers(conn, seed, warehouseId, d, batchRows);
+        InsertHistory(conn, seed, warehouseId, d);
+        InsertOrders(conn, seed, warehouseId, d);
+    }
+}
+
+bool IsDuplicateKeyError(const std::exception& ex) {
+    // MySQL / OceanBase ER_DUP_ENTRY
+    if (const auto* db = dynamic_cast<const TObDbError*>(&ex)) {
+        return db->Code() == 1062;
+    }
+    const std::string_view msg = ex.what();
+    return msg.find("1062") != std::string_view::npos
+        || msg.find("Duplicate entry") != std::string_view::npos;
+}
+
 } // namespace
 
 TPutBatchResult PutItemsIdempotent(
@@ -317,20 +345,29 @@ TPutBatchResult PutWarehouseIdempotent(
     int batchRows)
 {
     try {
-        LOG_D("Idempotent replace warehouse " << warehouseId << " (seed=" << seed
+        LOG_D("Idempotent load warehouse " << warehouseId << " (seed=" << seed
               << ", run_id=" << (runId.empty() ? "-" : runId)
               << ", batch_rows=" << batchRows << ")");
 
+        // Fast path: insert into an empty warehouse range.
+        try {
+            conn.BeginRepeatableRead();
+            PopulateWarehouse(conn, seed, warehouseId, batchRows);
+            conn.Commit();
+            return OkResult();
+        } catch (const std::exception& ex) {
+            conn.Rollback();
+            if (!IsDuplicateKeyError(ex)) {
+                throw;
+            }
+            LOG_I("Warehouse " << warehouseId
+                  << " hit duplicate key (ERROR 1062); deleting range and reloading");
+        }
+
+        // Slow path: PK conflict means the range is occupied; wipe and reload.
         conn.BeginRepeatableRead();
         DeleteWarehouseChildren(conn, warehouseId);
-        InsertWarehouse(conn, seed, warehouseId);
-        InsertDistricts(conn, seed, warehouseId);
-        InsertStock(conn, seed, warehouseId, batchRows);
-        for (int d = DISTRICT_LOW_ID; d <= DISTRICT_HIGH_ID; ++d) {
-            InsertCustomers(conn, seed, warehouseId, d, batchRows);
-            InsertHistory(conn, seed, warehouseId, d);
-            InsertOrders(conn, seed, warehouseId, d);
-        }
+        PopulateWarehouse(conn, seed, warehouseId, batchRows);
         conn.Commit();
         return OkResult();
     } catch (const std::exception& ex) {

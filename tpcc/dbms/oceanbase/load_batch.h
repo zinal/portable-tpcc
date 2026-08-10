@@ -9,12 +9,19 @@
 
 namespace NTpcc {
 
+// Idempotent population helpers (specification §6):
+// - item: INSERT ... ON DUPLICATE KEY UPDATE
+// - warehouse range: INSERT first; on ERROR 1062 (ER_DUP_ENTRY), DELETE
+//   warehouse-scoped tables and INSERT again in one transaction
+
 TPutBatchResult PutItemsIdempotent(
     TObConnection& conn,
     uint64_t seed,
     const std::string& runId = {},
     int batchRows = 0);
 
+// Loads all data owned by a single warehouse id. On primary-key conflict
+// (ERROR 1062), deletes that warehouse range and reloads.
 TPutBatchResult PutWarehouseIdempotent(
     TObConnection& conn,
     uint64_t seed,
