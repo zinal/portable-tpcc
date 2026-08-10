@@ -200,7 +200,8 @@ Use a reachable OceanBase tenant over the MySQL-compatible SQL port
 (default **2881**). The adapter talks through the vendored OceanBase
 Connector/C (`contrib/restricted/obconnector-c`).
 
-Typical lab user form is `user@tenant` (default client user: `root@test`).
+Typical lab user form is `user@tenant`. In orchestrated mode the client user
+comes from `database.user`, else `TPCC_OB_USER`, else `root@root`.
 The target database is created automatically (`CREATE DATABASE IF NOT EXISTS`)
 when schema runs, so you do not need to pre-create it.
 
@@ -256,20 +257,21 @@ database:
   endpoint: 127.0.0.1:2881      # host or host:port; default port 2881
   database: tpcc                # connection database=
   path: tpcc                    # TPC-C tables database (CREATE IF NOT EXISTS)
+  user: root@root               # optional; else TPCC_OB_USER, else root@root
   password_env: TPCC_PASSWORD
   options:
     partitions: 0               # -1 off, 0 derive from warehouses, N explicit
     foreign_keys: off           # omit FKs at schema time; default on
 ```
 
-For OceanBase, `database.user` is not set in the profile (YDB-only field).
-The client user defaults to `root@test`, or to the value of `TPCC_OB_USER`
-when that env var is set. Password is read from the env named in
-`password_env` and injected into remote role processes by `mind-tpcc`.
+For OceanBase, optional `database.user` sets the client login (`user@tenant`).
+When omitted, `tpcc-oceanbase` uses `TPCC_OB_USER` if set, otherwise
+`root@root`. Password is read from the env named in `password_env` and
+injected into remote role processes by `mind-tpcc`.
 
 ```bash
 export TPCC_PASSWORD='...'
-# export TPCC_OB_USER='root@test'   # optional; this is the default
+# export TPCC_OB_USER='root@root'   # optional when database.user is omitted
 
 mkdir -p dist
 cp tpcc/app/oceanbase/tpcc-oceanbase dist/
@@ -348,7 +350,7 @@ tpcc-oceanbase check  --run-config run-config.json --instance check-0 --after-im
 1. OceanBase is reachable on the MySQL SQL port (default 2881).
 2. `tpcc-oceanbase` is built (and `mind-tpcc` for orchestration).
 3. Credentials are supplied (`--connection=...` or `TPCC_PASSWORD`;
-   optional `TPCC_OB_USER`).
+   optional `database.user` / `TPCC_OB_USER`).
 4. Binary is under `paths.local_artifacts` as `tpcc-oceanbase`.
 5. Flow: `schema` → `import`/`load` → `check --after-import` → `run`/`start`
    → `check --after-run`.

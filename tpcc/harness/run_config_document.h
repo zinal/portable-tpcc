@@ -40,7 +40,7 @@ struct TRunConfigDocument {
     std::string Path;
     std::string PasswordEnv;
 
-    // YDB auth fields (empty for PostgreSQL).
+    // Auth fields: User is used by YDB login and OceanBase; others are YDB-only.
     std::string AuthScheme;
     std::string User;
     std::string TokenEnv;

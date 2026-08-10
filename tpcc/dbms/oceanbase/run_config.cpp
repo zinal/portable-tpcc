@@ -260,6 +260,7 @@ TRunConfigDocument LoadRunConfigDocument(const std::string& path) {
         doc.Endpoint = db.value("endpoint", "");
         doc.Database = db.value("database", "");
         doc.Path = db.value("path", "");
+        doc.User = db.value("user", "");
         doc.PasswordEnv = db.value("password_env", "");
         doc.Partitioning = OB_PARTITIONING_TABLEGROUP_HASH;
         if (db.contains("options")) {
@@ -433,8 +434,11 @@ std::string BuildObConnectionString(const TRunConfigDocument& doc) {
         throw std::runtime_error("database.endpoint must be host or host:port");
     }
 
-    std::string user = "root@test";
-    if (const char* u = std::getenv("TPCC_OB_USER")) {
+    // Prefer profile/run-config user, then TPCC_OB_USER, then root@root.
+    std::string user = "root@root";
+    if (!doc.User.empty()) {
+        user = doc.User;
+    } else if (const char* u = std::getenv("TPCC_OB_USER")) {
         user = u;
     }
 
