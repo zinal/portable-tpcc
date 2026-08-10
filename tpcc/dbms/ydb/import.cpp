@@ -74,7 +74,7 @@ void ImportSync(const TImportConfig& config) {
     threadCount = std::max(threadCount, size_t(1));
     threadCount = std::min(threadCount, assignedWarehouses);
 
-    LOG_I("Starting YDB idempotent TPC-C import for " << assignedWarehouses
+    LOG_I("Starting YDB idempotent TPC-C import (BulkUpsert) for " << assignedWarehouses
           << " assigned warehouses (scale " << scaleWarehouses << ") using "
           << threadCount << " threads (seed=" << config.Seed
           << ", run_id=" << (config.RunId.empty() ? "-" : config.RunId)
@@ -119,7 +119,7 @@ void ImportSync(const TImportConfig& config) {
                     }
                     state.DataSizeLoaded.fetch_add(EstimatePerWarehouseDataSize(), std::memory_order_relaxed);
                     state.WarehousesLoaded.fetch_add(1, std::memory_order_relaxed);
-                    LOG_I("Warehouse " << wh << " replaced (" << state.WarehousesLoaded.load()
+                    LOG_I("Warehouse " << wh << " loaded (" << state.WarehousesLoaded.load()
                           << "/" << assignedWarehouses << ")");
                 }
             } catch (const std::exception& ex) {
