@@ -7,7 +7,8 @@ Architecture draft:
 
 - [specification](docs/specification.md);
 - [shared libraries and adapter API](docs/adapter-api.md);
-- [profile example](docs/examples/profile.v1.yaml);
+- [profile example (YDB)](docs/examples/profile.v1.yaml);
+- [profile example (OceanBase)](docs/examples/profile.oceanbase.v1.yaml);
 - [run-config example](docs/examples/run-config.v1.json);
 - [start-token example](docs/examples/start-token.v1.json);
 - [aggregate example](docs/examples/aggregate.v1.json).
@@ -160,6 +161,156 @@ runs need SSH access and tightly synchronized clocks.
 2. `tpcc-pgsql` is built (and `mind-tpcc` for orchestration).
 3. Credentials are supplied (`--connection=...` or `TPCC_PASSWORD`).
 4. Flow: `schema` → `import`/`load` → `check --after-import` → `run`/`start`
+   → `check --after-run`.
+
+For a quick engineering smoke test, standalone with `-w 10` and a short
+`--duration` is enough. For settings closer to TPC-C 5.11, see the defaults
+embedded in `mind-tpcc` and
+[docs/tpcc-5.11-conformance-analysis.md](docs/tpcc-5.11-conformance-analysis.md)
+(for example measurement interval ≥ 120 minutes).
+
+## Running TPC-C against OceanBase
+
+Two modes are available:
+
+1. **Standalone** — drive `tpcc-oceanbase` directly (simplest for local smoke tests).
+2. **Orchestrated** — use `mind-tpcc` with a YAML profile (multi-host and full
+   pipeline).
+
+### Build
+
+From the repository root:
+
+```bash
+./ya make tpcc/app/oceanbase
+go -C mind build ./cmd/mind-tpcc
+```
+
+Or build everything with `./build.sh` (it always passes the CUDA defines
+needed when the YDB target is in the graph). The OceanBase worker/loader
+binary is `tpcc-oceanbase`. For orchestration, place it under the profile's
+`paths.local_artifacts` directory (for example `./dist/tpcc-oceanbase`).
+
+### Prepare OceanBase
+
+Use a reachable OceanBase tenant over the MySQL-compatible SQL port
+(default **2881**). The adapter talks through the vendored OceanBase
+Connector/C (`contrib/restricted/obconnector-c`).
+
+Typical lab user form is `user@tenant` (default client user: `root@test`).
+The target database is created automatically (`CREATE DATABASE IF NOT EXISTS`)
+when schema runs, so you do not need to pre-create it.
+
+Do not put passwords in profile YAML/JSON. Pass them via the connection
+string (standalone) or an environment variable named in `password_env`
+(orchestrated).
+
+### Standalone local run
+
+```bash
+CONN='host=127.0.0.1;port=2881;user=root@test;password=YOUR_PASSWORD;database=tpcc'
+
+# schema (hash partitions derived from -w; --foreign-keys=off omits FKs)
+./tpcc-oceanbase schema --connection="$CONN" --path=tpcc -w 10 \
+  --partitions=0 --foreign-keys=off
+
+# load
+./tpcc-oceanbase import --connection="$CONN" --path=tpcc -w 10 -t 8
+
+# check after load
+./tpcc-oceanbase check --connection="$CONN" --path=tpcc -w 10 --after-import
+
+# measurement run (durations in minutes)
+./tpcc-oceanbase run --connection="$CONN" --path=tpcc -w 10 \
+  --duration=5 -t 4
+
+# check after run
+./tpcc-oceanbase check --connection="$CONN" --path=tpcc -w 10 --after-run
+
+# drop TPC-C tables
+./tpcc-oceanbase clean --connection="$CONN" --path=tpcc
+```
+
+Useful flags:
+
+- `--partitions` — OceanBase hash partitions via tablegroup:
+  `-1` = plain tables, `0` = derive from `-w` / `--warehouses`,
+  `N` = explicit partition count (max 8192). On a non-OceanBase MySQL
+  server the partition options are ignored.
+- `--foreign-keys=off` — omit FOREIGN KEY constraints at schema time
+  (default `on`).
+- `--no-delays` — disable keying/think time (engineering runs);
+- `--help` — full command list.
+
+### Orchestrated run (`mind-tpcc`)
+
+Use a profile with `database.dbms: oceanbase`. A ready example lives in
+[`docs/examples/profile.oceanbase.v1.yaml`](docs/examples/profile.oceanbase.v1.yaml):
+
+```yaml
+database:
+  dbms: oceanbase
+  endpoint: 127.0.0.1:2881      # host or host:port; default port 2881
+  database: tpcc                # connection database=
+  path: tpcc                    # TPC-C tables database (CREATE IF NOT EXISTS)
+  password_env: TPCC_PASSWORD
+  options:
+    partitions: 0               # -1 off, 0 derive from warehouses, N explicit
+    foreign_keys: off           # omit FKs at schema time; default on
+```
+
+For OceanBase, `database.user` is not set in the profile (YDB-only field).
+The client user defaults to `root@test`, or to the value of `TPCC_OB_USER`
+when that env var is set. Password is read from the env named in
+`password_env` and injected into remote role processes by `mind-tpcc`.
+
+```bash
+export TPCC_PASSWORD='...'
+# export TPCC_OB_USER='root@test'   # optional; this is the default
+
+mkdir -p dist
+cp tpcc/app/oceanbase/tpcc-oceanbase dist/
+
+# Copy or edit the example profile as needed:
+#   cp docs/examples/profile.oceanbase.v1.yaml ./profile-oceanbase.yaml
+
+go -C mind run ./cmd/mind-tpcc validate --profile ./profile-oceanbase.yaml
+go -C mind run ./cmd/mind-tpcc plan     --profile ./profile-oceanbase.yaml
+
+# Full pipeline:
+# validate → deploy → schema → load → check(after-import)
+# → start → check(after-run) → collect → consolidate
+go -C mind run ./cmd/mind-tpcc run --profile ./profile-oceanbase.yaml
+```
+
+Or run stages individually: `deploy`, `schema`, `load`,
+`check --after-import`, `start`, `check --after-run`, `collect`,
+`consolidate`.
+
+Artifacts land under `paths.result_root/<run_id>/` (including
+`aggregate.json`, `orchestrator/run-config.json`, and
+`profile.redacted.yaml`).
+
+On a single host, every `hosts.*.address` may be `127.0.0.1`. Multi-host
+runs need SSH access and tightly synchronized clocks.
+
+Orchestrated roles launched by mind (for reference):
+
+```text
+tpcc-oceanbase schema --run-config run-config.json --instance schema-0
+tpcc-oceanbase loader --run-config run-config.json --instance <loader>
+tpcc-oceanbase worker --run-config run-config.json --instance <worker> --start-at=<UTC>
+tpcc-oceanbase check  --run-config run-config.json --instance check-0 --after-import|--after-run
+```
+
+### Checklist
+
+1. OceanBase is reachable on the MySQL SQL port (default 2881).
+2. `tpcc-oceanbase` is built (and `mind-tpcc` for orchestration).
+3. Credentials are supplied (`--connection=...` or `TPCC_PASSWORD`;
+   optional `TPCC_OB_USER`).
+4. Binary is under `paths.local_artifacts` as `tpcc-oceanbase`.
+5. Flow: `schema` → `import`/`load` → `check --after-import` → `run`/`start`
    → `check --after-run`.
 
 For a quick engineering smoke test, standalone with `-w 10` and a short
