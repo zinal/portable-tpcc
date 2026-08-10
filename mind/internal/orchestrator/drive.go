@@ -36,19 +36,15 @@ func (o *Orchestrator) openSessions() (map[string]remote.Session, error) {
 		return nil, err
 	}
 	sessions := map[string]remote.Session{}
-	for _, key := range remote.UniqueHostKeys(o.Profile) {
-		entry, ok := o.Profile.Hosts[key]
-		if !ok {
-			return nil, fmt.Errorf("unknown host %q", key)
-		}
-		sess, err := remote.Dial(key, entry, cfg)
+	for _, host := range remote.UniqueHosts(o.Profile) {
+		sess, err := remote.Dial(host, cfg)
 		if err != nil {
 			for _, s := range sessions {
 				_ = s.Close()
 			}
 			return nil, err
 		}
-		sessions[key] = sess
+		sessions[host] = sess
 	}
 	return sessions, nil
 }

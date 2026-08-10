@@ -110,6 +110,40 @@ func TestValidate_rejectsObsoleteFields(t *testing.T) {
 	}
 }
 
+func TestValidate_acceptsCoLocatedHosts(t *testing.T) {
+	path := filepath.Join("..", "..", "testdata", "profile.valid.yaml")
+	p, err := profile.ParseFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Scale.Warehouses = 20
+	p.Loaders = []profile.NamedHost{
+		{Name: "loader-a", Host: "10.10.0.21"},
+		{Name: "loader-b", Host: "10.10.0.21"},
+	}
+	p.Workers = []profile.NamedHost{
+		{Name: "worker-a", Host: "10.10.0.21"},
+		{Name: "worker-b", Host: "10.10.0.22"},
+	}
+	res := validate.Profile(p)
+	if !res.Valid {
+		t.Fatalf("expected co-located host addresses to be valid, errors: %v", res.Errors)
+	}
+}
+
+func TestValidate_rejectsEmptyHostAddress(t *testing.T) {
+	path := filepath.Join("..", "..", "testdata", "profile.valid.yaml")
+	p, err := profile.ParseFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Workers[0].Host = ""
+	res := validate.Profile(p)
+	if res.Valid {
+		t.Fatal("expected empty host address to fail")
+	}
+}
+
 func TestValidate_rejectsBadInstanceName(t *testing.T) {
 	path := filepath.Join("..", "..", "testdata", "profile.valid.yaml")
 	p, err := profile.ParseFile(path)

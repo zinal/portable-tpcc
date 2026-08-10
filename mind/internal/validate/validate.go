@@ -245,12 +245,10 @@ func validateInstances(
 		}
 		seenNames[item.Name] = true
 		if item.Host == "" {
-			res.Add(fmt.Sprintf("%s %s: host is required", role, item.Name))
+			res.Add(fmt.Sprintf("%s %s: host is required (connection address)", role, item.Name))
 		}
-		if _, ok := p.Hosts[item.Host]; !ok {
-			res.Add(fmt.Sprintf("%s %s: unknown host %q", role, item.Name, item.Host))
-		}
-		key := fmt.Sprintf("%s:%s:%s", p.Hosts[item.Host].Address, p.Paths.RemoteRoot, item.Name)
+		// Identical host addresses mean co-location (one SSH/local session).
+		key := fmt.Sprintf("%s:%s:%s", item.Host, p.Paths.RemoteRoot, item.Name)
 		if remoteKeys[key] {
 			res.Add(fmt.Sprintf("duplicate remote (host, run_dir, instance): %s", key))
 		}

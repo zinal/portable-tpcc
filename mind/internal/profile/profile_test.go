@@ -31,6 +31,27 @@ func TestParse_rejectsUnknownFields(t *testing.T) {
 	}
 }
 
+func TestParse_rejectsHostsSection(t *testing.T) {
+	path := filepath.Join("..", "..", "testdata", "profile.valid.yaml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	patched := strings.Replace(
+		string(data),
+		"paths:\n",
+		"hosts:\n  node1:\n    address: 10.10.0.1\npaths:\n",
+		1,
+	)
+	if patched == string(data) {
+		t.Fatal("failed to inject hosts section into test fixture")
+	}
+	_, err = profile.Parse([]byte(patched))
+	if err == nil || !strings.Contains(err.Error(), "hosts") {
+		t.Fatalf("expected hosts field rejection, got %v", err)
+	}
+}
+
 func TestParse_acceptsValidProfile(t *testing.T) {
 	path := filepath.Join("..", "..", "testdata", "profile.valid.yaml")
 	p, err := profile.ParseFile(path)

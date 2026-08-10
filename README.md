@@ -154,8 +154,9 @@ Or run stages individually: `deploy`, `schema`, `load`,
 Artifacts land under `paths.result_root/<run_id>/` (including
 `aggregate.json`).
 
-On a single host, every `hosts.*.address` may be `127.0.0.1`. Multi-host
-runs need SSH access and tightly synchronized clocks.
+On a single host, set every loader/worker `host` to `127.0.0.1` (local
+sessions, no SSH). Multi-host runs need SSH access and tightly synchronized
+clocks. Identical `host` values mean co-location on one machine.
 
 ### Checklist
 
@@ -295,46 +296,33 @@ Artifacts land under `paths.result_root/<run_id>/` (including
 `aggregate.json`, `orchestrator/run-config.json`, and
 `profile.redacted.yaml`).
 
-On a single host, every `hosts.*.address` may be `127.0.0.1`. Multi-host
-runs need SSH access and tightly synchronized clocks.
+On a single host, set every loader/worker `host` to `127.0.0.1` (local
+sessions, no SSH). Multi-host runs need SSH access and tightly synchronized
+clocks.
 
-#### Multiple workers (runners)
+#### Multiple workers / co-location
 
-List every worker under `workers:` and give each a host entry. Mind splits
-`scale.warehouses` into balanced contiguous ranges automatically (no manual
-warehouse ranges in the profile). Loaders work the same way under `loaders:`.
+`host` is the connection address. Mind splits `scale.warehouses` into balanced
+contiguous ranges across instances. Reuse the same `host` string to co-locate
+several loaders/workers on one machine (one SSH/local session).
 
 ```yaml
-hosts:
-  control:
-    address: 10.10.0.10
-  load-a:
-    address: 10.10.0.21
-  load-b:
-    address: 10.10.0.22
-  worker-a:
-    address: 10.10.0.31
-  worker-b:
-    address: 10.10.0.32
-  worker-c:
-    address: 10.10.0.33
-
 scale:
   warehouses: 300
 
 loaders:
   - name: loader-a
-    host: load-a
+    host: 10.10.0.21
   - name: loader-b
-    host: load-b
+    host: 10.10.0.22
 
 workers:
   - name: worker-a
-    host: worker-a
+    host: 10.10.0.31
   - name: worker-b
-    host: worker-b
+    host: 10.10.0.31   # co-located with worker-a
   - name: worker-c
-    host: worker-c
+    host: 10.10.0.32
 
 runtime:
   threads_per_worker: 4
@@ -342,9 +330,9 @@ runtime:
 ```
 
 With three workers and 300 warehouses, each worker typically owns a contiguous
-block of 100 warehouses. For a single-host smoke test, point every
-`hosts.*.address` at `127.0.0.1` and still declare multiple `workers` /
-`loaders` entries — mind launches one process per instance.
+block of 100 warehouses. For a single-host smoke test, set every `host` to
+`127.0.0.1` and still declare multiple `workers` / `loaders` entries — mind
+launches one process per instance.
 
 Orchestrated roles launched by mind (for reference):
 

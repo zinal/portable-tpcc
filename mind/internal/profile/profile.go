@@ -24,7 +24,6 @@ type Profile struct {
 	Kind       string      `yaml:"kind"`
 	Metadata   Metadata    `yaml:"metadata"`
 	SSH        SSHConfig   `yaml:"ssh"`
-	Hosts      Hosts       `yaml:"hosts"`
 	Paths      Paths       `yaml:"paths"`
 	Database   Database    `yaml:"database"`
 	Scale      Scale       `yaml:"scale"`
@@ -51,12 +50,6 @@ type SSHConfig struct {
 	KnownHosts     string `yaml:"known_hosts"`
 	ConnectTimeout string `yaml:"connect_timeout"`
 	InsecureIgnore bool   `yaml:"insecure_ignore_host_key"`
-}
-
-type Hosts map[string]HostEntry
-
-type HostEntry struct {
-	Address string `yaml:"address"`
 }
 
 type Paths struct {
@@ -112,6 +105,9 @@ type TxTiming struct {
 	StockLevel  int `yaml:"stock_level"`
 }
 
+// NamedHost is a loader or worker instance.
+// Host is the connection address (hostname, IP, or host:port for SSH).
+// Identical Host values across loaders/workers mean co-location on one machine.
 type NamedHost struct {
 	Name string `yaml:"name"`
 	Host string `yaml:"host"`

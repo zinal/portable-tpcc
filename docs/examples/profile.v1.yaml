@@ -10,18 +10,6 @@ ssh:
   known_hosts: ~/.ssh/known_hosts
   connect_timeout: 10s
 
-hosts:
-  control:
-    address: 10.10.0.10
-  load-a:
-    address: 10.10.0.21
-  load-b:
-    address: 10.10.0.22
-  worker-a:
-    address: 10.10.0.31
-  worker-b:
-    address: 10.10.0.32
-
 paths:
   local_artifacts: ./dist
   remote_root: /home/user/portable-tpcc
@@ -60,17 +48,19 @@ workload:
     delivery: 4
     stock_level: 4
 
+# host is the connection address. Identical host values mean co-location
+# (one SSH/local session shared by those instances).
 loaders:
   - name: loader-a
-    host: load-a
+    host: 10.10.0.21
   - name: loader-b
-    host: load-b
+    host: 10.10.0.22
 
 workers:
   - name: worker-a
-    host: worker-a
+    host: 10.10.0.31
   - name: worker-b
-    host: worker-b
+    host: 10.10.0.32
 
 phases:
   # Launch + prepare budget before absolute --start-at (orchestrator chooses

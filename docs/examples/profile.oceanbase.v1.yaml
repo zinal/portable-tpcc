@@ -10,20 +10,6 @@ ssh:
   known_hosts: ~/.ssh/known_hosts
   connect_timeout: 10s
 
-# Single-host lab: every address may be 127.0.0.1 (local sessions, no SSH).
-# Multi-host runs need SSH access and tightly synchronized clocks.
-hosts:
-  control:
-    address: 127.0.0.1
-  load-a:
-    address: 127.0.0.1
-  load-b:
-    address: 127.0.0.1
-  worker-a:
-    address: 127.0.0.1
-  worker-b:
-    address: 127.0.0.1
-
 paths:
   local_artifacts: ./dist
   remote_root: ./remote
@@ -64,19 +50,19 @@ workload:
     delivery: 4
     stock_level: 4
 
-# Multiple loaders/workers: mind assigns balanced contiguous warehouse ranges.
-# Add more entries (and matching hosts.*) to scale out runners.
+# host is the connection address. Same host => co-located instances.
+# Mind assigns balanced contiguous warehouse ranges across loaders/workers.
 loaders:
   - name: loader-a
-    host: load-a
+    host: 127.0.0.1
   - name: loader-b
-    host: load-b
+    host: 127.0.0.1
 
 workers:
   - name: worker-a
-    host: worker-a
+    host: 127.0.0.1
   - name: worker-b
-    host: worker-b
+    host: 127.0.0.1
 
 checks:
   after_import: true
