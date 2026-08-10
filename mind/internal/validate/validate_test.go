@@ -301,6 +301,62 @@ func TestValidate_ydbAuthSchemes(t *testing.T) {
 	})
 }
 
+func TestValidate_oceanbaseUser(t *testing.T) {
+	path := filepath.Join("..", "..", "testdata", "profile.valid.yaml")
+	base, err := profile.ParseFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("accepts_user", func(t *testing.T) {
+		p := *base
+		p.Database = profile.Database{
+			DBMS:        "oceanbase",
+			Endpoint:    "127.0.0.1:2881",
+			Database:    "tpcc",
+			Path:        "tpcc",
+			User:        "root@root",
+			PasswordEnv: "TPCC_PASSWORD",
+		}
+		res := validate.Profile(&p)
+		if !res.Valid {
+			t.Fatalf("expected valid oceanbase profile with user, errors: %v", res.Errors)
+		}
+	})
+
+	t.Run("accepts_omitted_user", func(t *testing.T) {
+		p := *base
+		p.Database = profile.Database{
+			DBMS:        "oceanbase",
+			Endpoint:    "127.0.0.1:2881",
+			Database:    "tpcc",
+			Path:        "tpcc",
+			PasswordEnv: "TPCC_PASSWORD",
+		}
+		res := validate.Profile(&p)
+		if !res.Valid {
+			t.Fatalf("expected valid oceanbase profile without user, errors: %v", res.Errors)
+		}
+	})
+
+	t.Run("rejects_ydb_only_fields", func(t *testing.T) {
+		p := *base
+		p.Database = profile.Database{
+			DBMS:        "oceanbase",
+			Endpoint:    "127.0.0.1:2881",
+			Database:    "tpcc",
+			Path:        "tpcc",
+			User:        "root@root",
+			PasswordEnv: "TPCC_PASSWORD",
+			AuthScheme:  "login",
+		}
+		res := validate.Profile(&p)
+		if res.Valid {
+			t.Fatal("expected oceanbase profile with auth_scheme to fail")
+		}
+	})
+}
+
 func TestValidate_pgsqlPartitioningOptions(t *testing.T) {
 	path := filepath.Join("..", "..", "testdata", "profile.valid.yaml")
 	base, err := profile.ParseFile(path)

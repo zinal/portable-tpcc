@@ -26,8 +26,8 @@ database:
   path: tpcc
   # Password is read from this environment variable (never put secrets in YAML).
   password_env: TPCC_PASSWORD
-  # database.user is YDB-only. OceanBase user defaults to root@test, or
-  # TPCC_OB_USER when that env var is set.
+  # Optional OceanBase login (user@tenant). When omitted: TPCC_OB_USER, else root@root.
+  # user: root@root
   options:
     # Hash partitions via tablegroup: -1 = off, 0 = derive from scale.warehouses,
     # N = explicit count (max 8192).
