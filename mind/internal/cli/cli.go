@@ -26,6 +26,11 @@ func Run(args []string) int {
 		printUsage()
 		return 2
 	}
+	// Help must work without required flags such as --profile.
+	if wantsHelp(args) {
+		printUsage()
+		return 0
+	}
 	cfg := &Config{}
 	cmd := args[0]
 	rest := args[1:]
@@ -68,7 +73,7 @@ func Run(args []string) int {
 		}
 	}
 
-	if cfg.ProfilePath == "" && cmd != "help" {
+	if cfg.ProfilePath == "" {
 		fmt.Fprintln(os.Stderr, "error: --profile is required")
 		return 2
 	}
@@ -107,14 +112,27 @@ func Run(args []string) int {
 		return runFull(opts)
 	case "cleanup":
 		return runCleanup(opts, cfg.Yes)
-	case "help", "-h", "--help":
-		printUsage()
-		return 0
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command %q\n", cmd)
 		printUsage()
 		return 2
 	}
+}
+
+func wantsHelp(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	switch args[0] {
+	case "help", "-h", "--help":
+		return true
+	}
+	for _, a := range args[1:] {
+		if a == "-h" || a == "--help" {
+			return true
+		}
+	}
+	return false
 }
 
 func orch(opts orchestrator.Options) (*orchestrator.Orchestrator, error) {
