@@ -243,7 +243,7 @@ TPutBatchResult PutItemsIdempotent(
     int batchRows)
 {
     try {
-        LOG_I("YDB Arrow load of " << ITEM_COUNT << " items (seed=" << seed
+        LOG_I("YDB idempotent upsert of " << ITEM_COUNT << " items (seed=" << seed
               << ", run_id=" << (runId.empty() ? "-" : runId)
               << ", batch_rows=" << batchRows << ")");
         const int chunk = batchRows > 0 ? batchRows : ITEM_COUNT;
@@ -276,6 +276,7 @@ TPutBatchResult PutItemsIdempotent(
             }, rows);
             BulkUpsertArrow(connection, TABLE_ITEM, batch);
         }
+        LOG_I("Items loaded (idempotent upsert)");
         return OkResult();
     } catch (const std::exception& ex) {
         return FailResult(ex);
@@ -290,7 +291,7 @@ TPutBatchResult PutWarehouseIdempotent(
     int batchRows)
 {
     try {
-        LOG_I("YDB Arrow load of warehouse " << warehouseId << " (seed=" << seed
+        LOG_D("YDB idempotent upsert warehouse " << warehouseId << " (seed=" << seed
               << ", run_id=" << (runId.empty() ? "-" : runId)
               << ", batch_rows=" << batchRows << ")");
 
