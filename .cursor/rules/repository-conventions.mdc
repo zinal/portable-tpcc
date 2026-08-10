@@ -11,7 +11,7 @@ Full text: [AGENTS.md](../../AGENTS.md).
 
 - Preserve the coding style of the directory being modified; do not perform drive-by refactoring.
 - Before making changes, study the context, dependencies, and the component's `ya.make` or `go.mod`; minimize the diff.
-- Build ya modules from the repository root with `./ya make …`; build and test the root `tpccctl/` module with `go -C tpccctl build ./cmd/tpccctl` and `go -C tpccctl test ./...` (see [AGENTS.md](../../AGENTS.md) §3).
+- Build ya modules from the repository root with `./ya make …`; build and test the root `mind/` module with `go -C mind build ./cmd/mind-tpcc` and `go -C mind test ./...` (see [AGENTS.md](../../AGENTS.md) §3).
 - Build YDB (`tpcc/app/ydb`) with `-DHAVE_CUDA=no -DCUDA_VERSION=11.4` (see [AGENTS.md](../../AGENTS.md) §3 “Building the YDB variant”); `./build.sh` passes these flags automatically.
 - Ask the user if the task is ambiguous or requires changes in protected areas.
 

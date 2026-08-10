@@ -28,7 +28,7 @@ verification.
 Two modes are available:
 
 1. **Standalone** — drive `tpcc-pgsql` directly (simplest for local smoke tests).
-2. **Orchestrated** — use `tpccctl` with a YAML profile (multi-host and full
+2. **Orchestrated** — use `mind-tpcc` with a YAML profile (multi-host and full
    pipeline).
 
 ### Build
@@ -37,7 +37,7 @@ From the repository root:
 
 ```bash
 ./ya make tpcc/app/pgsql
-go -C tpccctl build ./cmd/tpccctl
+go -C mind build ./cmd/mind-tpcc
 ```
 
 The YDB binary requires CUDA to be disabled in ya make:
@@ -107,10 +107,10 @@ Useful flags:
 - `--no-delays` — disable keying/think time (engineering runs);
 - `--help` — full command list.
 
-### Orchestrated run (`tpccctl`)
+### Orchestrated run (`mind-tpcc`)
 
 Use a profile with `database.dbms: pgsql`. A minimal example lives in
-[`tpccctl/testdata/profile.valid.yaml`](tpccctl/testdata/profile.valid.yaml):
+[`mind/testdata/profile.valid.yaml`](mind/testdata/profile.valid.yaml):
 
 ```yaml
 database:
@@ -135,13 +135,13 @@ export TPCC_PASSWORD='...'
 
 mkdir -p dist && cp /path/to/tpcc-pgsql dist/
 
-go -C tpccctl run ./cmd/tpccctl validate --profile ./profile-pgsql.yaml
-go -C tpccctl run ./cmd/tpccctl plan     --profile ./profile-pgsql.yaml
+go -C mind run ./cmd/mind-tpcc validate --profile ./profile-pgsql.yaml
+go -C mind run ./cmd/mind-tpcc plan     --profile ./profile-pgsql.yaml
 
 # Full pipeline:
 # validate → deploy → schema → load → check(after-import)
 # → start → check(after-run) → collect → consolidate
-go -C tpccctl run ./cmd/tpccctl run --profile ./profile-pgsql.yaml
+go -C mind run ./cmd/mind-tpcc run --profile ./profile-pgsql.yaml
 ```
 
 Or run stages individually: `deploy`, `schema`, `load`,
@@ -157,13 +157,13 @@ runs need SSH access and tightly synchronized clocks.
 ### Checklist
 
 1. PostgreSQL is reachable and the database exists.
-2. `tpcc-pgsql` is built (and `tpccctl` for orchestration).
+2. `tpcc-pgsql` is built (and `mind-tpcc` for orchestration).
 3. Credentials are supplied (`--connection=...` or `TPCC_PASSWORD`).
 4. Flow: `schema` → `import`/`load` → `check --after-import` → `run`/`start`
    → `check --after-run`.
 
 For a quick engineering smoke test, standalone with `-w 10` and a short
 `--duration` is enough. For settings closer to TPC-C 5.11, see the defaults
-embedded in `tpccctl` and
+embedded in `mind-tpcc` and
 [docs/tpcc-5.11-conformance-analysis.md](docs/tpcc-5.11-conformance-analysis.md)
 (for example measurement interval ≥ 120 minutes).

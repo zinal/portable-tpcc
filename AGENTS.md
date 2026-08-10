@@ -10,7 +10,7 @@ Before making changes, study the surrounding code and **preserve the style used 
 - **Formatting** — do not reformat code incidentally; the diff must contain only the changes required for the task.
 - **Dependencies and builds** — use the existing build system for each component;
   do not add alternative build systems unless explicitly requested. The
-  `tpccctl/` module is built with the standard Go toolchain, not `ya make`.
+  `mind/` module is built with the standard Go toolchain, not `ya make`.
 
 If a task affects multiple subsystems, follow the style of **each specific directory being modified**, not a “universal” modern C++ style.
 
@@ -19,7 +19,7 @@ If a task affects multiple subsystems, follow the style of **each specific direc
 **Do not make changes until you have completed this analysis:**
 
 1. **Understand the task** — determine which directories and components are affected and whether the proposed solution fits the repository architecture.
-2. **Study the context** — read the files to be modified and their immediate consumers/dependencies; inspect `ya.make` for ya modules or `go.mod` for `tpccctl/`.
+2. **Study the context** — read the files to be modified and their immediate consumers/dependencies; inspect `ya.make` for ya modules or `go.mod` for `mind/`.
 3. **Assess the scope** — minimize the diff; do not refactor or “improve” code outside the task’s scope.
 4. **Check the restrictions** — make sure the plan does not violate the prohibitions in sections 4 and 5 below.
 5. **Verify the changes** — whenever possible, build the affected targets and
@@ -55,19 +55,19 @@ When building the full `tpcc/` tree (which includes YDB), pass the same
 Do not omit these flags for YDB builds: the ya make graph otherwise expects
 a CUDA toolchain that is not part of the portable-tpcc development setup.
 
-### Building tpccctl with Go
+### Building mind-tpcc with Go
 
-`tpccctl/` is a standalone Go module and **must not** be added to the `ya make`
+`mind/` is a standalone Go module and **must not** be added to the `ya make`
 graph. Build and test it from the repository root with the standard Go
 toolchain:
 
 ```bash
-go -C tpccctl build ./cmd/tpccctl
-go -C tpccctl test ./...
+go -C mind build ./cmd/mind-tpcc
+go -C mind test ./...
 ```
 
 When changing dependencies, use Go module commands such as
-`go -C tpccctl get` and `go -C tpccctl mod tidy`.
+`go -C mind get` and `go -C mind mod tidy`.
 
 ## 4. Do not modify infrastructure directories
 

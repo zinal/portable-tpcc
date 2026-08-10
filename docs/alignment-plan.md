@@ -5,7 +5,7 @@ Depends on: [specification.md](specification.md), [adapter-api.md](adapter-api.m
 Current module status: [dependencies.md](dependencies.md). TPC-C 5.11 notes:
 [tpcc-5.11-conformance-analysis.md](tpcc-5.11-conformance-analysis.md).
 
-This plan brings `tpcc/` and `tpccctl` to the architecture’s “Done When”
+This plan brings `tpcc/` and `mind-tpcc` to the architecture’s “Done When”
 criteria ([specification.md](specification.md) §13).
 
 ---
@@ -47,7 +47,7 @@ validation and status; the tool does not implement its own clock sync.
 
 **Protocol:**
 
-1. `tpccctl` distributes the same `run-config.json` and launches each
+1. `mind-tpcc` distributes the same `run-config.json` and launches each
    `loader` / `worker` with an absolute start instant on the command line,
    e.g. `--start-at=2026-07-28T12:00:15Z` (UTC, RFC 3339).
 2. The orchestrator chooses `--start-at` as **now + `phases.start_lead`**
@@ -59,7 +59,7 @@ validation and status; the tool does not implement its own clock sync.
    admit work, the process **MUST** exit fatally with a clear error
    (missed start deadline).
 5. If any required process exits fatally before / at start (including missed
-   deadline), `tpccctl` **MUST** abort the run and stop the remaining
+   deadline), `mind-tpcc` **MUST** abort the run and stop the remaining
    processes.
 6. Phase schedule is derived from `--start-at` plus durations in run-config:
    `ramp_start = start-at`, then `measurement_start/end`, drain deadlines.
@@ -104,7 +104,7 @@ Goal: same `run-config` (scale, seed) → same logical rows; load retries safe.
 | 1.2 | Create `tpcc/generator`: population + per-tx inputs; timestamps from seed/config | `generator/` |
 | 1.3 | Create `tpcc/loader` helpers: batch identity → `PutBatch` | `loader/` |
 | 1.4 | PG: idempotent `PutBatch`; `OwnsGlobalData` | `dbms/pgsql/` |
-| 1.5 | PG: no wall-clock load dates; fix multi-loader preflight race | import / path_checker / tpccctl |
+| 1.5 | PG: no wall-clock load dates; fix multi-loader preflight race | import / path_checker / mind-tpcc |
 | 1.6 | Exact decimal (`TMoney` or equivalent) + PG `c_ytd_payment` → `DECIMAL` | domain + init + binds |
 | 1.7 | Apply `data.seed`, `batch_rows` | `run_config.*` |
 
@@ -160,7 +160,7 @@ missed deadline fails the process; consolidate can merge raw histograms.
 
 ---
 
-### Phase 5 — `tpccctl` orchestration **[§2.1]** ✅
+### Phase 5 — `mind-tpcc` orchestration **[§2.1]** ✅
 
 | # | Task | Notes |
 | --- | --- | --- |
@@ -172,7 +172,7 @@ missed deadline fails the process; consolidate can merge raw histograms.
 | 5.6 | `consolidate`: merge buckets then percentiles; embed settings; real status | Done |
 | 5.7 | Full `run` pipeline + skip recording; strict validate | Done (`check_after_run`, skipped_steps, pgsql options/known_hosts) |
 
-**Exit:** multi-host PG run via `tpccctl run` yields valid `aggregate.json`.
+**Exit:** multi-host PG run via `mind-tpcc run` yields valid `aggregate.json`.
 
 ---
 
@@ -200,7 +200,7 @@ Phase 0 (headers/docs)
     │
     ├─► Phase 4 (checks + admin + aliases)   [parallel with 1–3]
     │
-    └─► Phase 5 (tpccctl) ── needs 3.2/3.3 + 4.4 + 1.4
+    └─► Phase 5 (mind-tpcc) ── needs 3.2/3.3 + 4.4 + 1.4
             └─► Phase 6
 ```
 
@@ -219,7 +219,7 @@ Phase 0 (headers/docs)
 
 ## 6. Immediate next step
 
-Phase 0–5 scaffolding complete for `tpccctl` (SSH/local remote drive,
+Phase 0–5 scaffolding complete for `mind-tpcc` (SSH/local remote drive,
 `--start-at`, collect/consolidate with histogram merge). Next: harden
 multi-host SSH runs in the field and **Phase 6** (open decisions, tests,
 other DBMS).

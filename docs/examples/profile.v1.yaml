@@ -26,7 +26,7 @@ paths:
   local_artifacts: ./dist
   remote_root: /home/user/portable-tpcc
   result_root: ./results
-  state_dir: ~/.local/state/tpccctl
+  state_dir: ~/.local/state/mind-tpcc
 
 database:
   dbms: ydb
@@ -51,7 +51,7 @@ data:
   seed: 731910246
   batch_rows: 10000
 
-# Omitted workload fields use defaults embedded in tpccctl.
+# Omitted workload fields use defaults embedded in mind-tpcc.
 workload:
   transaction_mix:
     new_order: 45

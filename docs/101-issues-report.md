@@ -8,7 +8,7 @@
 
 Исходный анализ выполнен на commit `884230e`, повторная проверка — на commit
 `19df199` (`main`). Отчёт охватывает прикладной код `tpcc/` и оркестратор
-`tpccctl/`. Инфраструктурные каталоги `build/`, `contrib/`, `devtools/`,
+`mind/`. Инфраструктурные каталоги `build/`, `contrib/`, `devtools/`,
 `library/` и `util/` не анализировались на предмет дефектов и не изменялись.
 
 После повторной проверки 2026-08-02 на ветке `cursor/fix-101-issues-e7cf`
@@ -36,7 +36,7 @@
 - случаи, когда PostgreSQL adapter сообщает об успешной операции без
   подтверждения фактического изменения данных;
 - разрыв между заявленными настройками и их фактическим применением;
-- неисправная декларация сборки `tpccctl`.
+- неисправная декларация сборки `mind-tpcc`.
 
 Результат проверки на commit `3bc03ce` для IR-001..IR-020:
 
@@ -74,7 +74,7 @@ run-config. Остаточный проход закрыл IR-004, IR-006, IR-00
 
 **Статус: частично устранено.**
 
-**Код:** `tpccctl/internal/orchestrator/drive.go:358-369`.
+**Код:** `mind/internal/orchestrator/drive.go:358-369`.
 
 `payloads[].path` из удалённого `artifact-manifest.json` передаётся в
 `filepath.Join()` и `Session.Download()` до проверки через `paths.JoinUnder()`.
@@ -86,7 +86,7 @@ Manifest со значением наподобие `../../../target` позво
 - записать скачанные данные за пределами локального временного каталога;
 - в local mode обратиться к произвольному абсолютному пути, поскольку
   `Local.resolve()` разрешает абсолютные пути
-  (`tpccctl/internal/remote/local.go:37-41`).
+  (`mind/internal/remote/local.go:37-41`).
 
 **Исправление:** manifest path проверяется через `JoinUnder()` до любого
 download/copy payload. Абсолютные пути и компоненты `..` отклоняются до
@@ -98,7 +98,7 @@ download/copy payload. Абсолютные пути и компоненты `..
 
 **Остаточный риск:** проверка SSH `realpath` и последующий `Download()` являются
 двумя отдельными операциями
-(`tpccctl/internal/orchestrator/drive.go:502-509`). Скомпрометированный worker
+(`mind/internal/orchestrator/drive.go:502-509`). Скомпрометированный worker
 может заменить разрешённый файл на symlink после проверки, но до чтения.
 Необходима атомарная remote-операция без следования symlink либо чтение и
 проверка через один доверенный helper на runtime host.
@@ -107,8 +107,8 @@ download/copy payload. Абсолютные пути и компоненты `..
 
 **Статус: устранено.**
 
-**Код:** `tpccctl/internal/remote/ssh.go:223-234`,
-`tpccctl/internal/validate/validate.go:65-69`.
+**Код:** `mind/internal/remote/ssh.go:223-234`,
+`mind/internal/validate/validate.go:65-69`.
 
 Значение переменной окружения экранируется, но её имя без экранирования
 вставляется в удалённую shell-команду:
@@ -124,29 +124,29 @@ b.WriteString(k + "=" + shellQuote(v) + " ")
 **Исправление:** имя `password_env` проверяется как POSIX environment variable
 до формирования SSH-команды; runtime guard повторяет проверку перед запуском.
 
-### IR-003. `tpccctl` был ошибочно включён в build graph `ya make`
+### IR-003. `mind-tpcc` был ошибочно включён в build graph `ya make`
 
 **Статус: устранено.**
 
-**Код:** `tpccctl/go.mod`, `AGENTS.md`,
+**Код:** `mind/go.mod`, `AGENTS.md`,
 `.cursor/rules/repository-conventions.mdc`.
 
 Go-модуль перенесён из инфраструктурного дерева `tools/` в корневой каталог
-`tpccctl/`. Относящиеся к нему `ya.make` удалены, module/import path изменён на
-`portable-tpcc/tpccctl`.
+`mind/`. Относящиеся к нему `ya.make` удалены, module/import path изменён на
+`portable-tpcc/mind`.
 
 Инструкции для агентов теперь явно требуют стандартные команды:
 
 ```text
-go -C tpccctl build ./cmd/tpccctl
-go -C tpccctl test ./...
+go -C mind build ./cmd/mind-tpcc
+go -C mind test ./...
 ```
 
 ### IR-004. `Materialize()` сбрасывает состояние активного запуска
 
 **Статус: устранено.**
 
-**Код:** `tpccctl/internal/orchestrator/orchestrator.go:67-121`.
+**Код:** `mind/internal/orchestrator/orchestrator.go:67-121`.
 
 `Materialize()` загружает существующий `run-state.json`, безусловно меняет
 state на `planned` и сохраняет его. Этот метод вызывается не только новым
@@ -167,7 +167,7 @@ run и не переводит его обратно в `planned` при stage-�
 
 **Статус: устранено.**
 
-**Код:** `tpccctl/internal/state/state.go:137-147`.
+**Код:** `mind/internal/state/state.go:137-147`.
 
 Блокировка реализована как отдельные `ReadFile()` и `WriteFile()`. Два
 одновременных процесса могут оба увидеть отсутствие файла и оба считать
@@ -182,9 +182,9 @@ stage-команд добавлены отдельные stage locks.
 
 **Статус: устранено.**
 
-**Код:** `tpccctl/internal/config/config.go:350-354`,
-`tpccctl/internal/orchestrator/drive.go:178-219`,
-`tpccctl/internal/consolidate/consolidate.go:72-120`.
+**Код:** `mind/internal/config/config.go:350-354`,
+`mind/internal/orchestrator/drive.go:178-219`,
+`mind/internal/consolidate/consolidate.go:72-120`.
 
 Консолидация отклоняет неожиданные каталоги worker и проверяет `run_id`,
 instance, assignment и SHA-256 run-config. Автоматические run ID получают
@@ -303,7 +303,7 @@ unit tests для runtime time utilities.
 
 **Статус: устранено.**
 
-**Код:** `tpccctl/internal/orchestrator/orchestrator.go:171-193,264-296`.
+**Код:** `mind/internal/orchestrator/orchestrator.go:171-193,264-296`.
 
 `checks.after_import: false` и `checks.after_run: false` не исключают
 соответствующие шаги. Условие для `AfterImport` содержит только комментарий.
@@ -331,7 +331,7 @@ limit.
 
 **Статус: устранено.**
 
-**Код:** `tpccctl/internal/consolidate/consolidate.go:72-120,154-193`.
+**Код:** `mind/internal/consolidate/consolidate.go:72-120,154-193`.
 
 Невалидные result JSON, counters, histogram и неожиданные worker приводят к
 ошибке, а не пропускаются. Консолидация теперь fail-closed по умолчанию; режим
@@ -341,7 +341,7 @@ limit.
 
 **Статус: устранено.**
 
-**Код:** `tpccctl/internal/orchestrator/drive.go:178-235`.
+**Код:** `mind/internal/orchestrator/drive.go:178-235`.
 
 Если manifest существует с `finalized: false`, цикл сразу выполняет
 `continue` и не проверяет, жив ли процесс. Падение процесса после публикации
@@ -388,7 +388,7 @@ unit test.
 
 **Статус: устранено.**
 
-**Код:** `tpccctl/internal/config/config.go:112-117,229-248`,
+**Код:** `mind/internal/config/config.go:112-117,229-248`,
 `tpcc/dbms/pgsql/run_config.cpp:137-140`,
 `tpcc/dbms/pgsql/terminal.cpp:207-340`.
 
@@ -409,7 +409,7 @@ adapter API требует bounded retry с backoff и jitter. C++ parser счи
 
 **Статус: устранено.**
 
-**Код:** `tpccctl/internal/orchestrator/orchestrator.go:72-135`.
+**Код:** `mind/internal/orchestrator/orchestrator.go:72-135`.
 
 `Materialize()` валидирует текущий profile, но при существующем run ID повторно
 использует старый `run-config.json`. При этом `profile.redacted.yaml`
@@ -429,8 +429,8 @@ control artifacts конфигурацией, отличной от исходн
 
 **Критичность: средняя. Статус: остаётся.**
 
-**Код:** `tpccctl/internal/orchestrator/drive.go:502-509`,
-`tpccctl/internal/remote/ssh.go:158-175`.
+**Код:** `mind/internal/orchestrator/drive.go:502-509`,
+`mind/internal/remote/ssh.go:158-175`.
 
 Remote path проверяется через `realpath`, после чего отдельная SSH-команда
 читает файл. Между операциями контролирующий runtime host процесс способен
@@ -440,7 +440,7 @@ Remote path проверяется через `realpath`, после чего о
 
 **Критичность: низкая. Статус: остаётся.**
 
-**Код:** `tpccctl/internal/orchestrator/orchestrator.go:218-224`.
+**Код:** `mind/internal/orchestrator/orchestrator.go:218-224`.
 
 CLI вызывает materialization под lock, но экспортированный метод `Plan()`
 по-прежнему напрямую вызывает `Materialize()`. Другой Go consumer может
@@ -450,7 +450,7 @@ CLI вызывает materialization под lock, но экспортирова�
 
 **Критичность: низкая. Статус: остаётся.**
 
-**Код:** `tpccctl/internal/state/state.go:131-175,178-186`.
+**Код:** `mind/internal/state/state.go:131-175,178-186`.
 
 `Transition()` запрещает переход из `completed` и `failed`, а `Fail()`
 безусловно записывает `failed`. Запоздалая ошибка способна заменить уже
@@ -460,7 +460,7 @@ CLI вызывает materialization под lock, но экспортирова�
 
 **Критичность: низкая. Статус: остаётся.**
 
-**Код:** `tpccctl/internal/config/plan.go:107-150`.
+**Код:** `mind/internal/config/plan.go:107-150`.
 
 Go validation проверяет worker coverage, но не выполняет эквивалентную полную
 проверку loader assignments. C++ consumer отклоняет overlap и gaps, поэтому
@@ -488,12 +488,12 @@ Total 46 tests:
     46 - GOOD
 ```
 
-После переноса `tpccctl` в корень проекта выполнено:
+После переноса `mind-tpcc` в корень проекта выполнено:
 
 ```text
-go -C tpccctl fmt ./...
-go -C tpccctl test ./...
-go -C tpccctl build ./cmd/tpccctl
+go -C mind fmt ./...
+go -C mind test ./...
+go -C mind build ./cmd/mind-tpcc
 ```
 
 Форматирование, все Go unit tests и сборка завершились успешно.
@@ -501,9 +501,9 @@ go -C tpccctl build ./cmd/tpccctl
 На commit `3bc03ce` контрольные проверки перезапущены:
 
 ```text
-go -C tpccctl test ./...
-go -C tpccctl test -race ./...
-go -C tpccctl build ./cmd/tpccctl
+go -C mind test ./...
+go -C mind test -race ./...
+go -C mind build ./cmd/mind-tpcc
 ./ya make -t tpcc
 ```
 
@@ -511,7 +511,7 @@ go -C tpccctl build ./cmd/tpccctl
 
 - стандартные Go tests — успешно;
 - Go race detector — успешно;
-- сборка `tpccctl` — успешно;
+- сборка `mind-tpcc` — успешно;
 - C++: 7 suites, 49/49 tests — успешно.
 
 Пробелы, выявленные контрольной проверкой, закрыты остаточным проходом:
@@ -537,7 +537,7 @@ go -C tpccctl build ./cmd/tpccctl
 
 **Принятое ограничение дизайна (несущественно, исправления не требует):** run
 directories, созданные до появления `profile.sha256`, не могут быть продолжены
-под тем же run ID (`tpccctl/internal/orchestrator/orchestrator.go:109-113`).
+под тем же run ID (`mind/internal/orchestrator/orchestrator.go:109-113`).
 Проект не гарантирует возобновление run, созданных предыдущей версией формата;
 fail-closed отказ для таких каталогов является ожидаемым поведением.
 

@@ -4,7 +4,7 @@ Status: architecture draft, companion to [specification.md](specification.md).
 
 This document describes the C++ library boundaries inside `tpcc/` and the
 contract each `tpcc/dbms/<name>` adapter MUST implement. It is normative for
-adapter authors. Orchestration (`tpccctl`), profile YAML, and result packaging
+adapter authors. Orchestration (`mind-tpcc`), profile YAML, and result packaging
 remain in the main specification.
 
 The keywords **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT**, and **MAY**
@@ -24,7 +24,7 @@ are to be interpreted as described in RFC 2119.
 ## 2. Layering
 
 ```text
-tpccctl  ──SSH──>  tpcc-<dbms>  (schema | loader | worker | check)
+mind-tpcc  ──SSH──>  tpcc-<dbms>  (schema | loader | worker | check)
                          │
                          ├─ shared: domain / generator / transactions /
                          │          runtime / harness / loader / checks / metrics
@@ -106,7 +106,7 @@ PostgreSQL evaluates the shared catalog via `TPgCheckAdapter`.
 ### 3.7. `tpcc/metrics`
 
 Mergeable counters and latency histograms. Workers emit raw histograms;
-`tpccctl consolidate` merges buckets and only then computes percentiles.
+`mind-tpcc consolidate` merges buckets and only then computes percentiles.
 Adapters MUST NOT emit final p99 as the authoritative result.
 
 ## 4. Adapter Interfaces
@@ -426,7 +426,7 @@ comes from shared libraries and the distributed `run-config.json`.
 | `tpcc/dbms/pgsql` | Concrete admin/load/session/check + terminal runtime |
 | `tpcc/dbms/ydb` | In progress |
 | `tpcc/dbms/oceanbase` | Connector/C admin/load/session/check + terminal runtime |
-| `tpccctl` | Phase 5 remote drive / consolidate present |
+| `mind-tpcc` | Phase 5 remote drive / consolidate present |
 
 Alignment sequencing and accepted API decisions:
 [alignment-plan.md](alignment-plan.md). Module status detail:
