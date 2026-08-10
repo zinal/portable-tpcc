@@ -11,8 +11,8 @@ namespace NTpcc {
 
 // Idempotent population helpers (specification §6):
 // - item: staging COPY + INSERT ... ON CONFLICT DO UPDATE
-// - warehouse range: explicit DELETE of warehouse-scoped tables + COPY in
-//   dependency order, all in one transaction per warehouse id
+// - warehouse range: COPY first; on unique_violation / SQLSTATE 23505,
+//   DELETE warehouse-scoped tables and COPY again in one transaction
 
 TPutBatchResult PutItemsIdempotent(
     pqxx::connection& conn,
@@ -20,8 +20,9 @@ TPutBatchResult PutItemsIdempotent(
     const std::string& runId = {},
     int batchRows = 0);
 
-// Replaces all data owned by a single warehouse id (warehouse, district, stock,
-// customer, history, oorder, new_order, order_line).
+// Loads all data owned by a single warehouse id (warehouse, district, stock,
+// customer, history, oorder, new_order, order_line). On primary-key conflict
+// (duplicate key), deletes that warehouse range and reloads.
 // When batchRows > 0, large COPY streams are flushed every batchRows rows.
 TPutBatchResult PutWarehouseIdempotent(
     pqxx::connection& conn,

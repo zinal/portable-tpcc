@@ -13,6 +13,7 @@
 #include <optional>
 #include <sstream>
 #include <stdexcept>
+#include <string_view>
 
 namespace NTpcc {
 
@@ -236,6 +237,50 @@ void CopyOrders(pqxx::work& txn, uint64_t seed, int wh, int district) {
     }
 }
 
+void DeleteWarehouseChildren(pqxx::work& txn, int warehouseId) {
+    // Explicit deletes keep reload correct whether or not FOREIGN KEYs with
+    // ON DELETE CASCADE were created at schema time (foreign_keys=off).
+    txn.exec_params("DELETE FROM order_line WHERE ol_w_id = $1", warehouseId);
+    txn.exec_params("DELETE FROM new_order WHERE no_w_id = $1", warehouseId);
+    txn.exec_params("DELETE FROM oorder WHERE o_w_id = $1", warehouseId);
+    txn.exec_params(
+        "DELETE FROM history WHERE h_w_id = $1 OR h_c_w_id = $1", warehouseId);
+    txn.exec_params("DELETE FROM customer WHERE c_w_id = $1", warehouseId);
+    txn.exec_params("DELETE FROM district WHERE d_w_id = $1", warehouseId);
+    txn.exec_params("DELETE FROM stock WHERE s_w_id = $1", warehouseId);
+    txn.exec_params("DELETE FROM warehouse WHERE w_id = $1", warehouseId);
+}
+
+void PopulateWarehouse(
+    pqxx::work& txn,
+    uint64_t seed,
+    int warehouseId,
+    int batchRows)
+{
+    CopyWarehouse(txn, seed, warehouseId);
+    CopyDistricts(txn, seed, warehouseId);
+    CopyStock(txn, seed, warehouseId, batchRows);
+    for (int d = DISTRICT_LOW_ID; d <= DISTRICT_HIGH_ID; ++d) {
+        CopyCustomers(txn, seed, warehouseId, d, batchRows);
+        CopyHistory(txn, seed, warehouseId, d);
+        CopyOrders(txn, seed, warehouseId, d);
+    }
+}
+
+bool IsDuplicateKeyError(const std::exception& ex) {
+    if (dynamic_cast<const pqxx::unique_violation*>(&ex) != nullptr) {
+        return true;
+    }
+    // Fallback for adapters/wrappers that only expose the SQLSTATE / message.
+    if (const auto* sql = dynamic_cast<const pqxx::sql_error*>(&ex)) {
+        if (sql->sqlstate() == "23505") {
+            return true;
+        }
+    }
+    const std::string_view msg = ex.what();
+    return msg.find("duplicate key value violates unique constraint") != std::string_view::npos;
+}
+
 } // namespace
 
 TPutBatchResult PutItemsIdempotent(
@@ -304,33 +349,28 @@ TPutBatchResult PutWarehouseIdempotent(
     int batchRows)
 {
     try {
-        LOG_D("Idempotent replace warehouse " << warehouseId << " (seed=" << seed
+        LOG_D("Idempotent load warehouse " << warehouseId << " (seed=" << seed
               << ", run_id=" << (runId.empty() ? "-" : runId)
               << ", batch_rows=" << batchRows << ")");
 
-        pqxx::work txn(conn);
-
-        // Explicit deletes keep reload idempotent whether or not FOREIGN KEYs
-        // with ON DELETE CASCADE were created at schema time (foreign_keys=off).
-        txn.exec_params("DELETE FROM order_line WHERE ol_w_id = $1", warehouseId);
-        txn.exec_params("DELETE FROM new_order WHERE no_w_id = $1", warehouseId);
-        txn.exec_params("DELETE FROM oorder WHERE o_w_id = $1", warehouseId);
-        txn.exec_params(
-            "DELETE FROM history WHERE h_w_id = $1 OR h_c_w_id = $1", warehouseId);
-        txn.exec_params("DELETE FROM customer WHERE c_w_id = $1", warehouseId);
-        txn.exec_params("DELETE FROM district WHERE d_w_id = $1", warehouseId);
-        txn.exec_params("DELETE FROM stock WHERE s_w_id = $1", warehouseId);
-        txn.exec_params("DELETE FROM warehouse WHERE w_id = $1", warehouseId);
-
-        CopyWarehouse(txn, seed, warehouseId);
-        CopyDistricts(txn, seed, warehouseId);
-        CopyStock(txn, seed, warehouseId, batchRows);
-        for (int d = DISTRICT_LOW_ID; d <= DISTRICT_HIGH_ID; ++d) {
-            CopyCustomers(txn, seed, warehouseId, d, batchRows);
-            CopyHistory(txn, seed, warehouseId, d);
-            CopyOrders(txn, seed, warehouseId, d);
+        // Fast path: insert into an empty warehouse range.
+        try {
+            pqxx::work txn(conn);
+            PopulateWarehouse(txn, seed, warehouseId, batchRows);
+            txn.commit();
+            return OkResult();
+        } catch (const std::exception& ex) {
+            if (!IsDuplicateKeyError(ex)) {
+                throw;
+            }
+            LOG_I("Warehouse " << warehouseId
+                  << " hit duplicate key; deleting range and reloading");
         }
 
+        // Slow path: PK conflict means the range is occupied; wipe and reload.
+        pqxx::work txn(conn);
+        DeleteWarehouseChildren(txn, warehouseId);
+        PopulateWarehouse(txn, seed, warehouseId, batchRows);
         txn.commit();
         return OkResult();
     } catch (const std::exception& ex) {

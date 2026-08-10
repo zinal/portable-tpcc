@@ -128,7 +128,7 @@ void CheckDbForImport(const std::string& connectionString, const std::string& pa
         int whCount = GetWarehouseCount(*conn);
         if (whCount != 0) {
             LOG_W("Database already has " << whCount
-                  << " warehouses; import will replace assigned ranges");
+                  << " warehouses; import will reload assigned ranges on key conflict");
         }
     } catch (const std::exception& e) {
         std::cerr << "Pre-flight check for import failed: " << e.what() << std::endl;

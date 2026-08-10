@@ -154,7 +154,7 @@ void ImportSync(const TImportConfig& config) {
                         EstimatePerWarehouseDataSize(), std::memory_order_relaxed);
                     state.WarehousesLoaded.fetch_add(1, std::memory_order_relaxed);
 
-                    LOG_I("Warehouse " << wh << " replaced (" << state.WarehousesLoaded.load() << "/" << assignedWarehouses << ")");
+                    LOG_I("Warehouse " << wh << " loaded (" << state.WarehousesLoaded.load() << "/" << assignedWarehouses << ")");
                 }
             } catch (const std::exception& ex) {
                 LOG_E("Import thread failed: " << ex.what());
