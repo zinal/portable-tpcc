@@ -8,7 +8,11 @@ namespace NTpcc {
 
 TCheckReport RunYdbChecks(const TYdbConnectionConfig& connectionConfig, const TCheckRequest& request);
 
-void CheckSync(const TYdbConnectionConfig& connectionConfig, int warehouseCount, bool afterImport = false);
+void CheckSync(
+    const TYdbConnectionConfig& connectionConfig,
+    int warehouseCount,
+    bool afterImport = false,
+    int checkConcurrency = 1);
 
 class TYdbCheckAdapter final : public ICheckAdapter {
 public:
@@ -20,7 +24,11 @@ private:
     TYdbConnectionConfig ConnectionConfig_;
 };
 
-int RunCheckFromRunConfig(const std::string& runConfigPath, const std::string& instance,
-                          bool afterImport, bool afterRun);
+int RunCheckFromRunConfig(
+    const std::string& runConfigPath,
+    const std::string& instance,
+    bool afterImport,
+    bool afterRun,
+    int checkConcurrency = 1);
 
 } // namespace NTpcc
