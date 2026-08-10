@@ -17,7 +17,11 @@ hosts:
     address: 127.0.0.1
   load-a:
     address: 127.0.0.1
+  load-b:
+    address: 127.0.0.1
   worker-a:
+    address: 127.0.0.1
+  worker-b:
     address: 127.0.0.1
 
 paths:
@@ -60,13 +64,19 @@ workload:
     delivery: 4
     stock_level: 4
 
+# Multiple loaders/workers: mind assigns balanced contiguous warehouse ranges.
+# Add more entries (and matching hosts.*) to scale out runners.
 loaders:
   - name: loader-a
     host: load-a
+  - name: loader-b
+    host: load-b
 
 workers:
   - name: worker-a
     host: worker-a
+  - name: worker-b
+    host: worker-b
 
 checks:
   after_import: true
