@@ -13,9 +13,9 @@ multiple DBMSs. The product consists of:
 1. shared C++ libraries with the workload model, generator, terminal runtime,
    metrics, and integrity checks;
 2. one DBMS adapter and one `tpcc-<dbms>` binary per supported DBMS;
-3. the Go orchestrator `tpccctl`.
+3. the Go orchestrator `mind-tpcc`.
 
-Shipped binaries: `tpccctl`, `tpcc-ydb`, `tpcc-pgsql`, `tpcc-oceanbase`.
+Shipped binaries: `mind-tpcc`, `tpcc-ydb`, `tpcc-pgsql`, `tpcc-oceanbase`.
 There is no extra DBMS-neutral helper binary.
 
 Initial adapters: YDB, PostgreSQL, OceanBase. Adding a DBMS MUST NOT require
@@ -23,7 +23,7 @@ forking the shared workload logic.
 
 This document does not restate the TPC-C standard. The project implements one
 fixed workload model. Run parameters (transaction mix, think/keying times,
-terminals per warehouse, and similar) are defaults in `tpccctl` and MAY be
+terminals per warehouse, and similar) are defaults in `mind-tpcc` and MAY be
 overridden in the profile. The tool does not select TPC-C editions and does
 not emit an official TPC-C conformance verdict. It DOES report soft deviations
 of effective launch parameters from the fixed TPC-C 5.11 requirements used by
@@ -75,7 +75,7 @@ verification. By default the report uses `result_class: engineering`.
 ## 3. Architecture
 
 ```text
-          tpccctl (control host)
+          mind-tpcc (control host)
                |  SSH
      +---------+---------+
      |                   |
@@ -88,7 +88,7 @@ verification. By default the report uses `result_class: engineering`.
 
 | Role | Count | Responsibility |
 | --- | ---: | --- |
-| control | 1 | `tpccctl`: plan, deploy, drive phases, collect, merge |
+| control | 1 | `mind-tpcc`: plan, deploy, drive phases, collect, merge |
 | db | 1 | pre-provisioned DBMS |
 | loader | 1..N | non-overlapping load shards |
 | worker | 1..N | terminals for assigned warehouses |
@@ -129,7 +129,7 @@ guidance (YDB fused commit, DDL/query differences, OceanBase notes) are in
 
 ### 4.3. Binaries
 
-`tpccctl` orchestrates. Each `tpcc-<dbms>` binary **MUST** expose the
+`mind-tpcc` orchestrates. Each `tpcc-<dbms>` binary **MUST** expose the
 normative roles `schema`, `loader`, `worker`, and `check`. Non-DBMS logic
 comes from shared libraries; only the adapter/driver is DBMS-specific.
 
@@ -141,7 +141,7 @@ Orchestrated remotes use only the four normative role names.
 
 Human-edited input: one YAML profile (`portable-tpcc/v1`).
 
-`tpccctl` validates the profile, fills built-in defaults for omitted workload
+`mind-tpcc` validates the profile, fills built-in defaults for omitted workload
 fields, computes warehouse assignment, and writes a normalized
 `run-config.json`. That file is the only declarative input distributed to
 loaders and workers.
@@ -235,7 +235,7 @@ durability mechanisms appropriate to the selected DBMS and test objective.
 Startup (wall-clock rendezvous):
 
 1. Distribute the same `run-config.json` to all hosts.
-2. `tpccctl` chooses an absolute UTC start instant
+2. `mind-tpcc` chooses an absolute UTC start instant
    `--start-at = now + phases.start_lead` (plus any other configured
    launch/init margin) large enough for remote start and local prepare on
    every host. Hosts are assumed to keep system clocks tightly synchronized;
@@ -246,7 +246,7 @@ Startup (wall-clock rendezvous):
 5. If wall-clock time reaches `--start-at` before the process is ready to
    admit work, the process MUST exit fatally (missed start deadline).
 6. If any required process exits fatally before measurement (including a
-   missed deadline), `tpccctl` MUST abort the run and stop remaining
+   missed deadline), `mind-tpcc` MUST abort the run and stop remaining
    processes.
 7. At `--start-at`, workers begin ramp-up; later phase boundaries follow
    run-config durations. The orchestrator SHOULD record the chosen schedule
@@ -275,7 +275,7 @@ Workers do not compute final percentiles.
 
 ### 8.2. Aggregate
 
-`tpccctl consolidate` builds `aggregate.json` as the canonical result. It
+`mind-tpcc consolidate` builds `aggregate.json` as the canonical result. It
 MUST embed the concrete run settings (a copy of the effective run-config, or
 an equivalent inline object), not merely hashes that point at external config
 files.
@@ -319,10 +319,10 @@ aggregate carries the settings themselves.
 ## 9. Orchestrator Commands
 
 ```text
-tpccctl validate | plan | deploy | schema | load
-tpccctl check [--after-import|--after-run]
-tpccctl start | status | stop | collect | consolidate
-tpccctl run | cleanup --yes
+mind-tpcc validate | plan | deploy | schema | load
+mind-tpcc check [--after-import|--after-run]
+mind-tpcc start | status | stop | collect | consolidate
+mind-tpcc run | cleanup --yes
 ```
 
 `run` = validate → deploy → schema → load → check(after-import) → start
@@ -354,7 +354,7 @@ Additionally, compare effective (default-merged) launch parameters against the
 fixed TPC-C 5.11 requirements mirrored by built-in defaults: terminals per
 warehouse, minimum mix percentages, pacing enabled, exponential think time,
 standard keying/think means, and measurement interval ≥ 120 minutes. Report
-deviations in `tpccctl validate`, warn at `start`, and persist
+deviations in `mind-tpcc validate`, warn at `start`, and persist
 `tpcc_settings_conformant` plus `tpcc_settings_deviations` in the aggregate.
 These deviations MUST NOT fail structural validation or change
 `result_class`.
@@ -385,7 +385,7 @@ tpcc/
 ├── domain/ generator/ transactions/ runtime/ loader/ checks/ metrics/
 ├── dbms/{ydb,pgsql,oceanbase}/
 └── app/{ydb,pgsql,oceanbase}/
-tpccctl/
+mind/
 docs/specification.md
 docs/adapter-api.md
 docs/examples/

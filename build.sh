@@ -20,7 +20,7 @@ cd "$SCRIPT_DIR"
 
 RUN_TESTS=0
 BUILD_TPCC=1
-BUILD_TPCCCTL=1
+BUILD_MIND_TPCC=1
 YA_BUILD_FLAG=()
 YA_THREADS=()
 YA_EXTRA=()
@@ -33,7 +33,7 @@ Usage: ./build.sh [options] [-- ya-make-args...]
 
 Build all portable-tpcc components:
   ./ya make -DHAVE_CUDA=no -DCUDA_VERSION=11.4 tpcc
-  go -C tpccctl build ./cmd/tpccctl
+  go -C mind build ./cmd/mind-tpcc
 
 The CUDA defines are always passed: the YDB target (tpcc/app/ydb) must be
 built without CUDA. Standalone equivalent:
@@ -45,7 +45,7 @@ Options:
   -t, --test          Also run tests (./ya make -t tpcc; go test ./...)
   -j N, --jobs N      Parallelism for ya make
   --tpcc-only         Build only C++ targets under tpcc/
-  --tpccctl-only      Build only the Go orchestrator
+  --mind-tpcc-only    Build only the Go orchestrator
   -h, --help          Show this help
 
 Arguments after -- are forwarded to ./ya make.
@@ -55,7 +55,7 @@ Examples:
   ./build.sh -r
   ./build.sh -t -j8
   ./build.sh --tpcc-only -- -v
-  ./build.sh --tpccctl-only
+  ./build.sh --mind-tpcc-only
 EOF
 }
 
@@ -88,12 +88,12 @@ while [[ $# -gt 0 ]]; do
       ;;
     --tpcc-only)
       BUILD_TPCC=1
-      BUILD_TPCCCTL=0
+      BUILD_MIND_TPCC=0
       shift
       ;;
-    --tpccctl-only)
+    --mind-tpcc-only)
       BUILD_TPCC=0
-      BUILD_TPCCCTL=1
+      BUILD_MIND_TPCC=1
       shift
       ;;
     -h|--help)
@@ -113,7 +113,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ "$BUILD_TPCC" -eq 0 && "$BUILD_TPCCCTL" -eq 0 ]]; then
+if [[ "$BUILD_TPCC" -eq 0 && "$BUILD_MIND_TPCC" -eq 0 ]]; then
   echo "Nothing to build" >&2
   exit 1
 fi
@@ -123,8 +123,8 @@ if [[ ! -x ./ya ]]; then
   exit 1
 fi
 
-if [[ "$BUILD_TPCCCTL" -eq 1 ]] && ! command -v go >/dev/null 2>&1; then
-  echo "go is required to build tpccctl" >&2
+if [[ "$BUILD_MIND_TPCC" -eq 1 ]] && ! command -v go >/dev/null 2>&1; then
+  echo "go is required to build mind-tpcc" >&2
   exit 1
 fi
 
@@ -142,13 +142,13 @@ build_tpcc() {
   ./ya "${ya_args[@]}"
 }
 
-build_tpccctl() {
-  echo "==> Building Go orchestrator: go -C tpccctl build ./cmd/tpccctl"
-  go -C tpccctl build ./cmd/tpccctl
+build_mind_tpcc() {
+  echo "==> Building Go orchestrator: go -C mind build ./cmd/mind-tpcc"
+  go -C mind build ./cmd/mind-tpcc
 
   if [[ "$RUN_TESTS" -eq 1 ]]; then
-    echo "==> Testing Go orchestrator: go -C tpccctl test ./..."
-    go -C tpccctl test ./...
+    echo "==> Testing Go orchestrator: go -C mind test ./..."
+    go -C mind test ./...
   fi
 }
 
@@ -156,8 +156,8 @@ if [[ "$BUILD_TPCC" -eq 1 ]]; then
   build_tpcc
 fi
 
-if [[ "$BUILD_TPCCCTL" -eq 1 ]]; then
-  build_tpccctl
+if [[ "$BUILD_MIND_TPCC" -eq 1 ]]; then
+  build_mind_tpcc
 fi
 
 echo "Done."
@@ -167,6 +167,6 @@ if [[ "$BUILD_TPCC" -eq 1 ]]; then
   echo "  tpcc/app/ydb/tpcc-ydb"
   echo "  tpcc/app/oceanbase/tpcc-oceanbase"
 fi
-if [[ "$BUILD_TPCCCTL" -eq 1 ]]; then
-  echo "Go binary: tpccctl/tpccctl"
+if [[ "$BUILD_MIND_TPCC" -eq 1 ]]; then
+  echo "Go binary: mind/mind-tpcc"
 fi

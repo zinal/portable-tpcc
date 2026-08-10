@@ -89,7 +89,7 @@ void PrintHelp() {
         "  --after-import        check: verify freshly loaded data\n"
         "  --after-run           check: verify data after a measurement run\n"
         "\n"
-        "Orchestrated mode (tpccctl):\n"
+        "Orchestrated mode (mind-tpcc):\n"
         "  schema --run-config <path> --instance <name>\n"
         "  loader --run-config <path> --instance <name>\n"
         "  worker --run-config <path> --instance <name> --start-at=<RFC3339-UTC>\n"

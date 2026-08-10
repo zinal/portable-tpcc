@@ -25,7 +25,7 @@ TPC-C 5.11 conformance notes:
 | abseil-cpp | `contrib/restricted/abseil-cpp` | optional utilities |
 | tcmalloc | `contrib/libs/tcmalloc` | optional allocator |
 | util | `util/` | strings, threading, system, random |
-| ya make / Go toolchain | `devtools/`, `ya`; Go-native tools for `tpccctl` | C++ build; Go modules for orchestrator |
+| ya make / Go toolchain | `devtools/`, `ya`; Go-native tools for `mind-tpcc` | C++ build; Go modules for orchestrator |
 
 ## libpqxx version note
 
@@ -65,7 +65,7 @@ required for the current port.
 | `tpcc/app/ydb` (`tpcc-ydb`) | in progress | normative roles + legacy aliases for YDB |
 | `tpcc/dbms/oceanbase` | done | Connector/C transport, admin/load/session/check adapters, terminal runtime |
 | `tpcc/app/oceanbase` (`tpcc-oceanbase`) | done | normative roles + legacy aliases for OceanBase |
-| `tpccctl` | done (Phase 5) | SSH/local remote drive, `--start-at`, collect/consolidate |
+| `mind-tpcc` | done (Phase 5) | SSH/local remote drive, `--start-at`, collect/consolidate |
 
 ## Remaining work (tracked)
 

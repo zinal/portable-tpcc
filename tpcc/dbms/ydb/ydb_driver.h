@@ -10,7 +10,7 @@
 namespace NTpcc {
 
 // YDB authentication scheme selected via profile/run-config or CLI.
-// "token" is a standalone/legacy mode (token / token_env); not emitted by tpccctl.
+// "token" is a standalone/legacy mode (token / token_env); not emitted by mind-tpcc.
 enum class EYdbAuthScheme {
     Anonymous,
     Login,

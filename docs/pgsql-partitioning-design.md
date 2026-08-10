@@ -228,7 +228,7 @@ No edits to protected infrastructure trees (`build/`, `contrib/`, `devtools/`,
 | DDL | `init.cpp` (`BuildTpccSchemaDdl`) |
 | Admin / schema role | `pg_admin_adapter.*`, `worker_loader.cpp` |
 | CLI | `app/pgsql/main.cpp` (`--partitioning`, `--partition-count`, `--foreign_keys`) |
-| run-config / tpccctl | `database.options.partitioning`, `partition_count`, `foreign_keys` (profile → run-config.json → schema role) |
+| run-config / mind-tpcc | `database.options.partitioning`, `partition_count`, `foreign_keys` (profile → run-config.json → schema role) |
 | Capabilities | `TPgCapabilities` reports configured style |
 | Preflight | `path_checker.cpp` recognizes `PARTITIONED TABLE` |
 | Unit tests | `tpcc/dbms/pgsql/ut/partition_config_ut.cpp` |
