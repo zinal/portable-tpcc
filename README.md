@@ -135,14 +135,16 @@ export TPCC_PASSWORD='...'
 # export TPCC_PG_USER=myuser   # if not postgres
 
 mkdir -p dist && cp /path/to/tpcc-pgsql dist/
+# After `go -C mind build ./cmd/mind-tpcc`, the binary is at mind/mind-tpcc:
+cp mind/mind-tpcc ./mind-tpcc
 
-go -C mind run ./cmd/mind-tpcc validate --profile ./profile-pgsql.yaml
-go -C mind run ./cmd/mind-tpcc plan     --profile ./profile-pgsql.yaml
+./mind-tpcc validate --profile ./profile-pgsql.yaml
+./mind-tpcc plan     --profile ./profile-pgsql.yaml
 
 # Full pipeline:
 # validate → deploy → schema → load → check(after-import)
 # → start → check(after-run) → collect → consolidate
-go -C mind run ./cmd/mind-tpcc run --profile ./profile-pgsql.yaml
+./mind-tpcc run --profile ./profile-pgsql.yaml
 ```
 
 Or run stages individually: `deploy`, `schema`, `load`,
@@ -270,17 +272,19 @@ export TPCC_PASSWORD='...'
 
 mkdir -p dist
 cp tpcc/app/oceanbase/tpcc-oceanbase dist/
+# After `go -C mind build ./cmd/mind-tpcc`, the binary is at mind/mind-tpcc:
+cp mind/mind-tpcc ./mind-tpcc
 
 # Copy or edit the example profile as needed:
 #   cp docs/examples/profile.oceanbase.v1.yaml ./profile-oceanbase.yaml
 
-go -C mind run ./cmd/mind-tpcc validate --profile ./profile-oceanbase.yaml
-go -C mind run ./cmd/mind-tpcc plan     --profile ./profile-oceanbase.yaml
+./mind-tpcc validate --profile ./profile-oceanbase.yaml
+./mind-tpcc plan     --profile ./profile-oceanbase.yaml
 
 # Full pipeline:
 # validate → deploy → schema → load → check(after-import)
 # → start → check(after-run) → collect → consolidate
-go -C mind run ./cmd/mind-tpcc run --profile ./profile-oceanbase.yaml
+./mind-tpcc run --profile ./profile-oceanbase.yaml
 ```
 
 Or run stages individually: `deploy`, `schema`, `load`,
@@ -293,6 +297,54 @@ Artifacts land under `paths.result_root/<run_id>/` (including
 
 On a single host, every `hosts.*.address` may be `127.0.0.1`. Multi-host
 runs need SSH access and tightly synchronized clocks.
+
+#### Multiple workers (runners)
+
+List every worker under `workers:` and give each a host entry. Mind splits
+`scale.warehouses` into balanced contiguous ranges automatically (no manual
+warehouse ranges in the profile). Loaders work the same way under `loaders:`.
+
+```yaml
+hosts:
+  control:
+    address: 10.10.0.10
+  load-a:
+    address: 10.10.0.21
+  load-b:
+    address: 10.10.0.22
+  worker-a:
+    address: 10.10.0.31
+  worker-b:
+    address: 10.10.0.32
+  worker-c:
+    address: 10.10.0.33
+
+scale:
+  warehouses: 300
+
+loaders:
+  - name: loader-a
+    host: load-a
+  - name: loader-b
+    host: load-b
+
+workers:
+  - name: worker-a
+    host: worker-a
+  - name: worker-b
+    host: worker-b
+  - name: worker-c
+    host: worker-c
+
+runtime:
+  threads_per_worker: 4
+  max_inflight_per_worker: 256
+```
+
+With three workers and 300 warehouses, each worker typically owns a contiguous
+block of 100 warehouses. For a single-host smoke test, point every
+`hosts.*.address` at `127.0.0.1` and still declare multiple `workers` /
+`loaders` entries — mind launches one process per instance.
 
 Orchestrated roles launched by mind (for reference):
 
