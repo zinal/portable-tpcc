@@ -1,6 +1,7 @@
 package remote
 
 import (
+	"bufio"
 	"errors"
 	"fmt"
 	"io"
@@ -367,17 +368,14 @@ func shellExecPath(path string) string {
 	return "./" + path
 }
 
-func (s *SSH) StartDetached(workDir, binary string, argv []string, env map[string]string, stdoutPath, stderrPath string) (int, error) {
+// startDetachedShellCmd builds the remote shell line for StartDetached.
+// The child is backgrounded under nohup with stdio redirected to files so it
+// survives when the SSH channel is closed after the pid is printed.
+func startDetachedShellCmd(workDir, binary string, argv []string, env map[string]string, stdoutPath, stderrPath string) (string, error) {
 	for k := range env {
 		if !ValidEnvName(k) {
-			return 0, fmt.Errorf("invalid environment variable name %q", k)
+			return "", fmt.Errorf("invalid environment variable name %q", k)
 		}
-	}
-	if err := s.MkdirAll(workDir); err != nil {
-		return 0, err
-	}
-	if err := s.MkdirAll(filepath.Dir(stdoutPath)); err != nil {
-		return 0, err
 	}
 	bin := shellExecPath(pathUnderWorkDir(workDir, binary))
 	stdoutRel := pathUnderWorkDir(workDir, stdoutPath)
@@ -394,17 +392,87 @@ func (s *SSH) StartDetached(workDir, binary string, argv []string, env map[strin
 	b.WriteString(" > " + remotePathExpr(stdoutRel))
 	b.WriteString(" 2> " + remotePathExpr(stderrRel))
 	b.WriteString(" < /dev/null & echo $!")
-	stdout, stderr, exit, err := s.run(b.String())
+	return b.String(), nil
+}
+
+// readRemotePID reads the first whitespace-trimmed integer line from r.
+func readRemotePID(r io.Reader, timeout time.Duration) (int, error) {
+	type result struct {
+		pid int
+		err error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		sc := bufio.NewScanner(r)
+		if !sc.Scan() {
+			if err := sc.Err(); err != nil {
+				ch <- result{err: err}
+				return
+			}
+			ch <- result{err: fmt.Errorf("no pid from remote shell")}
+			return
+		}
+		pidStr := strings.TrimSpace(sc.Text())
+		pid, err := strconv.Atoi(pidStr)
+		if err != nil {
+			ch <- result{err: fmt.Errorf("parse pid %q: %w", pidStr, err)}
+			return
+		}
+		ch <- result{pid: pid}
+	}()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case res := <-ch:
+		return res.pid, res.err
+	case <-timer.C:
+		return 0, fmt.Errorf("timeout waiting for remote pid")
+	}
+}
+
+func (s *SSH) StartDetached(workDir, binary string, argv []string, env map[string]string, stdoutPath, stderrPath string) (int, error) {
+	cmd, err := startDetachedShellCmd(workDir, binary, argv, env, stdoutPath, stderrPath)
 	if err != nil {
 		return 0, err
 	}
-	if exit != 0 {
-		return 0, fmt.Errorf("start failed: %s", stderr)
+	if err := s.MkdirAll(workDir); err != nil {
+		return 0, err
 	}
-	pidStr := strings.TrimSpace(stdout)
-	pid, err := strconv.Atoi(pidStr)
+	if err := s.MkdirAll(filepath.Dir(stdoutPath)); err != nil {
+		return 0, err
+	}
+
+	session, err := s.client.NewSession()
 	if err != nil {
-		return 0, fmt.Errorf("parse pid %q: %w", pidStr, err)
+		return 0, err
+	}
+	// Do not session.Wait()/Run(): OpenSSH keeps the channel open for as long as
+	// the background workload remains in the session. That made multi-host load
+	// appear sequential — the next StartDetached never began until the first
+	// loader exited. Read the pid, then Close the channel; nohup + redirected
+	// stdio keep the child running (same intent as Local's Setsid).
+	defer session.Close()
+
+	stdout, err := session.StdoutPipe()
+	if err != nil {
+		return 0, err
+	}
+	var stderrBuf strings.Builder
+	session.Stderr = &stderrBuf
+
+	if err := session.Start(cmd); err != nil {
+		return 0, err
+	}
+	pid, err := readRemotePID(stdout, 15*time.Second)
+	_ = session.Close()
+	if err != nil {
+		if stderrBuf.Len() > 0 {
+			return 0, fmt.Errorf("%w: %s", err, strings.TrimSpace(stderrBuf.String()))
+		}
+		return 0, err
+	}
+	if pid <= 0 {
+		return 0, fmt.Errorf("invalid remote pid %d", pid)
 	}
 	return pid, nil
 }
@@ -438,6 +506,3 @@ func (s *SSH) Close() error {
 	}
 	return s.client.Close()
 }
-
-// ensure unused import for io kept for future streaming SCP
-var _ = io.EOF
