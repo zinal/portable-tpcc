@@ -96,6 +96,7 @@ void ImportSync(const TImportConfig& config) {
 
     if (config.OwnsGlobalData) {
         auto conn = ConnectToTargetDatabase(ConfigWithPath(config.ConnectionString, config.Path));
+        conn->ConfigureBulkLoadSession();
         ThrowIfFailed(PutItemsIdempotent(*conn, seed, runId, config.BatchRows), "item PutBatch");
         state.DataSizeLoaded.fetch_add(EstimateSharedDataSize(), std::memory_order_relaxed);
     }
@@ -118,6 +119,7 @@ void ImportSync(const TImportConfig& config) {
                               &runId]() {
             try {
                 auto conn = ConnectToTargetDatabase(ConfigWithPath(config.ConnectionString, config.Path));
+                conn->ConfigureBulkLoadSession();
                 for (size_t i = begin; i < end; ++i) {
                     if (state.StopToken.stop_requested()) {
                         return;

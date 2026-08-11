@@ -62,13 +62,13 @@ TPutBatchResult FailResult(const std::exception& ex) {
     return r;
 }
 
-// MySQL / OceanBase prepared statements reject more than 65535 placeholders
-// (ER_PS_MANY_PARAM / errno 1390). Cap multi-row INSERTs accordingly.
+// Match tpcc-oceanbase-cpp ObSession::ExecuteBulk (BULK_BATCH_ROWS = 200):
+// fixed-size multi-row INSERTs + short transactions. Larger batches / one giant
+// warehouse TX make mysql_stmt_prepare exceed default ob_query_timeout (10s)
+// while DB I/O looks idle.
+constexpr size_t BulkBatchRows = 200;
+// Hard MySQL / OceanBase prepared-statement limit (ER_PS_MANY_PARAM / 1390).
 constexpr size_t MaxPreparedPlaceholders = 65535;
-
-size_t BatchSize(int batchRows) {
-    return batchRows > 0 ? static_cast<size_t>(batchRows) : 200;
-}
 
 size_t MaxRowsForColumns(size_t columnCount) {
     if (columnCount == 0) {
@@ -78,7 +78,8 @@ size_t MaxRowsForColumns(size_t columnCount) {
 }
 
 size_t EffectiveBatchSize(size_t columnCount, int batchRows) {
-    return std::min(BatchSize(batchRows), MaxRowsForColumns(columnCount));
+    const size_t requested = batchRows > 0 ? static_cast<size_t>(batchRows) : BulkBatchRows;
+    return std::min({requested, BulkBatchRows, MaxRowsForColumns(columnCount)});
 }
 
 void InsertRowsChunk(
@@ -119,24 +120,6 @@ void InsertRowsChunk(
     conn.Execute(sql, params);
 }
 
-void InsertRows(
-    TObConnection& conn,
-    const std::string& table,
-    const std::vector<std::string>& columns,
-    const std::vector<TRow>& rows,
-    const std::string& suffix = {})
-{
-    if (rows.empty()) {
-        return;
-    }
-
-    const size_t maxRows = MaxRowsForColumns(columns.size());
-    for (size_t offset = 0; offset < rows.size(); offset += maxRows) {
-        const size_t end = std::min(offset + maxRows, rows.size());
-        InsertRowsChunk(conn, table, columns, rows, offset, end, suffix);
-    }
-}
-
 template <typename TEmit>
 void EmitBatches(
     TObConnection& conn,
@@ -146,53 +129,82 @@ void EmitBatches(
     TEmit emit,
     const std::string& suffix = {})
 {
-    batchSize = std::min(batchSize, MaxRowsForColumns(columns.size()));
+    batchSize = std::min(std::max<size_t>(1, batchSize), MaxRowsForColumns(columns.size()));
     std::vector<TRow> batch;
     batch.reserve(batchSize);
+    auto flush = [&]() {
+        if (batch.empty()) {
+            return;
+        }
+        InsertRowsChunk(conn, table, columns, batch, 0, batch.size(), suffix);
+        batch.clear();
+    };
     auto add = [&](TRow row) {
         batch.push_back(std::move(row));
         if (batch.size() >= batchSize) {
-            InsertRows(conn, table, columns, batch, suffix);
-            batch.clear();
+            flush();
         }
     };
     emit(add);
-    InsertRows(conn, table, columns, batch, suffix);
+    flush();
 }
 
-void InsertWarehouse(TObConnection& conn, uint64_t seed, int wh) {
-    auto row = NGenerator::GenerateWarehouse(seed, wh);
-    InsertRows(conn, "warehouse",
-        {"w_id", "w_ytd", "w_tax", "w_name", "w_street_1", "w_street_2", "w_city", "w_state", "w_zip"},
-        {{
-            Cell(row.Id), Cell(row.Ytd.ToString()), Cell(row.Tax.ToString()), Cell(row.Name),
-            Cell(row.Street1), Cell(row.Street2), Cell(row.City), Cell(row.State), Cell(row.Zip),
-        }});
-}
-
-void InsertDistricts(TObConnection& conn, uint64_t seed, int wh) {
-    std::vector<TRow> rows;
-    for (int d = DISTRICT_LOW_ID; d <= DISTRICT_HIGH_ID; ++d) {
-        auto row = NGenerator::GenerateDistrict(seed, wh, d);
-        rows.push_back({
-            Cell(row.WarehouseId), Cell(row.Id), Cell(row.Ytd.ToString()), Cell(row.Tax.ToString()),
-            Cell(row.NextOrderId), Cell(row.Name), Cell(row.Street1), Cell(row.Street2),
-            Cell(row.City), Cell(row.State), Cell(row.Zip),
-        });
+// Same shape as tpcc-oceanbase-cpp BulkInsert: one short TX per table.
+template <typename TEmit>
+void BulkInsert(
+    TObConnection& conn,
+    const std::string& table,
+    const std::vector<std::string>& columns,
+    int batchRows,
+    TEmit emit,
+    const std::string& suffix = {})
+{
+    conn.BeginRepeatableRead();
+    try {
+        EmitBatches(conn, table, columns, EffectiveBatchSize(columns.size(), batchRows), emit, suffix);
+        conn.Commit();
+    } catch (...) {
+        conn.Rollback();
+        throw;
     }
-    InsertRows(conn, "district",
+}
+
+void InsertWarehouse(TObConnection& conn, uint64_t seed, int wh, int batchRows) {
+    BulkInsert(conn, "warehouse",
+        {"w_id", "w_ytd", "w_tax", "w_name", "w_street_1", "w_street_2", "w_city", "w_state", "w_zip"},
+        batchRows,
+        [&](auto add) {
+            auto row = NGenerator::GenerateWarehouse(seed, wh);
+            add({
+                Cell(row.Id), Cell(row.Ytd.ToString()), Cell(row.Tax.ToString()), Cell(row.Name),
+                Cell(row.Street1), Cell(row.Street2), Cell(row.City), Cell(row.State), Cell(row.Zip),
+            });
+        });
+}
+
+void InsertDistricts(TObConnection& conn, uint64_t seed, int wh, int batchRows) {
+    BulkInsert(conn, "district",
         {"d_w_id", "d_id", "d_ytd", "d_tax", "d_next_o_id", "d_name",
          "d_street_1", "d_street_2", "d_city", "d_state", "d_zip"},
-        rows);
+        batchRows,
+        [&](auto add) {
+            for (int d = DISTRICT_LOW_ID; d <= DISTRICT_HIGH_ID; ++d) {
+                auto row = NGenerator::GenerateDistrict(seed, wh, d);
+                add({
+                    Cell(row.WarehouseId), Cell(row.Id), Cell(row.Ytd.ToString()), Cell(row.Tax.ToString()),
+                    Cell(row.NextOrderId), Cell(row.Name), Cell(row.Street1), Cell(row.Street2),
+                    Cell(row.City), Cell(row.State), Cell(row.Zip),
+                });
+            }
+        });
 }
 
 void InsertStock(TObConnection& conn, uint64_t seed, int wh, int batchRows) {
-    const std::vector<std::string> columns = {
-        "s_w_id", "s_i_id", "s_quantity", "s_ytd", "s_order_cnt", "s_remote_cnt",
-        "s_data", "s_dist_01", "s_dist_02", "s_dist_03", "s_dist_04", "s_dist_05",
-        "s_dist_06", "s_dist_07", "s_dist_08", "s_dist_09", "s_dist_10",
-    };
-    EmitBatches(conn, "stock", columns, EffectiveBatchSize(columns.size(), batchRows),
+    BulkInsert(conn, "stock",
+        {"s_w_id", "s_i_id", "s_quantity", "s_ytd", "s_order_cnt", "s_remote_cnt",
+         "s_data", "s_dist_01", "s_dist_02", "s_dist_03", "s_dist_04", "s_dist_05",
+         "s_dist_06", "s_dist_07", "s_dist_08", "s_dist_09", "s_dist_10"},
+        batchRows,
         [&](auto add) {
             for (int itemId = 1; itemId <= ITEM_COUNT; ++itemId) {
                 auto row = NGenerator::GenerateStock(seed, wh, itemId);
@@ -207,13 +219,12 @@ void InsertStock(TObConnection& conn, uint64_t seed, int wh, int batchRows) {
 }
 
 void InsertCustomers(TObConnection& conn, uint64_t seed, int wh, int district, int batchRows) {
-    const std::vector<std::string> columns = {
-        "c_w_id", "c_d_id", "c_id", "c_discount", "c_credit", "c_last", "c_first",
-        "c_credit_lim", "c_balance", "c_ytd_payment", "c_payment_cnt", "c_delivery_cnt",
-        "c_street_1", "c_street_2", "c_city", "c_state", "c_zip", "c_phone",
-        "c_since", "c_middle", "c_data",
-    };
-    EmitBatches(conn, "customer", columns, EffectiveBatchSize(columns.size(), batchRows),
+    BulkInsert(conn, "customer",
+        {"c_w_id", "c_d_id", "c_id", "c_discount", "c_credit", "c_last", "c_first",
+         "c_credit_lim", "c_balance", "c_ytd_payment", "c_payment_cnt", "c_delivery_cnt",
+         "c_street_1", "c_street_2", "c_city", "c_state", "c_zip", "c_phone",
+         "c_since", "c_middle", "c_data"},
+        batchRows,
         [&](auto add) {
             for (int cid = C_FIRST_CUSTOMER_ID; cid <= CUSTOMERS_PER_DISTRICT; ++cid) {
                 auto row = NGenerator::GenerateCustomer(seed, wh, district, cid);
@@ -229,79 +240,93 @@ void InsertCustomers(TObConnection& conn, uint64_t seed, int wh, int district, i
         });
 }
 
-void InsertHistory(TObConnection& conn, uint64_t seed, int wh, int district) {
-    std::vector<TRow> rows;
-    rows.reserve(CUSTOMERS_PER_DISTRICT);
-    for (int cid = C_FIRST_CUSTOMER_ID; cid <= CUSTOMERS_PER_DISTRICT; ++cid) {
-        auto row = NGenerator::GenerateHistory(seed, wh, district, cid);
-        rows.push_back({
-            Cell(row.CustomerId), Cell(row.CustomerDistrictId), Cell(row.CustomerWarehouseId),
-            Cell(row.DistrictId), Cell(row.WarehouseId), Cell(FormatUnixTimestamp(row.DateUnix)),
-            Cell(row.Amount.ToString()), Cell(row.Data),
-        });
-    }
-    InsertRows(conn, "history",
+void InsertHistory(TObConnection& conn, uint64_t seed, int wh, int district, int batchRows) {
+    BulkInsert(conn, "history",
         {"h_c_id", "h_c_d_id", "h_c_w_id", "h_d_id", "h_w_id", "h_date", "h_amount", "h_data"},
-        rows);
+        batchRows,
+        [&](auto add) {
+            for (int cid = C_FIRST_CUSTOMER_ID; cid <= CUSTOMERS_PER_DISTRICT; ++cid) {
+                auto row = NGenerator::GenerateHistory(seed, wh, district, cid);
+                add({
+                    Cell(row.CustomerId), Cell(row.CustomerDistrictId), Cell(row.CustomerWarehouseId),
+                    Cell(row.DistrictId), Cell(row.WarehouseId), Cell(FormatUnixTimestamp(row.DateUnix)),
+                    Cell(row.Amount.ToString()), Cell(row.Data),
+                });
+            }
+        });
 }
 
-void InsertOrders(TObConnection& conn, uint64_t seed, int wh, int district) {
+void InsertOrders(TObConnection& conn, uint64_t seed, int wh, int district, int batchRows) {
     const auto customerIds = NGenerator::InitialOrderCustomerPermutation(seed, wh, district);
-    std::vector<TRow> orders;
-    std::vector<TRow> newOrders;
-    std::vector<TRow> lines;
-    orders.reserve(CUSTOMERS_PER_DISTRICT);
-    newOrders.reserve(CUSTOMERS_PER_DISTRICT - FIRST_UNPROCESSED_O_ID + 1);
 
-    for (int oid = 1; oid <= CUSTOMERS_PER_DISTRICT; ++oid) {
-        int cid = customerIds[oid - 1];
-        auto order = NGenerator::GenerateOrder(seed, wh, district, oid, cid);
-        orders.push_back({
-            Cell(order.WarehouseId), Cell(order.DistrictId), Cell(order.Id), Cell(order.CustomerId),
-            Cell(order.CarrierId), Cell(order.OlCnt), Cell(order.AllLocal),
-            Cell(FormatUnixTimestamp(order.EntryUnix)),
-        });
-        if (oid >= FIRST_UNPROCESSED_O_ID) {
-            auto no = NGenerator::GenerateNewOrder(wh, district, oid);
-            newOrders.push_back({Cell(no.WarehouseId), Cell(no.DistrictId), Cell(no.OrderId)});
-        }
-
-        const bool delivered = oid < FIRST_UNPROCESSED_O_ID;
-        auto orderLines = NGenerator::GenerateOrderLines(
-            seed, wh, district, oid, order.OlCnt,
-            delivered ? std::optional<int64_t>(order.EntryUnix) : std::nullopt);
-        for (const auto& line : orderLines) {
-            std::optional<std::string> deliveryDate;
-            if (line.DeliveryUnix) {
-                deliveryDate = FormatUnixTimestamp(*line.DeliveryUnix);
-            }
-            lines.push_back({
-                Cell(line.WarehouseId), Cell(line.DistrictId), Cell(line.OrderId), Cell(line.Number),
-                Cell(line.ItemId), Cell(deliveryDate), Cell(line.Amount.ToString()),
-                Cell(line.SupplyWarehouseId), Cell(line.Quantity), Cell(line.DistInfo),
-            });
-        }
-    }
-
-    InsertRows(conn, "oorder",
+    BulkInsert(conn, "oorder",
         {"o_w_id", "o_d_id", "o_id", "o_c_id", "o_carrier_id", "o_ol_cnt", "o_all_local", "o_entry_d"},
-        orders);
-    InsertRows(conn, "new_order", {"no_w_id", "no_d_id", "no_o_id"}, newOrders);
-    InsertRows(conn, "order_line",
+        batchRows,
+        [&](auto add) {
+            for (int oid = 1; oid <= CUSTOMERS_PER_DISTRICT; ++oid) {
+                int cid = customerIds[oid - 1];
+                auto order = NGenerator::GenerateOrder(seed, wh, district, oid, cid);
+                add({
+                    Cell(order.WarehouseId), Cell(order.DistrictId), Cell(order.Id), Cell(order.CustomerId),
+                    Cell(order.CarrierId), Cell(order.OlCnt), Cell(order.AllLocal),
+                    Cell(FormatUnixTimestamp(order.EntryUnix)),
+                });
+            }
+        });
+
+    BulkInsert(conn, "new_order",
+        {"no_w_id", "no_d_id", "no_o_id"},
+        batchRows,
+        [&](auto add) {
+            for (int oid = FIRST_UNPROCESSED_O_ID; oid <= CUSTOMERS_PER_DISTRICT; ++oid) {
+                auto no = NGenerator::GenerateNewOrder(wh, district, oid);
+                add({Cell(no.WarehouseId), Cell(no.DistrictId), Cell(no.OrderId)});
+            }
+        });
+
+    BulkInsert(conn, "order_line",
         {"ol_w_id", "ol_d_id", "ol_o_id", "ol_number", "ol_i_id", "ol_delivery_d",
          "ol_amount", "ol_supply_w_id", "ol_quantity", "ol_dist_info"},
-        lines);
+        batchRows,
+        [&](auto add) {
+            for (int oid = 1; oid <= CUSTOMERS_PER_DISTRICT; ++oid) {
+                int cid = customerIds[oid - 1];
+                auto order = NGenerator::GenerateOrder(seed, wh, district, oid, cid);
+                const bool delivered = oid < FIRST_UNPROCESSED_O_ID;
+                auto orderLines = NGenerator::GenerateOrderLines(
+                    seed, wh, district, oid, order.OlCnt,
+                    delivered ? std::optional<int64_t>(order.EntryUnix) : std::nullopt);
+                for (const auto& line : orderLines) {
+                    std::optional<std::string> deliveryDate;
+                    if (line.DeliveryUnix) {
+                        deliveryDate = FormatUnixTimestamp(*line.DeliveryUnix);
+                    }
+                    add({
+                        Cell(line.WarehouseId), Cell(line.DistrictId), Cell(line.OrderId), Cell(line.Number),
+                        Cell(line.ItemId), Cell(deliveryDate), Cell(line.Amount.ToString()),
+                        Cell(line.SupplyWarehouseId), Cell(line.Quantity), Cell(line.DistInfo),
+                    });
+                }
+            }
+        });
 }
 
 void DeleteWarehouseChildren(TObConnection& conn, int warehouseId) {
-    conn.Execute("DELETE FROM order_line WHERE ol_w_id = ?", MakeParams(warehouseId));
-    conn.Execute("DELETE FROM new_order WHERE no_w_id = ?", MakeParams(warehouseId));
-    conn.Execute("DELETE FROM oorder WHERE o_w_id = ?", MakeParams(warehouseId));
-    conn.Execute("DELETE FROM history WHERE h_w_id = ? OR h_c_w_id = ?", MakeParams(warehouseId, warehouseId));
-    conn.Execute("DELETE FROM customer WHERE c_w_id = ?", MakeParams(warehouseId));
-    conn.Execute("DELETE FROM district WHERE d_w_id = ?", MakeParams(warehouseId));
-    conn.Execute("DELETE FROM stock WHERE s_w_id = ?", MakeParams(warehouseId));
-    conn.Execute("DELETE FROM warehouse WHERE w_id = ?", MakeParams(warehouseId));
+    conn.BeginRepeatableRead();
+    try {
+        conn.Execute("DELETE FROM order_line WHERE ol_w_id = ?", MakeParams(warehouseId));
+        conn.Execute("DELETE FROM new_order WHERE no_w_id = ?", MakeParams(warehouseId));
+        conn.Execute("DELETE FROM oorder WHERE o_w_id = ?", MakeParams(warehouseId));
+        conn.Execute("DELETE FROM history WHERE h_w_id = ? OR h_c_w_id = ?", MakeParams(warehouseId, warehouseId));
+        conn.Execute("DELETE FROM customer WHERE c_w_id = ?", MakeParams(warehouseId));
+        conn.Execute("DELETE FROM district WHERE d_w_id = ?", MakeParams(warehouseId));
+        conn.Execute("DELETE FROM stock WHERE s_w_id = ?", MakeParams(warehouseId));
+        conn.Execute("DELETE FROM warehouse WHERE w_id = ?", MakeParams(warehouseId));
+        conn.Commit();
+    } catch (...) {
+        conn.Rollback();
+        throw;
+    }
 }
 
 void PopulateWarehouse(
@@ -310,13 +335,14 @@ void PopulateWarehouse(
     int warehouseId,
     int batchRows)
 {
-    InsertWarehouse(conn, seed, warehouseId);
-    InsertDistricts(conn, seed, warehouseId);
+    // Per-table commits (tpcc-oceanbase-cpp LoadWarehouse), not one warehouse-sized TX.
+    InsertWarehouse(conn, seed, warehouseId, batchRows);
+    InsertDistricts(conn, seed, warehouseId, batchRows);
     InsertStock(conn, seed, warehouseId, batchRows);
     for (int d = DISTRICT_LOW_ID; d <= DISTRICT_HIGH_ID; ++d) {
         InsertCustomers(conn, seed, warehouseId, d, batchRows);
-        InsertHistory(conn, seed, warehouseId, d);
-        InsertOrders(conn, seed, warehouseId, d);
+        InsertHistory(conn, seed, warehouseId, d, batchRows);
+        InsertOrders(conn, seed, warehouseId, d, batchRows);
     }
 }
 
@@ -343,15 +369,13 @@ TPutBatchResult PutItemsIdempotent(
               << ", run_id=" << (runId.empty() ? "-" : runId)
               << ", batch_rows=" << batchRows << ")");
 
-        conn.BeginRepeatableRead();
         const std::string suffix =
             " ON DUPLICATE KEY UPDATE "
             "i_name = VALUES(i_name), i_price = VALUES(i_price), "
             "i_data = VALUES(i_data), i_im_id = VALUES(i_im_id)";
-        const std::vector<std::string> columns = {
-            "i_id", "i_name", "i_price", "i_data", "i_im_id",
-        };
-        EmitBatches(conn, "item", columns, EffectiveBatchSize(columns.size(), batchRows),
+        BulkInsert(conn, "item",
+            {"i_id", "i_name", "i_price", "i_data", "i_im_id"},
+            batchRows,
             [&](auto add) {
                 for (int i = 1; i <= ITEM_COUNT; ++i) {
                     auto row = NGenerator::GenerateItem(seed, i);
@@ -362,11 +386,9 @@ TPutBatchResult PutItemsIdempotent(
                 }
             },
             suffix);
-        conn.Commit();
         LOG_I("Items loaded (idempotent upsert)");
         return OkResult();
     } catch (const std::exception& ex) {
-        conn.Rollback();
         LOG_E("PutItemsIdempotent failed: " << ex.what());
         return FailResult(ex);
     }
@@ -384,14 +406,11 @@ TPutBatchResult PutWarehouseIdempotent(
               << ", run_id=" << (runId.empty() ? "-" : runId)
               << ", batch_rows=" << batchRows << ")");
 
-        // Fast path: insert into an empty warehouse range.
+        // Fast path: per-table BulkInsert commits (tpcc-oceanbase-cpp style).
         try {
-            conn.BeginRepeatableRead();
             PopulateWarehouse(conn, seed, warehouseId, batchRows);
-            conn.Commit();
             return OkResult();
         } catch (const std::exception& ex) {
-            conn.Rollback();
             if (!IsDuplicateKeyError(ex)) {
                 throw;
             }
@@ -400,13 +419,10 @@ TPutBatchResult PutWarehouseIdempotent(
         }
 
         // Slow path: PK conflict means the range is occupied; wipe and reload.
-        conn.BeginRepeatableRead();
         DeleteWarehouseChildren(conn, warehouseId);
         PopulateWarehouse(conn, seed, warehouseId, batchRows);
-        conn.Commit();
         return OkResult();
     } catch (const std::exception& ex) {
-        conn.Rollback();
         LOG_E("PutWarehouseIdempotent(w_id=" << warehouseId << ") failed: " << ex.what());
         return FailResult(ex);
     }
