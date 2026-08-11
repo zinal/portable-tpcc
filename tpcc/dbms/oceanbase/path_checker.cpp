@@ -5,7 +5,6 @@
 #include <constants.h>
 #include <log.h>
 
-#include <iostream>
 #include <stdexcept>
 #include <string>
 #include <unordered_set>
@@ -64,8 +63,8 @@ void CheckTablesExist(TObConnection& conn, const std::string& database, const ch
     auto tables = ListTables(conn, database);
     for (const char* table : TPCC_TABLES) {
         if (!tables.contains(table)) {
-            std::cerr << "TPC-C table '" << table << "' is missing. " << what << std::endl;
-            std::exit(1);
+            throw std::runtime_error(
+                std::string("TPC-C table '") + table + "' is missing. " + what);
         }
     }
 }
@@ -74,8 +73,8 @@ void CheckNoTablesExist(TObConnection& conn, const std::string& database, const 
     auto tables = ListTables(conn, database);
     for (const char* table : TPCC_TABLES) {
         if (tables.contains(table)) {
-            std::cerr << "TPC-C table '" << table << "' already exists. " << what << std::endl;
-            std::exit(1);
+            throw std::runtime_error(
+                std::string("TPC-C table '") + table + "' already exists. " + what);
         }
     }
 }
@@ -88,11 +87,9 @@ void CheckIndexExists(
 {
     auto indexes = ListIndexes(conn, database, tableName);
     if (!indexes.contains(expectedIndex)) {
-        std::cerr << "Table '" << tableName
-                  << "' is missing expected index '" << expectedIndex
-                  << "'. Run 'tpcc import' to create indexes after bulk load."
-                  << std::endl;
-        std::exit(1);
+        throw std::runtime_error(
+            "Table '" + tableName + "' is missing expected index '" + expectedIndex +
+            "'. Run 'tpcc import' to create indexes after bulk load.");
     }
 }
 
@@ -104,22 +101,28 @@ int GetWarehouseCount(TObConnection& conn) {
     return result.GetInt32("cnt");
 }
 
+template <typename Fn>
+void WithPreflight(const char* label, Fn&& fn) {
+    try {
+        fn();
+    } catch (const std::exception& e) {
+        throw std::runtime_error(std::string(label) + e.what());
+    }
+}
+
 } // namespace
 
-void CheckDbForInit(const std::string& connectionString, const std::string& path) noexcept {
-    try {
+void CheckDbForInit(const std::string& connectionString, const std::string& path) {
+    WithPreflight("Pre-flight check for init failed: ", [&] {
         auto cfg = ConfigWithPath(connectionString, path);
         const std::string db = EffectiveDatabase(cfg);
         auto conn = ConnectChecked(cfg);
         CheckNoTablesExist(*conn, db, "Already inited or forgot to clean?");
-    } catch (const std::exception& e) {
-        std::cerr << "Pre-flight check for init failed: " << e.what() << std::endl;
-        std::exit(1);
-    }
+    });
 }
 
-void CheckDbForImport(const std::string& connectionString, const std::string& path) noexcept {
-    try {
+void CheckDbForImport(const std::string& connectionString, const std::string& path) {
+    WithPreflight("Pre-flight check for import failed: ", [&] {
         auto cfg = ConfigWithPath(connectionString, path);
         const std::string db = EffectiveDatabase(cfg);
         auto conn = ConnectChecked(cfg);
@@ -130,18 +133,15 @@ void CheckDbForImport(const std::string& connectionString, const std::string& pa
             LOG_W("Database already has " << whCount
                   << " warehouses; import will reload assigned ranges on key conflict");
         }
-    } catch (const std::exception& e) {
-        std::cerr << "Pre-flight check for import failed: " << e.what() << std::endl;
-        std::exit(1);
-    }
+    });
 }
 
 void CheckDbForRun(
     const std::string& connectionString,
     int expectedWhCount,
-    const std::string& path) noexcept
+    const std::string& path)
 {
-    try {
+    WithPreflight("Pre-flight check for run failed: ", [&] {
         auto cfg = ConfigWithPath(connectionString, path);
         const std::string db = EffectiveDatabase(cfg);
         auto conn = ConnectChecked(cfg);
@@ -151,19 +151,16 @@ void CheckDbForRun(
 
         int whCount = GetWarehouseCount(*conn);
         if (whCount == 0) {
-            std::cerr << "Empty warehouse table (and maybe missing other TPC-C data), "
-                      << "run 'tpcc import' first" << std::endl;
-            std::exit(1);
+            throw std::runtime_error(
+                "Empty warehouse table (and maybe missing other TPC-C data), "
+                "run 'tpcc import' first");
         }
         if (whCount < expectedWhCount) {
-            std::cerr << "Expected data for " << expectedWhCount
-                      << " warehouses, but found only " << whCount << std::endl;
-            std::exit(1);
+            throw std::runtime_error(
+                "Expected data for " + std::to_string(expectedWhCount) +
+                " warehouses, but found only " + std::to_string(whCount));
         }
-    } catch (const std::exception& e) {
-        std::cerr << "Pre-flight check for run failed: " << e.what() << std::endl;
-        std::exit(1);
-    }
+    });
 }
 
 } // namespace NTpcc
