@@ -1,6 +1,7 @@
 package orchestrator
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -306,10 +307,37 @@ func (o *Orchestrator) waitProcessMetadata(ctx *Context, proc *launchedProc, tim
 			return nil
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("timeout waiting for %s/%s process metadata", proc.Role, proc.Instance)
+			return o.processMetadataTimeoutErr(proc)
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
+}
+
+func (o *Orchestrator) processMetadataTimeoutErr(proc *launchedProc) error {
+	var b strings.Builder
+	fmt.Fprintf(&b, "timeout waiting for %s/%s process metadata at %s", proc.Role, proc.Instance, proc.ProcPath)
+	if proc.PID > 0 {
+		alive, err := proc.Session.IsAlive(proc.PID)
+		if err != nil {
+			fmt.Fprintf(&b, " (pid %d alive=?: %v)", proc.PID, err)
+		} else {
+			fmt.Fprintf(&b, " (pid %d alive=%v)", proc.PID, alive)
+		}
+	}
+	instanceDir := filepath.Dir(proc.ProcPath)
+	for _, name := range []string{"stderr.log", "stdout.log"} {
+		path := filepath.Join(instanceDir, name)
+		data, err := proc.Session.ReadFile(path)
+		if err != nil || len(bytes.TrimSpace(data)) == 0 {
+			continue
+		}
+		const max = 2048
+		if len(data) > max {
+			data = data[len(data)-max:]
+		}
+		fmt.Fprintf(&b, "\n---- %s ----\n%s", name, strings.TrimSpace(string(data)))
+	}
+	return fmt.Errorf("%s", b.String())
 }
 
 func (o *Orchestrator) loadProcessMetadata(ctx *Context, proc *launchedProc) (bool, error) {

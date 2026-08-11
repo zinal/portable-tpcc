@@ -158,14 +158,26 @@ func TestWaitProcessMetadataTimesOutWhenMissing(t *testing.T) {
 		Role:     "worker",
 		Host:     "host-a",
 		Instance: "worker-a",
-		Session:  &fakeSession{files: map[string][]byte{}, alive: true},
+		Session: &fakeSession{
+			files: map[string][]byte{
+				"stderr.log": []byte("nohup: failed to run command 'remote/run/tpcc-x': No such file or directory\n"),
+			},
+			alive: false,
+		},
 		PID:      123,
-		ProcPath: "/missing",
+		ProcPath: "/tmp/run/worker/worker-a/process.json",
 	}
 
 	err := o.waitProcessMetadata(ctx, proc, 0)
 	if err == nil || !strings.Contains(err.Error(), "timeout waiting") {
 		t.Fatalf("expected timeout error, got %v", err)
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "process.json") || !strings.Contains(msg, "alive=false") {
+		t.Fatalf("timeout error missing path/alive diagnostics: %v", err)
+	}
+	if !strings.Contains(msg, "No such file or directory") {
+		t.Fatalf("timeout error missing stderr tail: %v", err)
 	}
 }
 

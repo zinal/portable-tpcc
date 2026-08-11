@@ -309,6 +309,29 @@ func (s *SSH) Remove(remotePath string) error {
 	return nil
 }
 
+// pathUnderWorkDir returns path relative to workDir when path is inside it.
+// StartDetached cds into workDir, so binary/log paths must not keep the workDir prefix
+// (e.g. workDir=remote/run, binary=remote/run/tpcc-x → tpcc-x).
+func pathUnderWorkDir(workDir, path string) string {
+	if workDir == "" || path == "" {
+		return path
+	}
+	cleanWork := filepath.Clean(workDir)
+	cleanPath := filepath.Clean(path)
+	if cleanPath == cleanWork {
+		return "."
+	}
+	sep := string(os.PathSeparator)
+	prefix := cleanWork + sep
+	if strings.HasPrefix(cleanPath, prefix) {
+		return cleanPath[len(prefix):]
+	}
+	if rel, err := filepath.Rel(cleanWork, cleanPath); err == nil && rel != "." && !strings.HasPrefix(rel, "..") {
+		return rel
+	}
+	return path
+}
+
 func (s *SSH) StartDetached(workDir, binary string, argv []string, env map[string]string, stdoutPath, stderrPath string) (int, error) {
 	for k := range env {
 		if !ValidEnvName(k) {
@@ -321,17 +344,20 @@ func (s *SSH) StartDetached(workDir, binary string, argv []string, env map[strin
 	if err := s.MkdirAll(filepath.Dir(stdoutPath)); err != nil {
 		return 0, err
 	}
+	bin := pathUnderWorkDir(workDir, binary)
+	stdoutRel := pathUnderWorkDir(workDir, stdoutPath)
+	stderrRel := pathUnderWorkDir(workDir, stderrPath)
 	var b strings.Builder
 	b.WriteString("cd " + remotePathExpr(workDir) + " && ")
 	for k, v := range env {
 		b.WriteString(k + "=" + shellQuote(v) + " ")
 	}
-	b.WriteString("nohup " + remotePathExpr(binary))
+	b.WriteString("nohup " + remotePathExpr(bin))
 	for _, a := range argv {
 		b.WriteString(" " + shellQuote(a))
 	}
-	b.WriteString(" > " + remotePathExpr(stdoutPath))
-	b.WriteString(" 2> " + remotePathExpr(stderrPath))
+	b.WriteString(" > " + remotePathExpr(stdoutRel))
+	b.WriteString(" 2> " + remotePathExpr(stderrRel))
 	b.WriteString(" < /dev/null & echo $!")
 	stdout, stderr, exit, err := s.run(b.String())
 	if err != nil {
