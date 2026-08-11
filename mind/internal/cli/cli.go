@@ -1,10 +1,14 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 
 	"portable-tpcc/mind/internal/config"
 	"portable-tpcc/mind/internal/orchestrator"
@@ -31,6 +35,16 @@ func Run(args []string) int {
 		printUsage()
 		return 0
 	}
+
+	// Catch Ctrl+C / SIGTERM so deferred profile-lock release can run.
+	interrupt, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	return run(args, interrupt)
+}
+
+// run is the testable entrypoint; interrupt is cancelled on SIGINT/SIGTERM in Run.
+func run(args []string, interrupt context.Context) int {
 	cfg := &Config{}
 	cmd := args[0]
 	rest := args[1:]
@@ -83,6 +97,7 @@ func Run(args []string) int {
 		RunID:        cfg.RunID,
 		WorkerBinary: cfg.WorkerBinary,
 		SkipSteps:    cfg.SkipSteps,
+		Interrupt:    interrupt,
 	}
 
 	switch cmd {
@@ -139,11 +154,18 @@ func orch(opts orchestrator.Options) (*orchestrator.Orchestrator, error) {
 	return orchestrator.New(opts)
 }
 
+func exitErr(err error) int {
+	fmt.Fprintln(os.Stderr, err)
+	if errors.Is(err, orchestrator.ErrInterrupted) {
+		return 130
+	}
+	return 1
+}
+
 func runValidate(opts orchestrator.Options) int {
 	o, err := orch(opts)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return exitErr(err)
 	}
 	res := o.Validate()
 	out, _ := json.MarshalIndent(res, "", "  ")
@@ -157,21 +179,18 @@ func runValidate(opts orchestrator.Options) int {
 func runPlan(opts orchestrator.Options) int {
 	o, err := orch(opts)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return exitErr(err)
 	}
 	var plan *config.PlanSnapshot
 	if err := withMaterializedProfileLock(o, func(ctx *orchestrator.Context) error {
 		plan = config.BuildPlanSnapshot(ctx.RunConfig)
 		return nil
 	}); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return exitErr(err)
 	}
 	data, err := orchestrator.WritePlanJSON(plan)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return exitErr(err)
 	}
 	fmt.Println(string(data))
 	return 0
@@ -180,12 +199,10 @@ func runPlan(opts orchestrator.Options) int {
 func runDeploy(opts orchestrator.Options) int {
 	o, err := orch(opts)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return exitErr(err)
 	}
 	if err := withMaterializedProfileLock(o, func(ctx *orchestrator.Context) error { return o.Deploy(ctx) }); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return exitErr(err)
 	}
 	return 0
 }
@@ -193,11 +210,9 @@ func runDeploy(opts orchestrator.Options) int {
 func runStage(opts orchestrator.Options, stage string) int {
 	o, err := orch(opts)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return exitErr(err)
 	}
-	var runErr error
-	runErr = withMaterializedProfileLock(o, func(ctx *orchestrator.Context) error {
+	runErr := withMaterializedProfileLock(o, func(ctx *orchestrator.Context) error {
 		switch stage {
 		case "schema":
 			return o.RunSchema(ctx)
@@ -214,8 +229,7 @@ func runStage(opts orchestrator.Options, stage string) int {
 		}
 	})
 	if runErr != nil {
-		fmt.Fprintln(os.Stderr, runErr)
-		return 1
+		return exitErr(runErr)
 	}
 	return 0
 }
@@ -227,12 +241,10 @@ func runCheck(opts orchestrator.Options, phase string) int {
 	}
 	o, err := orch(opts)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return exitErr(err)
 	}
 	if err := withMaterializedProfileLock(o, func(ctx *orchestrator.Context) error { return o.RunCheck(ctx, phase) }); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return exitErr(err)
 	}
 	return 0
 }
@@ -240,8 +252,7 @@ func runCheck(opts orchestrator.Options, phase string) int {
 func runStatus(opts orchestrator.Options) int {
 	o, err := orch(opts)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return exitErr(err)
 	}
 	runID := opts.RunID
 	if runID == "" {
@@ -249,8 +260,7 @@ func runStatus(opts orchestrator.Options) int {
 	}
 	rs, err := o.Status(runID)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return exitErr(err)
 	}
 	data, _ := json.MarshalIndent(rs, "", "  ")
 	fmt.Println(string(data))
@@ -260,12 +270,10 @@ func runStatus(opts orchestrator.Options) int {
 func runStop(opts orchestrator.Options) int {
 	o, err := orch(opts)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return exitErr(err)
 	}
 	if err := withMaterializedProfileLock(o, func(ctx *orchestrator.Context) error { return o.Stop(ctx) }); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return exitErr(err)
 	}
 	return 0
 }
@@ -273,12 +281,10 @@ func runStop(opts orchestrator.Options) int {
 func runFull(opts orchestrator.Options) int {
 	o, err := orch(opts)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return exitErr(err)
 	}
 	if err := o.Run(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return exitErr(err)
 	}
 	return 0
 }
@@ -309,14 +315,12 @@ func runCleanup(opts orchestrator.Options, yes bool) int {
 	}
 	o, err := orch(opts)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return exitErr(err)
 	}
 	if err := withExistingRunCleanup(o, func(ctx *orchestrator.Context) error {
 		return o.Cleanup(ctx, true)
 	}); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return exitErr(err)
 	}
 	return 0
 }
