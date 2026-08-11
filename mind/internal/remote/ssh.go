@@ -331,10 +331,10 @@ func (s *SSH) Remove(remotePath string) error {
 }
 
 func (s *SSH) RemoveAll(remotePath string) error {
-	if strings.TrimSpace(remotePath) == "" || remotePath == "/" || remotePath == "." {
-		return fmt.Errorf("refusing to remove unsafe path %q", remotePath)
+	if err := rejectUnsafeRemoveAll(remotePath); err != nil {
+		return err
 	}
-	_, stderr, exit, err := s.run("rm -rf " + remotePathExpr(remotePath))
+	_, stderr, exit, err := s.run("rm -rf -- " + remotePathExpr(remotePath))
 	if err != nil {
 		return err
 	}

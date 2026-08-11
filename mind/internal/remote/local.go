@@ -119,6 +119,9 @@ func (l *Local) Remove(remotePath string) error {
 }
 
 func (l *Local) RemoveAll(remotePath string) error {
+	if err := rejectUnsafeRemoveAll(remotePath); err != nil {
+		return err
+	}
 	err := os.RemoveAll(l.resolve(remotePath))
 	if os.IsNotExist(err) {
 		return nil

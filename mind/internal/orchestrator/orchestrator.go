@@ -679,7 +679,7 @@ func (o *Orchestrator) ResolveCleanupRunID() (string, error) {
 	if !vr.Valid {
 		return "", fmt.Errorf("profile invalid: %v", vr.Errors)
 	}
-	runID := o.Opts.RunID
+	runID := strings.TrimSpace(o.Opts.RunID)
 	if runID == "" {
 		latest, err := o.latestCleanupRunID()
 		if err != nil {
@@ -691,11 +691,24 @@ func (o *Orchestrator) ResolveCleanupRunID() (string, error) {
 		progress.Printf("cleanup run_id=%s", latest)
 		return latest, nil
 	}
+	if err := validateCleanupRunID(runID); err != nil {
+		return "", err
+	}
 	if err := o.verifyRunProfileSHA(runID); err != nil {
 		return "", err
 	}
 	progress.Printf("cleanup run_id=%s", runID)
 	return runID, nil
+}
+
+func validateCleanupRunID(runID string) error {
+	if runID == "." || runID == ".." {
+		return fmt.Errorf("invalid run_id %q", runID)
+	}
+	if strings.Contains(runID, "/") || strings.Contains(runID, `\`) || strings.Contains(runID, "..") {
+		return fmt.Errorf("invalid run_id %q", runID)
+	}
+	return nil
 }
 
 func (o *Orchestrator) latestCleanupRunID() (string, error) {
@@ -990,6 +1003,7 @@ func (o *Orchestrator) cleanupLocalDeployManifest() error {
 	manifestPath := deploy.DeployManifestPath(root)
 	if _, err := os.Stat(manifestPath); err != nil {
 		if os.IsNotExist(err) {
+			progress.Printf("cleanup: no local deploy manifest under %s", root)
 			return nil
 		}
 		return err

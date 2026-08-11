@@ -50,6 +50,17 @@ func TestAssertSafeRemoteRunDir(t *testing.T) {
 	}
 }
 
+func TestValidateCleanupRunID(t *testing.T) {
+	if err := validateCleanupRunID("run-1"); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"..", ".", "a/b", `a\b`, "a..b"} {
+		if err := validateCleanupRunID(id); err == nil {
+			t.Fatalf("expected invalid run_id %q", id)
+		}
+	}
+}
+
 func TestCleanArgv(t *testing.T) {
 	got := config.CleanArgv("run-config.json", "clean-0")
 	want := []string{"clean", "--run-config", "run-config.json", "--instance", "clean-0"}
