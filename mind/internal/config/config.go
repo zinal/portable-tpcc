@@ -144,7 +144,11 @@ type ExpandedPaths struct {
 	KnownHosts     string
 }
 
-// ExpandProfilePaths resolves ~ in profile path fields.
+// ExpandProfilePaths resolves ~ in control-host path fields.
+//
+// paths.remote_root is left host-native: relative paths and ~/ are interpreted
+// on each runtime host (SSH login cwd / home), not against the control-host cwd.
+// Local loopback sessions expand it when opening the session.
 func ExpandProfilePaths(p *profile.Profile) (ExpandedPaths, error) {
 	local, err := paths.ExpandHome(p.Paths.LocalArtifacts)
 	if err != nil {
@@ -162,16 +166,9 @@ func ExpandProfilePaths(p *profile.Profile) (ExpandedPaths, error) {
 	if err != nil {
 		return ExpandedPaths{}, err
 	}
-	remoteRoot, err := paths.ExpandHome(p.Paths.RemoteRoot)
-	if err != nil {
-		return ExpandedPaths{}, err
-	}
-	if abs, err := filepath.Abs(remoteRoot); err == nil {
-		remoteRoot = abs
-	}
 	return ExpandedPaths{
 		LocalArtifacts: local,
-		RemoteRoot:     remoteRoot,
+		RemoteRoot:     p.Paths.RemoteRoot,
 		ResultRoot:     result,
 		StateDir:       state,
 		KnownHosts:     known,

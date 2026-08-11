@@ -12,6 +12,7 @@ import (
 	"portable-tpcc/mind/internal/config"
 	"portable-tpcc/mind/internal/consolidate"
 	"portable-tpcc/mind/internal/deploy"
+	"portable-tpcc/mind/internal/paths"
 	"portable-tpcc/mind/internal/profile"
 	"portable-tpcc/mind/internal/redact"
 	"portable-tpcc/mind/internal/schedule"
@@ -241,12 +242,15 @@ func (o *Orchestrator) Deploy(ctx *Context) error {
 		return err
 	}
 	// Keep local-mode deploy manifest for cleanup of shared artifact trees when used.
-	if abs, err := filepath.Abs(o.Expanded.RemoteRoot); err == nil {
-		ld := &deploy.LocalDeploy{
-			SourceRoot: o.Expanded.LocalArtifacts,
-			TargetRoot: abs,
+	localRoot, err := paths.ExpandHome(o.Expanded.RemoteRoot)
+	if err == nil {
+		if abs, err := filepath.Abs(localRoot); err == nil {
+			ld := &deploy.LocalDeploy{
+				SourceRoot: o.Expanded.LocalArtifacts,
+				TargetRoot: abs,
+			}
+			_, _ = ld.Deploy(o.Expanded.LocalArtifacts, false)
 		}
-		_, _ = ld.Deploy(o.Expanded.LocalArtifacts, false)
 	}
 	return o.StateStore.Transition(ctx.RunID, state.StateSchema)
 }
@@ -527,7 +531,14 @@ func (o *Orchestrator) Stop(ctx *Context) error {
 
 // Cleanup deploy artifacts.
 func (o *Orchestrator) Cleanup(yes bool) error {
-	return deploy.Cleanup(o.Expanded.RemoteRoot, yes)
+	root, err := paths.ExpandHome(o.Expanded.RemoteRoot)
+	if err != nil {
+		return err
+	}
+	if abs, err := filepath.Abs(root); err == nil {
+		root = abs
+	}
+	return deploy.Cleanup(root, yes)
 }
 
 // WritePlanJSON encodes plan snapshot to JSON.

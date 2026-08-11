@@ -21,8 +21,38 @@ func remoteRunDir(remoteRoot, runID string) string {
 	return filepath.Join(remoteRoot, runID)
 }
 
+// runtimeRoot returns paths.remote_root as it should be used on sess.
+// Local loopback expands ~/ and resolves against the control-host cwd; SSH keeps
+// the host-native form (relative, absolute, or ~/ on the remote account).
+func (o *Orchestrator) runtimeRoot(sess remote.Session) (string, error) {
+	root := o.Expanded.RemoteRoot
+	if _, ok := sess.(*remote.Local); !ok {
+		return root, nil
+	}
+	expanded, err := paths.ExpandHome(root)
+	if err != nil {
+		return "", err
+	}
+	abs, err := filepath.Abs(expanded)
+	if err != nil {
+		return "", err
+	}
+	return abs, nil
+}
+
+func (o *Orchestrator) sessionRunDir(sess remote.Session, runID string) (string, error) {
+	root, err := o.runtimeRoot(sess)
+	if err != nil {
+		return "", err
+	}
+	return remoteRunDir(root, runID), nil
+}
+
 func (o *Orchestrator) dialConfig() (remote.DialConfig, error) {
-	localRoot := o.Expanded.RemoteRoot
+	localRoot, err := paths.ExpandHome(o.Expanded.RemoteRoot)
+	if err != nil {
+		return remote.DialConfig{}, err
+	}
 	abs, err := filepath.Abs(localRoot)
 	if err != nil {
 		return remote.DialConfig{}, err
@@ -112,7 +142,10 @@ func (o *Orchestrator) deployToHosts(ctx *Context, sessions map[string]remote.Se
 	}
 	binName := filepath.Base(binLocal)
 	for hostKey, sess := range sessions {
-		runDir := remoteRunDir(o.Expanded.RemoteRoot, ctx.RunID)
+		runDir, err := o.sessionRunDir(sess, ctx.RunID)
+		if err != nil {
+			return fmt.Errorf("host %s remote_root: %w", hostKey, err)
+		}
 		if err := sess.MkdirAll(runDir); err != nil {
 			return fmt.Errorf("host %s mkdir: %w", hostKey, err)
 		}
@@ -204,7 +237,10 @@ func (o *Orchestrator) launchRole(
 	if !ok {
 		return nil, fmt.Errorf("no session for host %s", hostKey)
 	}
-	runDir := remoteRunDir(o.Expanded.RemoteRoot, ctx.RunID)
+	runDir, err := o.sessionRunDir(sess, ctx.RunID)
+	if err != nil {
+		return nil, fmt.Errorf("host %s remote_root: %w", hostKey, err)
+	}
 	instanceDir := filepath.Join(runDir, role, instance)
 	if err := sess.MkdirAll(instanceDir); err != nil {
 		return nil, err
@@ -500,7 +536,7 @@ func validateRemotePathUnder(sess remote.Session, base, elem string) error {
 	if !ok {
 		return nil
 	}
-	target, err := paths.JoinUnder(base, elem)
+	target, err := paths.JoinRelative(base, elem)
 	if err != nil {
 		return err
 	}
@@ -526,7 +562,10 @@ func (o *Orchestrator) collectArtifacts(ctx *Context, sessions map[string]remote
 
 	collectOne := func(role, hostKey, instance string) error {
 		sess := sessions[hostKey]
-		runDir := remoteRunDir(o.Expanded.RemoteRoot, ctx.RunID)
+		runDir, err := o.sessionRunDir(sess, ctx.RunID)
+		if err != nil {
+			return err
+		}
 		remoteInstance := filepath.Join(runDir, role, instance)
 		localTmp := filepath.Join(o.Expanded.ResultRoot, ctx.RunID, ".collect-tmp", role, instance)
 		_ = os.RemoveAll(localTmp)
@@ -557,7 +596,12 @@ func (o *Orchestrator) collectArtifacts(ctx *Context, sessions map[string]remote
 			return err
 		}
 		for _, p := range manifest.Payloads {
-			remotePath, err := paths.JoinUnder(remoteInstance, p.Path)
+			var remotePath string
+			if _, ok := sess.(*remote.Local); ok {
+				remotePath, err = paths.JoinUnder(remoteInstance, p.Path)
+			} else {
+				remotePath, err = paths.JoinRelative(remoteInstance, p.Path)
+			}
 			if err != nil {
 				return err
 			}
@@ -599,7 +643,10 @@ func (o *Orchestrator) collectArtifacts(ctx *Context, sessions map[string]remote
 		checkHost = ctx.RunConfig.WorkerAssignment[0].Host
 	}
 	if sess, ok := sessions[checkHost]; ok {
-		runDir := remoteRunDir(o.Expanded.RemoteRoot, ctx.RunID)
+		runDir, err := o.sessionRunDir(sess, ctx.RunID)
+		if err != nil {
+			return err
+		}
 		for _, phase := range []string{"after-import", "after-run"} {
 			remotePath := filepath.Join(runDir, "checks", phase+".json")
 			exists, _ := sess.Exists(remotePath)
