@@ -168,6 +168,8 @@ func (o *Orchestrator) Materialize() (*Context, error) {
 }
 
 // ResolveRunID computes the run ID without creating run artifacts.
+// When --run-id is omitted, continues the latest non-terminal run created from
+// this profile so staged commands (deploy → schema → load → …) share one run.
 func (o *Orchestrator) ResolveRunID() (string, error) {
 	vr := o.Validate()
 	if !vr.Valid {
@@ -175,6 +177,12 @@ func (o *Orchestrator) ResolveRunID() (string, error) {
 	}
 	runID := o.Opts.RunID
 	if runID == "" {
+		if latest, err := o.latestContinuableRunID(); err != nil {
+			return "", err
+		} else if latest != "" {
+			progress.Printf("continuing run_id=%s", latest)
+			return latest, nil
+		}
 		var err error
 		runID, err = o.uniqueRunID(config.GenerateRunID(o.Profile.Metadata.Name))
 		if err != nil {
@@ -182,6 +190,37 @@ func (o *Orchestrator) ResolveRunID() (string, error) {
 		}
 	}
 	return runID, nil
+}
+
+// latestContinuableRunID returns the newest non-terminal run for this profile.
+func (o *Orchestrator) latestContinuableRunID() (string, error) {
+	latest, err := o.StateStore.LatestRunID()
+	if err != nil || latest == "" {
+		return latest, err
+	}
+	rs, err := o.StateStore.Load(latest)
+	if err != nil {
+		return "", err
+	}
+	if state.IsTerminal(rs.State) {
+		return "", nil
+	}
+	profileBytes, err := os.ReadFile(o.Opts.ProfilePath)
+	if err != nil {
+		return "", err
+	}
+	wantSHA := canonical.SHA256Bytes(profileBytes)
+	stored, err := os.ReadFile(filepath.Join(o.StateStore.RunDir(latest), "profile.sha256"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", err
+	}
+	if strings.TrimSpace(string(stored)) != wantSHA {
+		return "", nil
+	}
+	return latest, nil
 }
 
 func (o *Orchestrator) uniqueRunID(first string) (string, error) {
@@ -230,8 +269,18 @@ func (o *Orchestrator) Plan() (*config.PlanSnapshot, error) {
 // Deploy distributes binary + run-config.json to runtime hosts.
 func (o *Orchestrator) Deploy(ctx *Context) error {
 	progress.Printf("stage deploy: start (run_id=%s)", ctx.RunID)
-	if err := o.StateStore.Transition(ctx.RunID, state.StateDeploying); err != nil {
+	rs, err := o.StateStore.Load(ctx.RunID)
+	if err != nil {
 		return err
+	}
+	// Re-deploy into an in-progress staged run is allowed; only enter the
+	// deploying state from planned/deploying so later stages are not reset.
+	if rs.State == "" || rs.State == state.StatePlanned || rs.State == state.StateDeploying {
+		if err := o.StateStore.Transition(ctx.RunID, state.StateDeploying); err != nil {
+			return err
+		}
+	} else {
+		progress.Printf("redeploying into existing run (state=%s)", rs.State)
 	}
 	sessions, err := o.openSessions()
 	if err != nil {
@@ -262,11 +311,22 @@ func (o *Orchestrator) Deploy(ctx *Context) error {
 			progress.Printf("local deploy manifest: %v", err)
 		}
 	}
-	if err := o.StateStore.Transition(ctx.RunID, state.StateSchema); err != nil {
-		return err
+	if deployShouldMarkSchema(rs.State) {
+		if err := o.StateStore.Transition(ctx.RunID, state.StateSchema); err != nil {
+			return err
+		}
 	}
 	progress.Printf("stage deploy: complete")
 	return nil
+}
+
+func deployShouldMarkSchema(st string) bool {
+	switch st {
+	case "", state.StatePlanned, state.StateDeploying, state.StateSchema:
+		return true
+	default:
+		return false
+	}
 }
 
 // usesLocalRuntime reports whether any loader/worker host uses a Local session.

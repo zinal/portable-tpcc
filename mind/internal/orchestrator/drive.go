@@ -261,6 +261,13 @@ func (o *Orchestrator) launchRole(
 	remoteBin := filepath.Join(runDir, binName)
 	stdout := filepath.Join(instanceDir, "stdout.log")
 	stderr := filepath.Join(instanceDir, "stderr.log")
+	exists, err := sess.Exists(remoteBin)
+	if err != nil {
+		return nil, fmt.Errorf("check binary %s on %s: %w", remoteBin, hostKey, err)
+	}
+	if !exists {
+		return nil, fmt.Errorf("worker binary %s not found on %s; run `mind-tpcc deploy --profile ... --run-id %s` first", remoteBin, hostKey, ctx.RunID)
+	}
 	var env map[string]string
 	if o.requiresPasswordEnv() {
 		env = o.passwordEnv()
