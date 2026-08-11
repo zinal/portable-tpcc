@@ -16,6 +16,7 @@ import (
 	"portable-tpcc/mind/internal/profile"
 	"portable-tpcc/mind/internal/progress"
 	"portable-tpcc/mind/internal/redact"
+	"portable-tpcc/mind/internal/remote"
 	"portable-tpcc/mind/internal/schedule"
 	"portable-tpcc/mind/internal/state"
 	"portable-tpcc/mind/internal/validate"
@@ -237,21 +238,28 @@ func (o *Orchestrator) Deploy(ctx *Context) error {
 		o.StateStore.Fail(ctx.RunID, err)
 		return err
 	}
-	defer closeSessions(sessions)
+	closed := false
+	defer func() {
+		if !closed {
+			closeSessions(sessions)
+		}
+	}()
 
 	if err := o.deployToHosts(ctx, sessions); err != nil {
 		o.StateStore.Fail(ctx.RunID, err)
 		return err
 	}
-	// Keep local-mode deploy manifest for cleanup of shared artifact trees when used.
-	localRoot, err := paths.ExpandHome(o.Expanded.RemoteRoot)
-	if err == nil {
-		if abs, err := filepath.Abs(localRoot); err == nil {
-			ld := &deploy.LocalDeploy{
-				SourceRoot: o.Expanded.LocalArtifacts,
-				TargetRoot: abs,
-			}
-			_, _ = ld.Deploy(o.Expanded.LocalArtifacts, false)
+	progress.Printf("closing runtime sessions")
+	closeSessions(sessions)
+	closed = true
+
+	// LocalDeploy writes deploy-manifest.json under the control-host view of
+	// remote_root for cleanup of shared local artifact trees. Skip it for
+	// pure SSH runs: it copies+hashes local_artifacts into a local path and
+	// can stall deploy for tens of seconds with no effect on remote hosts.
+	if usesLocalRuntime(o.Profile) {
+		if err := o.writeLocalDeployManifest(); err != nil {
+			progress.Printf("local deploy manifest: %v", err)
 		}
 	}
 	if err := o.StateStore.Transition(ctx.RunID, state.StateSchema); err != nil {
@@ -259,6 +267,34 @@ func (o *Orchestrator) Deploy(ctx *Context) error {
 	}
 	progress.Printf("stage deploy: complete")
 	return nil
+}
+
+// usesLocalRuntime reports whether any loader/worker host uses a Local session.
+func usesLocalRuntime(p *profile.Profile) bool {
+	for _, host := range remote.UniqueHosts(p) {
+		if remote.IsLoopback(host) {
+			return true
+		}
+	}
+	return false
+}
+
+func (o *Orchestrator) writeLocalDeployManifest() error {
+	localRoot, err := paths.ExpandHome(o.Expanded.RemoteRoot)
+	if err != nil {
+		return err
+	}
+	abs, err := filepath.Abs(localRoot)
+	if err != nil {
+		return err
+	}
+	progress.Printf("writing local deploy manifest under %s", abs)
+	ld := &deploy.LocalDeploy{
+		SourceRoot: o.Expanded.LocalArtifacts,
+		TargetRoot: abs,
+	}
+	_, err = ld.Deploy(o.Expanded.LocalArtifacts, false)
+	return err
 }
 
 // Run executes the full pipeline (specification §9).
