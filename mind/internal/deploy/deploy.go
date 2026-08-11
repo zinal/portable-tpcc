@@ -103,6 +103,9 @@ func (d *LocalDeploy) Deploy(artifactDir string, verify bool) (*Manifest, error)
 }
 
 // Cleanup removes only manifest-owned paths.
+// A missing deploy-manifest.json is a no-op success: pure SSH deploys do not
+// write a control-host manifest, and re-running cleanup after a successful
+// remove must not fail.
 func Cleanup(root string, yes bool) error {
 	if !yes {
 		return fmt.Errorf("cleanup requires --yes in non-interactive mode")
@@ -110,6 +113,9 @@ func Cleanup(root string, yes bool) error {
 	manifestPath := DeployManifestPath(root)
 	manifest, err := loadManifest(manifestPath)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
 		return err
 	}
 	if !manifest.Complete {
@@ -124,7 +130,10 @@ func Cleanup(root string, yes bool) error {
 			return err
 		}
 	}
-	return os.Remove(manifestPath)
+	if err := os.Remove(manifestPath); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
 }
 
 func collectArtifacts(dir string) ([]string, error) {

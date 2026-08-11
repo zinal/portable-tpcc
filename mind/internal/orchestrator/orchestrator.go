@@ -680,6 +680,14 @@ func (o *Orchestrator) Cleanup(yes bool) error {
 	if abs, err := filepath.Abs(root); err == nil {
 		root = abs
 	}
+	manifestPath := deploy.DeployManifestPath(root)
+	if _, err := os.Stat(manifestPath); os.IsNotExist(err) {
+		if err := deploy.Cleanup(root, yes); err != nil {
+			return err
+		}
+		progress.Printf("cleanup: no deploy manifest under %s; nothing to remove", root)
+		return nil
+	}
 	progress.Printf("cleanup: removing deploy artifacts under %s", root)
 	if err := deploy.Cleanup(root, yes); err != nil {
 		return err
