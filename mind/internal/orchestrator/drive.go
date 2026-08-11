@@ -6,12 +6,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
 	"portable-tpcc/mind/internal/collect"
 	"portable-tpcc/mind/internal/config"
 	"portable-tpcc/mind/internal/paths"
+	"portable-tpcc/mind/internal/progress"
 	"portable-tpcc/mind/internal/remote"
 	"portable-tpcc/mind/internal/schedule"
 	"portable-tpcc/mind/internal/state"
@@ -66,8 +68,11 @@ func (o *Orchestrator) openSessions() (map[string]remote.Session, error) {
 	if err != nil {
 		return nil, err
 	}
+	hosts := remote.UniqueHosts(o.Profile)
+	progress.Printf("connecting to %d runtime host(s)", len(hosts))
 	sessions := map[string]remote.Session{}
-	for _, host := range remote.UniqueHosts(o.Profile) {
+	for _, host := range hosts {
+		progress.Printf("connect %s", host)
 		sess, err := remote.Dial(host, cfg)
 		if err != nil {
 			for _, s := range sessions {
@@ -142,29 +147,35 @@ func (o *Orchestrator) deployToHosts(ctx *Context, sessions map[string]remote.Se
 		return err
 	}
 	binName := filepath.Base(binLocal)
+	progress.Printf("deploying %s to %d host(s)", binName, len(sessions))
 	for hostKey, sess := range sessions {
 		runDir, err := o.sessionRunDir(sess, ctx.RunID)
 		if err != nil {
 			return fmt.Errorf("host %s remote_root: %w", hostKey, err)
 		}
+		progress.Printf("deploy %s: mkdir %s", hostKey, runDir)
 		if err := sess.MkdirAll(runDir); err != nil {
 			return fmt.Errorf("host %s mkdir: %w", hostKey, err)
 		}
 		remoteBin := filepath.Join(runDir, binName)
+		progress.Printf("deploy %s: upload binary", hostKey)
 		if err := sess.Upload(binLocal, remoteBin); err != nil {
 			return fmt.Errorf("host %s upload binary: %w", hostKey, err)
 		}
 		// Upload sets mode 0755 (local OpenFile / SSH chmod) so the binary is executable.
 		remoteCfg := filepath.Join(runDir, "run-config.json")
+		progress.Printf("deploy %s: upload run-config.json", hostKey)
 		if err := sess.Upload(runConfigLocal, remoteCfg); err != nil {
 			return fmt.Errorf("host %s upload run-config: %w", hostKey, err)
 		}
 		for _, f := range credFiles {
 			remotePath := filepath.Join(runDir, f.RemoteName)
+			progress.Printf("deploy %s: upload %s", hostKey, f.RemoteName)
 			if err := sess.Upload(f.LocalPath, remotePath); err != nil {
 				return fmt.Errorf("host %s upload %s: %w", hostKey, f.RemoteName, err)
 			}
 		}
+		progress.Printf("deploy %s: done", hostKey)
 	}
 	return nil
 }
@@ -257,10 +268,12 @@ func (o *Orchestrator) launchRole(
 			return nil, fmt.Errorf("environment variable %s is not set", o.Profile.Database.PasswordEnv)
 		}
 	}
+	progress.Printf("launch %s/%s on %s", role, instance, hostKey)
 	pid, err := sess.StartDetached(runDir, remoteBin, argv, env, stdout, stderr)
 	if err != nil {
 		return nil, err
 	}
+	progress.Printf("launch %s/%s: pid %d", role, instance, pid)
 	proc := &launchedProc{
 		Role:     role,
 		Host:     hostKey,
@@ -290,6 +303,7 @@ func (o *Orchestrator) launchRole(
 		})
 		return nil, err
 	}
+	progress.Printf("launch %s/%s: process metadata ready (nonce=%s)", role, instance, proc.InstanceNonce)
 	return proc, nil
 }
 
@@ -331,10 +345,7 @@ func (o *Orchestrator) processMetadataTimeoutErr(proc *launchedProc) error {
 func (o *Orchestrator) withProcessLogs(proc *launchedProc, msg string) error {
 	var b strings.Builder
 	b.WriteString(msg)
-	instanceDir := filepath.Dir(proc.ProcPath)
-	if instanceDir == "" || instanceDir == "." {
-		instanceDir = filepath.Dir(proc.DonePath)
-	}
+	instanceDir := processInstanceDir(proc)
 	for _, name := range []string{"stderr.log", "stdout.log"} {
 		path := filepath.Join(instanceDir, name)
 		data, err := proc.Session.ReadFile(path)
@@ -380,17 +391,89 @@ func (o *Orchestrator) loadProcessMetadata(ctx *Context, proc *launchedProc) (bo
 	return true, nil
 }
 
+type processLogCursor struct {
+	stderrOff int
+	stdoutOff int
+}
+
+func processInstanceDir(proc *launchedProc) string {
+	instanceDir := filepath.Dir(proc.ProcPath)
+	if instanceDir == "" || instanceDir == "." {
+		instanceDir = filepath.Dir(proc.DonePath)
+	}
+	return instanceDir
+}
+
+// completeLogLines returns finished lines from data[off:] and the new offset
+// (advanced only past complete newline-terminated lines).
+func completeLogLines(data []byte, off int) (lines []string, newOff int) {
+	if off < 0 || off > len(data) {
+		off = 0
+	}
+	newOff = off
+	for newOff < len(data) {
+		i := bytes.IndexByte(data[newOff:], '\n')
+		if i < 0 {
+			break
+		}
+		line := string(bytes.TrimRight(data[newOff:newOff+i], "\r"))
+		newOff += i + 1
+		if line != "" {
+			lines = append(lines, line)
+		}
+	}
+	return lines, newOff
+}
+
+func (o *Orchestrator) relayProcessLogs(proc *launchedProc, curs *processLogCursor) bool {
+	instanceDir := processInstanceDir(proc)
+	relayed := false
+	for _, item := range []struct {
+		name string
+		off  *int
+	}{
+		{"stderr.log", &curs.stderrOff},
+		{"stdout.log", &curs.stdoutOff},
+	} {
+		path := filepath.Join(instanceDir, item.name)
+		data, err := proc.Session.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		lines, newOff := completeLogLines(data, *item.off)
+		*item.off = newOff
+		for _, line := range lines {
+			progress.Printf("[%s/%s] %s", proc.Role, proc.Instance, line)
+			relayed = true
+		}
+	}
+	return relayed
+}
+
 func (o *Orchestrator) waitProcesses(ctx *Context, procs []*launchedProc, timeout time.Duration, abortOnFail bool) error {
 	deadline := time.Now().Add(timeout)
+	started := time.Now()
 	remaining := map[string]*launchedProc{}
+	cursors := map[string]*processLogCursor{}
 	for _, p := range procs {
-		remaining[p.Role+"/"+p.Instance] = p
+		key := p.Role + "/" + p.Instance
+		remaining[key] = p
+		cursors[key] = &processLogCursor{}
 	}
+	if len(remaining) > 0 {
+		progress.Printf("waiting for %d process(es): %s", len(remaining), sortedKeys(remaining))
+	}
+	lastHeartbeat := time.Now()
+	const heartbeatEvery = 15 * time.Second
 	for len(remaining) > 0 {
 		if time.Now().After(deadline) {
 			return fmt.Errorf("timeout waiting for processes to finish")
 		}
+		anyRelayed := false
 		for key, p := range remaining {
+			if o.relayProcessLogs(p, cursors[key]) {
+				anyRelayed = true
+			}
 			if p.InstanceNonce == "" {
 				loaded, err := o.loadProcessMetadata(ctx, p)
 				if err != nil {
@@ -419,6 +502,7 @@ func (o *Orchestrator) waitProcesses(ctx *Context, procs []*launchedProc, timeou
 						_ = o.StateStore.UpsertProcess(ctx.RunID, state.Process{
 							Role: p.Role, Host: p.Host, Instance: p.Instance, PID: p.PID, InstanceNonce: p.InstanceNonce, State: "failed",
 						})
+						_ = o.relayProcessLogs(p, cursors[key])
 						delete(remaining, key)
 						if abortOnFail {
 							return fmt.Errorf("%s/%s stale manifest nonce %q does not match launched nonce %q and process is dead", p.Role, p.Instance, manifest.InstanceNonce, p.InstanceNonce)
@@ -432,6 +516,7 @@ func (o *Orchestrator) waitProcesses(ctx *Context, procs []*launchedProc, timeou
 						_ = o.StateStore.UpsertProcess(ctx.RunID, state.Process{
 							Role: p.Role, Host: p.Host, Instance: p.Instance, PID: p.PID, InstanceNonce: p.InstanceNonce, State: "failed",
 						})
+						_ = o.relayProcessLogs(p, cursors[key])
 						delete(remaining, key)
 						if abortOnFail {
 							return o.withProcessLogs(p, fmt.Sprintf("%s/%s died before finalizing artifacts", p.Role, p.Instance))
@@ -446,6 +531,8 @@ func (o *Orchestrator) waitProcesses(ctx *Context, procs []*launchedProc, timeou
 				_ = o.StateStore.UpsertProcess(ctx.RunID, state.Process{
 					Role: p.Role, Host: p.Host, Instance: p.Instance, PID: p.PID, InstanceNonce: p.InstanceNonce, State: st,
 				})
+				_ = o.relayProcessLogs(p, cursors[key])
+				progress.Printf("%s/%s finished (%s, exit=%d)", p.Role, p.Instance, st, manifest.ExitStatus)
 				delete(remaining, key)
 				if abortOnFail && manifest.ExitStatus != 0 {
 					return o.withProcessLogs(p, fmt.Sprintf("%s/%s exited with status %d", p.Role, p.Instance, manifest.ExitStatus))
@@ -458,15 +545,33 @@ func (o *Orchestrator) waitProcesses(ctx *Context, procs []*launchedProc, timeou
 				_ = o.StateStore.UpsertProcess(ctx.RunID, state.Process{
 					Role: p.Role, Host: p.Host, Instance: p.Instance, PID: p.PID, InstanceNonce: p.InstanceNonce, State: "failed",
 				})
+				_ = o.relayProcessLogs(p, cursors[key])
 				delete(remaining, key)
 				if abortOnFail {
 					return o.withProcessLogs(p, fmt.Sprintf("%s/%s died before finalizing artifacts", p.Role, p.Instance))
 				}
 			}
 		}
+		if !anyRelayed && time.Since(lastHeartbeat) >= heartbeatEvery && len(remaining) > 0 {
+			progress.Printf("still waiting for %d process(es) after %s: %s",
+				len(remaining), time.Since(started).Round(time.Second), sortedKeys(remaining))
+			lastHeartbeat = time.Now()
+		}
+		if anyRelayed {
+			lastHeartbeat = time.Now()
+		}
 		time.Sleep(500 * time.Millisecond)
 	}
 	return nil
+}
+
+func sortedKeys(m map[string]*launchedProc) string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return strings.Join(keys, ", ")
 }
 
 func (o *Orchestrator) stopPeers(ctx *Context, sessions map[string]remote.Session) error {
@@ -475,6 +580,7 @@ func (o *Orchestrator) stopPeers(ctx *Context, sessions map[string]remote.Sessio
 		return err
 	}
 	var first error
+	stopping := 0
 	for _, proc := range rs.Processes {
 		if proc.State != "running" || proc.PID <= 0 {
 			continue
@@ -483,16 +589,21 @@ func (o *Orchestrator) stopPeers(ctx *Context, sessions map[string]remote.Sessio
 		if !ok {
 			continue
 		}
+		progress.Printf("stop %s/%s pid %d (TERM)", proc.Role, proc.Instance, proc.PID)
 		if err := sess.Signal(proc.PID, "TERM"); err != nil && first == nil {
 			first = err
 		}
 		_ = o.StateStore.UpsertProcess(ctx.RunID, state.Process{
 			Role: proc.Role, Host: proc.Host, Instance: proc.Instance, PID: proc.PID, State: "stopping",
 		})
+		stopping++
 	}
 	grace := time.Duration(ctx.RunConfig.Phases.StopGraceMs) * time.Millisecond
 	if grace <= 0 {
 		grace = 15 * time.Second
+	}
+	if stopping > 0 {
+		progress.Printf("waiting %s stop grace for %d process(es)", grace, stopping)
 	}
 	time.Sleep(grace)
 	rs, _ = o.StateStore.Load(ctx.RunID)
@@ -521,9 +632,21 @@ func (o *Orchestrator) superviseWorkers(ctx *Context, workers []*launchedProc, t
 	if err != nil {
 		return err
 	}
+	cursors := map[string]*processLogCursor{}
+	for _, w := range workers {
+		cursors[w.Role+"/"+w.Instance] = &processLogCursor{}
+	}
+	progress.Printf("workers armed; measurement starts at %s", token.Phases.MeasurementStart)
+	lastHeartbeat := time.Now()
+	const heartbeatEvery = 15 * time.Second
 	// Before measurement: any fatal aborts peers.
 	for time.Now().Before(measStart) {
+		anyRelayed := false
 		for _, w := range workers {
+			key := w.Role + "/" + w.Instance
+			if o.relayProcessLogs(w, cursors[key]) {
+				anyRelayed = true
+			}
 			alive, _ := w.Session.IsAlive(w.PID)
 			done, _ := w.Session.Exists(w.DonePath)
 			if done {
@@ -531,11 +654,13 @@ func (o *Orchestrator) superviseWorkers(ctx *Context, workers []*launchedProc, t
 				var manifest map[string]interface{}
 				_ = json.Unmarshal(data, &manifest)
 				if v, ok := manifest["exit_status"].(float64); ok && int(v) != 0 {
+					_ = o.relayProcessLogs(w, cursors[key])
 					_ = o.stopPeers(ctx, sessions)
 					return fmt.Errorf("worker %s failed before measurement", w.Instance)
 				}
 			}
 			if !alive && !done {
+				_ = o.relayProcessLogs(w, cursors[key])
 				_ = o.stopPeers(ctx, sessions)
 				return fmt.Errorf("worker %s died before measurement", w.Instance)
 			}
@@ -544,8 +669,16 @@ func (o *Orchestrator) superviseWorkers(ctx *Context, workers []*launchedProc, t
 		if time.Now().After(measStart.Add(-time.Duration(ctx.RunConfig.Phases.RampUpMs) * time.Millisecond)) {
 			_ = o.StateStore.Transition(ctx.RunID, state.StateRamping)
 		}
+		if !anyRelayed && time.Since(lastHeartbeat) >= heartbeatEvery {
+			progress.Printf("waiting for measurement start in %s", time.Until(measStart).Round(time.Second))
+			lastHeartbeat = time.Now()
+		}
+		if anyRelayed {
+			lastHeartbeat = time.Now()
+		}
 		time.Sleep(500 * time.Millisecond)
 	}
+	progress.Printf("measurement phase started")
 	_ = o.StateStore.Transition(ctx.RunID, state.StateMeasuring)
 
 	timeout := time.Until(drainEnd) + 2*time.Minute
@@ -556,6 +689,7 @@ func (o *Orchestrator) superviseWorkers(ctx *Context, workers []*launchedProc, t
 		_ = o.stopPeers(ctx, sessions)
 		return err
 	}
+	progress.Printf("workers finished; entering drain")
 	return o.StateStore.Transition(ctx.RunID, state.StateDraining)
 }
 
@@ -599,6 +733,7 @@ func (o *Orchestrator) collectArtifacts(ctx *Context, sessions map[string]remote
 	var manifests []collect.ArtifactManifest
 
 	collectOne := func(role, hostKey, instance string) error {
+		progress.Printf("collect %s/%s from %s", role, instance, hostKey)
 		sess := sessions[hostKey]
 		runDir, err := o.sessionRunDir(sess, ctx.RunID)
 		if err != nil {
@@ -661,6 +796,7 @@ func (o *Orchestrator) collectArtifacts(ctx *Context, sessions map[string]remote
 			return err
 		}
 		manifests = append(manifests, manifest)
+		progress.Printf("collect %s/%s: done (%d payload(s))", role, instance, len(manifest.Payloads))
 		return nil
 	}
 

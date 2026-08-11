@@ -14,6 +14,7 @@ import (
 	"portable-tpcc/mind/internal/deploy"
 	"portable-tpcc/mind/internal/paths"
 	"portable-tpcc/mind/internal/profile"
+	"portable-tpcc/mind/internal/progress"
 	"portable-tpcc/mind/internal/redact"
 	"portable-tpcc/mind/internal/schedule"
 	"portable-tpcc/mind/internal/state"
@@ -227,6 +228,7 @@ func (o *Orchestrator) Plan() (*config.PlanSnapshot, error) {
 
 // Deploy distributes binary + run-config.json to runtime hosts.
 func (o *Orchestrator) Deploy(ctx *Context) error {
+	progress.Printf("stage deploy: start (run_id=%s)", ctx.RunID)
 	if err := o.StateStore.Transition(ctx.RunID, state.StateDeploying); err != nil {
 		return err
 	}
@@ -252,7 +254,11 @@ func (o *Orchestrator) Deploy(ctx *Context) error {
 			_, _ = ld.Deploy(o.Expanded.LocalArtifacts, false)
 		}
 	}
-	return o.StateStore.Transition(ctx.RunID, state.StateSchema)
+	if err := o.StateStore.Transition(ctx.RunID, state.StateSchema); err != nil {
+		return err
+	}
+	progress.Printf("stage deploy: complete")
+	return nil
 }
 
 // Run executes the full pipeline (specification §9).
@@ -268,10 +274,12 @@ func (o *Orchestrator) Run() error {
 	oldRunID := o.Opts.RunID
 	o.Opts.RunID = runID
 	defer func() { o.Opts.RunID = oldRunID }()
+	progress.Printf("run %s: materializing configuration", runID)
 	ctx, err := o.Materialize()
 	if err != nil {
 		return err
 	}
+	progress.Printf("run %s: starting pipeline", runID)
 
 	steps := []struct {
 		name    string
@@ -289,18 +297,26 @@ func (o *Orchestrator) Run() error {
 	}
 	for _, step := range steps {
 		if !step.enabled || o.shouldSkip(step.name) {
+			progress.Printf("run %s: skip step %s", runID, step.name)
 			_ = o.StateStore.RecordSkip(ctx.RunID, step.name)
 			continue
 		}
+		progress.Printf("run %s: step %s", runID, step.name)
 		if err := step.fn(); err != nil {
 			if isCheckStep(step.name) && !o.Profile.Checks.FailFast {
+				progress.Printf("run %s: step %s failed (fail_fast=false): %v", runID, step.name, err)
 				continue
 			}
 			o.StateStore.Fail(ctx.RunID, err)
 			return fmt.Errorf("%s: %w", step.name, err)
 		}
+		progress.Printf("run %s: step %s complete", runID, step.name)
 	}
-	return o.StateStore.Transition(ctx.RunID, state.StateCompleted)
+	if err := o.StateStore.Transition(ctx.RunID, state.StateCompleted); err != nil {
+		return err
+	}
+	progress.Printf("run %s: completed", runID)
+	return nil
 }
 
 func (o *Orchestrator) shouldSkip(name string) bool {
@@ -317,6 +333,7 @@ func isCheckStep(name string) bool {
 }
 
 func (o *Orchestrator) schema(ctx *Context) error {
+	progress.Printf("stage schema: start (run_id=%s)", ctx.RunID)
 	if err := o.StateStore.Transition(ctx.RunID, state.StateSchema); err != nil {
 		return err
 	}
@@ -338,6 +355,7 @@ func (o *Orchestrator) schema(ctx *Context) error {
 		_ = o.stopPeers(ctx, sessions)
 		return err
 	}
+	progress.Printf("stage schema: complete")
 	return nil
 }
 
@@ -347,6 +365,7 @@ func (o *Orchestrator) RunSchema(ctx *Context) error {
 }
 
 func (o *Orchestrator) load(ctx *Context) error {
+	progress.Printf("stage load: start (%d loader(s), run_id=%s)", len(ctx.RunConfig.LoadAssignment), ctx.RunID)
 	if err := o.StateStore.Transition(ctx.RunID, state.StateLoading); err != nil {
 		return err
 	}
@@ -370,7 +389,11 @@ func (o *Orchestrator) load(ctx *Context) error {
 		_ = o.stopPeers(ctx, sessions)
 		return err
 	}
-	return o.StateStore.Transition(ctx.RunID, state.StateCheckingImport)
+	if err := o.StateStore.Transition(ctx.RunID, state.StateCheckingImport); err != nil {
+		return err
+	}
+	progress.Printf("stage load: complete")
+	return nil
 }
 
 // RunLoad runs horizontal loaders.
@@ -379,6 +402,7 @@ func (o *Orchestrator) RunLoad(ctx *Context) error {
 }
 
 func (o *Orchestrator) check(ctx *Context, phase string) error {
+	progress.Printf("stage check (%s): start (run_id=%s)", phase, ctx.RunID)
 	if phase == "after-import" {
 		if err := o.StateStore.Transition(ctx.RunID, state.StateCheckingImport); err != nil {
 			return err
@@ -405,6 +429,7 @@ func (o *Orchestrator) check(ctx *Context, phase string) error {
 		_ = o.stopPeers(ctx, sessions)
 		return err
 	}
+	progress.Printf("stage check (%s): complete", phase)
 	return nil
 }
 
@@ -414,6 +439,7 @@ func (o *Orchestrator) RunCheck(ctx *Context, phase string) error {
 }
 
 func (o *Orchestrator) start(ctx *Context) error {
+	progress.Printf("stage start: start (%d worker(s), run_id=%s)", len(ctx.RunConfig.WorkerAssignment), ctx.RunID)
 	if err := o.StateStore.Transition(ctx.RunID, state.StatePreparing); err != nil {
 		return err
 	}
@@ -425,6 +451,7 @@ func (o *Orchestrator) start(ctx *Context) error {
 	defer closeSessions(sessions)
 
 	token := schedule.Compute(ctx.RunConfig, time.Now().UTC())
+	progress.Printf("stage start: start-at %s", token.StartAt)
 	if err := state.WriteJSON(ctx.RunDir, "start-token.json", token); err != nil {
 		return err
 	}
@@ -447,7 +474,11 @@ func (o *Orchestrator) start(ctx *Context) error {
 		}
 		workers = append(workers, proc)
 	}
-	return o.superviseWorkers(ctx, workers, token, sessions)
+	if err := o.superviseWorkers(ctx, workers, token, sessions); err != nil {
+		return err
+	}
+	progress.Printf("stage start: complete")
+	return nil
 }
 
 // RunStart arms workers with a shared --start-at and supervises phases.
@@ -456,6 +487,7 @@ func (o *Orchestrator) RunStart(ctx *Context) error {
 }
 
 func (o *Orchestrator) collect(ctx *Context) error {
+	progress.Printf("stage collect: start (run_id=%s)", ctx.RunID)
 	if err := o.StateStore.Transition(ctx.RunID, state.StateCollecting); err != nil {
 		return err
 	}
@@ -464,7 +496,11 @@ func (o *Orchestrator) collect(ctx *Context) error {
 		return err
 	}
 	defer closeSessions(sessions)
-	return o.collectArtifacts(ctx, sessions)
+	if err := o.collectArtifacts(ctx, sessions); err != nil {
+		return err
+	}
+	progress.Printf("stage collect: complete")
+	return nil
 }
 
 // RunCollect pulls artifacts into results/<run_id>/.
@@ -473,6 +509,7 @@ func (o *Orchestrator) RunCollect(ctx *Context) error {
 }
 
 func (o *Orchestrator) consolidate(ctx *Context) error {
+	progress.Printf("stage consolidate: start (run_id=%s)", ctx.RunID)
 	if err := o.StateStore.Transition(ctx.RunID, state.StateConsolidating); err != nil {
 		return err
 	}
@@ -493,7 +530,11 @@ func (o *Orchestrator) consolidate(ctx *Context) error {
 	if err != nil {
 		return err
 	}
-	return consolidate.WriteAggregate(o.Expanded.ResultRoot, ctx.RunID, agg)
+	if err := consolidate.WriteAggregate(o.Expanded.ResultRoot, ctx.RunID, agg); err != nil {
+		return err
+	}
+	progress.Printf("stage consolidate: complete (aggregate.json written)")
+	return nil
 }
 
 // RunConsolidate merges artifacts into aggregate.json.
@@ -518,6 +559,7 @@ func (o *Orchestrator) Status(runID string) (*state.RunState, error) {
 
 // Stop terminates running processes for a run.
 func (o *Orchestrator) Stop(ctx *Context) error {
+	progress.Printf("stage stop: start (run_id=%s)", ctx.RunID)
 	if err := o.StateStore.Transition(ctx.RunID, state.StateStopping); err != nil {
 		return err
 	}
@@ -526,7 +568,11 @@ func (o *Orchestrator) Stop(ctx *Context) error {
 		return err
 	}
 	defer closeSessions(sessions)
-	return o.stopPeers(ctx, sessions)
+	if err := o.stopPeers(ctx, sessions); err != nil {
+		return err
+	}
+	progress.Printf("stage stop: complete")
+	return nil
 }
 
 // Cleanup deploy artifacts.
@@ -538,7 +584,12 @@ func (o *Orchestrator) Cleanup(yes bool) error {
 	if abs, err := filepath.Abs(root); err == nil {
 		root = abs
 	}
-	return deploy.Cleanup(root, yes)
+	progress.Printf("cleanup: removing deploy artifacts under %s", root)
+	if err := deploy.Cleanup(root, yes); err != nil {
+		return err
+	}
+	progress.Printf("cleanup: complete")
+	return nil
 }
 
 // WritePlanJSON encodes plan snapshot to JSON.
