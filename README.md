@@ -209,6 +209,41 @@ Do not put passwords in profile YAML/JSON. Pass them via the connection
 string (standalone) or an environment variable named in `password_env`
 (orchestrated).
 
+### Schema partitioning
+
+OceanBase creates a binding `TABLEGROUP` and HASH-partitions warehouse-scoped
+tables by warehouse id (`w_id` / `*_w_id`). Partition count is set **only at
+schema time** (`tpcc-oceanbase schema` / `mind-tpcc` schema stage).
+
+| Value | Meaning |
+| --- | --- |
+| `-1` | No tablegroup / no HASH partitions (plain tables) |
+| `0` (default) | Derive partition count from warehouse scale (`max(1, warehouses)`) |
+| `N` (`1`…`8192`) | Explicit HASH partition count |
+
+Standalone flag: `--partitions`. Orchestrated profile key:
+`database.options.partitions`. On a non-OceanBase MySQL server the partition
+options are ignored.
+
+Examples:
+
+```bash
+# default: partitions == warehouses (here 10)
+./tpcc-oceanbase schema --connection="$CONN" --path=tpcc -w 10 --partitions=0
+
+# explicit count
+./tpcc-oceanbase schema --connection="$CONN" --path=tpcc -w 100 --partitions=64
+
+# plain (non-partitioned) tables
+./tpcc-oceanbase schema --connection="$CONN" --path=tpcc -w 10 --partitions=-1
+```
+
+```yaml
+database:
+  options:
+    partitions: 64   # or 0 to derive from scale.warehouses, or -1 to disable
+```
+
 ### Standalone local run
 
 ```bash
@@ -217,6 +252,10 @@ CONN='host=127.0.0.1;port=2881;user=root@test;password=YOUR_PASSWORD;database=tp
 # schema (hash partitions derived from -w; --foreign-keys=off omits FKs)
 ./tpcc-oceanbase schema --connection="$CONN" --path=tpcc -w 10 \
   --partitions=0 --foreign-keys=off
+# optional explicit count (otherwise derived from -w when --partitions=0):
+#   --partitions=64
+# plain tables:
+#   --partitions=-1
 
 # load
 ./tpcc-oceanbase import --connection="$CONN" --path=tpcc -w 10 -t 8
@@ -237,10 +276,7 @@ CONN='host=127.0.0.1;port=2881;user=root@test;password=YOUR_PASSWORD;database=tp
 
 Useful flags:
 
-- `--partitions` — OceanBase hash partitions via tablegroup:
-  `-1` = plain tables, `0` = derive from `-w` / `--warehouses`,
-  `N` = explicit partition count (max 8192). On a non-OceanBase MySQL
-  server the partition options are ignored.
+- `--partitions` — see [Schema partitioning](#schema-partitioning) above.
 - `--foreign-keys=off` — omit FOREIGN KEY constraints at schema time
   (default `on`).
 - `--no-delays` — disable keying/think time (engineering runs);
@@ -260,7 +296,8 @@ database:
   user: root@root               # optional; else TPCC_OB_USER, else root@root
   password_env: TPCC_PASSWORD
   options:
-    partitions: 0               # -1 off, 0 derive from warehouses, N explicit
+    partitions: 0               # -1 off, 0 derive from scale.warehouses, N explicit (max 8192)
+    # partitions: 64            # optional explicit HASH partition count
     foreign_keys: off           # omit FKs at schema time; default on
 ```
 
