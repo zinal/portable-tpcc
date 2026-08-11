@@ -1,6 +1,7 @@
 package orchestrator_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -75,7 +76,7 @@ func TestMaterializePreservesActiveRunState(t *testing.T) {
 	}
 }
 
-func TestMaterializeAutoRunIDSkipsExistingRunDir(t *testing.T) {
+func TestMaterializeAutoRunIDContinuesActiveRun(t *testing.T) {
 	dir := t.TempDir()
 	profilePath := writeTestProfile(t, dir, "")
 	o, err := orchestrator.New(orchestrator.Options{ProfilePath: profilePath})
@@ -90,8 +91,31 @@ func TestMaterializeAutoRunIDSkipsExistingRunDir(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if first.RunID != second.RunID {
+		t.Fatalf("active run should continue, got %q then %q", first.RunID, second.RunID)
+	}
+}
+
+func TestMaterializeAutoRunIDAllocatesAfterTerminal(t *testing.T) {
+	dir := t.TempDir()
+	profilePath := writeTestProfile(t, dir, "")
+	o, err := orchestrator.New(orchestrator.Options{ProfilePath: profilePath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := o.Materialize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := o.StateStore.Fail(first.RunID, fmt.Errorf("boom")); err != nil {
+		t.Fatal(err)
+	}
+	second, err := o.Materialize()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if first.RunID == second.RunID {
-		t.Fatalf("auto run IDs should be unique, both were %q", first.RunID)
+		t.Fatalf("terminal run should not be reused, both were %q", first.RunID)
 	}
 	if !strings.HasSuffix(first.RunID, "-01") || !strings.HasSuffix(second.RunID, "-02") {
 		t.Fatalf("unexpected run IDs: %q, %q", first.RunID, second.RunID)

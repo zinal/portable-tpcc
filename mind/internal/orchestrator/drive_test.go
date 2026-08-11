@@ -97,7 +97,10 @@ func TestLaunchRoleStoresProcessInstanceNonce(t *testing.T) {
 		"instance_nonce": "nonce-1",
 	}
 	data, _ := json.Marshal(process)
-	sess := &fakeSession{files: map[string][]byte{"process.json": data}, alive: true}
+	sess := &fakeSession{files: map[string][]byte{
+		"process.json": data,
+		"tpcc-pgsql":   []byte("binary"),
+	}, alive: true}
 
 	proc, err := o.launchRole(ctx, map[string]remote.Session{"host-a": sess}, "worker", "host-a", "worker-a", nil)
 	if err != nil {
@@ -133,7 +136,10 @@ func TestLaunchRoleFailsWithoutProcessInstanceNonce(t *testing.T) {
 		"pid": 456,
 	}
 	data, _ := json.Marshal(process)
-	sess := &fakeSession{files: map[string][]byte{"process.json": data}, alive: true}
+	sess := &fakeSession{files: map[string][]byte{
+		"process.json": data,
+		"tpcc-pgsql":   []byte("binary"),
+	}, alive: true}
 
 	proc, err := o.launchRole(ctx, map[string]remote.Session{"host-a": sess}, "worker", "host-a", "worker-a", nil)
 	if err == nil || !strings.Contains(err.Error(), "missing instance_nonce") {
@@ -238,6 +244,26 @@ func TestWaitProcessesRejectsMissingInstanceNonce(t *testing.T) {
 	err := o.waitProcesses(ctx, []*launchedProc{proc}, time.Second, true)
 	if err == nil || !strings.Contains(err.Error(), "missing instance_nonce") {
 		t.Fatalf("expected missing nonce error, got %v", err)
+	}
+}
+
+func TestLaunchRoleRequiresDeployedBinary(t *testing.T) {
+	store := &state.Store{StateDir: t.TempDir()}
+	o := &Orchestrator{
+		Profile:    &profile.Profile{},
+		Expanded:   config.ExpandedPaths{RemoteRoot: t.TempDir()},
+		StateStore: store,
+	}
+	ctx := &Context{
+		RunID: "run-1",
+		RunConfig: &config.RunConfig{
+			Binary: "tpcc-oceanbase",
+		},
+	}
+	sess := &fakeSession{files: map[string][]byte{}, alive: true}
+	_, err := o.launchRole(ctx, map[string]remote.Session{"host-a": sess}, "schema", "host-a", "schema-0", nil)
+	if err == nil || !strings.Contains(err.Error(), "not found") || !strings.Contains(err.Error(), "deploy") {
+		t.Fatalf("expected missing binary deploy hint, got %v", err)
 	}
 }
 

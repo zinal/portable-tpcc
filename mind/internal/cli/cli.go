@@ -339,7 +339,8 @@ Commands:
 
 Options:
   --profile <path>         Profile YAML path
-  --run-id <id>            Run identifier
+  --run-id <id>            Run identifier (default: continue latest active run
+                           for this profile, else allocate a new id)
   --worker-binary <path>   Worker binary path
   --skip <step>            Skip pipeline step
   --yes                    Non-interactive confirmation
