@@ -1,6 +1,7 @@
 package remote
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -36,16 +37,17 @@ func DialSSH(key, address string, cfg DialConfig) (*SSH, error) {
 	if err != nil {
 		return nil, err
 	}
-	hostKeyCallback, err := hostKeyCallback(cfg)
+	hostKeyCallback, algos, err := hostKeyPolicy(cfg, host)
 	if err != nil {
 		return nil, err
 	}
 
 	clientCfg := &ssh.ClientConfig{
-		User:            cfg.User,
-		Auth:            auth,
-		HostKeyCallback: hostKeyCallback,
-		Timeout:         cfg.ConnectTimeout,
+		User:              cfg.User,
+		Auth:              auth,
+		HostKeyCallback:   hostKeyCallback,
+		HostKeyAlgorithms: algos,
+		Timeout:           cfg.ConnectTimeout,
 	}
 	client, err := ssh.Dial("tcp", host, clientCfg)
 	if err != nil {
@@ -84,19 +86,66 @@ func sshAuthMethods(cfg DialConfig) ([]ssh.AuthMethod, error) {
 	return methods, nil
 }
 
-func hostKeyCallback(cfg DialConfig) (ssh.HostKeyCallback, error) {
+// hostKeyPolicy returns the host-key callback and, when known_hosts lists keys
+// for host, the preferred HostKeyAlgorithms (OpenSSH-compatible).
+//
+// golang.org/x/crypto/ssh does not reorder host-key algorithms from known_hosts
+// the way OpenSSH does. Without that preference the server may present a key
+// type that is not in known_hosts while a different known type exists, which
+// surfaces as knownhosts.KeyError "key mismatch" even though `ssh` works.
+func hostKeyPolicy(cfg DialConfig, hostWithPort string) (ssh.HostKeyCallback, []string, error) {
 	if cfg.InsecureIgnoreHost {
-		return ssh.InsecureIgnoreHostKey(), nil
+		return ssh.InsecureIgnoreHostKey(), nil, nil
 	}
 	if cfg.KnownHostsPath == "" {
-		return nil, fmt.Errorf("ssh.known_hosts is required unless insecure_ignore_host_key is set")
+		return nil, nil, fmt.Errorf("ssh.known_hosts is required unless insecure_ignore_host_key is set")
 	}
 	cb, err := knownhosts.New(cfg.KnownHostsPath)
 	if err != nil {
-		return nil, fmt.Errorf("load known_hosts %s: %w", cfg.KnownHostsPath, err)
+		return nil, nil, fmt.Errorf("load known_hosts %s: %w", cfg.KnownHostsPath, err)
 	}
-	return cb, nil
+	return cb, hostKeyAlgorithms(cb, hostWithPort), nil
 }
+
+// hostKeyAlgorithms returns algorithms for keys already recorded for host.
+// Empty means the host is unknown (or probe failed); leave ClientConfig defaults.
+func hostKeyAlgorithms(cb ssh.HostKeyCallback, hostWithPort string) []string {
+	// Probe with a dummy key so knownhosts returns KeyError.Want for this host.
+	err := cb(hostWithPort, &net.TCPAddr{IP: net.IPv4zero, Port: 22}, probePublicKey{})
+	var keyErr *knownhosts.KeyError
+	if !errors.As(err, &keyErr) || len(keyErr.Want) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(keyErr.Want)+2)
+	var algos []string
+	add := func(algo string) {
+		if algo == "" {
+			return
+		}
+		if _, ok := seen[algo]; ok {
+			return
+		}
+		seen[algo] = struct{}{}
+		algos = append(algos, algo)
+	}
+	for _, k := range keyErr.Want {
+		typ := k.Key.Type()
+		if typ == ssh.KeyAlgoRSA {
+			// RSA known_hosts entries are key format ssh-rsa; prefer SHA-2 sig algos.
+			add(ssh.KeyAlgoRSASHA512)
+			add(ssh.KeyAlgoRSASHA256)
+		}
+		add(typ)
+	}
+	return algos
+}
+
+// probePublicKey is a sentinel key used only to discover known_hosts entries.
+type probePublicKey struct{}
+
+func (probePublicKey) Type() string                        { return "mind-tpcc-probe" }
+func (probePublicKey) Marshal() []byte                     { return []byte("mind-tpcc-probe") }
+func (probePublicKey) Verify([]byte, *ssh.Signature) error { return errors.New("probe key") }
 
 func (s *SSH) Key() string     { return s.key }
 func (s *SSH) Address() string { return s.address }
