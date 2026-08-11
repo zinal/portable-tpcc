@@ -62,21 +62,34 @@ TPutBatchResult FailResult(const std::exception& ex) {
     return r;
 }
 
+// MySQL / OceanBase prepared statements reject more than 65535 placeholders
+// (ER_PS_MANY_PARAM / errno 1390). Cap multi-row INSERTs accordingly.
+constexpr size_t MaxPreparedPlaceholders = 65535;
+
 size_t BatchSize(int batchRows) {
     return batchRows > 0 ? static_cast<size_t>(batchRows) : 200;
 }
 
-void InsertRows(
+size_t MaxRowsForColumns(size_t columnCount) {
+    if (columnCount == 0) {
+        return 1;
+    }
+    return std::max<size_t>(1, MaxPreparedPlaceholders / columnCount);
+}
+
+size_t EffectiveBatchSize(size_t columnCount, int batchRows) {
+    return std::min(BatchSize(batchRows), MaxRowsForColumns(columnCount));
+}
+
+void InsertRowsChunk(
     TObConnection& conn,
     const std::string& table,
     const std::vector<std::string>& columns,
     const std::vector<TRow>& rows,
-    const std::string& suffix = {})
+    size_t begin,
+    size_t end,
+    const std::string& suffix)
 {
-    if (rows.empty()) {
-        return;
-    }
-
     std::string sql = "INSERT INTO " + QuoteIdent(table) + " (";
     for (size_t i = 0; i < columns.size(); ++i) {
         if (i) sql += ',';
@@ -85,8 +98,8 @@ void InsertRows(
     sql += ") VALUES ";
 
     TObParams params;
-    for (size_t r = 0; r < rows.size(); ++r) {
-        if (r) sql += ',';
+    for (size_t r = begin; r < end; ++r) {
+        if (r > begin) sql += ',';
         sql += '(';
         if (rows[r].size() != columns.size()) {
             throw std::runtime_error("row column count mismatch for " + table);
@@ -106,6 +119,24 @@ void InsertRows(
     conn.Execute(sql, params);
 }
 
+void InsertRows(
+    TObConnection& conn,
+    const std::string& table,
+    const std::vector<std::string>& columns,
+    const std::vector<TRow>& rows,
+    const std::string& suffix = {})
+{
+    if (rows.empty()) {
+        return;
+    }
+
+    const size_t maxRows = MaxRowsForColumns(columns.size());
+    for (size_t offset = 0; offset < rows.size(); offset += maxRows) {
+        const size_t end = std::min(offset + maxRows, rows.size());
+        InsertRowsChunk(conn, table, columns, rows, offset, end, suffix);
+    }
+}
+
 template <typename TEmit>
 void EmitBatches(
     TObConnection& conn,
@@ -115,6 +146,7 @@ void EmitBatches(
     TEmit emit,
     const std::string& suffix = {})
 {
+    batchSize = std::min(batchSize, MaxRowsForColumns(columns.size()));
     std::vector<TRow> batch;
     batch.reserve(batchSize);
     auto add = [&](TRow row) {
@@ -155,11 +187,12 @@ void InsertDistricts(TObConnection& conn, uint64_t seed, int wh) {
 }
 
 void InsertStock(TObConnection& conn, uint64_t seed, int wh, int batchRows) {
-    EmitBatches(conn, "stock",
-        {"s_w_id", "s_i_id", "s_quantity", "s_ytd", "s_order_cnt", "s_remote_cnt",
-         "s_data", "s_dist_01", "s_dist_02", "s_dist_03", "s_dist_04", "s_dist_05",
-         "s_dist_06", "s_dist_07", "s_dist_08", "s_dist_09", "s_dist_10"},
-        BatchSize(batchRows),
+    const std::vector<std::string> columns = {
+        "s_w_id", "s_i_id", "s_quantity", "s_ytd", "s_order_cnt", "s_remote_cnt",
+        "s_data", "s_dist_01", "s_dist_02", "s_dist_03", "s_dist_04", "s_dist_05",
+        "s_dist_06", "s_dist_07", "s_dist_08", "s_dist_09", "s_dist_10",
+    };
+    EmitBatches(conn, "stock", columns, EffectiveBatchSize(columns.size(), batchRows),
         [&](auto add) {
             for (int itemId = 1; itemId <= ITEM_COUNT; ++itemId) {
                 auto row = NGenerator::GenerateStock(seed, wh, itemId);
@@ -174,12 +207,13 @@ void InsertStock(TObConnection& conn, uint64_t seed, int wh, int batchRows) {
 }
 
 void InsertCustomers(TObConnection& conn, uint64_t seed, int wh, int district, int batchRows) {
-    EmitBatches(conn, "customer",
-        {"c_w_id", "c_d_id", "c_id", "c_discount", "c_credit", "c_last", "c_first",
-         "c_credit_lim", "c_balance", "c_ytd_payment", "c_payment_cnt", "c_delivery_cnt",
-         "c_street_1", "c_street_2", "c_city", "c_state", "c_zip", "c_phone",
-         "c_since", "c_middle", "c_data"},
-        BatchSize(batchRows),
+    const std::vector<std::string> columns = {
+        "c_w_id", "c_d_id", "c_id", "c_discount", "c_credit", "c_last", "c_first",
+        "c_credit_lim", "c_balance", "c_ytd_payment", "c_payment_cnt", "c_delivery_cnt",
+        "c_street_1", "c_street_2", "c_city", "c_state", "c_zip", "c_phone",
+        "c_since", "c_middle", "c_data",
+    };
+    EmitBatches(conn, "customer", columns, EffectiveBatchSize(columns.size(), batchRows),
         [&](auto add) {
             for (int cid = C_FIRST_CUSTOMER_ID; cid <= CUSTOMERS_PER_DISTRICT; ++cid) {
                 auto row = NGenerator::GenerateCustomer(seed, wh, district, cid);
@@ -314,9 +348,10 @@ TPutBatchResult PutItemsIdempotent(
             " ON DUPLICATE KEY UPDATE "
             "i_name = VALUES(i_name), i_price = VALUES(i_price), "
             "i_data = VALUES(i_data), i_im_id = VALUES(i_im_id)";
-        EmitBatches(conn, "item",
-            {"i_id", "i_name", "i_price", "i_data", "i_im_id"},
-            BatchSize(batchRows),
+        const std::vector<std::string> columns = {
+            "i_id", "i_name", "i_price", "i_data", "i_im_id",
+        };
+        EmitBatches(conn, "item", columns, EffectiveBatchSize(columns.size(), batchRows),
             [&](auto add) {
                 for (int i = 1; i <= ITEM_COUNT; ++i) {
                     auto row = NGenerator::GenerateItem(seed, i);
