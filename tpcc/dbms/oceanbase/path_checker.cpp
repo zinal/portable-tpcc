@@ -130,8 +130,11 @@ void CheckDbForImport(const std::string& connectionString, const std::string& pa
 
         int whCount = GetWarehouseCount(*conn);
         if (whCount != 0) {
-            LOG_W("Database already has " << whCount
-                  << " warehouses; import will reload assigned ranges on key conflict");
+            // Expected when multiple loaders start together (peers already inserting)
+            // or when resuming an interrupted load. Not a hard failure.
+            LOG_I("Database already has " << whCount
+                  << " warehouses; concurrent loaders or a resumed run may observe this "
+                     "(assigned ranges reload on key conflict)");
         }
     });
 }

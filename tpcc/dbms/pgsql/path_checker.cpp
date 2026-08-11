@@ -113,11 +113,13 @@ void CheckDbForImport(const std::string& connectionString, const std::string& pa
         CheckTablesExist(conn, schema, "Run 'tpcc init' first.");
 
         // Idempotent import inserts assigned warehouse ranges; PK conflicts
-        // trigger delete+reload for that warehouse. Non-empty tables are OK.
+        // trigger delete+reload for that warehouse. Non-empty tables are OK —
+        // including when peer loaders have already started inserting.
         int whCount = GetWarehouseCount(conn);
         if (whCount != 0) {
-            LOG_W("Database already has " << whCount
-                  << " warehouses; import will reload assigned ranges on key conflict");
+            LOG_I("Database already has " << whCount
+                  << " warehouses; concurrent loaders or a resumed run may observe this "
+                     "(assigned ranges reload on key conflict)");
         }
     } catch (const std::exception& e) {
         std::cerr << "Pre-flight check for import failed: " << e.what() << std::endl;

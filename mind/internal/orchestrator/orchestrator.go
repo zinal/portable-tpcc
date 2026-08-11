@@ -481,6 +481,10 @@ func (o *Orchestrator) load(ctx *Context) error {
 
 	var procs []*launchedProc
 	for _, l := range ctx.RunConfig.LoadAssignment {
+		progress.Printf(
+			"load shard %s on %s: ranges=%v owns_global_data=%v threads=%d",
+			l.Instance, l.Host, l.WarehouseRanges, l.OwnsGlobalData, l.Threads,
+		)
 		argv := config.LoaderArgv("run-config.json", l.Instance)
 		proc, err := o.launchRole(ctx, sessions, "loader", l.Host, l.Instance, argv)
 		if err != nil {
