@@ -214,7 +214,27 @@ func (s *SSH) Upload(localPath, remotePath string) error {
 	if err != nil {
 		return err
 	}
-	return s.WriteFile(remotePath, data)
+	if err := s.WriteFile(remotePath, data); err != nil {
+		return err
+	}
+	// cat > creates files with the remote umask (typically 0644). Match
+	// Local.Upload, which always creates with 0755 so worker binaries stay runnable.
+	return s.chmod(remotePath, 0755)
+}
+
+func chmodCmd(remotePath string, mode os.FileMode) string {
+	return fmt.Sprintf("chmod %04o %s", mode.Perm(), remotePathExpr(remotePath))
+}
+
+func (s *SSH) chmod(remotePath string, mode os.FileMode) error {
+	_, stderr, exit, err := s.run(chmodCmd(remotePath, mode))
+	if err != nil {
+		return err
+	}
+	if exit != 0 {
+		return fmt.Errorf("chmod failed: %s", stderr)
+	}
+	return nil
 }
 
 func (s *SSH) Download(remotePath, localPath string) error {
@@ -309,6 +329,29 @@ func (s *SSH) Remove(remotePath string) error {
 	return nil
 }
 
+// pathUnderWorkDir returns path relative to workDir when path is inside it.
+// StartDetached cds into workDir, so binary/log paths must not keep the workDir prefix
+// (e.g. workDir=remote/run, binary=remote/run/tpcc-x → tpcc-x).
+func pathUnderWorkDir(workDir, path string) string {
+	if workDir == "" || path == "" {
+		return path
+	}
+	cleanWork := filepath.Clean(workDir)
+	cleanPath := filepath.Clean(path)
+	if cleanPath == cleanWork {
+		return "."
+	}
+	sep := string(os.PathSeparator)
+	prefix := cleanWork + sep
+	if strings.HasPrefix(cleanPath, prefix) {
+		return cleanPath[len(prefix):]
+	}
+	if rel, err := filepath.Rel(cleanWork, cleanPath); err == nil && rel != "." && !strings.HasPrefix(rel, "..") {
+		return rel
+	}
+	return path
+}
+
 func (s *SSH) StartDetached(workDir, binary string, argv []string, env map[string]string, stdoutPath, stderrPath string) (int, error) {
 	for k := range env {
 		if !ValidEnvName(k) {
@@ -321,17 +364,20 @@ func (s *SSH) StartDetached(workDir, binary string, argv []string, env map[strin
 	if err := s.MkdirAll(filepath.Dir(stdoutPath)); err != nil {
 		return 0, err
 	}
+	bin := pathUnderWorkDir(workDir, binary)
+	stdoutRel := pathUnderWorkDir(workDir, stdoutPath)
+	stderrRel := pathUnderWorkDir(workDir, stderrPath)
 	var b strings.Builder
 	b.WriteString("cd " + remotePathExpr(workDir) + " && ")
 	for k, v := range env {
 		b.WriteString(k + "=" + shellQuote(v) + " ")
 	}
-	b.WriteString("nohup " + remotePathExpr(binary))
+	b.WriteString("nohup " + remotePathExpr(bin))
 	for _, a := range argv {
 		b.WriteString(" " + shellQuote(a))
 	}
-	b.WriteString(" > " + remotePathExpr(stdoutPath))
-	b.WriteString(" 2> " + remotePathExpr(stderrPath))
+	b.WriteString(" > " + remotePathExpr(stdoutRel))
+	b.WriteString(" 2> " + remotePathExpr(stderrRel))
 	b.WriteString(" < /dev/null & echo $!")
 	stdout, stderr, exit, err := s.run(b.String())
 	if err != nil {
