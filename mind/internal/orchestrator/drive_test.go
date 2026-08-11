@@ -19,11 +19,13 @@ import (
 )
 
 type fakeSession struct {
-	files     map[string][]byte
-	uploads   []string
-	alive     bool
-	downloads int
-	signals   int
+	files      map[string][]byte
+	uploads    []string
+	alive      bool
+	downloads  int
+	signals    int
+	removedAll []string
+	startArgv  []string
 }
 
 func (f *fakeSession) Key() string     { return "host-a" }
@@ -67,7 +69,12 @@ func (f *fakeSession) Exists(remotePath string) (bool, error) {
 func (f *fakeSession) Remove(remotePath string) error {
 	return nil
 }
+func (f *fakeSession) RemoveAll(remotePath string) error {
+	f.removedAll = append(f.removedAll, remotePath)
+	return nil
+}
 func (f *fakeSession) StartDetached(workDir, binary string, argv []string, env map[string]string, stdoutPath, stderrPath string) (int, error) {
+	f.startArgv = append([]string{}, argv...)
 	return 123, nil
 }
 func (f *fakeSession) Signal(pid int, sig string) error {

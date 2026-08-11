@@ -411,7 +411,7 @@ Binaries **MAY** keep standalone aliases for local use:
 | `init` | ≡ `schema` (local flags; may drop/recreate) |
 | `import` | standalone load without run-config assignment |
 | `run` | standalone worker without run-config / `--start-at` |
-| `clean` | local-only admin; not a remote orchestrated role |
+| `clean` | admin helper; standalone `--connection` or mind cleanup via `--run-config --instance` |
 
 Non-DBMS logic (assignment interpretation, phase timing, artifact layout)
 comes from shared libraries and the distributed `run-config.json`.

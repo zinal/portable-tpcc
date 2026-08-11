@@ -330,6 +330,20 @@ func (s *SSH) Remove(remotePath string) error {
 	return nil
 }
 
+func (s *SSH) RemoveAll(remotePath string) error {
+	if strings.TrimSpace(remotePath) == "" || remotePath == "/" || remotePath == "." {
+		return fmt.Errorf("refusing to remove unsafe path %q", remotePath)
+	}
+	_, stderr, exit, err := s.run("rm -rf " + remotePathExpr(remotePath))
+	if err != nil {
+		return err
+	}
+	if exit != 0 {
+		return fmt.Errorf("rm -rf failed: %s", stderr)
+	}
+	return nil
+}
+
 // pathUnderWorkDir returns path relative to workDir when path is inside it.
 // StartDetached cds into workDir, so binary/log paths must not keep the workDir prefix
 // (e.g. workDir=remote/run, binary=remote/run/tpcc-x → tpcc-x).

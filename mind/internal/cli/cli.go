@@ -303,16 +303,42 @@ func withMaterializedProfileLock(o *orchestrator.Orchestrator, fn func(*orchestr
 }
 
 func runCleanup(opts orchestrator.Options, yes bool) int {
+	if !yes {
+		fmt.Fprintln(os.Stderr, "cleanup requires --yes")
+		return 2
+	}
 	o, err := orch(opts)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-	if err := o.Cleanup(yes); err != nil {
+	if err := withExistingRunCleanup(o, func(ctx *orchestrator.Context) error {
+		return o.Cleanup(ctx, true)
+	}); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
 	return 0
+}
+
+// withExistingRunCleanup locks the profile and loads an existing run (no new run_id).
+func withExistingRunCleanup(o *orchestrator.Orchestrator, fn func(*orchestrator.Context) error) error {
+	runID, err := o.ResolveCleanupRunID()
+	if err != nil {
+		return err
+	}
+	if err := o.StateStore.AcquireProfileLock(o.Profile.Metadata.Name, runID); err != nil {
+		return err
+	}
+	defer o.StateStore.ReleaseProfileLock(o.Profile.Metadata.Name, runID)
+	oldRunID := o.Opts.RunID
+	o.Opts.RunID = runID
+	defer func() { o.Opts.RunID = oldRunID }()
+	ctx, err := o.LoadExistingContext(runID)
+	if err != nil {
+		return err
+	}
+	return fn(ctx)
 }
 
 func printUsage() {
@@ -335,7 +361,7 @@ Commands:
   collect     Collect artifacts from runtime hosts
   consolidate Merge worker results into aggregate.json
   run         Full pipeline
-  cleanup     Remove deploy manifest paths (--yes required)
+  cleanup     Full teardown for a run: stop, DB clean, remote+local artifacts (--yes)
 
 Options:
   --profile <path>         Profile YAML path

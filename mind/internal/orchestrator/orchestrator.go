@@ -671,8 +671,315 @@ func (o *Orchestrator) Stop(ctx *Context) error {
 	return nil
 }
 
-// Cleanup deploy artifacts.
-func (o *Orchestrator) Cleanup(yes bool) error {
+// ResolveCleanupRunID selects an existing run for cleanup.
+// Explicit --run-id wins; otherwise the newest run for this profile is used
+// (including terminal runs). Does not allocate a new run_id.
+func (o *Orchestrator) ResolveCleanupRunID() (string, error) {
+	vr := o.Validate()
+	if !vr.Valid {
+		return "", fmt.Errorf("profile invalid: %v", vr.Errors)
+	}
+	runID := o.Opts.RunID
+	if runID == "" {
+		latest, err := o.latestCleanupRunID()
+		if err != nil {
+			return "", err
+		}
+		if latest == "" {
+			return "", fmt.Errorf("no runs found for profile %q under %s", o.Profile.Metadata.Name, o.StateStore.StateDir)
+		}
+		progress.Printf("cleanup run_id=%s", latest)
+		return latest, nil
+	}
+	if err := o.verifyRunProfileSHA(runID); err != nil {
+		return "", err
+	}
+	progress.Printf("cleanup run_id=%s", runID)
+	return runID, nil
+}
+
+func (o *Orchestrator) latestCleanupRunID() (string, error) {
+	root := filepath.Join(o.StateStore.StateDir, "runs")
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", err
+	}
+	profileBytes, err := os.ReadFile(o.Opts.ProfilePath)
+	if err != nil {
+		return "", err
+	}
+	wantSHA := canonical.SHA256Bytes(profileBytes)
+	var bestID string
+	var bestTime time.Time
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		runID := e.Name()
+		stored, err := os.ReadFile(filepath.Join(o.StateStore.RunDir(runID), "profile.sha256"))
+		if err != nil || strings.TrimSpace(string(stored)) != wantSHA {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(o.StateStore.RunDir(runID), "run-config.json")); err != nil {
+			continue
+		}
+		rs, err := o.StateStore.Load(runID)
+		if err != nil {
+			continue
+		}
+		t, err := time.Parse(time.RFC3339, rs.UpdatedAt)
+		if err != nil {
+			info, ierr := e.Info()
+			if ierr != nil {
+				continue
+			}
+			t = info.ModTime()
+		}
+		if bestID == "" || t.After(bestTime) {
+			bestID = runID
+			bestTime = t
+		}
+	}
+	return bestID, nil
+}
+
+func (o *Orchestrator) verifyRunProfileSHA(runID string) error {
+	runDir := o.StateStore.RunDir(runID)
+	if _, err := os.Stat(filepath.Join(runDir, "run-config.json")); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("run %s not found under %s", runID, o.StateStore.StateDir)
+		}
+		return err
+	}
+	profileBytes, err := os.ReadFile(o.Opts.ProfilePath)
+	if err != nil {
+		return err
+	}
+	wantSHA := canonical.SHA256Bytes(profileBytes)
+	stored, err := os.ReadFile(filepath.Join(runDir, "profile.sha256"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("run %s is missing profile.sha256", runID)
+		}
+		return err
+	}
+	if strings.TrimSpace(string(stored)) != wantSHA {
+		return fmt.Errorf("run %s was created from a different profile", runID)
+	}
+	return nil
+}
+
+// LoadExistingContext loads an already materialized run without creating artifacts.
+func (o *Orchestrator) LoadExistingContext(runID string) (*Context, error) {
+	if err := o.verifyRunProfileSHA(runID); err != nil {
+		return nil, err
+	}
+	runDir := o.StateStore.RunDir(runID)
+	data, err := os.ReadFile(filepath.Join(runDir, "run-config.json"))
+	if err != nil {
+		return nil, err
+	}
+	rc := &config.RunConfig{}
+	if err := json.Unmarshal(data, rc); err != nil {
+		return nil, fmt.Errorf("load run-config.json: %w", err)
+	}
+	if rc.RunID != "" && rc.RunID != runID {
+		return nil, fmt.Errorf("run-config run_id %q does not match %q", rc.RunID, runID)
+	}
+	rc.RunID = runID
+	return &Context{RunID: runID, RunConfig: rc, RunDir: runDir}, nil
+}
+
+func cleanupNeedsRemote(st string) bool {
+	switch st {
+	case "", state.StatePlanned:
+		return false
+	default:
+		return true
+	}
+}
+
+func cleanupNeedsDB(st string) bool {
+	switch st {
+	case "", state.StatePlanned, state.StateDeploying:
+		return false
+	default:
+		return true
+	}
+}
+
+func hasRunningProcesses(rs *state.RunState) bool {
+	for _, p := range rs.Processes {
+		if p.State == "running" && p.PID > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// Cleanup tears down a run according to its state: stop peers, drop TPC-C
+// objects when schema may exist, remove remote_root/<run_id> on every host,
+// then delete local results and state for the run.
+func (o *Orchestrator) Cleanup(ctx *Context, yes bool) error {
+	if !yes {
+		return fmt.Errorf("cleanup requires --yes")
+	}
+	rs, err := o.StateStore.Load(ctx.RunID)
+	if err != nil {
+		return err
+	}
+	progress.Printf("cleanup: start (run_id=%s, state=%s)", ctx.RunID, rs.State)
+
+	needRemote := cleanupNeedsRemote(rs.State)
+	needDB := cleanupNeedsDB(rs.State)
+	needSessions := needRemote || needDB || hasRunningProcesses(rs)
+
+	if needSessions {
+		sessions, err := o.openSessions()
+		if err != nil {
+			return err
+		}
+		defer closeSessions(sessions)
+
+		if hasRunningProcesses(rs) {
+			progress.Printf("cleanup: stopping running processes")
+			if err := o.stopPeers(ctx, sessions); err != nil {
+				return err
+			}
+		}
+		if needDB {
+			if err := o.cleanupDatabase(ctx, sessions); err != nil {
+				return err
+			}
+		} else {
+			progress.Printf("cleanup: skip database clean (state=%s)", rs.State)
+		}
+		if needRemote {
+			if err := o.removeRemoteRunDirs(ctx, sessions); err != nil {
+				return err
+			}
+		} else {
+			progress.Printf("cleanup: skip remote run dirs (state=%s)", rs.State)
+		}
+	} else {
+		progress.Printf("cleanup: no remote sessions needed (state=%s)", rs.State)
+	}
+
+	if err := o.removeLocalResults(ctx.RunID); err != nil {
+		return err
+	}
+	if err := o.cleanupLocalDeployManifest(); err != nil {
+		return err
+	}
+	if err := o.removeLocalRunState(ctx.RunID); err != nil {
+		return err
+	}
+	progress.Printf("cleanup: complete")
+	return nil
+}
+
+func (o *Orchestrator) cleanupDatabase(ctx *Context, sessions map[string]remote.Session) error {
+	if len(ctx.RunConfig.LoadAssignment) == 0 {
+		return fmt.Errorf("cleanup: run-config has no load_assignment host for database clean")
+	}
+	hostKey := ctx.RunConfig.LoadAssignment[0].Host
+	sess, ok := sessions[hostKey]
+	if !ok {
+		return fmt.Errorf("cleanup: no session for host %s", hostKey)
+	}
+	runDir, err := o.sessionRunDir(sess, ctx.RunID)
+	if err != nil {
+		return err
+	}
+	remoteBin := filepath.Join(runDir, ctx.RunConfig.Binary)
+	exists, err := sess.Exists(remoteBin)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		progress.Printf("cleanup: skip database clean (worker binary missing on %s)", hostKey)
+		return nil
+	}
+	instance := "clean-0"
+	argv := config.CleanArgv("run-config.json", instance)
+	progress.Printf("cleanup: drop TPC-C objects via %s/%s", hostKey, instance)
+	proc, err := o.launchRole(ctx, sessions, "clean", hostKey, instance, argv)
+	if err != nil {
+		return err
+	}
+	if err := o.waitProcesses(ctx, []*launchedProc{proc}, 30*time.Minute, true); err != nil {
+		return err
+	}
+	progress.Printf("cleanup: database clean finished")
+	return nil
+}
+
+func (o *Orchestrator) removeRemoteRunDirs(ctx *Context, sessions map[string]remote.Session) error {
+	for hostKey, sess := range sessions {
+		runDir, err := o.sessionRunDir(sess, ctx.RunID)
+		if err != nil {
+			return fmt.Errorf("cleanup host %s: %w", hostKey, err)
+		}
+		if err := assertSafeRemoteRunDir(runDir, ctx.RunID); err != nil {
+			return fmt.Errorf("cleanup host %s: %w", hostKey, err)
+		}
+		exists, err := sess.Exists(runDir)
+		if err != nil {
+			return fmt.Errorf("cleanup host %s: %w", hostKey, err)
+		}
+		if !exists {
+			progress.Printf("cleanup %s: remote run dir absent (%s)", hostKey, runDir)
+			continue
+		}
+		progress.Printf("cleanup %s: remove %s", hostKey, runDir)
+		if err := sess.RemoveAll(runDir); err != nil {
+			return fmt.Errorf("cleanup host %s remove %s: %w", hostKey, runDir, err)
+		}
+	}
+	return nil
+}
+
+func assertSafeRemoteRunDir(runDir, runID string) error {
+	clean := filepath.Clean(runDir)
+	if clean == "" || clean == "." || clean == "/" || clean == string(filepath.Separator) {
+		return fmt.Errorf("refusing to remove unsafe path %q", runDir)
+	}
+	base := filepath.Base(clean)
+	if base != runID {
+		return fmt.Errorf("refusing to remove %q: base %q is not run_id %q", runDir, base, runID)
+	}
+	return nil
+}
+
+func (o *Orchestrator) removeLocalResults(runID string) error {
+	dir := filepath.Join(o.Expanded.ResultRoot, runID)
+	if err := assertSafeRemoteRunDir(dir, runID); err != nil {
+		return fmt.Errorf("local results: %w", err)
+	}
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		progress.Printf("cleanup: local results absent (%s)", dir)
+		return nil
+	}
+	progress.Printf("cleanup: remove local results %s", dir)
+	return os.RemoveAll(dir)
+}
+
+func (o *Orchestrator) removeLocalRunState(runID string) error {
+	dir := o.StateStore.RunDir(runID)
+	if err := assertSafeRemoteRunDir(dir, runID); err != nil {
+		return fmt.Errorf("local state: %w", err)
+	}
+	progress.Printf("cleanup: remove local run state %s", dir)
+	return os.RemoveAll(dir)
+}
+
+func (o *Orchestrator) cleanupLocalDeployManifest() error {
+	if !usesLocalRuntime(o.Profile) {
+		return nil
+	}
 	root, err := paths.ExpandHome(o.Expanded.RemoteRoot)
 	if err != nil {
 		return err
@@ -680,12 +987,15 @@ func (o *Orchestrator) Cleanup(yes bool) error {
 	if abs, err := filepath.Abs(root); err == nil {
 		root = abs
 	}
-	progress.Printf("cleanup: removing deploy artifacts under %s", root)
-	if err := deploy.Cleanup(root, yes); err != nil {
+	manifestPath := deploy.DeployManifestPath(root)
+	if _, err := os.Stat(manifestPath); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
 		return err
 	}
-	progress.Printf("cleanup: complete")
-	return nil
+	progress.Printf("cleanup: removing local deploy manifest paths under %s", root)
+	return deploy.Cleanup(root, true)
 }
 
 // WritePlanJSON encodes plan snapshot to JSON.

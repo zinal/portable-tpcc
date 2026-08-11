@@ -26,6 +26,8 @@ type Session interface {
 	Exists(remotePath string) (bool, error)
 	// Remove removes a remote file if present.
 	Remove(remotePath string) error
+	// RemoveAll removes a remote file or directory tree if present.
+	RemoveAll(remotePath string) error
 	// StartDetached starts a process without waiting; returns OS pid when known.
 	StartDetached(workDir, binary string, argv []string, env map[string]string, stdoutPath, stderrPath string) (pid int, err error)
 	// Signal sends a signal to a remote pid (e.g. "TERM", "KILL").

@@ -343,6 +343,15 @@ tpcc-oceanbase schema --run-config run-config.json --instance schema-0
 tpcc-oceanbase loader --run-config run-config.json --instance <loader>
 tpcc-oceanbase worker --run-config run-config.json --instance <worker> --start-at=<UTC>
 tpcc-oceanbase check  --run-config run-config.json --instance check-0 --after-import|--after-run
+tpcc-oceanbase clean  --run-config run-config.json --instance clean-0   # mind-tpcc cleanup
+```
+
+Teardown a run (DB objects when past deploy, remote `remote_root/<run_id>`,
+local results + state):
+
+```bash
+./mind-tpcc cleanup --profile ./profile-oceanbase.yaml --yes
+# or: --run-id <id>
 ```
 
 ### Checklist
