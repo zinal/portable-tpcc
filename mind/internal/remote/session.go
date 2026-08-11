@@ -2,6 +2,7 @@ package remote
 
 import (
 	"io"
+	"os"
 	"time"
 )
 
@@ -20,6 +21,8 @@ type Session interface {
 	ReadFile(remotePath string) ([]byte, error)
 	// WriteFile writes a remote file (creates parent directories).
 	WriteFile(remotePath string, data []byte) error
+	// WriteFileMode writes a remote file with explicit permission bits.
+	WriteFileMode(remotePath string, data []byte, mode os.FileMode) error
 	// MkdirAll creates a remote directory tree.
 	MkdirAll(remotePath string) error
 	// Exists reports whether a remote path exists.

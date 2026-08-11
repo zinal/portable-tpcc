@@ -73,4 +73,65 @@ func TestBuildRunConfig_rewritesYdbCredentialPaths(t *testing.T) {
 	if rc.Database.SaKeyFile != config.RemoteSAKeyFileName {
 		t.Fatalf("sa_key_file=%q want %q", rc.Database.SaKeyFile, config.RemoteSAKeyFileName)
 	}
+	if rc.Database.PasswordFile != "" || rc.Database.PasswordEnv != "" {
+		t.Fatalf("sa_key run-config must omit password fields, got file=%q env=%q",
+			rc.Database.PasswordFile, rc.Database.PasswordEnv)
+	}
+}
+
+func TestBuildRunConfig_usesPasswordFileNotEnv(t *testing.T) {
+	seed := int64(1)
+	p := &profile.Profile{
+		Metadata: profile.Metadata{Name: "pg"},
+		Database: profile.Database{
+			DBMS:        "pgsql",
+			Endpoint:    "localhost:5432",
+			Database:    "tpcc",
+			Path:        "portable_tpcc",
+			PasswordEnv: "TPCC_PASSWORD",
+		},
+		Scale:   profile.Scale{Warehouses: 1},
+		Data:    profile.Data{Seed: &seed, BatchRows: 100},
+		Loaders: []profile.NamedHost{{Name: "loader-a", Host: "h1"}},
+		Workers: []profile.NamedHost{{Name: "worker-a", Host: "h1"}},
+		Phases: profile.Phases{
+			StartLead:        "1s",
+			RampUp:           "1s",
+			Measurement:      "120m",
+			TransactionDrain: "1s",
+			StopGrace:        "1s",
+			MaxClockSkew:     "100ms",
+		},
+		Runtime: profile.Runtime{
+			ThreadsPerWorker:     1,
+			MaxInflightPerWorker: 8,
+		},
+	}
+	rc, err := config.BuildRunConfig(config.BuildInput{
+		Profile: p,
+		RunID:   "run-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rc.Database.PasswordFile != config.RemotePasswordFileName {
+		t.Fatalf("password_file=%q want %q", rc.Database.PasswordFile, config.RemotePasswordFileName)
+	}
+	if rc.Database.PasswordEnv != "" {
+		t.Fatalf("password_env=%q, want empty in orchestrated run-config", rc.Database.PasswordEnv)
+	}
+}
+
+func TestNeedsRemotePasswordFile(t *testing.T) {
+	if !config.NeedsRemotePasswordFile(profile.Database{DBMS: "pgsql", PasswordEnv: "P"}) {
+		t.Fatal("pgsql with password_env should need file")
+	}
+	if config.NeedsRemotePasswordFile(profile.Database{DBMS: "ydb", AuthScheme: "sa_key", PasswordEnv: ""}) {
+		t.Fatal("ydb sa_key should not need password file")
+	}
+	if !config.NeedsRemotePasswordFile(profile.Database{
+		DBMS: "ydb", AuthScheme: "login", User: "root", PasswordEnv: "P",
+	}) {
+		t.Fatal("ydb login should need password file")
+	}
 }

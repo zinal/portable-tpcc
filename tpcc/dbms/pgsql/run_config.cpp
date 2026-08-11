@@ -2,6 +2,7 @@
 
 #include "partition_config.h"
 
+#include <password_secret.h>
 #include <sha256.h>
 #include <think_time.h>
 
@@ -297,6 +298,7 @@ TRunConfigDocument LoadRunConfigDocument(const std::string& path) {
         doc.Database = db.value("database", "");
         doc.Path = db.value("path", "");
         doc.PasswordEnv = db.value("password_env", "");
+        doc.PasswordFile = db.value("password_file", "");
         if (db.contains("options")) {
             if (!db["options"].is_object()) {
                 throw std::runtime_error("database.options must be an object");
@@ -488,23 +490,18 @@ TRunConfigDocument LoadRunConfigDocument(const std::string& path) {
 }
 
 std::string BuildPgConnectionString(const TRunConfigDocument& doc) {
-    if (doc.PasswordEnv.empty()) {
-        throw std::runtime_error("database.password_env is required");
-    }
-    const char* password = std::getenv(doc.PasswordEnv.c_str());
-    if (!password) {
-        throw std::runtime_error("environment variable not set: " + doc.PasswordEnv);
-    }
+    const std::string password = ReadDatabasePassword(
+        doc.PasswordFile, doc.PasswordEnv, doc.RunDir);
 
     const auto& ep = doc.Endpoint;
     if (ep.empty()) {
         throw std::runtime_error("database.endpoint is required");
     }
-    // Reject libpq keyword strings so secrets cannot bypass password_env.
+    // Reject libpq keyword strings so secrets cannot bypass password_file/env.
     if (ep.find('=') != std::string::npos) {
         throw std::runtime_error(
             "database.endpoint must be host or host:port; "
-            "libpq keyword strings are not accepted (use password_env for secrets)");
+            "libpq keyword strings are not accepted (use password_file/password_env for secrets)");
     }
 
     std::string host;

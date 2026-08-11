@@ -121,26 +121,38 @@ func closeSessions(sessions map[string]remote.Session) {
 	}
 }
 
-func (o *Orchestrator) passwordEnv() map[string]string {
+func (o *Orchestrator) controlHostPassword() (string, error) {
 	name := o.Profile.Database.PasswordEnv
 	if name == "" {
-		return nil
+		return "", fmt.Errorf("database.password_env is not set in the profile")
 	}
 	val, ok := os.LookupEnv(name)
 	if !ok {
-		return nil
+		return "", fmt.Errorf("environment variable %s is not set", name)
 	}
-	return map[string]string{name: val}
+	return val, nil
 }
 
-func (o *Orchestrator) requiresPasswordEnv() bool {
-	if o.Profile.Database.PasswordEnv == "" {
-		return false
+func (o *Orchestrator) requiresPasswordFile() bool {
+	return config.NeedsRemotePasswordFile(o.Profile.Database)
+}
+
+// ensureRemotePasswordFile writes the control-host password_env value to the
+// worker-local db-password file (mode 0600). The secret is never placed in the
+// SSH/nohup command line.
+func (o *Orchestrator) ensureRemotePasswordFile(sess remote.Session, runDir string) error {
+	if !o.requiresPasswordFile() {
+		return nil
 	}
-	if o.Profile.Database.DBMS == "ydb" {
-		return config.InferYdbAuthScheme(o.Profile.Database) == "login"
+	password, err := o.controlHostPassword()
+	if err != nil {
+		return err
 	}
-	return true
+	remotePath := filepath.Join(runDir, config.RemotePasswordFileName)
+	if err := sess.WriteFileMode(remotePath, []byte(password), 0600); err != nil {
+		return fmt.Errorf("write %s: %w", config.RemotePasswordFileName, err)
+	}
+	return nil
 }
 
 func (o *Orchestrator) binaryLocalPath() (string, error) {
@@ -203,6 +215,12 @@ func (o *Orchestrator) deployToHosts(ctx *Context, sessions map[string]remote.Se
 			progress.Printf("deploy %s: upload %s", hostKey, f.RemoteName)
 			if err := sess.Upload(f.LocalPath, remotePath); err != nil {
 				return fmt.Errorf("host %s upload %s: %w", hostKey, f.RemoteName, err)
+			}
+		}
+		if o.requiresPasswordFile() {
+			progress.Printf("deploy %s: write %s", hostKey, config.RemotePasswordFileName)
+			if err := o.ensureRemotePasswordFile(sess, runDir); err != nil {
+				return fmt.Errorf("host %s: %w", hostKey, err)
 			}
 		}
 		progress.Printf("deploy %s: done", hostKey)
@@ -298,15 +316,14 @@ func (o *Orchestrator) launchRole(
 	if !exists {
 		return nil, fmt.Errorf("worker binary %s not found on %s; run `mind-tpcc deploy --profile ... --run-id %s` first", remoteBin, hostKey, ctx.RunID)
 	}
-	var env map[string]string
-	if o.requiresPasswordEnv() {
-		env = o.passwordEnv()
-		if env == nil {
-			return nil, fmt.Errorf("environment variable %s is not set", o.Profile.Database.PasswordEnv)
-		}
+	// Refresh the password file before each launch so cleanup / late stages
+	// still work if deploy was skipped; never inject the secret into argv/env
+	// of the remote shell command (visible in ps).
+	if err := o.ensureRemotePasswordFile(sess, runDir); err != nil {
+		return nil, err
 	}
 	progress.Printf("launch %s/%s on %s", role, instance, hostKey)
-	pid, err := sess.StartDetached(runDir, remoteBin, argv, env, stdout, stderr)
+	pid, err := sess.StartDetached(runDir, remoteBin, argv, nil, stdout, stderr)
 	if err != nil {
 		return nil, err
 	}

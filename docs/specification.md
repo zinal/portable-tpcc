@@ -152,8 +152,9 @@ loaders and workers.
 `run-config.json` includes concrete values, not hash stand-ins for other
 documents:
 
-- `run_id`, DBMS settings (no passwords or tokens — only `password_env` /
-  worker-local paths such as `sa_key_file` / `ca_file`);
+- `run_id`, DBMS settings (no passwords or tokens — only worker-local paths
+  such as `password_file` / `sa_key_file` / `ca_file`, or a `password_env`
+  name for standalone);
 - scale, seed, workload (mix, think/keying times, terminals per warehouse);
 - loader/worker instance lists and computed warehouse ranges;
 - phase durations and runtime/retry/histogram settings;
@@ -350,9 +351,11 @@ error, not a compatibility mode that `consolidate` is required to reconcile.
 
 Skipped steps are recorded in the run-state and aggregate.
 
-Secrets: passwords only via environment variable names; never in profile
-artifacts, argv, run-config, or logs. Host-key checking is required unless
-explicitly disabled in the profile (recorded in run-state).
+Secrets: the profile names a control-host environment variable
+(`password_env`); `mind-tpcc` delivers the value to workers as a mode-0600
+`password_file` beside `run-config.json` and must not place the secret in
+argv, SSH/nohup command lines, profile artifacts, or logs. Host-key checking
+is required unless explicitly disabled in the profile (recorded in run-state).
 
 ## 10. Validation
 

@@ -277,6 +277,10 @@ func (s *SSH) Realpath(remotePath string) (string, error) {
 }
 
 func (s *SSH) WriteFile(remotePath string, data []byte) error {
+	return s.WriteFileMode(remotePath, data, 0644)
+}
+
+func (s *SSH) WriteFileMode(remotePath string, data []byte, mode os.FileMode) error {
 	if err := s.MkdirAll(filepath.Dir(remotePath)); err != nil {
 		return err
 	}
@@ -297,7 +301,14 @@ func (s *SSH) WriteFile(remotePath string, data []byte) error {
 		return err
 	}
 	stdin.Close()
-	return session.Wait()
+	if err := session.Wait(); err != nil {
+		return err
+	}
+	perm := mode.Perm()
+	if perm == 0 {
+		perm = 0644
+	}
+	return s.chmod(remotePath, perm)
 }
 
 func (s *SSH) MkdirAll(remotePath string) error {

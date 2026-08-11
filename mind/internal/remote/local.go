@@ -84,12 +84,24 @@ func (l *Local) ReadFile(remotePath string) ([]byte, error) {
 }
 
 func (l *Local) WriteFile(remotePath string, data []byte) error {
+	return l.WriteFileMode(remotePath, data, 0644)
+}
+
+func (l *Local) WriteFileMode(remotePath string, data []byte, mode os.FileMode) error {
 	path := l.resolve(remotePath)
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
 	}
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0644); err != nil {
+	perm := mode.Perm()
+	if perm == 0 {
+		perm = 0644
+	}
+	if err := os.WriteFile(tmp, data, perm); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmp, perm); err != nil {
+		_ = os.Remove(tmp)
 		return err
 	}
 	return os.Rename(tmp, path)

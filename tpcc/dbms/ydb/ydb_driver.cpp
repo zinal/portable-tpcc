@@ -5,6 +5,8 @@
 #include <ydb/public/sdk/cpp/include/ydb-cpp-sdk/client/iam/iam.h>
 #include <ydb/public/sdk/cpp/include/ydb-cpp-sdk/client/types/credentials/credentials.h>
 
+#include <password_secret.h>
+
 #include <cstdlib>
 #include <fstream>
 #include <sstream>
@@ -22,17 +24,6 @@ std::string ReadFileContents(const std::string& path) {
     std::ostringstream ss;
     ss << in.rdbuf();
     return ss.str();
-}
-
-std::string ReadPasswordFromEnv(const std::string& envName) {
-    if (envName.empty()) {
-        throw std::runtime_error("YDB login auth requires password_env");
-    }
-    const char* value = std::getenv(envName.c_str());
-    if (!value) {
-        throw std::runtime_error("YDB password environment variable is not set: " + envName);
-    }
-    return value;
 }
 
 std::string NormalizeRelativePrefix(const TYdbConnectionConfig& config) {
@@ -113,7 +104,9 @@ void ApplyCredentials(NYdb::TDriverConfig& driverConfig, const TYdbConnectionCon
             }
             NYdb::TLoginCredentialsParams params;
             params.User = config.User;
-            params.Password = ReadPasswordFromEnv(config.PasswordEnv);
+            // PasswordFile is already resolved under run_dir when present.
+            params.Password = ReadDatabasePassword(
+                config.PasswordFile, config.PasswordEnv, /*runDir=*/"");
             driverConfig.SetCredentialsProviderFactory(
                 NYdb::CreateLoginCredentialsProviderFactory(std::move(params)));
             return;

@@ -60,7 +60,9 @@ createdb tpcc
 
 Do not put passwords in profile YAML/JSON. Pass them via the connection
 string (standalone) or an environment variable named in `password_env`
-(orchestrated).
+on the control host (orchestrated). `mind-tpcc` copies that value to a
+mode-0600 `db-password` file on each worker and points `run-config.json` at
+`password_file` — it does not put the secret into SSH/`nohup` command lines.
 
 ### Standalone local run
 
@@ -207,7 +209,9 @@ when schema runs, so you do not need to pre-create it.
 
 Do not put passwords in profile YAML/JSON. Pass them via the connection
 string (standalone) or an environment variable named in `password_env`
-(orchestrated).
+on the control host (orchestrated). `mind-tpcc` delivers the value as a
+worker-local `password_file` (`db-password`, mode 0600), not via the remote
+process command line.
 
 ### Schema partitioning
 
@@ -303,8 +307,9 @@ database:
 
 For OceanBase, optional `database.user` sets the client login (`user@tenant`).
 When omitted, `tpcc-oceanbase` uses `TPCC_OB_USER` if set, otherwise
-`root@root`. Password is read from the env named in `password_env` and
-injected into remote role processes by `mind-tpcc`.
+`root@root`. On the control host, set the env named in `password_env`;
+`mind-tpcc` writes it to each worker as `db-password` (`password_file` in
+run-config) instead of embedding it in the remote launch command.
 
 ```bash
 export TPCC_PASSWORD='...'
