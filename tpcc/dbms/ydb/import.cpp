@@ -81,7 +81,8 @@ void ImportSync(const TImportConfig& config) {
           << ", owns_global_data=" << (config.OwnsGlobalData ? "true" : "false")
           << ") using " << threadCount << " threads (seed=" << config.Seed
           << ", run_id=" << (config.RunId.empty() ? "-" : config.RunId)
-          << ", batch_rows=" << config.BatchRows << ")");
+          << ", batch_rows=" << config.BatchRows
+          << "; each warehouse includes ~100k stock rows)");
 
     auto startTime = Clock::now();
     TImportState state{GetGlobalInterruptSource().get_token()};
@@ -133,16 +134,11 @@ void ImportSync(const TImportConfig& config) {
         });
     }
 
-    auto lastProgress = Clock::now();
+    // Per-warehouse "Loading"/"loaded" lines already report progress; avoid a
+    // periodic counter that every parallel loader repeats with the same value.
     while (state.WarehousesLoaded.load(std::memory_order_relaxed) < assignedWarehouses
            && !state.StopToken.stop_requested())
     {
-        if (Clock::now() - lastProgress >= std::chrono::seconds(15)) {
-            LOG_I("Import progress: " << state.WarehousesLoaded.load()
-                  << "/" << assignedWarehouses
-                  << " warehouses (first warehouse includes ~100k stock rows)");
-            lastProgress = Clock::now();
-        }
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
     }
 
