@@ -134,8 +134,11 @@ normative roles `schema`, `loader`, `worker`, and `check`. Non-DBMS logic
 comes from shared libraries; only the adapter/driver is DBMS-specific.
 
 Binaries **MAY** keep standalone aliases for local use (`init` ≡ `schema`,
-`import` / `run` with flag-driven config, `clean` as local-only admin).
-Orchestrated remotes use only the four normative role names.
+`import` / `run` with flag-driven config, `clean` as local admin).
+Orchestrated workload remotes use the four normative role names
+(`schema`, `loader`, `worker`, `check`). `mind-tpcc cleanup` **MAY** also
+launch `clean --run-config --instance` as an admin helper to drop TPC-C
+objects with the same secret handling as other roles.
 
 ## 5. Configuration Model
 
@@ -327,6 +330,14 @@ mind-tpcc run | cleanup --yes
 
 `run` = validate → deploy → schema → load → check(after-import) → start
 phases → check(after-run) → collect → consolidate.
+
+`cleanup --yes` tears down an existing run for the profile (explicit
+`--run-id`, else the newest matching run, including terminal states). Phases
+depend on run-state: stop any recorded running processes; when state is past
+`deploying`, launch orchestrated `clean` on the first loader host; when state
+is past `planned`, remove `remote_root/<run_id>` on every runtime host; always
+remove local `result_root/<run_id>` and `state/runs/<run_id>` (and loopback
+deploy-manifest paths when present).
 
 Worker artifact semantics are not independently version-negotiated. The
 operator **MUST** invoke `deploy` after selecting, building, or updating the

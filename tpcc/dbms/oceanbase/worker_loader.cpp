@@ -118,4 +118,14 @@ int RunSchemaFromRunConfig(const std::string& runConfigPath, const std::string& 
     });
 }
 
+int RunCleanFromRunConfig(const std::string& runConfigPath, const std::string& instance) {
+    const auto doc = LoadRunConfigDocument(runConfigPath);
+    return RunOrchestratedClean(doc, instance, [instance](const TRunConfigDocument& d) {
+        const std::string connection = BuildObConnectionString(d);
+        TObAdminAdapter admin(connection, d.Path);
+        admin.Clean();
+        LOG_I("Clean complete (instance=" << instance << ", path=" << d.Path << ")");
+    });
+}
+
 } // namespace NTpcc

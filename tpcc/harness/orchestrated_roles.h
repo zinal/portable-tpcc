@@ -55,4 +55,10 @@ int RunOrchestratedSchema(
     const std::string& instance,
     std::function<void(const TRunConfigDocument&)> ensureSchema);
 
+// Admin helper for mind-tpcc cleanup (not a workload role).
+int RunOrchestratedClean(
+    const TRunConfigDocument& doc,
+    const std::string& instance,
+    std::function<void(const TRunConfigDocument&)> clean);
+
 } // namespace NTpcc
