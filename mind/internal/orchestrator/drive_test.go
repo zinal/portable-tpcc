@@ -19,11 +19,12 @@ import (
 )
 
 type fakeSession struct {
-	files     map[string][]byte
-	uploads   []string
-	alive     bool
-	downloads int
-	signals   int
+	files      map[string][]byte
+	uploads    []string
+	alive      bool
+	downloads  int
+	signals    int
+	removeAlls []string
 }
 
 func (f *fakeSession) Key() string     { return "host-a" }
@@ -65,6 +66,10 @@ func (f *fakeSession) Exists(remotePath string) (bool, error) {
 	return false, nil
 }
 func (f *fakeSession) Remove(remotePath string) error {
+	return nil
+}
+func (f *fakeSession) RemoveAll(remotePath string) error {
+	f.removeAlls = append(f.removeAlls, remotePath)
 	return nil
 }
 func (f *fakeSession) StartDetached(workDir, binary string, argv []string, env map[string]string, stdoutPath, stderrPath string) (int, error) {
@@ -582,5 +587,55 @@ func TestDeployToHostsUploadsCredentialFiles(t *testing.T) {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("missing upload %q in %v", want, sess.uploads)
 		}
+	}
+}
+
+func TestRemoveRemoteRunDirs(t *testing.T) {
+	o := &Orchestrator{
+		Expanded: config.ExpandedPaths{RemoteRoot: "/home/demo/portable-tpcc/ob-work"},
+	}
+	sess := &fakeSession{}
+	if err := o.removeRemoteRunDirs("lab-ob-01", map[string]remote.Session{
+		"10.0.0.1": sess,
+		"10.0.0.2": sess,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(sess.removeAlls) != 2 {
+		t.Fatalf("RemoveAll calls=%v", sess.removeAlls)
+	}
+	want := "/home/demo/portable-tpcc/ob-work/lab-ob-01"
+	for _, got := range sess.removeAlls {
+		if got != want {
+			t.Fatalf("RemoveAll path=%q, want %q", got, want)
+		}
+	}
+}
+
+func TestValidateCleanupRunID(t *testing.T) {
+	if err := validateCleanupRunID("run-1"); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"..", ".", "a/b", `a\b`, "a..b"} {
+		if err := validateCleanupRunID(id); err == nil {
+			t.Fatalf("expected invalid run_id %q", id)
+		}
+	}
+}
+
+func TestResolveCleanupRunID_explicit(t *testing.T) {
+	o := &Orchestrator{Opts: Options{RunID: "explicit-01"}}
+	got, err := o.resolveCleanupRunID()
+	if err != nil || got != "explicit-01" {
+		t.Fatalf("got %q err=%v", got, err)
+	}
+}
+
+func TestCleanup_requiresYes(t *testing.T) {
+	o := &Orchestrator{
+		Expanded: config.ExpandedPaths{RemoteRoot: t.TempDir()},
+	}
+	if err := o.Cleanup(false); err == nil {
+		t.Fatal("expected error without --yes")
 	}
 }

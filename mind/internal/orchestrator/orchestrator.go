@@ -671,8 +671,25 @@ func (o *Orchestrator) Stop(ctx *Context) error {
 	return nil
 }
 
-// Cleanup deploy artifacts.
+// Cleanup removes per-run deploy trees on runtime hosts and any local
+// deploy-manifest paths under paths.remote_root.
 func (o *Orchestrator) Cleanup(yes bool) error {
+	if !yes {
+		return fmt.Errorf("cleanup requires --yes in non-interactive mode")
+	}
+	runID, err := o.resolveCleanupRunID()
+	if err != nil {
+		return err
+	}
+	if runID != "" {
+		progress.Printf("cleanup: removing remote run dir for run_id=%s", runID)
+		if err := o.cleanupRemoteRun(runID); err != nil {
+			return err
+		}
+	} else {
+		progress.Printf("cleanup: no run_id resolved; skipping remote run dirs (pass --run-id)")
+	}
+
 	root, err := paths.ExpandHome(o.Expanded.RemoteRoot)
 	if err != nil {
 		return err
@@ -682,17 +699,85 @@ func (o *Orchestrator) Cleanup(yes bool) error {
 	}
 	manifestPath := deploy.DeployManifestPath(root)
 	if _, err := os.Stat(manifestPath); os.IsNotExist(err) {
-		if err := deploy.Cleanup(root, yes); err != nil {
+		progress.Printf("cleanup: no local deploy manifest under %s", root)
+	} else {
+		progress.Printf("cleanup: removing local deploy manifest paths under %s", root)
+		if err := deploy.Cleanup(root, true); err != nil {
 			return err
 		}
-		progress.Printf("cleanup: no deploy manifest under %s; nothing to remove", root)
-		return nil
-	}
-	progress.Printf("cleanup: removing deploy artifacts under %s", root)
-	if err := deploy.Cleanup(root, yes); err != nil {
-		return err
 	}
 	progress.Printf("cleanup: complete")
+	return nil
+}
+
+// resolveCleanupRunID picks the run tree to delete on runtime hosts.
+// Unlike ResolveRunID, it never allocates a new identifier.
+func (o *Orchestrator) resolveCleanupRunID() (string, error) {
+	if runID := strings.TrimSpace(o.Opts.RunID); runID != "" {
+		if err := validateCleanupRunID(runID); err != nil {
+			return "", err
+		}
+		return runID, nil
+	}
+	latest, err := o.StateStore.LatestRunID()
+	if err != nil || latest == "" {
+		return "", err
+	}
+	profileBytes, err := os.ReadFile(o.Opts.ProfilePath)
+	if err != nil {
+		return "", err
+	}
+	wantSHA := canonical.SHA256Bytes(profileBytes)
+	stored, err := os.ReadFile(filepath.Join(o.StateStore.RunDir(latest), "profile.sha256"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", err
+	}
+	if strings.TrimSpace(string(stored)) != wantSHA {
+		return "", nil
+	}
+	return latest, nil
+}
+
+func validateCleanupRunID(runID string) error {
+	if runID == "." || runID == ".." {
+		return fmt.Errorf("invalid run_id %q", runID)
+	}
+	if strings.Contains(runID, "/") || strings.Contains(runID, `\`) || strings.Contains(runID, "..") {
+		return fmt.Errorf("invalid run_id %q", runID)
+	}
+	return nil
+}
+
+func (o *Orchestrator) cleanupRemoteRun(runID string) error {
+	sessions, err := o.openSessions()
+	if err != nil {
+		return err
+	}
+	defer closeSessions(sessions)
+	return o.removeRemoteRunDirs(runID, sessions)
+}
+
+func (o *Orchestrator) removeRemoteRunDirs(runID string, sessions map[string]remote.Session) error {
+	for hostKey, sess := range sessions {
+		root, err := o.runtimeRoot(sess)
+		if err != nil {
+			return fmt.Errorf("host %s remote_root: %w", hostKey, err)
+		}
+		runDir, err := paths.JoinRelative(root, runID)
+		if err != nil {
+			return fmt.Errorf("host %s run dir: %w", hostKey, err)
+		}
+		if filepath.Clean(runDir) == filepath.Clean(root) {
+			return fmt.Errorf("refusing to remove remote_root %s", root)
+		}
+		progress.Printf("cleanup %s: remove %s", hostKey, runDir)
+		if err := sess.RemoveAll(runDir); err != nil {
+			return fmt.Errorf("host %s cleanup: %w", hostKey, err)
+		}
+	}
 	return nil
 }
 

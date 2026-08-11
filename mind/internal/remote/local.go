@@ -118,6 +118,17 @@ func (l *Local) Remove(remotePath string) error {
 	return err
 }
 
+func (l *Local) RemoveAll(remotePath string) error {
+	if err := rejectUnsafeRemoveAll(remotePath); err != nil {
+		return err
+	}
+	err := os.RemoveAll(l.resolve(remotePath))
+	if os.IsNotExist(err) {
+		return nil
+	}
+	return err
+}
+
 func (l *Local) StartDetached(workDir, binary string, argv []string, env map[string]string, stdoutPath, stderrPath string) (int, error) {
 	wd := l.resolve(workDir)
 	bin := binary

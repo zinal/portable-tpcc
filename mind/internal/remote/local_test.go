@@ -59,3 +59,34 @@ func TestIsLoopback(t *testing.T) {
 		t.Fatal("expected non-loopback")
 	}
 }
+
+func TestLocalSession_RemoveAll(t *testing.T) {
+	root := t.TempDir()
+	sess, err := remote.NewLocal("local", "127.0.0.1", root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sess.Close()
+
+	runDir := "run-1"
+	nested := filepath.Join(runDir, "worker", "w1", "stdout.log")
+	if err := sess.MkdirAll(filepath.Dir(nested)); err != nil {
+		t.Fatal(err)
+	}
+	if err := sess.WriteFile(nested, []byte("log")); err != nil {
+		t.Fatal(err)
+	}
+	if err := sess.RemoveAll(runDir); err != nil {
+		t.Fatal(err)
+	}
+	exists, err := sess.Exists(runDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exists {
+		t.Fatal("run dir still exists after RemoveAll")
+	}
+	if err := sess.RemoveAll(runDir); err != nil {
+		t.Fatalf("idempotent RemoveAll: %v", err)
+	}
+}
