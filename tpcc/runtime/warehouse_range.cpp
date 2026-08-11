@@ -1,6 +1,7 @@
 #include "warehouse_range.h"
 
 #include <stdexcept>
+#include <string>
 
 namespace NTpcc {
 
@@ -22,6 +23,24 @@ bool WarehouseInRanges(int warehouseId, const std::vector<TWarehouseRange>& rang
         }
     }
     return false;
+}
+
+std::string FormatWarehouseRanges(const std::vector<TWarehouseRange>& ranges) {
+    if (ranges.empty()) {
+        return "[]";
+    }
+    std::string out;
+    for (size_t i = 0; i < ranges.size(); ++i) {
+        if (i > 0) {
+            out.push_back(',');
+        }
+        out.push_back('[');
+        out += std::to_string(ranges[i].Start);
+        out.push_back(',');
+        out += std::to_string(ranges[i].End);
+        out.push_back(')');
+    }
+    return out;
 }
 
 int RangeStartInclusive(const TWarehouseRange& range) {

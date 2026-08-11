@@ -7,6 +7,7 @@
 #include <constants.h>
 #include <domain_util.h>
 #include <log.h>
+#include <warehouse_range.h>
 
 #include <fmt/format.h>
 
@@ -54,6 +55,34 @@ void ThrowIfFailed(const TPutBatchResult& result, const char* what) {
     }
 }
 
+int CountItems(TObConnection& conn) {
+    auto result = conn.QuerySimple("SELECT COUNT(*) AS cnt FROM item");
+    if (!result.TryNextRow()) {
+        return 0;
+    }
+    return result.GetInt32("cnt");
+}
+
+// Non-owners must not insert stock (FK to item) until the global owner finishes items.
+void WaitForGlobalItems(TObConnection& conn, std::stop_token stop) {
+    LOG_I("Waiting for global item table (" << ITEM_COUNT
+          << " rows) before loading assigned warehouses");
+    auto lastLog = Clock::now();
+    while (!stop.stop_requested()) {
+        const int count = CountItems(conn);
+        if (count >= ITEM_COUNT) {
+            LOG_I("Global item table ready (" << count << " rows)");
+            return;
+        }
+        if (Clock::now() - lastLog >= std::chrono::seconds(15)) {
+            LOG_I("Still waiting for item table (" << count << "/" << ITEM_COUNT << ")");
+            lastLog = Clock::now();
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    }
+    throw std::runtime_error("Interrupted while waiting for global item table");
+}
+
 } // namespace
 
 void ImportSync(const TImportConfig& config) {
@@ -79,8 +108,10 @@ void ImportSync(const TImportConfig& config) {
     threadCount = std::min(threadCount, assignedWarehouses);
 
     LOG_I("Starting idempotent TPC-C import for " << assignedWarehouses
-          << " assigned warehouses (scale " << scaleWarehouses << ") using "
-          << threadCount << " threads (seed=" << config.Seed
+          << " assigned warehouses (scale " << scaleWarehouses
+          << ", ranges=" << FormatWarehouseRanges(ranges)
+          << ", owns_global_data=" << (config.OwnsGlobalData ? "true" : "false")
+          << ") using " << threadCount << " threads (seed=" << config.Seed
           << ", run_id=" << (config.RunId.empty() ? "-" : config.RunId)
           << ", batch_rows=" << config.BatchRows << ")");
 
@@ -99,6 +130,9 @@ void ImportSync(const TImportConfig& config) {
         conn->ConfigureBulkLoadSession();
         ThrowIfFailed(PutItemsIdempotent(*conn, seed, runId, config.BatchRows), "item PutBatch");
         state.DataSizeLoaded.fetch_add(EstimateSharedDataSize(), std::memory_order_relaxed);
+    } else {
+        auto conn = ConnectToTargetDatabase(ConfigWithPath(config.ConnectionString, config.Path));
+        WaitForGlobalItems(*conn, state.StopToken);
     }
 
     std::vector<int> warehouseIds;
@@ -125,6 +159,7 @@ void ImportSync(const TImportConfig& config) {
                         return;
                     }
                     const int wh = warehouseIds[i];
+                    LOG_I("Loading warehouse " << wh);
                     const auto batchResult = PutWarehouseIdempotent(
                         *conn, seed, wh, runId, config.BatchRows);
                     if (batchResult.Outcome != EPutBatchOutcome::Completed) {
@@ -146,9 +181,16 @@ void ImportSync(const TImportConfig& config) {
         });
     }
 
+    auto lastProgress = Clock::now();
     while (state.WarehousesLoaded.load(std::memory_order_relaxed) < assignedWarehouses
            && !state.StopToken.stop_requested())
     {
+        if (Clock::now() - lastProgress >= std::chrono::seconds(15)) {
+            LOG_I("Import progress: " << state.WarehousesLoaded.load()
+                  << "/" << assignedWarehouses
+                  << " warehouses (first warehouse includes ~100k stock rows)");
+            lastProgress = Clock::now();
+        }
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
     }
 
@@ -164,8 +206,14 @@ void ImportSync(const TImportConfig& config) {
         throw std::runtime_error("Import was interrupted or failed. See logs.");
     }
 
-    CreateIndexes(config.ConnectionString, config.Path);
-    AnalyzeTables(config.ConnectionString, config.Path);
+    // Indexes/ANALYZE are DB-wide; only the global-data owner runs them so
+    // earlier-finishing shard loaders do not lock tables still being loaded.
+    if (config.OwnsGlobalData) {
+        CreateIndexes(config.ConnectionString, config.Path);
+        AnalyzeTables(config.ConnectionString, config.Path);
+    } else {
+        LOG_I("Skipping CreateIndexes/ANALYZE (owned by global-data loader)");
+    }
 
     auto elapsed = std::chrono::duration<double>(Clock::now() - startTime);
     LOG_I(fmt::format("Import completed successfully in {:.1f}s", elapsed.count()));

@@ -6,6 +6,7 @@
 #include <constants.h>
 #include <domain_util.h>
 #include <log.h>
+#include <warehouse_range.h>
 
 #include <algorithm>
 #include <chrono>
@@ -75,8 +76,10 @@ void ImportSync(const TImportConfig& config) {
     threadCount = std::min(threadCount, assignedWarehouses);
 
     LOG_I("Starting YDB idempotent TPC-C import (BulkUpsert) for " << assignedWarehouses
-          << " assigned warehouses (scale " << scaleWarehouses << ") using "
-          << threadCount << " threads (seed=" << config.Seed
+          << " assigned warehouses (scale " << scaleWarehouses
+          << ", ranges=" << FormatWarehouseRanges(ranges)
+          << ", owns_global_data=" << (config.OwnsGlobalData ? "true" : "false")
+          << ") using " << threadCount << " threads (seed=" << config.Seed
           << ", run_id=" << (config.RunId.empty() ? "-" : config.RunId)
           << ", batch_rows=" << config.BatchRows << ")");
 
@@ -112,6 +115,7 @@ void ImportSync(const TImportConfig& config) {
                         return;
                     }
                     const int wh = warehouseIds[i];
+                    LOG_I("Loading warehouse " << wh);
                     auto result = PutWarehouseIdempotent(
                         connection, config.Seed, wh, config.RunId, config.BatchRows);
                     if (result.Outcome != EPutBatchOutcome::Completed) {
@@ -129,9 +133,16 @@ void ImportSync(const TImportConfig& config) {
         });
     }
 
+    auto lastProgress = Clock::now();
     while (state.WarehousesLoaded.load(std::memory_order_relaxed) < assignedWarehouses
            && !state.StopToken.stop_requested())
     {
+        if (Clock::now() - lastProgress >= std::chrono::seconds(15)) {
+            LOG_I("Import progress: " << state.WarehousesLoaded.load()
+                  << "/" << assignedWarehouses
+                  << " warehouses (first warehouse includes ~100k stock rows)");
+            lastProgress = Clock::now();
+        }
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
     }
 
@@ -145,7 +156,11 @@ void ImportSync(const TImportConfig& config) {
         throw std::runtime_error("YDB import interrupted or failed");
     }
 
-    CreateIndexes(config.Connection);
+    if (config.OwnsGlobalData) {
+        CreateIndexes(config.Connection);
+    } else {
+        LOG_I("Skipping CreateIndexes (owned by global-data loader)");
+    }
 
     auto elapsed = std::chrono::duration<double>(Clock::now() - startTime).count();
     LOG_I("YDB import completed: " << assignedWarehouses << " warehouses in " << elapsed << " seconds");
