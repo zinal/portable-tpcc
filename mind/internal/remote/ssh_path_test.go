@@ -51,3 +51,25 @@ func TestPathUnderWorkDir(t *testing.T) {
 		}
 	}
 }
+
+func TestShellExecPath(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"tpcc-oceanbase", "./tpcc-oceanbase"},
+		{"./tpcc-oceanbase", "./tpcc-oceanbase"},
+		{"bin/tpcc-oceanbase", "bin/tpcc-oceanbase"},
+		{"/usr/bin/true", "/usr/bin/true"},
+		{"~/portable-tpcc/tpcc-oceanbase", "~/portable-tpcc/tpcc-oceanbase"},
+	}
+	for _, tc := range cases {
+		if got := shellExecPath(tc.in); got != tc.want {
+			t.Fatalf("shellExecPath(%q)=%q, want %q", tc.in, got, tc.want)
+		}
+	}
+	// After cd into the run dir, bare binary names must become ./name.
+	bin := shellExecPath(pathUnderWorkDir("ob-work/run-1", "ob-work/run-1/tpcc-oceanbase"))
+	if bin != "./tpcc-oceanbase" {
+		t.Fatalf("detached binary path = %q, want ./tpcc-oceanbase", bin)
+	}
+}

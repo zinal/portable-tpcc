@@ -352,6 +352,21 @@ func pathUnderWorkDir(workDir, path string) string {
 	return path
 }
 
+// shellExecPath makes a relative executable resolve in the current directory.
+// Names without '/' are looked up on PATH; after cd into the run dir we need ./tpcc-x.
+func shellExecPath(path string) string {
+	if path == "" || path == "." || filepath.IsAbs(path) {
+		return path
+	}
+	if strings.HasPrefix(path, "~/") || strings.HasPrefix(path, "./") || strings.HasPrefix(path, "../") {
+		return path
+	}
+	if strings.Contains(path, "/") {
+		return path
+	}
+	return "./" + path
+}
+
 func (s *SSH) StartDetached(workDir, binary string, argv []string, env map[string]string, stdoutPath, stderrPath string) (int, error) {
 	for k := range env {
 		if !ValidEnvName(k) {
@@ -364,7 +379,7 @@ func (s *SSH) StartDetached(workDir, binary string, argv []string, env map[strin
 	if err := s.MkdirAll(filepath.Dir(stdoutPath)); err != nil {
 		return 0, err
 	}
-	bin := pathUnderWorkDir(workDir, binary)
+	bin := shellExecPath(pathUnderWorkDir(workDir, binary))
 	stdoutRel := pathUnderWorkDir(workDir, stdoutPath)
 	stderrRel := pathUnderWorkDir(workDir, stderrPath)
 	var b strings.Builder
