@@ -466,6 +466,7 @@ TRunConfigDocument LoadRunConfigDocument(const std::string& path) {
             a.Instance = item.value("instance", "");
             a.Host = item.value("host", "");
             a.OwnsGlobalData = item.value("owns_global_data", false);
+            a.Threads = ReadSizeTNonNegative(item, "threads", 0, "load_assignment.threads");
             a.WarehouseRanges = ParseWarehouseRanges(item["warehouse_ranges"]);
             doc.LoadAssignments.push_back(std::move(a));
         }

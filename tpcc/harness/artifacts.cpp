@@ -148,6 +148,7 @@ void WriteLoaderResultJson(const TArtifactPaths& paths, const TRunConfigDocument
             {"host", assign.Host},
             {"warehouse_ranges", WarehouseRangesJson(assign.WarehouseRanges)},
             {"owns_global_data", assign.OwnsGlobalData},
+            {"threads", assign.Threads},
         }},
         {"exit_status", exitCode},
         {"completed_at", FormatTime(SysClock::now())},

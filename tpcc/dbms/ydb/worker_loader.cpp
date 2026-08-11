@@ -33,7 +33,7 @@ int RunLoaderFromRunConfig(const std::string& runConfigPath, const std::string& 
         importCfg.WarehouseRanges = assign.WarehouseRanges;
         importCfg.OwnsGlobalData = assign.OwnsGlobalData;
         importCfg.TotalWarehouses = d.ScaleWarehouses;
-        importCfg.LoadThreadCount = 0;
+        importCfg.LoadThreadCount = assign.Threads;
         importCfg.BatchRows = d.BatchRows;
         if (d.HasSeed) {
             importCfg.Seed = static_cast<uint64_t>(d.Seed);

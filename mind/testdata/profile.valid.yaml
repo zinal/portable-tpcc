@@ -57,6 +57,7 @@ phases:
 
 runtime:
   pacing: enabled
+  threads_per_loader: 2
   threads_per_worker: 2
   max_inflight_per_worker: 64
   retry:

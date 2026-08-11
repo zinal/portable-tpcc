@@ -67,7 +67,7 @@ func TestBalancedContiguousV1_orderIndependent(t *testing.T) {
 
 func TestBuildLoaderAssignments_globalOwner(t *testing.T) {
 	loaders := []assignment.Instance{{Name: "loader-a", Host: "h1"}, {Name: "loader-b", Host: "h2"}}
-	assign, err := assignment.BuildLoaderAssignments(loaders, 4)
+	assign, err := assignment.BuildLoaderAssignments(loaders, 4, 8)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,6 +76,9 @@ func TestBuildLoaderAssignments_globalOwner(t *testing.T) {
 	}
 	if assign[1].OwnsGlobalData {
 		t.Fatal("second loader must not own global data")
+	}
+	if assign[0].Threads != 8 || assign[1].Threads != 8 {
+		t.Fatalf("threads=%d/%d, want 8", assign[0].Threads, assign[1].Threads)
 	}
 	if err := assignment.ValidateAssignment(assign, 4); err != nil {
 		t.Fatal(err)

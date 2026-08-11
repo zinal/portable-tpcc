@@ -327,6 +327,7 @@ workers:
     host: 10.10.0.32
 
 runtime:
+  threads_per_loader: 4   # 0 / omit = auto (CPU-capped per loader process)
   threads_per_worker: 4
   max_inflight_per_worker: 256
 ```

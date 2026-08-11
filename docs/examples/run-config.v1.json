@@ -50,13 +50,15 @@
       "instance": "loader-a",
       "host": "load-a",
       "warehouse_ranges": [[1, 101]],
-      "owns_global_data": true
+      "owns_global_data": true,
+      "threads": 4
     },
     {
       "instance": "loader-b",
       "host": "load-b",
       "warehouse_ranges": [[101, 201]],
-      "owns_global_data": false
+      "owns_global_data": false,
+      "threads": 4
     }
   ],
   "worker_assignment": [

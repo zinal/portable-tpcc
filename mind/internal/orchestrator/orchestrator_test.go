@@ -42,6 +42,9 @@ func TestPlan_snapshot(t *testing.T) {
 	if plan.WorkerAssignment[0].Threads != 2 {
 		t.Fatalf("threads %d, want 2", plan.WorkerAssignment[0].Threads)
 	}
+	if len(plan.LoadAssignment) != 1 || plan.LoadAssignment[0].Threads != 2 {
+		t.Fatalf("loader threads %v, want [2]", plan.LoadAssignment)
+	}
 }
 
 func TestMaterializePreservesActiveRunState(t *testing.T) {
