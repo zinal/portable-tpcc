@@ -38,21 +38,23 @@ type RunConfig struct {
 
 // Remote credential filenames placed next to run-config.json on worker hosts.
 const (
-	RemoteCAFileName    = "ca.pem"
-	RemoteSAKeyFileName = "sa-key.json"
+	RemoteCAFileName       = "ca.pem"
+	RemoteSAKeyFileName    = "sa-key.json"
+	RemotePasswordFileName = "db-password"
 )
 
 type RunDatabase struct {
-	DBMS        string                 `json:"dbms"`
-	Endpoint    string                 `json:"endpoint"`
-	Database    string                 `json:"database"`
-	Path        string                 `json:"path"`
-	AuthScheme  string                 `json:"auth_scheme,omitempty"`
-	User        string                 `json:"user,omitempty"`
-	PasswordEnv string                 `json:"password_env,omitempty"`
-	SaKeyFile   string                 `json:"sa_key_file,omitempty"`
-	CaFile      string                 `json:"ca_file,omitempty"`
-	Options     map[string]interface{} `json:"options,omitempty"`
+	DBMS         string                 `json:"dbms"`
+	Endpoint     string                 `json:"endpoint"`
+	Database     string                 `json:"database"`
+	Path         string                 `json:"path"`
+	AuthScheme   string                 `json:"auth_scheme,omitempty"`
+	User         string                 `json:"user,omitempty"`
+	PasswordEnv  string                 `json:"password_env,omitempty"`
+	PasswordFile string                 `json:"password_file,omitempty"`
+	SaKeyFile    string                 `json:"sa_key_file,omitempty"`
+	CaFile       string                 `json:"ca_file,omitempty"`
+	Options      map[string]interface{} `json:"options,omitempty"`
 }
 
 type ScaleBlock struct {
@@ -289,14 +291,20 @@ func BuildRunConfig(in BuildInput) (*RunConfig, error) {
 	}
 
 	db := RunDatabase{
-		DBMS:        p.Database.DBMS,
-		Endpoint:    p.Database.Endpoint,
-		Database:    p.Database.Database,
-		Path:        p.Database.Path,
-		AuthScheme:  p.Database.AuthScheme,
-		User:        p.Database.User,
-		PasswordEnv: p.Database.PasswordEnv,
-		Options:     p.Database.Options,
+		DBMS:       p.Database.DBMS,
+		Endpoint:   p.Database.Endpoint,
+		Database:   p.Database.Database,
+		Path:       p.Database.Path,
+		AuthScheme: p.Database.AuthScheme,
+		User:       p.Database.User,
+		Options:    p.Database.Options,
+	}
+	// Orchestrated workers read the DB password from a mode-0600 file that
+	// deploy writes beside run-config.json. The profile still names the
+	// control-host env var (password_env); its value is never copied into
+	// run-config or into the SSH launch cmdline.
+	if NeedsRemotePasswordFile(p.Database) {
+		db.PasswordFile = RemotePasswordFileName
 	}
 	// Rewrite control-host credential paths to fixed names under the remote
 	// run directory. Orchestrator deploy uploads the local files there.
@@ -354,6 +362,18 @@ func InferYdbAuthScheme(db profile.Database) string {
 	return "anonymous"
 }
 
+// NeedsRemotePasswordFile reports whether orchestrated deploy must materialize
+// db-password on worker hosts from the control-host password_env value.
+func NeedsRemotePasswordFile(db profile.Database) bool {
+	if db.PasswordEnv == "" {
+		return false
+	}
+	if db.DBMS == "ydb" {
+		return InferYdbAuthScheme(db) == "login"
+	}
+	return true
+}
+
 func toLoadJSON(assign []assignment.LoaderAssignment) []LoadAssignmentJSON {
 	out := make([]LoadAssignmentJSON, len(assign))
 	for i, a := range assign {
@@ -402,6 +422,9 @@ func SettingsForAggregate(rc *RunConfig) map[string]interface{} {
 	}
 	if rc.Database.User != "" {
 		db["user"] = rc.Database.User
+	}
+	if rc.Database.PasswordFile != "" {
+		db["password_file"] = rc.Database.PasswordFile
 	}
 	if rc.Database.CaFile != "" {
 		db["ca_file"] = rc.Database.CaFile

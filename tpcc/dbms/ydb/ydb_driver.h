@@ -25,6 +25,7 @@ struct TYdbConnectionConfig {
     EYdbAuthScheme AuthScheme = EYdbAuthScheme::Anonymous;
     std::string User;
     std::string PasswordEnv;
+    std::string PasswordFile;
     std::string Token;
     std::string TokenEnv;
     std::string SaKeyFile;

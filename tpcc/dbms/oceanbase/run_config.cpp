@@ -2,6 +2,7 @@
 
 #include "schema_options.h"
 
+#include <password_secret.h>
 #include <sha256.h>
 #include <think_time.h>
 
@@ -262,6 +263,7 @@ TRunConfigDocument LoadRunConfigDocument(const std::string& path) {
         doc.Path = db.value("path", "");
         doc.User = db.value("user", "");
         doc.PasswordEnv = db.value("password_env", "");
+        doc.PasswordFile = db.value("password_file", "");
         doc.Partitioning = OB_PARTITIONING_TABLEGROUP_HASH;
         if (db.contains("options")) {
             if (!db["options"].is_object()) {
@@ -407,13 +409,8 @@ TRunConfigDocument LoadRunConfigDocument(const std::string& path) {
 }
 
 std::string BuildObConnectionString(const TRunConfigDocument& doc) {
-    if (doc.PasswordEnv.empty()) {
-        throw std::runtime_error("database.password_env is required");
-    }
-    const char* password = std::getenv(doc.PasswordEnv.c_str());
-    if (!password) {
-        throw std::runtime_error("environment variable not set: " + doc.PasswordEnv);
-    }
+    const std::string password = ReadDatabasePassword(
+        doc.PasswordFile, doc.PasswordEnv, doc.RunDir);
     if (doc.Endpoint.empty()) {
         throw std::runtime_error("database.endpoint is required");
     }

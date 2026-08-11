@@ -11,7 +11,7 @@
     "path": "portable_tpcc",
     "auth_scheme": "login",
     "user": "root",
-    "password_env": "YDB_PASSWORD",
+    "password_file": "db-password",
     "ca_file": "ca.pem"
   },
   "scale": {

@@ -21,11 +21,14 @@ import (
 type fakeSession struct {
 	files      map[string][]byte
 	uploads    []string
+	writes     map[string][]byte
+	writeModes map[string]os.FileMode
 	alive      bool
 	downloads  int
 	signals    int
 	removedAll []string
 	startArgv  []string
+	startEnv   map[string]string
 }
 
 func (f *fakeSession) Key() string     { return "host-a" }
@@ -50,6 +53,22 @@ func (f *fakeSession) ReadFile(remotePath string) ([]byte, error) {
 	return nil, fmt.Errorf("missing file %s", remotePath)
 }
 func (f *fakeSession) WriteFile(remotePath string, data []byte) error {
+	return f.WriteFileMode(remotePath, data, 0644)
+}
+func (f *fakeSession) WriteFileMode(remotePath string, data []byte, mode os.FileMode) error {
+	if f.writes == nil {
+		f.writes = map[string][]byte{}
+	}
+	if f.writeModes == nil {
+		f.writeModes = map[string]os.FileMode{}
+	}
+	cp := append([]byte(nil), data...)
+	f.writes[remotePath] = cp
+	f.writeModes[remotePath] = mode
+	if f.files == nil {
+		f.files = map[string][]byte{}
+	}
+	f.files[remotePath] = cp
 	return nil
 }
 func (f *fakeSession) MkdirAll(remotePath string) error {
@@ -75,6 +94,7 @@ func (f *fakeSession) RemoveAll(remotePath string) error {
 }
 func (f *fakeSession) StartDetached(workDir, binary string, argv []string, env map[string]string, stdoutPath, stderrPath string) (int, error) {
 	f.startArgv = append([]string{}, argv...)
+	f.startEnv = env
 	return 123, nil
 }
 func (f *fakeSession) Signal(pid int, sig string) error {
@@ -589,5 +609,98 @@ func TestDeployToHostsUploadsCredentialFiles(t *testing.T) {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("missing upload %q in %v", want, sess.uploads)
 		}
+	}
+}
+
+func TestDeployToHostsWritesPasswordFile(t *testing.T) {
+	root := t.TempDir()
+	binPath := filepath.Join(root, "tpcc-pgsql")
+	runDir := filepath.Join(root, "run")
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(binPath, []byte("bin"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runDir, "run-config.json"), []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TPCC_PASSWORD", "s3cret")
+	o := &Orchestrator{
+		Profile: &profile.Profile{
+			Database: profile.Database{
+				DBMS:        "pgsql",
+				PasswordEnv: "TPCC_PASSWORD",
+			},
+		},
+		Expanded: config.ExpandedPaths{RemoteRoot: filepath.Join(root, "remote")},
+		Opts:     Options{WorkerBinary: binPath},
+	}
+	ctx := &Context{RunID: "run-1", RunDir: runDir}
+	sess := &fakeSession{}
+	if err := o.deployToHosts(ctx, map[string]remote.Session{"host-a": sess}); err != nil {
+		t.Fatal(err)
+	}
+	var got []byte
+	for path, data := range sess.writes {
+		if strings.HasSuffix(path, config.RemotePasswordFileName) {
+			got = data
+			if sess.writeModes[path] != 0600 {
+				t.Fatalf("password file mode=%v, want 0600", sess.writeModes[path])
+			}
+			break
+		}
+	}
+	if string(got) != "s3cret" {
+		t.Fatalf("password file contents=%q", got)
+	}
+}
+
+func TestLaunchRoleDoesNotPassPasswordEnv(t *testing.T) {
+	store := &state.Store{StateDir: t.TempDir()}
+	t.Setenv("TPCC_PASSWORD", "s3cret")
+	o := &Orchestrator{
+		Profile: &profile.Profile{
+			Database: profile.Database{
+				DBMS:        "pgsql",
+				PasswordEnv: "TPCC_PASSWORD",
+			},
+		},
+		Expanded:   config.ExpandedPaths{RemoteRoot: t.TempDir()},
+		StateStore: store,
+	}
+	ctx := &Context{
+		RunID: "run-1",
+		RunConfig: &config.RunConfig{
+			Binary: "tpcc-pgsql",
+		},
+	}
+	process := map[string]interface{}{
+		"pid":            456,
+		"instance_nonce": "nonce-1",
+	}
+	data, _ := json.Marshal(process)
+	sess := &fakeSession{files: map[string][]byte{
+		"process.json": data,
+		"tpcc-pgsql":   []byte("binary"),
+	}, alive: true}
+
+	if _, err := o.launchRole(ctx, map[string]remote.Session{"host-a": sess}, "loader", "host-a", "loader-a", []string{"loader"}); err != nil {
+		t.Fatal(err)
+	}
+	if sess.startEnv != nil {
+		t.Fatalf("StartDetached env=%v, want nil (password via file)", sess.startEnv)
+	}
+	found := false
+	for path, data := range sess.writes {
+		if strings.HasSuffix(path, config.RemotePasswordFileName) && string(data) == "s3cret" {
+			found = true
+			if sess.writeModes[path] != 0600 {
+				t.Fatalf("mode=%v", sess.writeModes[path])
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("password file not written: %v", sess.writes)
 	}
 }

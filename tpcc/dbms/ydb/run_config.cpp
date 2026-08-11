@@ -186,7 +186,7 @@ EYdbAuthScheme ResolveAuthScheme(const TRunConfigDocument& doc) {
     if (!doc.SaKeyFile.empty()) {
         return EYdbAuthScheme::SaKey;
     }
-    if (!doc.PasswordEnv.empty() || !doc.User.empty()) {
+    if (!doc.PasswordEnv.empty() || !doc.PasswordFile.empty() || !doc.User.empty()) {
         return EYdbAuthScheme::Login;
     }
     if (!doc.TokenEnv.empty()) {
@@ -199,21 +199,22 @@ void ValidateYdbAuth(const TRunConfigDocument& doc) {
     const EYdbAuthScheme scheme = ResolveAuthScheme(doc);
     switch (scheme) {
         case EYdbAuthScheme::Anonymous:
-            if (!doc.User.empty() || !doc.PasswordEnv.empty() || !doc.SaKeyFile.empty() ||
-                !doc.TokenEnv.empty())
+            if (!doc.User.empty() || !doc.PasswordEnv.empty() || !doc.PasswordFile.empty() ||
+                !doc.SaKeyFile.empty() || !doc.TokenEnv.empty())
             {
                 throw std::runtime_error(
                     "database.auth_scheme=anonymous does not accept user, password_env, "
-                    "sa_key_file, or token_env");
+                    "password_file, sa_key_file, or token_env");
             }
             break;
         case EYdbAuthScheme::Login:
             if (doc.User.empty()) {
                 throw std::runtime_error("database.user is required for auth_scheme=login");
             }
-            if (doc.PasswordEnv.empty()) {
+            if (doc.PasswordEnv.empty() && doc.PasswordFile.empty()) {
                 throw std::runtime_error(
-                    "database.password_env is required for auth_scheme=login");
+                    "database.password_file or database.password_env is required for "
+                    "auth_scheme=login");
             }
             if (!doc.SaKeyFile.empty() || !doc.TokenEnv.empty()) {
                 throw std::runtime_error(
@@ -225,10 +226,12 @@ void ValidateYdbAuth(const TRunConfigDocument& doc) {
                 throw std::runtime_error(
                     "database.sa_key_file is required for auth_scheme=sa_key");
             }
-            if (!doc.User.empty() || !doc.PasswordEnv.empty() || !doc.TokenEnv.empty()) {
+            if (!doc.User.empty() || !doc.PasswordEnv.empty() || !doc.PasswordFile.empty() ||
+                !doc.TokenEnv.empty())
+            {
                 throw std::runtime_error(
                     "database.auth_scheme=sa_key does not accept user, password_env, "
-                    "or token_env");
+                    "password_file, or token_env");
             }
             break;
         case EYdbAuthScheme::Token:
@@ -236,10 +239,12 @@ void ValidateYdbAuth(const TRunConfigDocument& doc) {
                 throw std::runtime_error(
                     "database.token_env is required for auth_scheme=token");
             }
-            if (!doc.User.empty() || !doc.PasswordEnv.empty() || !doc.SaKeyFile.empty()) {
+            if (!doc.User.empty() || !doc.PasswordEnv.empty() || !doc.PasswordFile.empty() ||
+                !doc.SaKeyFile.empty())
+            {
                 throw std::runtime_error(
                     "database.auth_scheme=token does not accept user, password_env, "
-                    "or sa_key_file");
+                    "password_file, or sa_key_file");
             }
             break;
     }
@@ -364,6 +369,7 @@ TRunConfigDocument LoadRunConfigDocument(const std::string& path) {
         doc.AuthScheme = db.value("auth_scheme", "");
         doc.User = db.value("user", "");
         doc.PasswordEnv = db.value("password_env", "");
+        doc.PasswordFile = db.value("password_file", "");
         doc.TokenEnv = db.value("token_env", "");
         doc.SaKeyFile = db.value("sa_key_file", "");
         doc.CaFile = db.value("ca_file", "");
@@ -539,6 +545,7 @@ TYdbConnectionConfig BuildYdbConnectionConfig(const TRunConfigDocument& doc) {
     config.AuthScheme = ResolveAuthScheme(doc);
     config.User = doc.User;
     config.PasswordEnv = doc.PasswordEnv;
+    config.PasswordFile = ResolveUnderRunDir(doc.PasswordFile, doc.RunDir);
     config.TokenEnv = doc.TokenEnv;
     config.SaKeyFile = ResolveUnderRunDir(doc.SaKeyFile, doc.RunDir);
     config.CaFile = ResolveUnderRunDir(doc.CaFile, doc.RunDir);

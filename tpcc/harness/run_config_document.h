@@ -41,6 +41,8 @@ struct TRunConfigDocument {
     std::string Database;
     std::string Path;
     std::string PasswordEnv;
+    // Worker-local password file (orchestrator deploy); preferred over PasswordEnv.
+    std::string PasswordFile;
 
     // Auth fields: User is used by YDB login and OceanBase; others are YDB-only.
     std::string AuthScheme;

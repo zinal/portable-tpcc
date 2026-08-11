@@ -13,6 +13,7 @@ SRCS(
     sha256.cpp
     run_loop.cpp
     orchestrated_roles.cpp
+    password_secret.cpp
 )
 
 PEERDIR(
@@ -26,3 +27,7 @@ PEERDIR(
 )
 
 END()
+
+RECURSE_FOR_TESTS(
+    ut
+)

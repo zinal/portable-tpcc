@@ -76,6 +76,17 @@ func TestLocalSession_RemoveAll(t *testing.T) {
 	if err := sess.WriteFile(nested, []byte("log")); err != nil {
 		t.Fatal(err)
 	}
+	secret := filepath.Join(runDir, "db-password")
+	if err := sess.WriteFileMode(secret, []byte("s3cret"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	st, err := os.Stat(filepath.Join(root, secret))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Mode().Perm() != 0600 {
+		t.Fatalf("secret mode=%o, want 0600", st.Mode().Perm())
+	}
 	if err := sess.RemoveAll(runDir); err != nil {
 		t.Fatal(err)
 	}
