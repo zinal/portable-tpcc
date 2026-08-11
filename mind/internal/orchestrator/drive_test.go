@@ -250,13 +250,17 @@ func TestWaitProcessesFailsUnfinalizedManifestWhenProcessDead(t *testing.T) {
 		Finalized:     false,
 	}
 	data, _ := json.Marshal(manifest)
-	sess := &fakeSession{files: map[string][]byte{"/done": data}, alive: false}
+	sess := &fakeSession{files: map[string][]byte{
+		"/done":      data,
+		"stderr.log": []byte("TPC-C table 'warehouse' already exists. Already inited or forgot to clean?\n"),
+	}, alive: false}
 	proc := &launchedProc{
 		Role:          "worker",
 		Host:          "host-a",
 		Instance:      "worker-a",
 		Session:       sess,
 		PID:           123,
+		ProcPath:      "/run/worker/worker-a/process.json",
 		DonePath:      "/done",
 		InstanceNonce: "nonce-1",
 	}
@@ -264,6 +268,9 @@ func TestWaitProcessesFailsUnfinalizedManifestWhenProcessDead(t *testing.T) {
 	err := o.waitProcesses(ctx, []*launchedProc{proc}, time.Second, true)
 	if err == nil || !strings.Contains(err.Error(), "died before finalizing artifacts") {
 		t.Fatalf("expected unfinalized dead process error, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("expected stderr tail in error, got %v", err)
 	}
 }
 

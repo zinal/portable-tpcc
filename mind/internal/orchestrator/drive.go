@@ -324,7 +324,17 @@ func (o *Orchestrator) processMetadataTimeoutErr(proc *launchedProc) error {
 			fmt.Fprintf(&b, " (pid %d alive=%v)", proc.PID, alive)
 		}
 	}
+	return o.withProcessLogs(proc, b.String())
+}
+
+// withProcessLogs appends stderr/stdout tails from the instance directory.
+func (o *Orchestrator) withProcessLogs(proc *launchedProc, msg string) error {
+	var b strings.Builder
+	b.WriteString(msg)
 	instanceDir := filepath.Dir(proc.ProcPath)
+	if instanceDir == "" || instanceDir == "." {
+		instanceDir = filepath.Dir(proc.DonePath)
+	}
 	for _, name := range []string{"stderr.log", "stdout.log"} {
 		path := filepath.Join(instanceDir, name)
 		data, err := proc.Session.ReadFile(path)
@@ -424,7 +434,7 @@ func (o *Orchestrator) waitProcesses(ctx *Context, procs []*launchedProc, timeou
 						})
 						delete(remaining, key)
 						if abortOnFail {
-							return fmt.Errorf("%s/%s died before finalizing artifacts", p.Role, p.Instance)
+							return o.withProcessLogs(p, fmt.Sprintf("%s/%s died before finalizing artifacts", p.Role, p.Instance))
 						}
 					}
 					continue
@@ -438,7 +448,7 @@ func (o *Orchestrator) waitProcesses(ctx *Context, procs []*launchedProc, timeou
 				})
 				delete(remaining, key)
 				if abortOnFail && manifest.ExitStatus != 0 {
-					return fmt.Errorf("%s/%s exited with status %d", p.Role, p.Instance, manifest.ExitStatus)
+					return o.withProcessLogs(p, fmt.Sprintf("%s/%s exited with status %d", p.Role, p.Instance, manifest.ExitStatus))
 				}
 				continue
 			}
@@ -450,7 +460,7 @@ func (o *Orchestrator) waitProcesses(ctx *Context, procs []*launchedProc, timeou
 				})
 				delete(remaining, key)
 				if abortOnFail {
-					return fmt.Errorf("%s/%s died before finalizing artifacts", p.Role, p.Instance)
+					return o.withProcessLogs(p, fmt.Sprintf("%s/%s died before finalizing artifacts", p.Role, p.Instance))
 				}
 			}
 		}
