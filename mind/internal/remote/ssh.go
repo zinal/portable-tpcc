@@ -176,6 +176,19 @@ func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
 }
 
+// remotePathExpr quotes a remote filesystem path for sh -c.
+// A leading ~/ is expanded via $HOME on the remote account (shellQuote alone
+// would create a literal "~" directory component).
+func remotePathExpr(p string) string {
+	if p == "~" {
+		return "\"$HOME\""
+	}
+	if strings.HasPrefix(p, "~/") {
+		return "\"$HOME\"/" + shellQuote(p[2:])
+	}
+	return shellQuote(p)
+}
+
 // ValidEnvName reports whether name is safe as a POSIX-style environment key.
 func ValidEnvName(name string) bool {
 	if name == "" {
@@ -221,7 +234,7 @@ func (s *SSH) ReadFile(remotePath string) ([]byte, error) {
 		return nil, err
 	}
 	defer session.Close()
-	out, err := session.Output("cat " + shellQuote(remotePath))
+	out, err := session.Output("cat " + remotePathExpr(remotePath))
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", remotePath, err)
 	}
@@ -230,7 +243,8 @@ func (s *SSH) ReadFile(remotePath string) ([]byte, error) {
 
 // Realpath resolves a remote path through symlinks.
 func (s *SSH) Realpath(remotePath string) (string, error) {
-	cmd := "if command -v realpath >/dev/null 2>&1; then realpath -- " + shellQuote(remotePath) + "; else readlink -f -- " + shellQuote(remotePath) + "; fi"
+	expr := remotePathExpr(remotePath)
+	cmd := "if command -v realpath >/dev/null 2>&1; then realpath -- " + expr + "; else readlink -f -- " + expr + "; fi"
 	stdout, stderr, exit, err := s.run(cmd)
 	if err != nil {
 		return "", err
@@ -254,7 +268,7 @@ func (s *SSH) WriteFile(remotePath string, data []byte) error {
 	if err != nil {
 		return err
 	}
-	cmd := fmt.Sprintf("cat > %s", shellQuote(remotePath))
+	cmd := fmt.Sprintf("cat > %s", remotePathExpr(remotePath))
 	if err := session.Start(cmd); err != nil {
 		return err
 	}
@@ -266,7 +280,7 @@ func (s *SSH) WriteFile(remotePath string, data []byte) error {
 }
 
 func (s *SSH) MkdirAll(remotePath string) error {
-	_, stderr, exit, err := s.run("mkdir -p " + shellQuote(remotePath))
+	_, stderr, exit, err := s.run("mkdir -p " + remotePathExpr(remotePath))
 	if err != nil {
 		return err
 	}
@@ -277,7 +291,7 @@ func (s *SSH) MkdirAll(remotePath string) error {
 }
 
 func (s *SSH) Exists(remotePath string) (bool, error) {
-	_, _, exit, err := s.run("test -e " + shellQuote(remotePath))
+	_, _, exit, err := s.run("test -e " + remotePathExpr(remotePath))
 	if err != nil {
 		return false, err
 	}
@@ -285,7 +299,7 @@ func (s *SSH) Exists(remotePath string) (bool, error) {
 }
 
 func (s *SSH) Remove(remotePath string) error {
-	_, stderr, exit, err := s.run("rm -f " + shellQuote(remotePath))
+	_, stderr, exit, err := s.run("rm -f " + remotePathExpr(remotePath))
 	if err != nil {
 		return err
 	}
@@ -308,16 +322,16 @@ func (s *SSH) StartDetached(workDir, binary string, argv []string, env map[strin
 		return 0, err
 	}
 	var b strings.Builder
-	b.WriteString("cd " + shellQuote(workDir) + " && ")
+	b.WriteString("cd " + remotePathExpr(workDir) + " && ")
 	for k, v := range env {
 		b.WriteString(k + "=" + shellQuote(v) + " ")
 	}
-	b.WriteString("nohup " + shellQuote(binary))
+	b.WriteString("nohup " + remotePathExpr(binary))
 	for _, a := range argv {
 		b.WriteString(" " + shellQuote(a))
 	}
-	b.WriteString(" > " + shellQuote(stdoutPath))
-	b.WriteString(" 2> " + shellQuote(stderrPath))
+	b.WriteString(" > " + remotePathExpr(stdoutPath))
+	b.WriteString(" 2> " + remotePathExpr(stderrPath))
 	b.WriteString(" < /dev/null & echo $!")
 	stdout, stderr, exit, err := s.run(b.String())
 	if err != nil {

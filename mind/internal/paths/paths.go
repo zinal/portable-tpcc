@@ -48,16 +48,12 @@ func Normalize(path string, permittedRoots []string) (string, error) {
 }
 
 // JoinUnder joins elem under base and validates the result stays under base.
+// The returned path is absolute (resolved against the local process cwd).
 func JoinUnder(base, elem string) (string, error) {
-	if filepath.IsAbs(elem) {
-		return "", fmt.Errorf("path %q must be relative", elem)
+	joined, err := JoinRelative(base, elem)
+	if err != nil {
+		return "", err
 	}
-	for _, part := range strings.FieldsFunc(elem, func(r rune) bool { return r == '/' || r == '\\' }) {
-		if part == ".." {
-			return "", fmt.Errorf("path %q contains parent traversal", elem)
-		}
-	}
-	joined := filepath.Join(base, elem)
 	baseAbs, err := filepath.Abs(base)
 	if err != nil {
 		return "", err
@@ -68,6 +64,32 @@ func JoinUnder(base, elem string) (string, error) {
 	}
 	baseClean := filepath.Clean(baseAbs)
 	joinedClean := filepath.Clean(joinedAbs)
+	if joinedClean != baseClean && !strings.HasPrefix(joinedClean, baseClean+string(os.PathSeparator)) {
+		return "", fmt.Errorf("joined path %q escapes base %q", joined, base)
+	}
+	return joinedClean, nil
+}
+
+// JoinRelative joins elem under base without resolving against the local cwd.
+// Use this for paths that are interpreted on a remote host (relative or ~/ forms).
+func JoinRelative(base, elem string) (string, error) {
+	if filepath.IsAbs(elem) {
+		return "", fmt.Errorf("path %q must be relative", elem)
+	}
+	for _, part := range strings.FieldsFunc(elem, func(r rune) bool { return r == '/' || r == '\\' }) {
+		if part == ".." {
+			return "", fmt.Errorf("path %q contains parent traversal", elem)
+		}
+	}
+	joined := filepath.Join(base, elem)
+	baseClean := filepath.Clean(base)
+	joinedClean := filepath.Clean(joined)
+	if baseClean == "." {
+		if joinedClean == "." || strings.HasPrefix(joinedClean, "..") {
+			return "", fmt.Errorf("joined path %q escapes base %q", joined, base)
+		}
+		return joinedClean, nil
+	}
 	if joinedClean != baseClean && !strings.HasPrefix(joinedClean, baseClean+string(os.PathSeparator)) {
 		return "", fmt.Errorf("joined path %q escapes base %q", joined, base)
 	}

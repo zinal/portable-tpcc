@@ -12,6 +12,8 @@ ssh:
 
 paths:
   local_artifacts: ./dist
+  # Interpreted on each runtime host (SSH cwd/home). Relative OK; do not use
+  # a control-host absolute path unless that same path exists remotely.
   remote_root: ./remote
   result_root: ./results
   state_dir: ./state
