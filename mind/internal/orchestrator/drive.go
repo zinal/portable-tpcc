@@ -19,6 +19,36 @@ import (
 	"portable-tpcc/mind/internal/state"
 )
 
+func (o *Orchestrator) checkInterrupted() error {
+	if o == nil || o.Opts.Interrupt == nil {
+		return nil
+	}
+	select {
+	case <-o.Opts.Interrupt.Done():
+		return ErrInterrupted
+	default:
+		return nil
+	}
+}
+
+func (o *Orchestrator) sleep(d time.Duration) error {
+	if err := o.checkInterrupted(); err != nil {
+		return err
+	}
+	if o == nil || o.Opts.Interrupt == nil {
+		time.Sleep(d)
+		return nil
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-o.Opts.Interrupt.Done():
+		return ErrInterrupted
+	case <-timer.C:
+		return nil
+	}
+}
+
 // remoteRunDir is the per-run working directory on a runtime host.
 func remoteRunDir(remoteRoot, runID string) string {
 	return filepath.Join(remoteRoot, runID)
@@ -330,7 +360,9 @@ func (o *Orchestrator) waitProcessMetadata(ctx *Context, proc *launchedProc, tim
 		if time.Now().After(deadline) {
 			return o.processMetadataTimeoutErr(proc)
 		}
-		time.Sleep(50 * time.Millisecond)
+		if err := o.sleep(50 * time.Millisecond); err != nil {
+			return err
+		}
 	}
 }
 
@@ -473,6 +505,10 @@ func (o *Orchestrator) waitProcesses(ctx *Context, procs []*launchedProc, timeou
 	lastHeartbeat := time.Now()
 	const heartbeatEvery = 15 * time.Second
 	for len(remaining) > 0 {
+		if err := o.checkInterrupted(); err != nil {
+			progress.Printf("interrupted; stopping process wait so profile lock can be released")
+			return err
+		}
 		if time.Now().After(deadline) {
 			return fmt.Errorf("timeout waiting for processes to finish")
 		}
@@ -567,7 +603,10 @@ func (o *Orchestrator) waitProcesses(ctx *Context, procs []*launchedProc, timeou
 		if anyRelayed {
 			lastHeartbeat = time.Now()
 		}
-		time.Sleep(500 * time.Millisecond)
+		if err := o.sleep(500 * time.Millisecond); err != nil {
+			progress.Printf("interrupted; stopping process wait so profile lock can be released")
+			return err
+		}
 	}
 	return nil
 }
@@ -648,6 +687,10 @@ func (o *Orchestrator) superviseWorkers(ctx *Context, workers []*launchedProc, t
 	const heartbeatEvery = 15 * time.Second
 	// Before measurement: any fatal aborts peers.
 	for time.Now().Before(measStart) {
+		if err := o.checkInterrupted(); err != nil {
+			_ = o.stopPeers(ctx, sessions)
+			return err
+		}
 		anyRelayed := false
 		for _, w := range workers {
 			key := w.Role + "/" + w.Instance
@@ -683,7 +726,10 @@ func (o *Orchestrator) superviseWorkers(ctx *Context, workers []*launchedProc, t
 		if anyRelayed {
 			lastHeartbeat = time.Now()
 		}
-		time.Sleep(500 * time.Millisecond)
+		if err := o.sleep(500 * time.Millisecond); err != nil {
+			_ = o.stopPeers(ctx, sessions)
+			return err
+		}
 	}
 	progress.Printf("measurement phase started")
 	_ = o.StateStore.Transition(ctx.RunID, state.StateMeasuring)

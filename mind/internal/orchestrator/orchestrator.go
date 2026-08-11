@@ -1,7 +1,9 @@
 package orchestrator
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -22,12 +24,18 @@ import (
 	"portable-tpcc/mind/internal/validate"
 )
 
+// ErrInterrupted is returned when Options.Interrupt is cancelled (e.g. Ctrl+C).
+var ErrInterrupted = errors.New("interrupted")
+
 // Options configure the orchestrator runtime.
 type Options struct {
 	ProfilePath  string
 	RunID        string
 	WorkerBinary string
 	SkipSteps    []string
+	// Interrupt, when cancelled, aborts long waits so callers can release the
+	// profile lock via defer (SIGINT/SIGTERM). Nil means not interruptible.
+	Interrupt context.Context
 }
 
 // Orchestrator coordinates mind-tpcc stages.

@@ -2,7 +2,9 @@ package orchestrator
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -193,6 +195,41 @@ func TestWaitProcessMetadataTimesOutWhenMissing(t *testing.T) {
 	}
 	if !strings.Contains(msg, "No such file or directory") {
 		t.Fatalf("timeout error missing stderr tail: %v", err)
+	}
+}
+
+func TestWaitProcessesReturnsOnInterrupt(t *testing.T) {
+	store := &state.Store{StateDir: t.TempDir()}
+	interrupt, cancel := context.WithCancel(context.Background())
+	o := &Orchestrator{
+		Opts:       Options{Interrupt: interrupt},
+		StateStore: store,
+	}
+	ctx := &Context{RunID: "run-1"}
+	proc := &launchedProc{
+		Role:          "loader",
+		Host:          "host-a",
+		Instance:      "loader-a",
+		Session:       &fakeSession{files: map[string][]byte{}, alive: true},
+		PID:           123,
+		DonePath:      "/done",
+		InstanceNonce: "nonce-1",
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- o.waitProcesses(ctx, []*launchedProc{proc}, time.Minute, true)
+	}()
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, ErrInterrupted) {
+			t.Fatalf("expected ErrInterrupted, got %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("waitProcesses did not return after interrupt")
 	}
 }
 
