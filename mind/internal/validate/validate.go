@@ -103,6 +103,9 @@ func Profile(p *profile.Profile) *Result {
 	if !config.ValidThinkTimeDistribution(p.Runtime.ThinkTimeDistribution) {
 		res.Add("runtime.think_time_distribution must be \"exponential\", \"compatibility\", or \"constant\"")
 	}
+	if p.Runtime.ThreadsPerLoader < 0 {
+		res.Add("runtime.threads_per_loader must not be negative")
+	}
 	if p.Runtime.ThreadsPerWorker < 0 {
 		res.Add("runtime.threads_per_worker must not be negative")
 	}
@@ -151,7 +154,8 @@ func Profile(p *profile.Profile) *Result {
 		res.Add("phases.max_clock_skew_ms: " + err.Error())
 	}
 
-	loadAssign, err := assignment.BuildLoaderAssignments(p.LoaderInstances(), p.Scale.Warehouses)
+	loadAssign, err := assignment.BuildLoaderAssignments(
+		p.LoaderInstances(), p.Scale.Warehouses, p.Runtime.ThreadsPerLoader)
 	if err != nil {
 		res.Add("loader assignment: " + err.Error())
 	} else if err := assignment.ValidateAssignment(loadAssign, p.Scale.Warehouses); err != nil {

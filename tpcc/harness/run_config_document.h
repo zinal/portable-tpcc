@@ -16,6 +16,8 @@ struct TLoaderAssignment {
     std::string Host;
     std::vector<TWarehouseRange> WarehouseRanges;
     bool OwnsGlobalData = false;
+    // Import concurrency; 0 means auto (CPU/warehouse capped) in ImportSync.
+    size_t Threads = 0;
 };
 
 struct TWorkerAssignment {

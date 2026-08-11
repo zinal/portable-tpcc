@@ -28,6 +28,9 @@ type LoaderAssignment struct {
 	Host            string
 	WarehouseRanges []WarehouseRange
 	OwnsGlobalData  bool
+	// Threads is import concurrency for this loader. 0 means auto
+	// (min of assigned warehouses, host CPUs, and adapter max).
+	Threads int
 }
 
 // WorkerAssignment describes warehouse ranges and runtime params for a worker.
@@ -74,7 +77,8 @@ func BalancedContiguousV1(instances []Instance, warehouses int) ([]WarehouseRang
 }
 
 // BuildLoaderAssignments applies balanced-contiguous to loaders.
-func BuildLoaderAssignments(loaders []Instance, warehouses int) ([]LoaderAssignment, error) {
+// threads is written into each assignment; 0 means auto at import time.
+func BuildLoaderAssignments(loaders []Instance, warehouses, threads int) ([]LoaderAssignment, error) {
 	ranges, err := BalancedContiguousV1(loaders, warehouses)
 	if err != nil {
 		return nil, err
@@ -90,6 +94,7 @@ func BuildLoaderAssignments(loaders []Instance, warehouses int) ([]LoaderAssignm
 			Host:            inst.Host,
 			WarehouseRanges: []WarehouseRange{ranges[i]},
 			OwnsGlobalData:  i == 0,
+			Threads:         threads,
 		}
 	}
 	return out, nil

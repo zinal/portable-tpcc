@@ -92,6 +92,8 @@ type LoadAssignmentJSON struct {
 	Host            string  `json:"host"`
 	WarehouseRanges [][]int `json:"warehouse_ranges"`
 	OwnsGlobalData  bool    `json:"owns_global_data"`
+	// Threads is import concurrency for this loader. 0 means auto.
+	Threads int `json:"threads"`
 }
 
 type WorkerAssignmentJSON struct {
@@ -178,7 +180,8 @@ func ExpandProfilePaths(p *profile.Profile) (ExpandedPaths, error) {
 // BuildRunConfig materializes run-config.json from the profile and defaults.
 func BuildRunConfig(in BuildInput) (*RunConfig, error) {
 	p := in.Profile
-	loadAssign, err := assignment.BuildLoaderAssignments(p.LoaderInstances(), p.Scale.Warehouses)
+	loadAssign, err := assignment.BuildLoaderAssignments(
+		p.LoaderInstances(), p.Scale.Warehouses, p.Runtime.ThreadsPerLoader)
 	if err != nil {
 		return nil, err
 	}
@@ -359,6 +362,7 @@ func toLoadJSON(assign []assignment.LoaderAssignment) []LoadAssignmentJSON {
 			Host:            a.Host,
 			WarehouseRanges: assignment.ToJSONRanges(a.WarehouseRanges),
 			OwnsGlobalData:  a.OwnsGlobalData,
+			Threads:         a.Threads,
 		}
 	}
 	return out
