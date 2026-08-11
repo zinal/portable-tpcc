@@ -47,3 +47,10 @@ func TestCleanup_requiresYes(t *testing.T) {
 		t.Fatal("expected error without --yes")
 	}
 }
+
+func TestCleanup_missingManifest_isNoop(t *testing.T) {
+	root := t.TempDir()
+	if err := deploy.Cleanup(root, true); err != nil {
+		t.Fatalf("missing manifest should be no-op: %v", err)
+	}
+}
