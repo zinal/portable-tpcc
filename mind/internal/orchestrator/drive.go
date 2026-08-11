@@ -154,7 +154,7 @@ func (o *Orchestrator) deployToHosts(ctx *Context, sessions map[string]remote.Se
 		if err := sess.Upload(binLocal, remoteBin); err != nil {
 			return fmt.Errorf("host %s upload binary: %w", hostKey, err)
 		}
-		// Ensure executable bit for local sessions (Upload sets 0755).
+		// Upload sets mode 0755 (local OpenFile / SSH chmod) so the binary is executable.
 		remoteCfg := filepath.Join(runDir, "run-config.json")
 		if err := sess.Upload(runConfigLocal, remoteCfg); err != nil {
 			return fmt.Errorf("host %s upload run-config: %w", hostKey, err)

@@ -214,7 +214,27 @@ func (s *SSH) Upload(localPath, remotePath string) error {
 	if err != nil {
 		return err
 	}
-	return s.WriteFile(remotePath, data)
+	if err := s.WriteFile(remotePath, data); err != nil {
+		return err
+	}
+	// cat > creates files with the remote umask (typically 0644). Match
+	// Local.Upload, which always creates with 0755 so worker binaries stay runnable.
+	return s.chmod(remotePath, 0755)
+}
+
+func chmodCmd(remotePath string, mode os.FileMode) string {
+	return fmt.Sprintf("chmod %04o %s", mode.Perm(), remotePathExpr(remotePath))
+}
+
+func (s *SSH) chmod(remotePath string, mode os.FileMode) error {
+	_, stderr, exit, err := s.run(chmodCmd(remotePath, mode))
+	if err != nil {
+		return err
+	}
+	if exit != 0 {
+		return fmt.Errorf("chmod failed: %s", stderr)
+	}
+	return nil
 }
 
 func (s *SSH) Download(remotePath, localPath string) error {

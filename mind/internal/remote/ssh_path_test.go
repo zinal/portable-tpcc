@@ -1,6 +1,9 @@
 package remote
 
-import "testing"
+import (
+	"os"
+	"testing"
+)
 
 func TestRemotePathExpr(t *testing.T) {
 	cases := []struct {
@@ -15,6 +18,19 @@ func TestRemotePathExpr(t *testing.T) {
 		if got := remotePathExpr(tc.in); got != tc.want {
 			t.Fatalf("remotePathExpr(%q)=%q, want %q", tc.in, got, tc.want)
 		}
+	}
+}
+
+func TestChmodCmd(t *testing.T) {
+	got := chmodCmd("remote/run-1/tpcc-oceanbase", 0755)
+	want := "chmod 0755 'remote/run-1/tpcc-oceanbase'"
+	if got != want {
+		t.Fatalf("chmodCmd = %q, want %q", got, want)
+	}
+	got = chmodCmd("~/portable-tpcc/tpcc-oceanbase", os.FileMode(0755))
+	want = "chmod 0755 \"$HOME\"/'portable-tpcc/tpcc-oceanbase'"
+	if got != want {
+		t.Fatalf("chmodCmd home = %q, want %q", got, want)
 	}
 }
 
