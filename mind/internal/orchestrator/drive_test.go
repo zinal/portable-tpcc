@@ -1,6 +1,7 @@
 package orchestrator
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"portable-tpcc/mind/internal/collect"
 	"portable-tpcc/mind/internal/config"
 	"portable-tpcc/mind/internal/profile"
+	"portable-tpcc/mind/internal/progress"
 	"portable-tpcc/mind/internal/remote"
 	"portable-tpcc/mind/internal/state"
 )
@@ -236,6 +238,68 @@ func TestWaitProcessesRejectsMissingInstanceNonce(t *testing.T) {
 	err := o.waitProcesses(ctx, []*launchedProc{proc}, time.Second, true)
 	if err == nil || !strings.Contains(err.Error(), "missing instance_nonce") {
 		t.Fatalf("expected missing nonce error, got %v", err)
+	}
+}
+
+func TestCompleteLogLinesAdvancesOnlyPastNewlines(t *testing.T) {
+	data := []byte("line1\nline2\npartial")
+	lines, off := completeLogLines(data, 0)
+	if len(lines) != 2 || lines[0] != "line1" || lines[1] != "line2" {
+		t.Fatalf("lines=%v", lines)
+	}
+	if off != len("line1\nline2\n") {
+		t.Fatalf("off=%d", off)
+	}
+	more := append(data, []byte("ly\nnext\n")...)
+	lines, off = completeLogLines(more, off)
+	if len(lines) != 2 || lines[0] != "partially" || lines[1] != "next" {
+		t.Fatalf("follow-up lines=%v", lines)
+	}
+	if off != len(more) {
+		t.Fatalf("follow-up off=%d want %d", off, len(more))
+	}
+}
+
+func TestWaitProcessesRelaysRemoteLogs(t *testing.T) {
+	var buf bytes.Buffer
+	progress.SetWriter(&buf)
+	defer progress.SetWriter(nil)
+
+	store := &state.Store{StateDir: t.TempDir()}
+	o := &Orchestrator{StateStore: store}
+	ctx := &Context{RunID: "run-1"}
+	manifest := collect.ArtifactManifest{
+		SchemaVersion: 1,
+		Instance:      "loader-a",
+		InstanceNonce: "nonce-1",
+		Finalized:     true,
+		ExitStatus:    0,
+	}
+	data, _ := json.Marshal(manifest)
+	sess := &fakeSession{files: map[string][]byte{
+		"/done":      data,
+		"stderr.log": []byte("Warehouse 1 loaded (1/10)\nWarehouse 2 loaded (2/10)\n"),
+	}, alive: true}
+	proc := &launchedProc{
+		Role:          "loader",
+		Host:          "host-a",
+		Instance:      "loader-a",
+		Session:       sess,
+		PID:           123,
+		ProcPath:      "/run/loader/loader-a/process.json",
+		DonePath:      "/done",
+		InstanceNonce: "nonce-1",
+	}
+
+	if err := o.waitProcesses(ctx, []*launchedProc{proc}, time.Second, true); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "[loader/loader-a] Warehouse 1 loaded (1/10)") {
+		t.Fatalf("missing relayed log line in progress output: %q", out)
+	}
+	if !strings.Contains(out, "loader/loader-a finished (exited, exit=0)") {
+		t.Fatalf("missing finish progress line: %q", out)
 	}
 }
 
