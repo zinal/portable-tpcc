@@ -37,6 +37,15 @@ func SchemaArgv(runConfigPath, instance string) []string {
 	}
 }
 
+// CleanArgv returns argv for the clean role (drop TPC-C tables).
+func CleanArgv(runConfigPath, instance string) []string {
+	return []string{
+		"clean",
+		"--run-config", runConfigPath,
+		"--instance", instance,
+	}
+}
+
 // CheckArgv returns argv for the check role.
 func CheckArgv(runConfigPath, instance, phase string) []string {
 	flag := "--after-run"

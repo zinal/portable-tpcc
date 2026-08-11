@@ -130,12 +130,12 @@ guidance (YDB fused commit, DDL/query differences, OceanBase notes) are in
 ### 4.3. Binaries
 
 `mind-tpcc` orchestrates. Each `tpcc-<dbms>` binary **MUST** expose the
-normative roles `schema`, `loader`, `worker`, and `check`. Non-DBMS logic
-comes from shared libraries; only the adapter/driver is DBMS-specific.
+normative roles `schema`, `loader`, `worker`, `check`, and `clean`. Non-DBMS
+logic comes from shared libraries; only the adapter/driver is DBMS-specific.
 
 Binaries **MAY** keep standalone aliases for local use (`init` ≡ `schema`,
-`import` / `run` with flag-driven config, `clean` as local-only admin).
-Orchestrated remotes use only the four normative role names.
+`import` / `run` with flag-driven config, and `clean` with connection flags).
+Orchestrated remotes use the five normative role names.
 
 ## 5. Configuration Model
 
@@ -327,6 +327,11 @@ mind-tpcc run | cleanup --yes
 
 `run` = validate → deploy → schema → load → check(after-import) → start
 phases → check(after-run) → collect → consolidate.
+
+`cleanup --yes` drops the workload path objects via the orchestrated `clean`
+role (using the run's `run-config.json`), then removes
+`paths.remote_root/<run_id>/` on runtime hosts and any control-host deploy
+manifest under `paths.remote_root`. It **MUST NOT** allocate a new `run_id`.
 
 Worker artifact semantics are not independently version-negotiated. The
 operator **MUST** invoke `deploy` after selecting, building, or updating the

@@ -138,4 +138,28 @@ int RunOrchestratedSchema(
     return exitCode;
 }
 
+int RunOrchestratedClean(
+    const TRunConfigDocument& doc,
+    const std::string& instance,
+    std::function<void(const TRunConfigDocument&)> clean)
+{
+    const std::string instanceDir = InstanceWorkDir(doc, "clean", instance);
+    EnsureInstanceDir(instanceDir);
+    const auto paths = MakeArtifactPaths(instanceDir);
+    const std::string nonce = GenerateInstanceNonce();
+
+    WriteProcessJson(paths, doc, instance, "clean", static_cast<int>(::getpid()), nonce);
+
+    int exitCode = 0;
+    try {
+        clean(doc);
+    } catch (const std::exception& ex) {
+        LOG_E("Clean failed: " << ex.what());
+        exitCode = 1;
+    }
+
+    WriteArtifactManifest(paths, instance, nonce, exitCode);
+    return exitCode;
+}
+
 } // namespace NTpcc

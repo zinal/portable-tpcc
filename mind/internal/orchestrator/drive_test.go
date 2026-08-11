@@ -639,3 +639,46 @@ func TestCleanup_requiresYes(t *testing.T) {
 		t.Fatal("expected error without --yes")
 	}
 }
+
+func TestLoadCleanupContext(t *testing.T) {
+	store := &state.Store{StateDir: t.TempDir()}
+	runID := "run-1"
+	runDir := store.RunDir(runID)
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	rc := &config.RunConfig{
+		RunID:  runID,
+		Binary: "tpcc-oceanbase",
+		LoadAssignment: []config.LoadAssignmentJSON{
+			{Instance: "loader-a", Host: "10.0.0.1"},
+		},
+	}
+	if err := state.WriteJSON(runDir, "run-config.json", rc); err != nil {
+		t.Fatal(err)
+	}
+	o := &Orchestrator{StateStore: store}
+	ctx, err := o.loadCleanupContext(runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ctx.RunID != runID || ctx.RunConfig.Binary != "tpcc-oceanbase" {
+		t.Fatalf("ctx=%+v", ctx)
+	}
+	if ctx.RunConfig.LoadAssignment[0].Host != "10.0.0.1" {
+		t.Fatalf("host=%q", ctx.RunConfig.LoadAssignment[0].Host)
+	}
+}
+
+func TestCleanArgv(t *testing.T) {
+	got := config.CleanArgv("run-config.json", "clean-0")
+	want := []string{"clean", "--run-config", "run-config.json", "--instance", "clean-0"}
+	if len(got) != len(want) {
+		t.Fatalf("got %v", got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got %v want %v", got, want)
+		}
+	}
+}

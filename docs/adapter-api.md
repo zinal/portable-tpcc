@@ -400,6 +400,7 @@ Each `tpcc-<dbms>` binary **MUST** expose:
 | `loader` | `PutBatch` over assigned ranges; then `EnsureIndexes` / `EnsureStatistics` as needed |
 | `worker` | sessions for terminals; honor `--start-at` (specification §7); write diagnostics / `result.json` |
 | `check` | `ICheckAdapter` for `--after-import` / `--after-run` |
+| `clean` | `IAdminAdapter::Clean` for the run-config path (used by `mind-tpcc cleanup`) |
 
 Orchestrated remotes pass at least `--run-config`, `--instance`, and for
 workers `--start-at=<RFC3339-UTC>`.
@@ -411,7 +412,7 @@ Binaries **MAY** keep standalone aliases for local use:
 | `init` | ≡ `schema` (local flags; may drop/recreate) |
 | `import` | standalone load without run-config assignment |
 | `run` | standalone worker without run-config / `--start-at` |
-| `clean` | local-only admin; not a remote orchestrated role |
+| `clean` | also available with local connection flags (same `Clean` path) |
 
 Non-DBMS logic (assignment interpretation, phase timing, artifact layout)
 comes from shared libraries and the distributed `run-config.json`.

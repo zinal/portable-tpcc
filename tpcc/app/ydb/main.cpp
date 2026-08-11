@@ -68,7 +68,7 @@ void PrintHelp() {
         "  init      ≡ schema\n"
         "  import    Load TPC-C data (standalone)\n"
         "  run       Run the TPC-C benchmark (standalone)\n"
-        "  clean     Drop all TPC-C tables (local admin)\n"
+        "  clean     Drop TPC-C tables (standalone or orchestrated)\n"
         "\n"
         "Options:\n"
         "  --endpoint            YDB endpoint host:port | grpc:// | grpcs:// (default: localhost:2136)\n"
@@ -100,6 +100,7 @@ void PrintHelp() {
         "  loader --run-config <path> --instance <name>\n"
         "  worker --run-config <path> --instance <name> --start-at=<RFC3339-UTC>\n"
         "  check  --run-config <path> --instance <name> --after-import|--after-run\n"
+        "  clean  --run-config <path> --instance <name>\n"
         "\n"
         "Simulation (for testing without real TPC-C transactions):\n"
         "  --simulate-select1    Run N SELECT 1 queries per transaction (default: 0 = disabled)\n"
@@ -127,7 +128,8 @@ bool IsValidCommand(const std::string& cmd) {
 }
 
 bool IsOrchestratedRole(const std::string& cmd) {
-    return cmd == "worker" || cmd == "loader" || cmd == "schema" || cmd == "check";
+    return cmd == "worker" || cmd == "loader" || cmd == "schema" || cmd == "check" ||
+           cmd == "clean";
 }
 
 void ValidateWarehouseFlag() {
@@ -223,6 +225,10 @@ int RunOrchestrated(
         const int checkConcurrency = threads <= 0 ? 1 : threads;
         return NTpcc::RunCheckFromRunConfig(
             runConfig, instance, afterImport, afterRun, checkConcurrency);
+    }
+    if (command == "clean") {
+        LOG_I("Starting orchestrated clean " << instance << "...");
+        return NTpcc::RunCleanFromRunConfig(runConfig, instance);
     }
     return 1;
 }

@@ -59,7 +59,7 @@ void PrintHelp() {
         "  init      Alias for schema\n"
         "  import    Load TPC-C data (standalone)\n"
         "  run       Run the TPC-C benchmark (standalone)\n"
-        "  clean     Drop all TPC-C tables (local admin)\n"
+        "  clean     Drop TPC-C tables (standalone or orchestrated)\n"
         "\n"
         "Options:\n"
         "  --connection          OceanBase connection string\n"
@@ -83,7 +83,8 @@ void PrintHelp() {
         "  schema --run-config <path> --instance <name>\n"
         "  loader --run-config <path> --instance <name>\n"
         "  worker --run-config <path> --instance <name> --start-at=<RFC3339-UTC>\n"
-        "  check  --run-config <path> --instance <name> --after-import|--after-run\n";
+        "  check  --run-config <path> --instance <name> --after-import|--after-run\n"
+        "  clean  --run-config <path> --instance <name>\n";
 }
 
 ELogPriority ParseLogLevel(const std::string& level) {
@@ -101,7 +102,8 @@ bool IsValidCommand(const std::string& cmd) {
 }
 
 bool IsOrchestratedRole(const std::string& cmd) {
-    return cmd == "worker" || cmd == "loader" || cmd == "schema" || cmd == "check";
+    return cmd == "worker" || cmd == "loader" || cmd == "schema" || cmd == "check" ||
+           cmd == "clean";
 }
 
 void ValidateWarehouseFlag() {
@@ -172,6 +174,7 @@ int RunOrchestrated(
     if (command == "loader") return NTpcc::RunLoaderFromRunConfig(runConfig, instance);
     if (command == "schema") return NTpcc::RunSchemaFromRunConfig(runConfig, instance);
     if (command == "check") return NTpcc::RunCheckFromRunConfig(runConfig, instance, afterImport, afterRun);
+    if (command == "clean") return NTpcc::RunCleanFromRunConfig(runConfig, instance);
     return 1;
 }
 

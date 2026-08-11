@@ -671,8 +671,8 @@ func (o *Orchestrator) Stop(ctx *Context) error {
 	return nil
 }
 
-// Cleanup removes per-run deploy trees on runtime hosts and any local
-// deploy-manifest paths under paths.remote_root.
+// Cleanup drops TPC-C tables via the clean role, removes per-run deploy trees
+// on runtime hosts, and clears any local deploy-manifest paths.
 func (o *Orchestrator) Cleanup(yes bool) error {
 	if !yes {
 		return fmt.Errorf("cleanup requires --yes in non-interactive mode")
@@ -682,12 +682,31 @@ func (o *Orchestrator) Cleanup(yes bool) error {
 		return err
 	}
 	if runID != "" {
-		progress.Printf("cleanup: removing remote run dir for run_id=%s", runID)
-		if err := o.cleanupRemoteRun(runID); err != nil {
+		ctx, err := o.loadCleanupContext(runID)
+		if err != nil {
 			return err
 		}
+		sessions, err := o.openSessions()
+		if err != nil {
+			return err
+		}
+		closed := false
+		defer func() {
+			if !closed {
+				closeSessions(sessions)
+			}
+		}()
+		if err := o.cleanDatabase(ctx, sessions); err != nil {
+			return err
+		}
+		progress.Printf("cleanup: removing remote run dir for run_id=%s", runID)
+		if err := o.removeRemoteRunDirs(runID, sessions); err != nil {
+			return err
+		}
+		closeSessions(sessions)
+		closed = true
 	} else {
-		progress.Printf("cleanup: no run_id resolved; skipping remote run dirs (pass --run-id)")
+		progress.Printf("cleanup: no run_id resolved; skipping schema drop and remote run dirs (pass --run-id)")
 	}
 
 	root, err := paths.ExpandHome(o.Expanded.RemoteRoot)
@@ -707,6 +726,54 @@ func (o *Orchestrator) Cleanup(yes bool) error {
 		}
 	}
 	progress.Printf("cleanup: complete")
+	return nil
+}
+
+// loadCleanupContext loads an existing run-config for cleanup without allocating
+// a new run or rewriting control-host artifacts.
+func (o *Orchestrator) loadCleanupContext(runID string) (*Context, error) {
+	runDir := o.StateStore.RunDir(runID)
+	runConfigPath := filepath.Join(runDir, "run-config.json")
+	data, err := os.ReadFile(runConfigPath)
+	if err != nil {
+		return nil, fmt.Errorf("cleanup needs run-config for %s: %w", runID, err)
+	}
+	rc := &config.RunConfig{}
+	if err := json.Unmarshal(data, rc); err != nil {
+		return nil, fmt.Errorf("load run-config.json for %s: %w", runID, err)
+	}
+	if rc.RunID != "" && rc.RunID != runID {
+		return nil, fmt.Errorf("run-config run_id %q does not match %q", rc.RunID, runID)
+	}
+	rc.RunID = runID
+	if len(rc.LoadAssignment) == 0 {
+		return nil, fmt.Errorf("cleanup: run-config %s has empty load_assignment", runID)
+	}
+	if strings.TrimSpace(rc.Binary) == "" {
+		return nil, fmt.Errorf("cleanup: run-config %s missing binary", runID)
+	}
+	return &Context{RunID: runID, RunConfig: rc, RunDir: runDir}, nil
+}
+
+// cleanDatabase runs the orchestrated clean role before deleting deploy trees.
+func (o *Orchestrator) cleanDatabase(ctx *Context, sessions map[string]remote.Session) error {
+	progress.Printf("cleanup: ensuring deploy artifacts for schema drop")
+	if err := o.deployToHosts(ctx, sessions); err != nil {
+		return fmt.Errorf("cleanup redeploy before clean: %w", err)
+	}
+	hostKey := ctx.RunConfig.LoadAssignment[0].Host
+	instance := "clean-0"
+	argv := config.CleanArgv("run-config.json", instance)
+	progress.Printf("cleanup: dropping TPC-C tables via clean on %s", hostKey)
+	proc, err := o.launchRole(ctx, sessions, "clean", hostKey, instance, argv)
+	if err != nil {
+		return err
+	}
+	if err := o.waitProcesses(ctx, []*launchedProc{proc}, 30*time.Minute, true); err != nil {
+		_ = o.stopPeers(ctx, sessions)
+		return err
+	}
+	progress.Printf("cleanup: schema drop complete")
 	return nil
 }
 
@@ -749,15 +816,6 @@ func validateCleanupRunID(runID string) error {
 		return fmt.Errorf("invalid run_id %q", runID)
 	}
 	return nil
-}
-
-func (o *Orchestrator) cleanupRemoteRun(runID string) error {
-	sessions, err := o.openSessions()
-	if err != nil {
-		return err
-	}
-	defer closeSessions(sessions)
-	return o.removeRemoteRunDirs(runID, sessions)
 }
 
 func (o *Orchestrator) removeRemoteRunDirs(runID string, sessions map[string]remote.Session) error {

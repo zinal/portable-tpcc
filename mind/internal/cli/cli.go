@@ -335,7 +335,7 @@ Commands:
   collect     Collect artifacts from runtime hosts
   consolidate Merge worker results into aggregate.json
   run         Full pipeline
-  cleanup     Remove remote run dirs and local deploy manifest (--yes required)
+  cleanup     Drop TPC-C tables, remove remote run dirs (--yes required)
 
 Options:
   --profile <path>         Profile YAML path

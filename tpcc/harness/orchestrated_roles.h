@@ -55,4 +55,9 @@ int RunOrchestratedSchema(
     const std::string& instance,
     std::function<void(const TRunConfigDocument&)> ensureSchema);
 
+int RunOrchestratedClean(
+    const TRunConfigDocument& doc,
+    const std::string& instance,
+    std::function<void(const TRunConfigDocument&)> clean);
+
 } // namespace NTpcc
