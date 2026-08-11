@@ -12,7 +12,9 @@ namespace NTpcc {
 // Idempotent population helpers (specification §6):
 // - item: INSERT ... ON DUPLICATE KEY UPDATE
 // - warehouse range: INSERT first; on ERROR 1062 (ER_DUP_ENTRY), DELETE
-//   warehouse-scoped tables and INSERT again in one transaction
+//   warehouse-scoped tables and INSERT again
+// Load path mirrors tpcc-oceanbase-cpp: multi-row INSERT batches of at most 200
+// rows and a short transaction per table (not one warehouse-sized TX).
 
 TPutBatchResult PutItemsIdempotent(
     TObConnection& conn,

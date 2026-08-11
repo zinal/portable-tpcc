@@ -3,6 +3,8 @@
 #include "ob_errors.h"
 #include "ob_prepared_statement.h"
 
+#include <log.h>
+
 #include <mysql.h>
 
 #include <cctype>
@@ -227,6 +229,17 @@ void TObConnection::CreateDatabaseIfNotExists(const std::string& database) {
     const std::string sql = "CREATE DATABASE IF NOT EXISTS " + QuoteIdent(database);
     if (mysql_query(Impl_->Mysql, sql.c_str()) != 0) {
         ThrowMysqlError(Impl_->Mysql, "CREATE DATABASE failed");
+    }
+}
+
+void TObConnection::ConfigureBulkLoadSession() {
+    // Match tpcc-oceanbase-cpp ImportQueryTimeoutMicros (600s). Default is 10s.
+    constexpr const char* kSql = "SET SESSION ob_query_timeout = 600000000";
+    if (mysql_query(Impl_->Mysql, kSql) != 0) {
+        // MariaDB stand-in and other MySQL-compat servers may not have this variable.
+        LOG_W("Could not set ob_query_timeout ("
+              << (Impl_->Mysql ? mysql_error(Impl_->Mysql) : "null mysql handle")
+              << "); continuing with server default");
     }
 }
 

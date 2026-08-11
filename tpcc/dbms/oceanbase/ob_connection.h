@@ -36,6 +36,8 @@ struct TObConnection {
 
     void UseDatabase(const std::string& database);
     void CreateDatabaseIfNotExists(const std::string& database);
+    // Raise session ob_query_timeout for bulk import (default is 10s; see tpcc-oceanbase-cpp).
+    void ConfigureBulkLoadSession();
     void BeginRepeatableRead();
     void Commit();
     void Rollback();
