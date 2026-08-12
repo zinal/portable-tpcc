@@ -33,6 +33,7 @@ type Options struct {
 	RunID        string
 	WorkerBinary string
 	SkipSteps    []string
+	Overrides    config.ProfileOverrides
 	// Interrupt, when cancelled, aborts long waits so callers can release the
 	// profile lock via defer (SIGINT/SIGTERM). Nil means not interruptible.
 	Interrupt context.Context
@@ -57,6 +58,9 @@ type Context struct {
 func New(opts Options) (*Orchestrator, error) {
 	p, err := profile.ParseFile(opts.ProfilePath)
 	if err != nil {
+		return nil, err
+	}
+	if err := config.ApplyOverrides(p, opts.Overrides); err != nil {
 		return nil, err
 	}
 	ep, err := config.ExpandProfilePaths(p)
@@ -119,6 +123,9 @@ func (o *Orchestrator) Materialize() (*Context, error) {
 		if strings.TrimSpace(string(storedSHA)) != profileSHA {
 			return nil, fmt.Errorf("existing run %s was created from a different profile", runID)
 		}
+		if err := config.OverridesMatchRunConfig(o.Opts.Overrides, rc); err != nil {
+			return nil, fmt.Errorf("existing run %s: %w", runID, err)
+		}
 		rc.RunID = runID
 	} else if os.IsNotExist(err) {
 		rc, err = config.BuildRunConfig(config.BuildInput{
@@ -177,7 +184,7 @@ func (o *Orchestrator) Materialize() (*Context, error) {
 
 // ResolveRunID computes the run ID without creating run artifacts.
 // When --run-id is omitted, continues the latest non-terminal run created from
-// this profile so staged commands (deploy → schema → load → …) share one run.
+// this profile so staged commands (schema → load → …) share one run.
 func (o *Orchestrator) ResolveRunID() (string, error) {
 	vr := o.Validate()
 	if !vr.Valid {
@@ -201,6 +208,9 @@ func (o *Orchestrator) ResolveRunID() (string, error) {
 }
 
 // latestContinuableRunID returns the newest non-terminal run for this profile.
+// When CLI overrides disagree with that run's run-config (e.g. a second
+// `start --warehouses N` after a completed measurement left the run in
+// draining), the run is not continued so Materialize allocates a new id.
 func (o *Orchestrator) latestContinuableRunID() (string, error) {
 	latest, err := o.StateStore.LatestRunID()
 	if err != nil || latest == "" {
@@ -227,6 +237,24 @@ func (o *Orchestrator) latestContinuableRunID() (string, error) {
 	}
 	if strings.TrimSpace(string(stored)) != wantSHA {
 		return "", nil
+	}
+	if o.Opts.Overrides.Any() {
+		rcPath := filepath.Join(o.StateStore.RunDir(latest), "run-config.json")
+		data, err := os.ReadFile(rcPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return latest, nil
+			}
+			return "", err
+		}
+		rc := &config.RunConfig{}
+		if err := json.Unmarshal(data, rc); err != nil {
+			return "", fmt.Errorf("load existing run-config.json: %w", err)
+		}
+		if err := config.OverridesMatchRunConfig(o.Opts.Overrides, rc); err != nil {
+			progress.Printf("overrides differ from run_id=%s; allocating a new run", latest)
+			return "", nil
+		}
 	}
 	return latest, nil
 }
@@ -274,41 +302,24 @@ func (o *Orchestrator) Plan() (*config.PlanSnapshot, error) {
 	return config.BuildPlanSnapshot(ctx.RunConfig), nil
 }
 
-// Deploy distributes binary + run-config.json to runtime hosts.
-func (o *Orchestrator) Deploy(ctx *Context) error {
-	progress.Printf("stage deploy: start (run_id=%s)", ctx.RunID)
-	rs, err := o.StateStore.Load(ctx.RunID)
-	if err != nil {
-		return err
+// Deploy uploads the shared worker binary to runtime hosts.
+// It is profile-scoped: it does not allocate a run_id, materialize run-config,
+// or mutate per-run FSM state. Per-run run-config.json is uploaded at launch.
+func (o *Orchestrator) Deploy() error {
+	vr := o.Validate()
+	if !vr.Valid {
+		return fmt.Errorf("profile invalid: %v", vr.Errors)
 	}
-	// Re-deploy into an in-progress staged run is allowed; only enter the
-	// deploying state from planned/deploying so later stages are not reset.
-	if rs.State == "" || rs.State == state.StatePlanned || rs.State == state.StateDeploying {
-		if err := o.StateStore.Transition(ctx.RunID, state.StateDeploying); err != nil {
-			return err
-		}
-	} else {
-		progress.Printf("redeploying into existing run (state=%s)", rs.State)
-	}
+	progress.Printf("deploy: start (profile=%s, shared binary)", o.Profile.Metadata.Name)
 	sessions, err := o.openSessions()
 	if err != nil {
-		o.StateStore.Fail(ctx.RunID, err)
 		return err
 	}
-	closed := false
-	defer func() {
-		if !closed {
-			closeSessions(sessions)
-		}
-	}()
+	defer closeSessions(sessions)
 
-	if err := o.deployToHosts(ctx, sessions); err != nil {
-		o.StateStore.Fail(ctx.RunID, err)
+	if err := o.deployToHosts(sessions); err != nil {
 		return err
 	}
-	progress.Printf("closing runtime sessions")
-	closeSessions(sessions)
-	closed = true
 
 	// LocalDeploy writes deploy-manifest.json under the control-host view of
 	// remote_root for cleanup of shared local artifact trees. Skip it for
@@ -319,22 +330,32 @@ func (o *Orchestrator) Deploy(ctx *Context) error {
 			progress.Printf("local deploy manifest: %v", err)
 		}
 	}
-	if deployShouldMarkSchema(rs.State) {
-		if err := o.StateStore.Transition(ctx.RunID, state.StateSchema); err != nil {
-			return err
-		}
-	}
-	progress.Printf("stage deploy: complete")
+	progress.Printf("deploy: complete")
 	return nil
 }
 
-func deployShouldMarkSchema(st string) bool {
-	switch st {
-	case "", state.StatePlanned, state.StateDeploying, state.StateSchema:
-		return true
-	default:
-		return false
+// requireWorkerBinary verifies that an explicit `mind-tpcc deploy` already
+// placed the shared worker binary on every runtime host. It does not upload
+// artifacts: run must not silently refresh binaries (version skew risk).
+func (o *Orchestrator) requireWorkerBinary() error {
+	sessions, err := o.openSessions()
+	if err != nil {
+		return err
 	}
+	defer closeSessions(sessions)
+
+	binName, missing, err := o.workerBinaryMissingHosts(sessions)
+	if err != nil {
+		return err
+	}
+	if len(missing) == 0 {
+		progress.Printf("shared worker binary %s present on all hosts", binName)
+		return nil
+	}
+	return fmt.Errorf(
+		"shared worker binary %s missing on host(s) %s; run `mind-tpcc deploy --profile ...` first (and after any binary rebuild)",
+		binName, strings.Join(missing, ", "),
+	)
 }
 
 // usesLocalRuntime reports whether any loader/worker host uses a Local session.
@@ -390,7 +411,7 @@ func (o *Orchestrator) Run() error {
 		enabled bool
 		fn      func() error
 	}{
-		{"deploy", true, func() error { return o.Deploy(ctx) }},
+		{"deploy", true, func() error { return o.requireWorkerBinary() }},
 		{"schema", true, func() error { return o.schema(ctx) }},
 		{"load", true, func() error { return o.load(ctx) }},
 		{"indexes", true, func() error { return o.indexes(ctx) }},
@@ -944,11 +965,10 @@ func (o *Orchestrator) cleanupDatabase(ctx *Context, sessions map[string]remote.
 	if !ok {
 		return fmt.Errorf("cleanup: no session for host %s", hostKey)
 	}
-	runDir, err := o.sessionRunDir(sess, ctx.RunID)
+	remoteBin, err := o.sessionBinaryPath(sess, ctx.RunConfig.Binary)
 	if err != nil {
 		return err
 	}
-	remoteBin := filepath.Join(runDir, ctx.RunConfig.Binary)
 	exists, err := sess.Exists(remoteBin)
 	if err != nil {
 		return err

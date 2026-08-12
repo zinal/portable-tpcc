@@ -146,8 +146,12 @@ cp mind/mind-tpcc ./mind-tpcc
 ./mind-tpcc validate --profile ./profile-pgsql.yaml
 ./mind-tpcc plan     --profile ./profile-pgsql.yaml
 
-# Full pipeline:
-# validate → deploy → schema → load → indexes → check(after-import)
+# Explicit deploy installs the shared worker binary under paths.remote_root.
+# Re-run deploy after rebuilding tpcc-*; `run` will not auto-upload binaries.
+./mind-tpcc deploy --profile ./profile-pgsql.yaml
+
+# Full pipeline (requires prior deploy):
+# validate → require deploy → schema → load → indexes → check(after-import)
 # → start → check(after-run) → collect → consolidate
 ./mind-tpcc run --profile ./profile-pgsql.yaml
 ```
@@ -333,8 +337,12 @@ cp mind/mind-tpcc ./mind-tpcc
 ./mind-tpcc validate --profile ./profile-oceanbase.yaml
 ./mind-tpcc plan     --profile ./profile-oceanbase.yaml
 
-# Full pipeline:
-# validate → deploy → schema → load → indexes → check(after-import)
+# Explicit deploy installs the shared worker binary under paths.remote_root.
+# Re-run deploy after rebuilding tpcc-*; `run` will not auto-upload binaries.
+./mind-tpcc deploy --profile ./profile-oceanbase.yaml
+
+# Full pipeline (requires prior deploy):
+# validate → require deploy → schema → load → indexes → check(after-import)
 # → start → check(after-run) → collect → consolidate
 ./mind-tpcc run --profile ./profile-oceanbase.yaml
 ```

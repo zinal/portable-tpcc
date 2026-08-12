@@ -330,8 +330,9 @@ mind-tpcc start | status | stop | collect | consolidate
 mind-tpcc run | cleanup --yes
 ```
 
-`run` = validate → deploy → schema → load → indexes → check(after-import)
-→ start phases → check(after-run) → collect → consolidate.
+`run` = validate → require prior `deploy` (shared worker binaries present on
+every assigned host; no auto-upload) → schema → load → indexes →
+check(after-import) → start phases → check(after-run) → collect → consolidate.
 
 `cleanup --yes` tears down an existing run for the profile (explicit
 `--run-id`, else the newest matching run, including terminal states). Phases
@@ -343,9 +344,13 @@ deploy-manifest paths when present).
 
 Worker artifact semantics are not independently version-negotiated. The
 operator **MUST** invoke `deploy` after selecting, building, or updating the
-portable-tpcc version and before starting a run. `deploy` **MUST** install on
+portable-tpcc version and before `run` or any role launch that needs the
+worker binary. `deploy` is profile-scoped (shared binary under
+`paths.remote_root`; not tied to a `run_id` FSM stage). It **MUST** install on
 every assigned host the current set of binary artifacts from that selected
 version and **MUST NOT** intentionally reuse binaries from an earlier version.
+`run` **MUST NOT** silently re-upload binaries: it only verifies that
+`deploy` already placed them, so the operator controls which version is live.
 All workers in one run are therefore assumed to execute a homogeneous artifact
 set. Mixed worker versions are unsupported and are an operator/deployment
 error, not a compatibility mode that `consolidate` is required to reconcile.

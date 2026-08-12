@@ -54,6 +54,13 @@ func remoteRunDir(remoteRoot, runID string) string {
 	return filepath.Join(remoteRoot, runID)
 }
 
+// remoteBinaryPath is the shared worker binary location on a runtime host.
+// It lives directly under paths.remote_root so successive runs can reuse one
+// deploy without re-uploading into each run_id directory.
+func remoteBinaryPath(remoteRoot, binName string) string {
+	return filepath.Join(remoteRoot, filepath.Base(binName))
+}
+
 // runtimeRoot returns paths.remote_root as it should be used on sess.
 // Local loopback expands ~/ and resolves against the control-host cwd; SSH keeps
 // the host-native form (relative, absolute, or ~/ on the remote account).
@@ -79,6 +86,14 @@ func (o *Orchestrator) sessionRunDir(sess remote.Session, runID string) (string,
 		return "", err
 	}
 	return remoteRunDir(root, runID), nil
+}
+
+func (o *Orchestrator) sessionBinaryPath(sess remote.Session, binName string) (string, error) {
+	root, err := o.runtimeRoot(sess)
+	if err != nil {
+		return "", err
+	}
+	return remoteBinaryPath(root, binName), nil
 }
 
 func (o *Orchestrator) dialConfig() (remote.DialConfig, error) {
@@ -175,7 +190,7 @@ func (o *Orchestrator) binaryLocalPath() (string, error) {
 	return name, nil
 }
 
-func (o *Orchestrator) deployToHosts(ctx *Context, sessions map[string]remote.Session) error {
+func (o *Orchestrator) deployToHosts(sessions map[string]remote.Session) error {
 	binLocal, err := o.binaryLocalPath()
 	if err != nil {
 		return err
@@ -183,47 +198,85 @@ func (o *Orchestrator) deployToHosts(ctx *Context, sessions map[string]remote.Se
 	if _, err := os.Stat(binLocal); err != nil {
 		return fmt.Errorf("worker binary not found at %s: %w", binLocal, err)
 	}
-	runConfigLocal := filepath.Join(ctx.RunDir, "run-config.json")
-	credFiles, err := o.credentialFilesForDeploy()
-	if err != nil {
-		return err
-	}
 	binName := filepath.Base(binLocal)
 	progress.Printf("deploying %s to %d host(s)", binName, len(sessions))
 	for hostKey, sess := range sessions {
-		runDir, err := o.sessionRunDir(sess, ctx.RunID)
+		root, err := o.runtimeRoot(sess)
 		if err != nil {
 			return fmt.Errorf("host %s remote_root: %w", hostKey, err)
 		}
-		progress.Printf("deploy %s: mkdir %s", hostKey, runDir)
-		if err := sess.MkdirAll(runDir); err != nil {
+		// Shared worker binary under remote_root. Per-run run-config.json and
+		// credentials are pushed at launch time for the active run_id.
+		if err := sess.MkdirAll(root); err != nil {
 			return fmt.Errorf("host %s mkdir: %w", hostKey, err)
 		}
-		remoteBin := filepath.Join(runDir, binName)
-		progress.Printf("deploy %s: upload binary", hostKey)
+		remoteBin := remoteBinaryPath(root, binName)
+		progress.Printf("deploy %s: upload binary %s", hostKey, remoteBin)
 		if err := sess.Upload(binLocal, remoteBin); err != nil {
 			return fmt.Errorf("host %s upload binary: %w", hostKey, err)
 		}
 		// Upload sets mode 0755 (local OpenFile / SSH chmod) so the binary is executable.
-		remoteCfg := filepath.Join(runDir, "run-config.json")
-		progress.Printf("deploy %s: upload run-config.json", hostKey)
-		if err := sess.Upload(runConfigLocal, remoteCfg); err != nil {
-			return fmt.Errorf("host %s upload run-config: %w", hostKey, err)
-		}
-		for _, f := range credFiles {
-			remotePath := filepath.Join(runDir, f.RemoteName)
-			progress.Printf("deploy %s: upload %s", hostKey, f.RemoteName)
-			if err := sess.Upload(f.LocalPath, remotePath); err != nil {
-				return fmt.Errorf("host %s upload %s: %w", hostKey, f.RemoteName, err)
-			}
-		}
-		if o.requiresPasswordFile() {
-			progress.Printf("deploy %s: write %s", hostKey, config.RemotePasswordFileName)
-			if err := o.ensureRemotePasswordFile(sess, runDir); err != nil {
-				return fmt.Errorf("host %s: %w", hostKey, err)
-			}
-		}
 		progress.Printf("deploy %s: done", hostKey)
+	}
+	return nil
+}
+
+// workerBinaryMissingHosts returns hosts where the shared worker binary is absent.
+func (o *Orchestrator) workerBinaryMissingHosts(sessions map[string]remote.Session) (binName string, missing []string, err error) {
+	binLocal, err := o.binaryLocalPath()
+	if err != nil {
+		return "", nil, err
+	}
+	binName = filepath.Base(binLocal)
+	for hostKey, sess := range sessions {
+		remoteBin, err := o.sessionBinaryPath(sess, binName)
+		if err != nil {
+			return "", nil, fmt.Errorf("host %s remote_root: %w", hostKey, err)
+		}
+		exists, err := sess.Exists(remoteBin)
+		if err != nil {
+			return "", nil, fmt.Errorf("host %s check binary: %w", hostKey, err)
+		}
+		if !exists {
+			missing = append(missing, hostKey)
+		}
+	}
+	sort.Strings(missing)
+	return binName, missing, nil
+}
+
+// ensureRemoteRunFiles uploads run-config.json and DB credential files into the
+// per-run working directory on a runtime host. Called before every role launch
+// so stages work without a preceding deploy of run-scoped artifacts.
+func (o *Orchestrator) ensureRemoteRunFiles(ctx *Context, sess remote.Session, runDir string) error {
+	if ctx == nil || ctx.RunDir == "" {
+		return fmt.Errorf("run directory is not set")
+	}
+	if err := sess.MkdirAll(runDir); err != nil {
+		return fmt.Errorf("mkdir %s: %w", runDir, err)
+	}
+	localCfg := filepath.Join(ctx.RunDir, "run-config.json")
+	if _, err := os.Stat(localCfg); err != nil {
+		return fmt.Errorf("local run-config.json: %w", err)
+	}
+	remoteCfg := filepath.Join(runDir, "run-config.json")
+	progress.Printf("upload run-config.json -> %s", remoteCfg)
+	if err := sess.Upload(localCfg, remoteCfg); err != nil {
+		return fmt.Errorf("upload run-config: %w", err)
+	}
+	credFiles, err := o.credentialFilesForRun()
+	if err != nil {
+		return err
+	}
+	for _, f := range credFiles {
+		remotePath := filepath.Join(runDir, f.RemoteName)
+		progress.Printf("upload %s -> %s", f.RemoteName, remotePath)
+		if err := sess.Upload(f.LocalPath, remotePath); err != nil {
+			return fmt.Errorf("upload %s: %w", f.RemoteName, err)
+		}
+	}
+	if err := o.ensureRemotePasswordFile(sess, runDir); err != nil {
+		return err
 	}
 	return nil
 }
@@ -233,9 +286,9 @@ type credentialFile struct {
 	RemoteName string
 }
 
-// credentialFilesForDeploy resolves control-host CA / SA-key paths that must be
+// credentialFilesForRun resolves control-host CA / SA-key paths that must be
 // uploaded beside run-config.json. Remote names match rewritten run-config fields.
-func (o *Orchestrator) credentialFilesForDeploy() ([]credentialFile, error) {
+func (o *Orchestrator) credentialFilesForRun() ([]credentialFile, error) {
 	var out []credentialFile
 	if o.Profile.Database.CaFile != "" {
 		local, err := paths.ExpandHome(o.Profile.Database.CaFile)
@@ -305,8 +358,10 @@ func (o *Orchestrator) launchRole(
 	if err := sess.MkdirAll(instanceDir); err != nil {
 		return nil, err
 	}
-	binName := ctx.RunConfig.Binary
-	remoteBin := filepath.Join(runDir, binName)
+	remoteBin, err := o.sessionBinaryPath(sess, ctx.RunConfig.Binary)
+	if err != nil {
+		return nil, fmt.Errorf("host %s remote_root: %w", hostKey, err)
+	}
 	stdout := filepath.Join(instanceDir, "stdout.log")
 	stderr := filepath.Join(instanceDir, "stderr.log")
 	exists, err := sess.Exists(remoteBin)
@@ -314,13 +369,13 @@ func (o *Orchestrator) launchRole(
 		return nil, fmt.Errorf("check binary %s on %s: %w", remoteBin, hostKey, err)
 	}
 	if !exists {
-		return nil, fmt.Errorf("worker binary %s not found on %s; run `mind-tpcc deploy --profile ... --run-id %s` first", remoteBin, hostKey, ctx.RunID)
+		return nil, fmt.Errorf("worker binary %s not found on %s; run `mind-tpcc deploy --profile ...` first", remoteBin, hostKey)
 	}
-	// Refresh the password file before each launch so cleanup / late stages
-	// still work if deploy was skipped; never inject the secret into argv/env
-	// of the remote shell command (visible in ps).
-	if err := o.ensureRemotePasswordFile(sess, runDir); err != nil {
-		return nil, err
+	// Push per-run run-config + credentials on every launch so a new run_id
+	// does not require redeploy. Password is written to a mode-0600 file and
+	// never injected into argv/env of the remote shell command (visible in ps).
+	if err := o.ensureRemoteRunFiles(ctx, sess, runDir); err != nil {
+		return nil, fmt.Errorf("host %s: %w", hostKey, err)
 	}
 	progress.Printf("launch %s/%s on %s", role, instance, hostKey)
 	pid, err := sess.StartDetached(runDir, remoteBin, argv, nil, stdout, stderr)

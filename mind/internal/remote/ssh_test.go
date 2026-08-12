@@ -20,7 +20,7 @@ func TestSSHStartDetachedRejectsInvalidEnvKey(t *testing.T) {
 func TestStartDetachedShellCmd(t *testing.T) {
 	cmd, err := startDetachedShellCmd(
 		"remote/run-1",
-		"remote/run-1/tpcc-oceanbase",
+		"remote/tpcc-oceanbase",
 		[]string{"loader", "--instance", "host-a-l"},
 		map[string]string{"DB_PASSWORD": "s3cret"},
 		"remote/run-1/loader/host-a-l/stdout.log",
@@ -32,7 +32,7 @@ func TestStartDetachedShellCmd(t *testing.T) {
 	for _, want := range []string{
 		"cd 'remote/run-1' && ",
 		"DB_PASSWORD='s3cret' ",
-		"nohup './tpcc-oceanbase'",
+		"nohup '../tpcc-oceanbase'",
 		" 'loader' '--instance' 'host-a-l'",
 		" > 'loader/host-a-l/stdout.log'",
 		" 2> 'loader/host-a-l/stderr.log'",

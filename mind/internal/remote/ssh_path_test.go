@@ -42,6 +42,7 @@ func TestPathUnderWorkDir(t *testing.T) {
 		{"remote/run-1", "remote/run-1/schema/schema-0/stderr.log", "schema/schema-0/stderr.log"},
 		{"/home/u/remote/run-1", "/home/u/remote/run-1/tpcc-oceanbase", "tpcc-oceanbase"},
 		{"~/portable-tpcc/run-1", "~/portable-tpcc/run-1/tpcc-oceanbase", "tpcc-oceanbase"},
+		{"remote/run-1", "remote/tpcc-oceanbase", "../tpcc-oceanbase"},
 		{"remote/run-1", "/usr/bin/true", "/usr/bin/true"},
 		{"remote/run-1", "remote/run-1", "."},
 	}
@@ -71,5 +72,10 @@ func TestShellExecPath(t *testing.T) {
 	bin := shellExecPath(pathUnderWorkDir("ob-work/run-1", "ob-work/run-1/tpcc-oceanbase"))
 	if bin != "./tpcc-oceanbase" {
 		t.Fatalf("detached binary path = %q, want ./tpcc-oceanbase", bin)
+	}
+	// Shared binary under remote_root is launched via ../name from the run dir.
+	shared := shellExecPath(pathUnderWorkDir("ob-work/run-1", "ob-work/tpcc-oceanbase"))
+	if shared != "../tpcc-oceanbase" {
+		t.Fatalf("shared binary path = %q, want ../tpcc-oceanbase", shared)
 	}
 }

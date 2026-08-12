@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -20,6 +21,7 @@ type Config struct {
 	RunID        string
 	WorkerBinary string
 	SkipSteps    []string
+	Overrides    config.ProfileOverrides
 	Yes          bool
 	CheckPhase   string
 }
@@ -78,6 +80,34 @@ func run(args []string, interrupt context.Context) int {
 			}
 			cfg.SkipSteps = append(cfg.SkipSteps, rest[i+1])
 			i++
+		case "--warehouses":
+			if i+1 >= len(rest) {
+				fmt.Fprintln(os.Stderr, "--warehouses requires a value")
+				return 2
+			}
+			w, err := strconv.Atoi(rest[i+1])
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "--warehouses: invalid integer %q\n", rest[i+1])
+				return 2
+			}
+			cfg.Overrides.Warehouses = &w
+			i++
+		case "--ramp-up":
+			if i+1 >= len(rest) {
+				fmt.Fprintln(os.Stderr, "--ramp-up requires a value")
+				return 2
+			}
+			v := rest[i+1]
+			cfg.Overrides.RampUp = &v
+			i++
+		case "--measurement":
+			if i+1 >= len(rest) {
+				fmt.Fprintln(os.Stderr, "--measurement requires a value")
+				return 2
+			}
+			v := rest[i+1]
+			cfg.Overrides.Measurement = &v
+			i++
 		case "--yes":
 			cfg.Yes = true
 		case "--after-import":
@@ -97,6 +127,7 @@ func run(args []string, interrupt context.Context) int {
 		RunID:        cfg.RunID,
 		WorkerBinary: cfg.WorkerBinary,
 		SkipSteps:    cfg.SkipSteps,
+		Overrides:    cfg.Overrides,
 		Interrupt:    interrupt,
 	}
 
@@ -203,7 +234,8 @@ func runDeploy(opts orchestrator.Options) int {
 	if err != nil {
 		return exitErr(err)
 	}
-	if err := withMaterializedProfileLock(o, func(ctx *orchestrator.Context) error { return o.Deploy(ctx) }); err != nil {
+	// Profile-scoped: no run_id allocation, materialize, or FSM transitions.
+	if err := o.Deploy(); err != nil {
 		return exitErr(err)
 	}
 	return 0
@@ -359,7 +391,7 @@ Usage:
 Commands:
   validate    Validate profile without side effects
   plan        Show planned assignment and argv
-  deploy      Deploy binaries and schema to runtime hosts
+  deploy      Deploy shared worker binary (profile-scoped; no run_id / FSM)
   schema      Apply database schema
   load        Run horizontal data load
   indexes     Create secondary indexes and gather statistics
@@ -369,7 +401,7 @@ Commands:
   stop        Stop workers gracefully
   collect     Collect artifacts from runtime hosts
   consolidate Merge worker results into aggregate.json
-  run         Full pipeline
+  run         Full pipeline (requires prior explicit deploy)
   cleanup     Full teardown for a run: stop, DB clean, remote+local artifacts (--yes)
 
 Options:
@@ -377,6 +409,9 @@ Options:
   --run-id <id>            Run identifier (default: continue latest active run
                            for this profile, else allocate a new id)
   --worker-binary <path>   Worker binary path
+  --warehouses <n>         Override scale.warehouses (must be <= profile value)
+  --ramp-up <duration>     Override phases.ramp_up (warmup), e.g. 30s, 5m
+  --measurement <duration> Override phases.measurement, e.g. 2m, 120m
   --skip <step>            Skip pipeline step
   --yes                    Non-interactive confirmation
 `)

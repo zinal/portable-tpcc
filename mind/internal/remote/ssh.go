@@ -355,9 +355,10 @@ func (s *SSH) RemoveAll(remotePath string) error {
 	return nil
 }
 
-// pathUnderWorkDir returns path relative to workDir when path is inside it.
+// pathUnderWorkDir returns path relative to workDir when path is reachable from it.
 // StartDetached cds into workDir, so binary/log paths must not keep the workDir prefix
 // (e.g. workDir=remote/run, binary=remote/run/tpcc-x → tpcc-x).
+// Shared binaries live under remote_root (parent of the run dir), so ../name is allowed.
 func pathUnderWorkDir(workDir, path string) string {
 	if workDir == "" || path == "" {
 		return path
@@ -372,7 +373,7 @@ func pathUnderWorkDir(workDir, path string) string {
 	if strings.HasPrefix(cleanPath, prefix) {
 		return cleanPath[len(prefix):]
 	}
-	if rel, err := filepath.Rel(cleanWork, cleanPath); err == nil && rel != "." && !strings.HasPrefix(rel, "..") {
+	if rel, err := filepath.Rel(cleanWork, cleanPath); err == nil && rel != "." {
 		return rel
 	}
 	return path

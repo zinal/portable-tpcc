@@ -300,14 +300,14 @@ func BuildRunConfig(in BuildInput) (*RunConfig, error) {
 		Options:    p.Database.Options,
 	}
 	// Orchestrated workers read the DB password from a mode-0600 file that
-	// deploy writes beside run-config.json. The profile still names the
+	// launch writes beside run-config.json. The profile still names the
 	// control-host env var (password_env); its value is never copied into
 	// run-config or into the SSH launch cmdline.
 	if NeedsRemotePasswordFile(p.Database) {
 		db.PasswordFile = RemotePasswordFileName
 	}
 	// Rewrite control-host credential paths to fixed names under the remote
-	// run directory. Orchestrator deploy uploads the local files there.
+	// run directory. Orchestrator uploads the local files there at launch.
 	if p.Database.CaFile != "" {
 		db.CaFile = RemoteCAFileName
 	}

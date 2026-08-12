@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"portable-tpcc/mind/internal/config"
 	"portable-tpcc/mind/internal/orchestrator"
 	"portable-tpcc/mind/internal/state"
 )
@@ -149,6 +150,214 @@ func TestMaterializeRejectsRunIDReuseWithDifferentProfile(t *testing.T) {
 	}
 	if _, err := o.Materialize(); err == nil || !strings.Contains(err.Error(), "different profile") {
 		t.Fatalf("expected profile mismatch error, got %v", err)
+	}
+}
+
+func TestMaterializeAppliesOverrides(t *testing.T) {
+	dir := t.TempDir()
+	profilePath := writeTestProfile(t, dir, "")
+	warehouses := 3
+	rampUp := "10s"
+	measurement := "1m"
+	o, err := orchestrator.New(orchestrator.Options{
+		ProfilePath: profilePath,
+		RunID:       "run-override",
+		Overrides: config.ProfileOverrides{
+			Warehouses:  &warehouses,
+			RampUp:      &rampUp,
+			Measurement: &measurement,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, err := o.Materialize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ctx.RunConfig.Scale.Warehouses != 3 {
+		t.Fatalf("warehouses=%d, want 3", ctx.RunConfig.Scale.Warehouses)
+	}
+	if ctx.RunConfig.Phases.RampUpMs != 10000 {
+		t.Fatalf("ramp_up_ms=%d, want 10000", ctx.RunConfig.Phases.RampUpMs)
+	}
+	if ctx.RunConfig.Phases.MeasurementMs != 60000 {
+		t.Fatalf("measurement_ms=%d, want 60000", ctx.RunConfig.Phases.MeasurementMs)
+	}
+}
+
+func TestMaterializeRejectsOverrideConflictOnExistingRun(t *testing.T) {
+	dir := t.TempDir()
+	profilePath := writeTestProfile(t, dir, "")
+	warehouses := 3
+	o, err := orchestrator.New(orchestrator.Options{
+		ProfilePath: profilePath,
+		RunID:       "run-override-conflict",
+		Overrides:   config.ProfileOverrides{Warehouses: &warehouses},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := o.Materialize(); err != nil {
+		t.Fatal(err)
+	}
+	other := 2
+	o, err = orchestrator.New(orchestrator.Options{
+		ProfilePath: profilePath,
+		RunID:       "run-override-conflict",
+		Overrides:   config.ProfileOverrides{Warehouses: &other},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := o.Materialize(); err == nil || !strings.Contains(err.Error(), "conflicts") {
+		t.Fatalf("expected override conflict, got %v", err)
+	}
+}
+
+func TestMaterializeAutoRunIDAllocatesOnOverrideMismatch(t *testing.T) {
+	dir := t.TempDir()
+	profilePath := writeTestProfile(t, dir, "")
+	firstWH := 5
+	o, err := orchestrator.New(orchestrator.Options{
+		ProfilePath: profilePath,
+		Overrides:   config.ProfileOverrides{Warehouses: &firstWH},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := o.Materialize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Simulate a finished start stage: non-terminal, but measurement done.
+	if err := o.StateStore.Transition(first.RunID, state.StateDraining); err != nil {
+		t.Fatal(err)
+	}
+
+	secondWH := 3
+	o, err = orchestrator.New(orchestrator.Options{
+		ProfilePath: profilePath,
+		Overrides:   config.ProfileOverrides{Warehouses: &secondWH},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := o.Materialize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.RunID == second.RunID {
+		t.Fatalf("override mismatch should allocate a new run, both were %q", first.RunID)
+	}
+	if second.RunConfig.Scale.Warehouses != 3 {
+		t.Fatalf("warehouses=%d, want 3", second.RunConfig.Scale.Warehouses)
+	}
+}
+
+func TestNewRejectsWarehousesIncrease(t *testing.T) {
+	dir := t.TempDir()
+	profilePath := writeTestProfile(t, dir, "")
+	warehouses := 11
+	_, err := orchestrator.New(orchestrator.Options{
+		ProfilePath: profilePath,
+		Overrides:   config.ProfileOverrides{Warehouses: &warehouses},
+	})
+	if err == nil || !strings.Contains(err.Error(), "exceeds profile") {
+		t.Fatalf("expected exceed error, got %v", err)
+	}
+}
+
+func TestDeployIsProfileScoped(t *testing.T) {
+	dir := t.TempDir()
+	profilePath := writeTestProfile(t, dir, "")
+	dist := filepath.Join(dir, "dist")
+	if err := os.MkdirAll(dist, 0755); err != nil {
+		t.Fatal(err)
+	}
+	binPath := filepath.Join(dist, "tpcc-pgsql")
+	if err := os.WriteFile(binPath, []byte("#!/bin/sh\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	o, err := orchestrator.New(orchestrator.Options{ProfilePath: profilePath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Pre-create a run and leave it planned; deploy must not advance it.
+	ctx, err := o.Materialize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := o.StateStore.Load(ctx.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.State != state.StatePlanned {
+		t.Fatalf("state=%q, want planned", before.State)
+	}
+
+	if err := o.Deploy(); err != nil {
+		t.Fatal(err)
+	}
+
+	after, err := o.StateStore.Load(ctx.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.State != state.StatePlanned {
+		t.Fatalf("deploy mutated run FSM: state=%q, want planned", after.State)
+	}
+	absRemote, err := filepath.Abs(filepath.Join(dir, "remote"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sharedBin := filepath.Join(absRemote, "tpcc-pgsql")
+	if _, err := os.Stat(sharedBin); err != nil {
+		t.Fatalf("shared binary missing at %s: %v", sharedBin, err)
+	}
+	if _, err := os.Stat(filepath.Join(absRemote, ctx.RunID, "tpcc-pgsql")); !os.IsNotExist(err) {
+		t.Fatalf("binary should not be under run dir")
+	}
+}
+
+func TestRequireWorkerBinaryNeedsExplicitDeploy(t *testing.T) {
+	dir := t.TempDir()
+	profilePath := writeTestProfile(t, dir, "")
+	dist := filepath.Join(dir, "dist")
+	if err := os.MkdirAll(dist, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dist, "tpcc-pgsql"), []byte("#!/bin/sh\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	o, err := orchestrator.New(orchestrator.Options{ProfilePath: profilePath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = o.Run()
+	if err == nil || !strings.Contains(err.Error(), "mind-tpcc deploy") {
+		t.Fatalf("expected require-deploy error, got %v", err)
+	}
+
+	if err := o.Deploy(); err != nil {
+		t.Fatal(err)
+	}
+	// After explicit deploy, the gate should pass (run will fail later without DB).
+	// Call the pipeline gate indirectly by starting Run until past deploy: use
+	// Materialize + require by invoking Run with --skip for later stages is
+	// unavailable here; Deploy presence is enough that a second check succeeds
+	// via openSessions in requireWorkerBinary through a minimal re-check:
+	o2, err := orchestrator.New(orchestrator.Options{ProfilePath: profilePath, SkipSteps: []string{
+		"schema", "load", "indexes", "check_after_import", "start",
+		"check_after_run", "collect", "consolidate",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := o2.Run(); err != nil {
+		t.Fatalf("run after deploy with later steps skipped: %v", err)
 	}
 }
 

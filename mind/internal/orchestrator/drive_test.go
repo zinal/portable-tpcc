@@ -108,6 +108,15 @@ func (f *fakeSession) IsAlive(pid int) (bool, error) {
 }
 func (f *fakeSession) Close() error { return nil }
 
+func writeLaunchRunDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "run-config.json"), []byte(`{}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
 func TestLaunchRoleStoresProcessInstanceNonce(t *testing.T) {
 	store := &state.Store{StateDir: t.TempDir()}
 	o := &Orchestrator{
@@ -116,7 +125,8 @@ func TestLaunchRoleStoresProcessInstanceNonce(t *testing.T) {
 		StateStore: store,
 	}
 	ctx := &Context{
-		RunID: "run-1",
+		RunID:   "run-1",
+		RunDir:  writeLaunchRunDir(t),
 		RunConfig: &config.RunConfig{
 			Binary: "tpcc-pgsql",
 		},
@@ -156,7 +166,8 @@ func TestLaunchRoleFailsWithoutProcessInstanceNonce(t *testing.T) {
 		StateStore: store,
 	}
 	ctx := &Context{
-		RunID: "run-1",
+		RunID:   "run-1",
+		RunDir:  writeLaunchRunDir(t),
 		RunConfig: &config.RunConfig{
 			Binary: "tpcc-pgsql",
 		},
@@ -565,7 +576,7 @@ func TestCollectArtifactsRejectsLocalSymlinkPayloadEscape(t *testing.T) {
 	}
 }
 
-func TestCredentialFilesForDeploy(t *testing.T) {
+func TestCredentialFilesForRun(t *testing.T) {
 	root := t.TempDir()
 	caPath := filepath.Join(root, "root.pem")
 	saPath := filepath.Join(root, "sa.json")
@@ -584,7 +595,7 @@ func TestCredentialFilesForDeploy(t *testing.T) {
 			},
 		},
 	}
-	files, err := o.credentialFilesForDeploy()
+	files, err := o.credentialFilesForRun()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -603,7 +614,7 @@ func TestCredentialFilesForDeploy(t *testing.T) {
 	}
 }
 
-func TestDeployToHostsUploadsCredentialFiles(t *testing.T) {
+func TestDeployToHostsUploadsOnlyBinary(t *testing.T) {
 	root := t.TempDir()
 	caPath := filepath.Join(root, "root.pem")
 	saPath := filepath.Join(root, "sa.json")
@@ -625,6 +636,51 @@ func TestDeployToHostsUploadsCredentialFiles(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	t.Setenv("TPCC_PASSWORD", "s3cret")
+	o := &Orchestrator{
+		Profile: &profile.Profile{
+			Database: profile.Database{
+				DBMS:        "ydb",
+				CaFile:      caPath,
+				SaKeyFile:   saPath,
+				PasswordEnv: "TPCC_PASSWORD",
+			},
+		},
+		Expanded: config.ExpandedPaths{RemoteRoot: filepath.Join(root, "remote")},
+		Opts:     Options{WorkerBinary: binPath},
+	}
+	sess := &fakeSession{}
+	if err := o.deployToHosts(map[string]remote.Session{"host-a": sess}); err != nil {
+		t.Fatal(err)
+	}
+	if len(sess.uploads) != 1 || !strings.HasSuffix(sess.uploads[0], "tpcc-ydb") {
+		t.Fatalf("deploy uploads=%v, want only shared binary", sess.uploads)
+	}
+	if strings.Contains(sess.uploads[0], "run-1") {
+		t.Fatalf("binary should be shared under remote_root, got %q", sess.uploads[0])
+	}
+	for _, u := range sess.uploads {
+		if strings.Contains(u, "run-config.json") || strings.Contains(u, config.RemoteCAFileName) {
+			t.Fatalf("deploy must not upload run-scoped files: %v", sess.uploads)
+		}
+	}
+	if len(sess.writes) != 0 {
+		t.Fatalf("deploy must not write password file: %v", sess.writes)
+	}
+}
+
+func TestLaunchRoleUploadsRunConfigAndCredentials(t *testing.T) {
+	root := t.TempDir()
+	caPath := filepath.Join(root, "root.pem")
+	saPath := filepath.Join(root, "sa.json")
+	if err := os.WriteFile(caPath, []byte("CA"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(saPath, []byte("{}"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	store := &state.Store{StateDir: t.TempDir()}
+	remoteRoot := filepath.Join(root, "remote")
 	o := &Orchestrator{
 		Profile: &profile.Profile{
 			Database: profile.Database{
@@ -633,63 +689,39 @@ func TestDeployToHostsUploadsCredentialFiles(t *testing.T) {
 				SaKeyFile: saPath,
 			},
 		},
-		Expanded: config.ExpandedPaths{RemoteRoot: filepath.Join(root, "remote")},
-		Opts:     Options{WorkerBinary: binPath},
+		Expanded:   config.ExpandedPaths{RemoteRoot: remoteRoot},
+		StateStore: store,
 	}
-	ctx := &Context{RunID: "run-1", RunDir: runDir}
-	sess := &fakeSession{}
-	if err := o.deployToHosts(ctx, map[string]remote.Session{"host-a": sess}); err != nil {
+	ctx := &Context{
+		RunID:   "run-1",
+		RunDir:  writeLaunchRunDir(t),
+		RunConfig: &config.RunConfig{
+			Binary: "tpcc-ydb",
+		},
+	}
+	process := map[string]interface{}{
+		"pid":            456,
+		"instance_nonce": "nonce-1",
+	}
+	data, _ := json.Marshal(process)
+	sess := &fakeSession{files: map[string][]byte{
+		"process.json": data,
+		"tpcc-ydb":     []byte("binary"),
+	}, alive: true}
+
+	if _, err := o.launchRole(ctx, map[string]remote.Session{"host-a": sess}, "loader", "host-a", "loader-a", []string{"loader"}); err != nil {
 		t.Fatal(err)
 	}
 	joined := strings.Join(sess.uploads, "\n")
-	for _, want := range []string{"tpcc-ydb", "run-config.json", config.RemoteCAFileName, config.RemoteSAKeyFileName} {
+	for _, want := range []string{"run-config.json", config.RemoteCAFileName, config.RemoteSAKeyFileName} {
 		if !strings.Contains(joined, want) {
-			t.Fatalf("missing upload %q in %v", want, sess.uploads)
+			t.Fatalf("missing launch upload %q in %v", want, sess.uploads)
 		}
 	}
-}
-
-func TestDeployToHostsWritesPasswordFile(t *testing.T) {
-	root := t.TempDir()
-	binPath := filepath.Join(root, "tpcc-pgsql")
-	runDir := filepath.Join(root, "run")
-	if err := os.MkdirAll(runDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(binPath, []byte("bin"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(runDir, "run-config.json"), []byte("{}"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("TPCC_PASSWORD", "s3cret")
-	o := &Orchestrator{
-		Profile: &profile.Profile{
-			Database: profile.Database{
-				DBMS:        "pgsql",
-				PasswordEnv: "TPCC_PASSWORD",
-			},
-		},
-		Expanded: config.ExpandedPaths{RemoteRoot: filepath.Join(root, "remote")},
-		Opts:     Options{WorkerBinary: binPath},
-	}
-	ctx := &Context{RunID: "run-1", RunDir: runDir}
-	sess := &fakeSession{}
-	if err := o.deployToHosts(ctx, map[string]remote.Session{"host-a": sess}); err != nil {
-		t.Fatal(err)
-	}
-	var got []byte
-	for path, data := range sess.writes {
-		if strings.HasSuffix(path, config.RemotePasswordFileName) {
-			got = data
-			if sess.writeModes[path] != 0600 {
-				t.Fatalf("password file mode=%v, want 0600", sess.writeModes[path])
-			}
-			break
+	for _, u := range sess.uploads {
+		if strings.HasSuffix(u, "run-config.json") && !strings.Contains(u, "run-1") {
+			t.Fatalf("run-config should land under run dir, got %q", u)
 		}
-	}
-	if string(got) != "s3cret" {
-		t.Fatalf("password file contents=%q", got)
 	}
 }
 
@@ -707,7 +739,8 @@ func TestLaunchRoleDoesNotPassPasswordEnv(t *testing.T) {
 		StateStore: store,
 	}
 	ctx := &Context{
-		RunID: "run-1",
+		RunID:   "run-1",
+		RunDir:  writeLaunchRunDir(t),
 		RunConfig: &config.RunConfig{
 			Binary: "tpcc-pgsql",
 		},
@@ -739,5 +772,14 @@ func TestLaunchRoleDoesNotPassPasswordEnv(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("password file not written: %v", sess.writes)
+	}
+	cfgUploaded := false
+	for _, u := range sess.uploads {
+		if strings.HasSuffix(u, "run-config.json") {
+			cfgUploaded = true
+		}
+	}
+	if !cfgUploaded {
+		t.Fatalf("run-config not uploaded at launch: %v", sess.uploads)
 	}
 }

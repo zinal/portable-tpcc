@@ -187,7 +187,8 @@ func TestCleanupSchemaDropsRemoteAndRunsClean(t *testing.T) {
 	if err := os.MkdirAll(absRunDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	binPath := filepath.Join(absRunDir, ctx.RunConfig.Binary)
+	// Shared binary under remote_root (not per-run).
+	binPath := filepath.Join(absRemote, ctx.RunConfig.Binary)
 	script := `#!/bin/sh
 set -e
 cmd="$1"
@@ -223,6 +224,9 @@ printf '{"schema_version":1,"instance":"%s","instance_nonce":"n1","finalized":tr
 	}
 	if _, err := os.Stat(absRunDir); !os.IsNotExist(err) {
 		t.Fatalf("remote run dir still present: %v", err)
+	}
+	if _, err := os.Stat(binPath); err != nil {
+		t.Fatalf("shared binary should survive run cleanup: %v", err)
 	}
 	if _, err := os.Stat(o.StateStore.RunDir(ctx.RunID)); !os.IsNotExist(err) {
 		t.Fatalf("local run state still present: %v", err)
