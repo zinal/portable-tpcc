@@ -122,7 +122,7 @@ int RunIndexesFromRunConfig(const std::string& runConfigPath, const std::string&
     const auto doc = LoadRunConfigDocument(runConfigPath);
     return RunOrchestratedIndexes(doc, instance, [instance](const TRunConfigDocument& d) {
         const std::string connection = BuildObConnectionString(d);
-        CheckDbForImport(connection, d.Path);
+        CheckDbForIndexes(connection, d.Path);
         TObAdminAdapter admin(connection, d.Path);
         admin.EnsureIndexes();
         admin.EnsureStatistics();

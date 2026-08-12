@@ -127,6 +127,18 @@ void CheckDbForImport(const std::string& connectionString, const std::string& pa
     }
 }
 
+void CheckDbForIndexes(const std::string& connectionString, const std::string& path) noexcept {
+    try {
+        pqxx::connection conn(connectionString);
+        auto schema = GetEffectiveSchema(path);
+        SetSearchPath(conn, path);
+        CheckTablesExist(conn, schema, "Run 'tpcc init' and 'tpcc import' first.");
+    } catch (const std::exception& e) {
+        std::cerr << "Pre-flight check for indexes failed: " << e.what() << std::endl;
+        std::exit(1);
+    }
+}
+
 void CheckDbForRun(const std::string& connectionString, int expectedWhCount,
                    const std::string& path) noexcept {
     try {

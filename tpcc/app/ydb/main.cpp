@@ -376,7 +376,7 @@ void RunImport() {
 
 void RunIndexes() {
     auto connection = BuildConnectionConfig();
-    NTpcc::CheckDbForImport(connection);
+    NTpcc::CheckDbForIndexes(connection);
     NTpcc::TYdbAdminAdapter admin(connection, FLAGS_warehouses);
     admin.EnsureIndexes();
     admin.EnsureStatistics();

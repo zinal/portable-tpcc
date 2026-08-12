@@ -272,7 +272,7 @@ void RunImport() {
 }
 
 void RunIndexes() {
-    NTpcc::CheckDbForImport(FLAGS_connection, FLAGS_path);
+    NTpcc::CheckDbForIndexes(FLAGS_connection, FLAGS_path);
     NTpcc::TObAdminAdapter admin(FLAGS_connection, FLAGS_path);
     admin.EnsureIndexes();
     admin.EnsureStatistics();

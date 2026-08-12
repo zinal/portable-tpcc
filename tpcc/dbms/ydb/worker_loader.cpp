@@ -106,7 +106,7 @@ int RunIndexesFromRunConfig(const std::string& runConfigPath, const std::string&
     const auto doc = LoadRunConfigDocument(runConfigPath);
     return RunOrchestratedIndexes(doc, instance, [instance](const TRunConfigDocument& d) {
         const auto connection = BuildYdbConnectionConfig(d);
-        CheckDbForImport(connection);
+        CheckDbForIndexes(connection);
         TYdbAdminAdapter admin(connection, d.ScaleWarehouses);
         admin.EnsureIndexes();
         admin.EnsureStatistics();

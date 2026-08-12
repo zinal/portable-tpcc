@@ -139,6 +139,15 @@ void CheckDbForImport(const std::string& connectionString, const std::string& pa
     });
 }
 
+void CheckDbForIndexes(const std::string& connectionString, const std::string& path) {
+    WithPreflight("Pre-flight check for indexes failed: ", [&] {
+        auto cfg = ConfigWithPath(connectionString, path);
+        const std::string db = EffectiveDatabase(cfg);
+        auto conn = ConnectChecked(cfg);
+        CheckTablesExist(*conn, db, "Run 'tpcc init' and 'tpcc import' first.");
+    });
+}
+
 void CheckDbForRun(
     const std::string& connectionString,
     int expectedWhCount,

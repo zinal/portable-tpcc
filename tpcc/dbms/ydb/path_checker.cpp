@@ -33,6 +33,10 @@ void CheckDbForImport(const TYdbConnectionConfig& connectionConfig) noexcept {
     CheckTables(connectionConfig);
 }
 
+void CheckDbForIndexes(const TYdbConnectionConfig& connectionConfig) noexcept {
+    CheckTables(connectionConfig);
+}
+
 void CheckDbForRun(const TYdbConnectionConfig& connectionConfig, int /*expectedWhCount*/) noexcept {
     CheckTables(connectionConfig);
 }
