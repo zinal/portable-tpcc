@@ -72,6 +72,9 @@ func Profile(p *profile.Profile) *Result {
 	if p.Database.DBMS == "pgsql" {
 		validatePgsqlOptions(p.Database.Options, res)
 	}
+	if p.Database.DBMS == "oceanbase" {
+		validateOceanbaseOptions(p.Database.Options, res)
+	}
 	if p.Database.Endpoint == "" {
 		res.Add("database.endpoint is required")
 	}
@@ -294,6 +297,32 @@ func validatePgsqlOptions(options map[string]interface{}, res *Result) {
 	}
 }
 
+func validateOceanbaseOptions(options map[string]interface{}, res *Result) {
+	for key, value := range options {
+		switch key {
+		case "partitions":
+			n, ok := asInt(value)
+			if !ok {
+				res.Add("database.options.partitions must be an integer")
+			} else if n < -1 {
+				res.Add("database.options.partitions must be -1, 0, or a positive integer")
+			} else if n > 8192 {
+				res.Add("database.options.partitions must not exceed 8192")
+			}
+		case "foreign_keys":
+			if !asForeignKeysOption(value) {
+				res.Add(`database.options.foreign_keys must be a boolean or "on"/"off"`)
+			}
+		case "query_timeout":
+			if _, ok := asPositiveInt(value); !ok {
+				res.Add("database.options.query_timeout must be a positive integer (seconds)")
+			}
+		default:
+			res.Add(fmt.Sprintf("unknown database.options.%s for dbms=oceanbase", key))
+		}
+	}
+}
+
 func asForeignKeysOption(value interface{}) bool {
 	switch v := value.(type) {
 	case bool:
@@ -311,21 +340,35 @@ func asForeignKeysOption(value interface{}) bool {
 }
 
 func asPositiveInt(value interface{}) (int, bool) {
+	n, ok := asInt(value)
+	if !ok || n <= 0 {
+		return 0, false
+	}
+	return n, true
+}
+
+func asInt(value interface{}) (int, bool) {
 	switch v := value.(type) {
 	case int:
-		return v, v > 0
+		return v, true
 	case int32:
-		return int(v), v > 0
+		return int(v), true
 	case int64:
-		return int(v), v > 0
+		return int(v), true
 	case uint:
-		return int(v), v > 0 && v <= uint(^uint(0)>>1)
+		if v > uint(^uint(0)>>1) {
+			return 0, false
+		}
+		return int(v), true
 	case uint32:
-		return int(v), v > 0
+		return int(v), true
 	case uint64:
-		return int(v), v > 0 && v <= uint64(^uint(0)>>1)
+		if v > uint64(^uint(0)>>1) {
+			return 0, false
+		}
+		return int(v), true
 	case float64:
-		if v != float64(int(v)) || v <= 0 {
+		if v != float64(int(v)) {
 			return 0, false
 		}
 		return int(v), true

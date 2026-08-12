@@ -357,6 +357,66 @@ func TestValidate_oceanbaseUser(t *testing.T) {
 	})
 }
 
+func TestValidate_oceanbaseOptions(t *testing.T) {
+	path := filepath.Join("..", "..", "testdata", "profile.valid.yaml")
+	base, err := profile.ParseFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	obBase := func() profile.Profile {
+		p := *base
+		p.Database = profile.Database{
+			DBMS:        "oceanbase",
+			Endpoint:    "127.0.0.1:2881",
+			Database:    "tpcc",
+			Path:        "tpcc",
+			PasswordEnv: "TPCC_PASSWORD",
+		}
+		return p
+	}
+
+	t.Run("accepts_partitions_and_query_timeout", func(t *testing.T) {
+		p := obBase()
+		p.Database.Options = map[string]interface{}{
+			"partitions":     0,
+			"foreign_keys":   "off",
+			"query_timeout":  1800,
+		}
+		res := validate.Profile(&p)
+		if !res.Valid {
+			t.Fatalf("expected valid oceanbase options, errors: %v", res.Errors)
+		}
+	})
+
+	t.Run("accepts_partitions_off", func(t *testing.T) {
+		p := obBase()
+		p.Database.Options = map[string]interface{}{"partitions": -1}
+		res := validate.Profile(&p)
+		if !res.Valid {
+			t.Fatalf("expected partitions=-1 to be valid, errors: %v", res.Errors)
+		}
+	})
+
+	t.Run("rejects_non_positive_query_timeout", func(t *testing.T) {
+		p := obBase()
+		p.Database.Options = map[string]interface{}{"query_timeout": 0}
+		res := validate.Profile(&p)
+		if res.Valid {
+			t.Fatal("expected query_timeout=0 to fail")
+		}
+	})
+
+	t.Run("rejects_unknown_option", func(t *testing.T) {
+		p := obBase()
+		p.Database.Options = map[string]interface{}{"tx_mode": "serializable"}
+		res := validate.Profile(&p)
+		if res.Valid {
+			t.Fatal("expected unknown oceanbase option to fail")
+		}
+	})
+}
+
 func TestValidate_pgsqlPartitioningOptions(t *testing.T) {
 	path := filepath.Join("..", "..", "testdata", "profile.valid.yaml")
 	base, err := profile.ParseFile(path)

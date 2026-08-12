@@ -57,6 +57,9 @@ struct TRunConfigDocument {
     // Hash modulus; 0 = derive from ScaleWarehouses when hashing.
     int PartitionCount = 0;
     bool ForeignKeys = true;
+    // OceanBase session query timeout for bulk load / index / ANALYZE (seconds).
+    // Emitted as connection property query_timeout; 0 means use adapter default.
+    int QueryTimeoutSeconds = 0;
 
     int ScaleWarehouses = 0;
     int64_t Seed = 0;

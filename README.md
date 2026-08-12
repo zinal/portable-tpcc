@@ -303,6 +303,7 @@ database:
     partitions: 0               # -1 off, 0 derive from scale.warehouses, N explicit (max 8192)
     # partitions: 64            # optional explicit HASH partition count
     foreign_keys: off           # omit FKs at schema time; default on
+    query_timeout: 600          # Session ob_query_timeout for bulk import / CREATE INDEX / ANALYZE (seconds).
 ```
 
 For OceanBase, optional `database.user` sets the client login (`user@tenant`).

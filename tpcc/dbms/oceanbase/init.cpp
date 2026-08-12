@@ -307,6 +307,8 @@ void CreateIndexes(const std::string& connectionString, const std::string& path,
         auto cfg = ConfigWithPath(connectionString, path);
         const std::string db = EffectiveDatabase(cfg);
         auto conn = ConnectToTargetDatabase(cfg);
+        // Fresh session: raise ob_query_timeout via connection property query_timeout.
+        conn->ConfigureBulkLoadSession();
 
         const bool localIndexes = useLocalIndexes || IsOceanBaseServer(*conn);
         const char* localSuffix = localIndexes ? " LOCAL" : "";
@@ -348,6 +350,9 @@ void CreateIndexes(const std::string& connectionString, const std::string& path,
 void AnalyzeTables(const std::string& connectionString, const std::string& path) {
     LOG_I("Running ANALYZE TABLE on TPC-C tables...");
     auto conn = ConnectToTargetDatabase(ConfigWithPath(connectionString, path));
+    // Fresh session: raise ob_query_timeout via connection property query_timeout.
+    // ANALYZE on large customer/stock/order_line otherwise hits [4012] Timeout.
+    conn->ConfigureBulkLoadSession();
     for (const auto* table : TPCC_TABLES) {
         LOG_I("Analyzing table `" << table << "`...");
         conn->QuerySimple(fmt::format("ANALYZE TABLE {}", QuoteIdent(table)));

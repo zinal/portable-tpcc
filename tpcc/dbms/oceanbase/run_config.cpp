@@ -1,5 +1,6 @@
 #include "run_config.h"
 
+#include "ob_connection.h"
 #include "schema_options.h"
 
 #include <password_secret.h>
@@ -165,6 +166,9 @@ void ValidateRunConfigDocument(const TRunConfigDocument& doc) {
     opts.WarehouseCount = doc.ScaleWarehouses;
     opts.EnableForeignKeys = doc.ForeignKeys;
     ResolveObPartitionCount(opts);
+    if (doc.QueryTimeoutSeconds < 0) {
+        throw std::runtime_error("database.options.query_timeout must be a positive integer (seconds)");
+    }
     if (doc.BatchRows < 0) {
         throw std::runtime_error("data.batch_rows must not be negative");
     }
@@ -286,6 +290,13 @@ TRunConfigDocument LoadRunConfigDocument(const std::string& path) {
                         }
                     } else {
                         throw std::runtime_error("database.options.foreign_keys must be a string or boolean");
+                    }
+                } else if (key == "query_timeout") {
+                    doc.QueryTimeoutSeconds = ReadInt(
+                        options, "query_timeout", 0, "database.options.query_timeout");
+                    if (doc.QueryTimeoutSeconds <= 0) {
+                        throw std::runtime_error(
+                            "database.options.query_timeout must be a positive integer (seconds)");
                     }
                 } else {
                     throw std::runtime_error("unknown database.options." + key + " for dbms=oceanbase");
@@ -444,7 +455,11 @@ std::string BuildObConnectionString(const TRunConfigDocument& doc) {
         ";port=" + ObQuoteValue(port) +
         ";user=" + ObQuoteValue(user) +
         ";password=" + ObQuoteValue(password) +
-        ";database=" + ObQuoteValue(doc.Database);
+        ";database=" + ObQuoteValue(doc.Database) +
+        ";query_timeout=" + std::to_string(
+            doc.QueryTimeoutSeconds > 0
+                ? doc.QueryTimeoutSeconds
+                : OB_DEFAULT_QUERY_TIMEOUT_SECONDS);
 }
 
 } // namespace NTpcc

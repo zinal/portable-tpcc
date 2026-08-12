@@ -47,6 +47,13 @@ void SetKv(TObConnectionConfig& cfg, const std::string& key, const std::string& 
         cfg.Database = value;
     } else if (key == "path") {
         cfg.Path = value;
+    } else if (key == "query_timeout" || key == "ob_query_timeout") {
+        const int seconds = std::stoi(value);
+        if (seconds <= 0) {
+            throw std::invalid_argument(
+                "query_timeout must be a positive integer (seconds)");
+        }
+        cfg.QueryTimeoutSeconds = seconds;
     }
 }
 
@@ -233,9 +240,14 @@ void TObConnection::CreateDatabaseIfNotExists(const std::string& database) {
 }
 
 void TObConnection::ConfigureBulkLoadSession() {
-    // Match tpcc-oceanbase-cpp ImportQueryTimeoutMicros (600s). Default is 10s.
-    constexpr const char* kSql = "SET SESSION ob_query_timeout = 600000000";
-    if (mysql_query(Impl_->Mysql, kSql) != 0) {
+    // OceanBase measures ob_query_timeout in microseconds. Connection property
+    // query_timeout is in seconds (default OB_DEFAULT_QUERY_TIMEOUT_SECONDS).
+    const int seconds = Impl_->Config.QueryTimeoutSeconds > 0
+        ? Impl_->Config.QueryTimeoutSeconds
+        : OB_DEFAULT_QUERY_TIMEOUT_SECONDS;
+    const long long micros = static_cast<long long>(seconds) * 1000000LL;
+    const std::string sql = "SET SESSION ob_query_timeout = " + std::to_string(micros);
+    if (mysql_query(Impl_->Mysql, sql.c_str()) != 0) {
         // MariaDB stand-in and other MySQL-compat servers may not have this variable.
         LOG_W("Could not set ob_query_timeout ("
               << (Impl_->Mysql ? mysql_error(Impl_->Mysql) : "null mysql handle")

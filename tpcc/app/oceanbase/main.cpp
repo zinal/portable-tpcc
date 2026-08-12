@@ -22,7 +22,7 @@
 #include <vector>
 
 DEFINE_string(connection, "host=127.0.0.1;port=2881;user=root@test;password=tpcc;database=tpcc",
-              "OceanBase connection string");
+              "OceanBase connection string (supports query_timeout=<seconds>, default 600)");
 DEFINE_string(path, "", "OceanBase database name for benchmark tables (default: connection database)");
 DEFINE_int32(partitions, 0, "OceanBase hash partitions: -1 = off, 0 = derive from --warehouses, N = explicit");
 DEFINE_string(foreign_keys, "on", "Foreign keys: on or off");
@@ -63,6 +63,7 @@ void PrintHelp() {
         "\n"
         "Options:\n"
         "  --connection          OceanBase connection string\n"
+        "                        (query_timeout=<seconds> for bulk/ANALYZE; default 600)\n"
         "  -p, --path            OceanBase database name for benchmark tables\n"
         "  --partitions          -1 off, 0 derive from -w, N explicit (default: 0)\n"
         "  --foreign-keys        on | off (default: on)\n"
