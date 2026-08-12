@@ -251,22 +251,26 @@ TFuture<void> TTerminal::Run() {
         // Reset so each business transaction gets fresh inputs; retries reuse FixedInputs.
         Context.FixedInputs.reset();
 
-        // TPC-C §5.4.2: count only when response-time start and end both lie
-        // within the absolute measurement interval from the phase schedule.
+        // TPC-C §5.4.2: measurement counters only when response-time start and end
+        // both lie within the absolute measurement interval. Progress counters
+        // always update so console tpmC is live during ramp-up too.
         auto shouldRecordMetrics = [&](std::chrono::system_clock::time_point endWall) {
             return PhaseController.CompletelyWithinMeasurement(startWall, endWall);
         };
         auto recordOk = [&](auto latencyTransaction, auto latencyFull, auto endWall) {
+            Stats->AddProgressOK(txType);
             if (shouldRecordMetrics(endWall)) {
                 Stats->AddOK(txType, latencyTransaction, latencyFull, latencyPure);
             }
         };
         auto recordFailed = [&](auto endWall) {
+            Stats->IncProgressFailed(txType);
             if (shouldRecordMetrics(endWall)) {
                 Stats->IncFailed(txType);
             }
         };
         auto recordUserAborted = [&](auto latencyTransaction, auto latencyFull, auto endWall) {
+            Stats->AddProgressUserAborted(txType);
             if (shouldRecordMetrics(endWall)) {
                 Stats->AddUserAborted(txType, latencyTransaction, latencyFull, latencyPure);
             }
@@ -292,8 +296,8 @@ TFuture<void> TTerminal::Run() {
                         std::move(future), Context.TaskQueue, Context.TerminalID);
                     auto endTime = std::chrono::steady_clock::now();
                     const auto endWall = std::chrono::system_clock::now();
-                    auto latencyFull = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime);
-                    auto latencyTransaction = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTimeTransaction);
+                    auto latencyFull = std::chrono::duration_cast<std::chrono::microseconds>(endTime - startTime);
+                    auto latencyTransaction = std::chrono::duration_cast<std::chrono::microseconds>(endTime - startTimeTransaction);
                     if (result) {
                         recordOk(latencyTransaction, latencyFull, endWall);
                         LOG_T("Terminal " << Context.TerminalID << " " << txName << " succeeded");
@@ -307,8 +311,8 @@ TFuture<void> TTerminal::Run() {
                         std::move(future), Context.TaskQueue, Context.TerminalID);
                     auto endTime = std::chrono::steady_clock::now();
                     const auto endWall = std::chrono::system_clock::now();
-                    auto latencyFull = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime);
-                    auto latencyTransaction = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTimeTransaction);
+                    auto latencyFull = std::chrono::duration_cast<std::chrono::microseconds>(endTime - startTime);
+                    auto latencyTransaction = std::chrono::duration_cast<std::chrono::microseconds>(endTime - startTimeTransaction);
                     if (result) {
                         recordOk(latencyTransaction, latencyFull, endWall);
                         LOG_T("Terminal " << Context.TerminalID << " " << txName << " succeeded");
@@ -320,9 +324,9 @@ TFuture<void> TTerminal::Run() {
             } catch (const TUserAbortedException&) {
                 auto endTime = std::chrono::steady_clock::now();
                 const auto endWall = std::chrono::system_clock::now();
-                auto latencyFull = std::chrono::duration_cast<std::chrono::milliseconds>(
+                auto latencyFull = std::chrono::duration_cast<std::chrono::microseconds>(
                     endTime - startTime);
-                auto latencyTransaction = std::chrono::duration_cast<std::chrono::milliseconds>(
+                auto latencyTransaction = std::chrono::duration_cast<std::chrono::microseconds>(
                     endTime - startTimeTransaction);
                 recordUserAborted(latencyTransaction, latencyFull, endWall);
                 LOG_T("Terminal " << Context.TerminalID << " " << txName << " user aborted");

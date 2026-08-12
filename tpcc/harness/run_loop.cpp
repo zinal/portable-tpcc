@@ -9,6 +9,7 @@
 #include <fmt/format.h>
 
 #include <algorithm>
+#include <cstring>
 #include <stdexcept>
 #include <thread>
 
@@ -41,6 +42,20 @@ void ResolveHistogramParams(
         ? histogram.MaxValue()
         : 32768ull;
     aggUs = histogram.Configured && histogram.Unit == "us";
+}
+
+const char* HistogramUnitLabel(const TRunStatsConfig& config) {
+    return (config.Histogram.Configured && config.Histogram.Unit == "us") ? "us" : "ms";
+}
+
+// Console-friendly percentile: keep histogram native units, but when unit is us
+// also show approximate milliseconds so bucket bounds like 65536 are readable.
+std::string FormatPercentile(uint64_t value, const char* unit) {
+    if (std::strcmp(unit, "us") == 0) {
+        const double ms = static_cast<double>(value) / 1000.0;
+        return fmt::format("{}us ({:.1f}ms)", value, ms);
+    }
+    return fmt::format("{}ms", value);
 }
 
 } // anonymous
@@ -200,15 +215,68 @@ EStartAtWaitResult WaitUntilStartAt(
     return EStartAtWaitResult::Ok;
 }
 
-void PrintConsoleStats(
+void MaybeUpdateConsoleStats(
+    TProgressDisplayState& state,
     const TRunStatsConfig& config,
     const std::vector<std::shared_ptr<TTerminalStats>>& perThreadStats,
-    Clock::time_point measureStart,
-    Clock::time_point runEnd)
+    ERunPhase phase,
+    const TPhaseSchedule& schedule,
+    Clock::time_point rampStartSteady,
+    Clock::time_point measureStartSteady,
+    Clock::time_point measureEndSteady)
 {
+    using SysClock = std::chrono::system_clock;
+
+    if (phase == ERunPhase::Measure || phase == ERunPhase::Drain) {
+        for (auto& stats : perThreadStats) {
+            stats->ClearProgressOnce();
+        }
+    }
+
     auto now = Clock::now();
-    auto elapsed = std::chrono::duration<double>(now - measureStart).count();
-    auto remaining = std::chrono::duration<double>(runEnd - now).count();
+    auto sinceLast = std::chrono::duration_cast<std::chrono::seconds>(now - state.LastUpdate);
+    if (state.LastUpdate.time_since_epoch().count() != 0 && sinceLast < std::chrono::seconds(5)) {
+        return;
+    }
+
+    const auto wallNow = SysClock::now();
+    double elapsed = 0.0;
+    double phaseTotal = 0.0;
+    double remaining = 0.0;
+
+    switch (phase) {
+        case ERunPhase::Ramp: {
+            elapsed = std::chrono::duration<double>(now - rampStartSteady).count();
+            phaseTotal = std::chrono::duration<double>(measureStartSteady - rampStartSteady).count();
+            remaining = std::chrono::duration<double>(schedule.MeasurementStart - wallNow).count();
+            break;
+        }
+        case ERunPhase::Measure: {
+            elapsed = std::chrono::duration<double>(now - measureStartSteady).count();
+            phaseTotal = std::chrono::duration<double>(measureEndSteady - measureStartSteady).count();
+            remaining = std::chrono::duration<double>(schedule.MeasurementEnd - wallNow).count();
+            break;
+        }
+        case ERunPhase::Drain: {
+            elapsed = std::chrono::duration<double>(now - measureEndSteady).count();
+            phaseTotal = std::chrono::duration<double>(
+                schedule.DrainDeadline - schedule.MeasurementEnd).count();
+            remaining = std::chrono::duration<double>(schedule.DrainDeadline - wallNow).count();
+            break;
+        }
+        default: {
+            elapsed = std::chrono::duration<double>(now - rampStartSteady).count();
+            phaseTotal = elapsed;
+            remaining = 0.0;
+            break;
+        }
+    }
+    if (remaining < 0.0) {
+        remaining = 0.0;
+    }
+    if (phaseTotal < 0.0) {
+        phaseTotal = 0.0;
+    }
 
     size_t totalOK = 0;
     size_t totalFailed = 0;
@@ -222,45 +290,62 @@ void PrintConsoleStats(
     for (auto& stats : perThreadStats) {
         stats->Collect(aggregated);
         for (size_t i = 0; i < TRANSACTION_TYPE_COUNT; ++i) {
-            totalOK += stats->GetStats(static_cast<ETransactionType>(i)).OK.load(std::memory_order_relaxed);
-            totalFailed += stats->GetStats(static_cast<ETransactionType>(i)).Failed.load(std::memory_order_relaxed);
+            const auto& s = stats->GetStats(static_cast<ETransactionType>(i));
+            totalOK += s.ProgressOK.load(std::memory_order_relaxed);
+            totalFailed += s.ProgressFailed.load(std::memory_order_relaxed);
         }
         const auto& no = stats->GetStats(ETransactionType::NewOrder);
-        totalNewOrderCompleted += no.OK.load(std::memory_order_relaxed)
-            + no.UserAborted.load(std::memory_order_relaxed);
+        totalNewOrderCompleted += no.ProgressOK.load(std::memory_order_relaxed)
+            + no.ProgressUserAborted.load(std::memory_order_relaxed);
     }
 
+    // tpmC uses live Progress* over time spent in the current phase.
     double tpmc = elapsed > 0 ? (totalNewOrderCompleted / elapsed * 60.0) : 0.0;
     double efficiency = config.WarehouseCount > 0
         ? (tpmc / (MAX_TPMC_PER_WAREHOUSE * config.WarehouseCount) * 100.0) : 0.0;
 
+    const char* unit = HistogramUnitLabel(config);
     std::string latencies;
     for (size_t i = 0; i < TRANSACTION_TYPE_COUNT; ++i) {
         auto type = static_cast<ETransactionType>(i);
         const auto& s = aggregated.GetStats(type);
         auto p50 = s.LatencyHistogramFullMs.GetValueAtPercentile(50);
         auto p99 = s.LatencyHistogramFullMs.GetValueAtPercentile(99);
+        // Latencies are measurement-window only; during ramp show progress counts.
         auto completed = s.OK.load(std::memory_order_relaxed)
             + s.UserAborted.load(std::memory_order_relaxed);
-        if (completed > 0) {
-            latencies += fmt::format("  {}:{}(p50={} p99={})",
-                TransactionTypeName(type), completed, p50, p99);
+        size_t progressCompleted = 0;
+        for (auto& stats : perThreadStats) {
+            const auto& ps = stats->GetStats(type);
+            progressCompleted += ps.ProgressOK.load(std::memory_order_relaxed)
+                + ps.ProgressUserAborted.load(std::memory_order_relaxed);
+        }
+        if (progressCompleted > 0) {
+            if (completed > 0) {
+                latencies += fmt::format("  {}:{}(p50={} p99={})",
+                    TransactionTypeName(type), progressCompleted,
+                    FormatPercentile(p50, unit), FormatPercentile(p99, unit));
+            } else {
+                latencies += fmt::format("  {}:{}", TransactionTypeName(type), progressCompleted);
+            }
         }
     }
 
     if (config.NoDelays) {
-        LOG_I(fmt::format("{:.0f}s/{:.0f}s | tpmC:{:.0f} | OK:{} Fail:{} Inflight:{} |{}",
-              elapsed, elapsed + remaining, tpmc,
+        LOG_I(fmt::format("{} {:.0f}s/{:.0f}s ({:.0f}s left) | tpmC:{:.0f} | OK:{} Fail:{} Inflight:{} |{}",
+              RunPhaseName(phase), elapsed, phaseTotal, remaining, tpmc,
               totalOK, totalFailed,
               TransactionsInflight.load(std::memory_order_relaxed),
               latencies));
     } else {
-        LOG_I(fmt::format("{:.0f}s/{:.0f}s | tpmC:{:.0f} eff:{:.1f}% | OK:{} Fail:{} Inflight:{} |{}",
-              elapsed, elapsed + remaining, tpmc, efficiency,
+        LOG_I(fmt::format("{} {:.0f}s/{:.0f}s ({:.0f}s left) | tpmC:{:.0f} eff:{:.1f}% | OK:{} Fail:{} Inflight:{} |{}",
+              RunPhaseName(phase), elapsed, phaseTotal, remaining, tpmc, efficiency,
               totalOK, totalFailed,
               TransactionsInflight.load(std::memory_order_relaxed),
               latencies));
     }
+
+    state.LastUpdate = now;
 }
 
 void PrintFinalResults(
@@ -299,6 +384,7 @@ void PrintFinalResults(
     }
     LOG_I("  Total Failed: " << totalFailed);
 
+    const char* unit = HistogramUnitLabel(config);
     for (size_t i = 0; i < TRANSACTION_TYPE_COUNT; ++i) {
         auto type = static_cast<ETransactionType>(i);
         const auto& s = aggregated.GetStats(type);
@@ -309,9 +395,9 @@ void PrintFinalResults(
 
         LOG_I("  " << TransactionTypeName(type) << ": OK=" << ok
               << " UserAborted=" << userAborted << " Failed=" << failed
-              << " p50=" << s.LatencyHistogramFullMs.GetValueAtPercentile(50)
-              << "ms p90=" << s.LatencyHistogramFullMs.GetValueAtPercentile(90)
-              << "ms p99=" << s.LatencyHistogramFullMs.GetValueAtPercentile(99) << "ms");
+              << " p50=" << FormatPercentile(s.LatencyHistogramFullMs.GetValueAtPercentile(50), unit)
+              << " p90=" << FormatPercentile(s.LatencyHistogramFullMs.GetValueAtPercentile(90), unit)
+              << " p99=" << FormatPercentile(s.LatencyHistogramFullMs.GetValueAtPercentile(99), unit));
     }
 }
 
@@ -321,7 +407,7 @@ void RunMeasurementDrainLoop(
     bool asyncDelivery,
     std::stop_token stopToken,
     std::chrono::milliseconds sleepEvery,
-    std::function<void(bool inMeasureOrDrain)> maybeUpdateDisplay)
+    std::function<void(ERunPhase phase)> maybeUpdateDisplay)
 {
     using SysClock = std::chrono::system_clock;
 
@@ -347,7 +433,7 @@ void RunMeasurementDrainLoop(
         }
 
         if (maybeUpdateDisplay) {
-            maybeUpdateDisplay(phase == ERunPhase::Measure || phase == ERunPhase::Drain);
+            maybeUpdateDisplay(phase);
         }
         std::this_thread::sleep_for(sleepEvery);
     }

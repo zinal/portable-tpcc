@@ -203,7 +203,7 @@ TRunOutcome RunSync(const TRunConfig& config, TTerminalStats* aggregatedStats) {
     auto runEnd = warmupEnd + std::chrono::milliseconds(durations.MeasurementMs);
 
     const TRunStatsConfig statsConfig = MakeRunStatsConfig(config);
-    Clock::time_point lastDisplayUpdate = startTs;
+    TProgressDisplayState progressState;
 
     RunMeasurementDrainLoop(
         phaseController,
@@ -211,15 +211,16 @@ TRunOutcome RunSync(const TRunConfig& config, TTerminalStats* aggregatedStats) {
         asyncDelivery,
         stopToken,
         TRunConfig::SleepMsEveryIterationMainLoop,
-        [&](bool inMeasureOrDrain) {
-            auto now = Clock::now();
-            auto sinceLast = std::chrono::duration_cast<std::chrono::seconds>(now - lastDisplayUpdate);
-            if (sinceLast < std::chrono::seconds(5)) {
-                return;
-            }
-            auto measureStart = inMeasureOrDrain ? warmupEnd : startTs;
-            PrintConsoleStats(statsConfig, perThreadStats, measureStart, runEnd);
-            lastDisplayUpdate = now;
+        [&](ERunPhase phase) {
+            MaybeUpdateConsoleStats(
+                progressState,
+                statsConfig,
+                perThreadStats,
+                phase,
+                schedule,
+                startTs,
+                warmupEnd,
+                runEnd);
         });
 
     auto measureElapsed = std::chrono::duration<double>(

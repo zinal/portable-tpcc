@@ -44,6 +44,7 @@ public:
             dst.Failed.fetch_add(Failed.load(std::memory_order_relaxed), std::memory_order_relaxed);
             dst.UserAborted.fetch_add(UserAborted.load(std::memory_order_relaxed), std::memory_order_relaxed);
             dst.Retried.fetch_add(Retried.load(std::memory_order_relaxed), std::memory_order_relaxed);
+            // Progress* is console-only and must not flow into measurement aggregates.
 
             std::lock_guard guard(HistLock);
             dst.LatencyHistogramMs.Add(LatencyHistogramMs);
@@ -56,6 +57,7 @@ public:
             Failed.store(0, std::memory_order_relaxed);
             UserAborted.store(0, std::memory_order_relaxed);
             Retried.store(0, std::memory_order_relaxed);
+            ClearProgress();
 
             std::lock_guard guard(HistLock);
             LatencyHistogramMs.Reset();
@@ -63,10 +65,21 @@ public:
             LatencyHistogramPure.Reset();
         }
 
+        void ClearProgress() {
+            ProgressOK.store(0, std::memory_order_relaxed);
+            ProgressFailed.store(0, std::memory_order_relaxed);
+            ProgressUserAborted.store(0, std::memory_order_relaxed);
+        }
+
+        // Measurement-window counters (TPC-C §5.4.2); used for final results.
         std::atomic<size_t> OK = 0;
         std::atomic<size_t> Failed = 0;
         std::atomic<size_t> UserAborted = 0;
         std::atomic<size_t> Retried = 0;
+        // Live console counters (ramp + measure). Reset when measure starts.
+        std::atomic<size_t> ProgressOK = 0;
+        std::atomic<size_t> ProgressFailed = 0;
+        std::atomic<size_t> ProgressUserAborted = 0;
 
         mutable TSpinLock HistLock;
         THistogram LatencyHistogramMs;
@@ -98,8 +111,8 @@ public:
 
     void AddOK(
         ETransactionType type,
-        std::chrono::milliseconds latency,
-        std::chrono::milliseconds latencyFull,
+        std::chrono::microseconds latency,
+        std::chrono::microseconds latencyFull,
         std::chrono::microseconds latencyPure)
     {
         auto& stats = PerTransactionTypeStats[static_cast<size_t>(type)];
@@ -115,8 +128,8 @@ public:
     // and New-Order response-time statistics (TPC-C §5.1.2, §5.4.2).
     void AddUserAborted(
         ETransactionType type,
-        std::chrono::milliseconds latency,
-        std::chrono::milliseconds latencyFull,
+        std::chrono::microseconds latency,
+        std::chrono::microseconds latencyFull,
         std::chrono::microseconds latencyPure)
     {
         auto& stats = PerTransactionTypeStats[static_cast<size_t>(type)];
@@ -126,6 +139,21 @@ public:
 
     void IncRetried(ETransactionType type) {
         PerTransactionTypeStats[static_cast<size_t>(type)].Retried.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    void AddProgressOK(ETransactionType type) {
+        PerTransactionTypeStats[static_cast<size_t>(type)].ProgressOK.fetch_add(
+            1, std::memory_order_relaxed);
+    }
+
+    void IncProgressFailed(ETransactionType type) {
+        PerTransactionTypeStats[static_cast<size_t>(type)].ProgressFailed.fetch_add(
+            1, std::memory_order_relaxed);
+    }
+
+    void AddProgressUserAborted(ETransactionType type) {
+        PerTransactionTypeStats[static_cast<size_t>(type)].ProgressUserAborted.fetch_add(
+            1, std::memory_order_relaxed);
     }
 
     void Collect(TTerminalStats& dst) const {
@@ -138,34 +166,42 @@ public:
         for (auto& stats: PerTransactionTypeStats) {
             stats.Clear();
         }
+        ProgressClearedForMeasure.store(false, std::memory_order_relaxed);
     }
 
-    void ClearOnce() {
+    // Drop ramp live counters once when entering measurement so console tpmC
+    // reflects the current phase only. Measurement OK/Fail are untouched.
+    void ClearProgressOnce() {
         bool expected = false;
-        if (WasCleared.compare_exchange_strong(expected, true, std::memory_order_relaxed)) {
-            Clear();
+        if (ProgressClearedForMeasure.compare_exchange_strong(
+                expected, true, std::memory_order_relaxed))
+        {
+            for (auto& stats : PerTransactionTypeStats) {
+                stats.ClearProgress();
+            }
         }
     }
 
 private:
     void RecordLatency(
         TTransactionStats& stats,
-        std::chrono::milliseconds latency,
-        std::chrono::milliseconds latencyFull,
+        std::chrono::microseconds latency,
+        std::chrono::microseconds latencyFull,
         std::chrono::microseconds latencyPure)
     {
         uint64_t vTxn = 0;
         uint64_t vFull = 0;
         uint64_t vPure = 0;
         if (RecordMicroseconds) {
-            vTxn = static_cast<uint64_t>(
-                std::chrono::duration_cast<std::chrono::microseconds>(latency).count());
-            vFull = static_cast<uint64_t>(
-                std::chrono::duration_cast<std::chrono::microseconds>(latencyFull).count());
-            vPure = static_cast<uint64_t>(latencyPure.count());
-        } else {
+            // Keep full microsecond resolution; do not round-trip through ms.
             vTxn = static_cast<uint64_t>(latency.count());
             vFull = static_cast<uint64_t>(latencyFull.count());
+            vPure = static_cast<uint64_t>(latencyPure.count());
+        } else {
+            vTxn = static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(latency).count());
+            vFull = static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(latencyFull).count());
             vPure = static_cast<uint64_t>(
                 std::chrono::duration_cast<std::chrono::milliseconds>(latencyPure).count());
         }
@@ -178,7 +214,7 @@ private:
     }
 
     std::array<TTransactionStats, TRANSACTION_TYPE_COUNT> PerTransactionTypeStats;
-    std::atomic<bool> WasCleared{false};
+    std::atomic<bool> ProgressClearedForMeasure{false};
     bool RecordMicroseconds = false;
     uint64_t HdrTill_ = 4096;
     uint64_t MaxValue_ = 32768;

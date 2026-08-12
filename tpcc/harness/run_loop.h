@@ -92,11 +92,21 @@ struct TRunStatsConfig {
     bool HighResHistogram = false;
 };
 
-void PrintConsoleStats(
+struct TProgressDisplayState {
+    Clock::time_point LastUpdate{};
+};
+
+// Throttled progress line: phase name, elapsed/total for the phase, seconds
+// left until phase end, and live tpmC from Progress* counters (including ramp).
+void MaybeUpdateConsoleStats(
+    TProgressDisplayState& state,
     const TRunStatsConfig& config,
     const std::vector<std::shared_ptr<TTerminalStats>>& perThreadStats,
-    Clock::time_point measureStart,
-    Clock::time_point runEnd);
+    ERunPhase phase,
+    const TPhaseSchedule& schedule,
+    Clock::time_point rampStartSteady,
+    Clock::time_point measureStartSteady,
+    Clock::time_point measureEndSteady);
 
 void PrintFinalResults(
     const TRunStatsConfig& config,
@@ -109,6 +119,6 @@ void RunMeasurementDrainLoop(
     bool asyncDelivery,
     std::stop_token stopToken,
     std::chrono::milliseconds sleepEvery,
-    std::function<void(bool inMeasureOrDrain)> maybeUpdateDisplay);
+    std::function<void(ERunPhase phase)> maybeUpdateDisplay);
 
 } // namespace NTpcc

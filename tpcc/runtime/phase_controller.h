@@ -14,6 +14,22 @@ enum class ERunPhase : int {
     Stop = 4,
 };
 
+inline const char* RunPhaseName(ERunPhase phase) {
+    switch (phase) {
+        case ERunPhase::Prepare:
+            return "prepare";
+        case ERunPhase::Ramp:
+            return "ramp";
+        case ERunPhase::Measure:
+            return "measure";
+        case ERunPhase::Drain:
+            return "drain";
+        case ERunPhase::Stop:
+            return "stop";
+    }
+    return "unknown";
+}
+
 struct TPhaseDurations {
     int64_t RampUpMs = 0;
     int64_t MeasurementMs = 0;
