@@ -138,6 +138,8 @@ func run(args []string, interrupt context.Context) int {
 		return runPlan(opts)
 	case "deploy":
 		return runDeploy(opts)
+	case "undeploy":
+		return runUndeploy(opts, cfg.Yes)
 	case "schema":
 		return runStage(opts, "schema")
 	case "load":
@@ -236,6 +238,22 @@ func runDeploy(opts orchestrator.Options) int {
 	}
 	// Profile-scoped: no run_id allocation, materialize, or FSM transitions.
 	if err := o.Deploy(); err != nil {
+		return exitErr(err)
+	}
+	return 0
+}
+
+func runUndeploy(opts orchestrator.Options, yes bool) int {
+	if !yes {
+		fmt.Fprintln(os.Stderr, "undeploy requires --yes")
+		return 2
+	}
+	o, err := orch(opts)
+	if err != nil {
+		return exitErr(err)
+	}
+	// Profile-scoped: inverse of deploy; no run_id / FSM.
+	if err := o.Undeploy(true); err != nil {
 		return exitErr(err)
 	}
 	return 0
@@ -392,6 +410,7 @@ Commands:
   validate    Validate profile without side effects
   plan        Show planned assignment and argv
   deploy      Deploy shared worker binary (profile-scoped; no run_id / FSM)
+  undeploy    Remove shared worker binary (profile-scoped; --yes)
   schema      Apply database schema
   load        Run horizontal data load
   indexes     Create secondary indexes and gather statistics
@@ -402,7 +421,7 @@ Commands:
   collect     Collect artifacts from runtime hosts
   consolidate Merge worker results into aggregate.json
   run         Full pipeline (requires prior explicit deploy)
-  cleanup     Full teardown for a run: stop, DB clean, remote+local artifacts (--yes)
+  cleanup     Full teardown for a run: stop, DB clean, remote+local run artifacts (--yes)
 
 Options:
   --profile <path>         Profile YAML path

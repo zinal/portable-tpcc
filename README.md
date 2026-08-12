@@ -405,11 +405,17 @@ tpcc-oceanbase clean  --run-config run-config.json --instance clean-0   # mind-t
 ```
 
 Teardown a run (DB objects when past deploy, remote `remote_root/<run_id>`,
-local results + state):
+local results + state). Shared worker binaries stay installed:
 
 ```bash
 ./mind-tpcc cleanup --profile ./profile-oceanbase.yaml --yes
 # or: --run-id <id>
+```
+
+Remove the shared worker binary from runtime hosts (inverse of `deploy`):
+
+```bash
+./mind-tpcc undeploy --profile ./profile-oceanbase.yaml --yes
 ```
 
 ### Checklist

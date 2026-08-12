@@ -321,6 +321,48 @@ func TestDeployIsProfileScoped(t *testing.T) {
 	}
 }
 
+func TestUndeployRemovesSharedBinary(t *testing.T) {
+	dir := t.TempDir()
+	profilePath := writeTestProfile(t, dir, "")
+	dist := filepath.Join(dir, "dist")
+	if err := os.MkdirAll(dist, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dist, "tpcc-pgsql"), []byte("#!/bin/sh\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	o, err := orchestrator.New(orchestrator.Options{ProfilePath: profilePath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := o.Deploy(); err != nil {
+		t.Fatal(err)
+	}
+	absRemote, err := filepath.Abs(filepath.Join(dir, "remote"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sharedBin := filepath.Join(absRemote, "tpcc-pgsql")
+	if _, err := os.Stat(sharedBin); err != nil {
+		t.Fatalf("shared binary missing after deploy: %v", err)
+	}
+
+	if err := o.Undeploy(false); err == nil {
+		t.Fatal("expected error without --yes")
+	}
+	if err := o.Undeploy(true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(sharedBin); !os.IsNotExist(err) {
+		t.Fatalf("shared binary still present after undeploy: %v", err)
+	}
+	// Idempotent: binary already gone.
+	if err := o.Undeploy(true); err != nil {
+		t.Fatalf("second undeploy: %v", err)
+	}
+}
+
 func TestRequireWorkerBinaryNeedsExplicitDeploy(t *testing.T) {
 	dir := t.TempDir()
 	profilePath := writeTestProfile(t, dir, "")

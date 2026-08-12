@@ -221,6 +221,35 @@ func (o *Orchestrator) deployToHosts(sessions map[string]remote.Session) error {
 	return nil
 }
 
+func (o *Orchestrator) undeployFromHosts(sessions map[string]remote.Session) error {
+	binLocal, err := o.binaryLocalPath()
+	if err != nil {
+		return err
+	}
+	binName := filepath.Base(binLocal)
+	progress.Printf("undeploying %s from %d host(s)", binName, len(sessions))
+	for hostKey, sess := range sessions {
+		root, err := o.runtimeRoot(sess)
+		if err != nil {
+			return fmt.Errorf("host %s remote_root: %w", hostKey, err)
+		}
+		remoteBin := remoteBinaryPath(root, binName)
+		exists, err := sess.Exists(remoteBin)
+		if err != nil {
+			return fmt.Errorf("host %s check binary: %w", hostKey, err)
+		}
+		if !exists {
+			progress.Printf("undeploy %s: binary absent (%s)", hostKey, remoteBin)
+			continue
+		}
+		progress.Printf("undeploy %s: remove %s", hostKey, remoteBin)
+		if err := sess.Remove(remoteBin); err != nil {
+			return fmt.Errorf("host %s remove binary: %w", hostKey, err)
+		}
+	}
+	return nil
+}
+
 // workerBinaryMissingHosts returns hosts where the shared worker binary is absent.
 func (o *Orchestrator) workerBinaryMissingHosts(sessions map[string]remote.Session) (binName string, missing []string, err error) {
 	binLocal, err := o.binaryLocalPath()

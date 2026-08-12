@@ -46,6 +46,9 @@ func TestCleanup_requiresYes(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error without --yes")
 	}
+	if got := err.Error(); got != "undeploy requires --yes in non-interactive mode" {
+		t.Fatalf("error=%q", got)
+	}
 }
 
 func TestCleanup_missingManifest_isNoop(t *testing.T) {

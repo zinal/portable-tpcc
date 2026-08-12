@@ -324,7 +324,7 @@ aggregate carries the settings themselves.
 ## 9. Orchestrator Commands
 
 ```text
-mind-tpcc validate | plan | deploy | schema | load | indexes
+mind-tpcc validate | plan | deploy | undeploy --yes | schema | load | indexes
 mind-tpcc check [--after-import|--after-run]
 mind-tpcc start | status | stop | collect | consolidate
 mind-tpcc run | cleanup --yes
@@ -339,8 +339,12 @@ check(after-import) → start phases → check(after-run) → collect → consol
 depend on run-state: stop any recorded running processes; when state is past
 `deploying`, launch orchestrated `clean` on the first loader host; when state
 is past `planned`, remove `remote_root/<run_id>` on every runtime host; always
-remove local `result_root/<run_id>` and `state/runs/<run_id>` (and loopback
-deploy-manifest paths when present).
+remove local `result_root/<run_id>` and `state/runs/<run_id>`. Shared worker
+binaries under `remote_root` are left in place.
+
+`undeploy --yes` is the inverse of `deploy`: profile-scoped removal of the
+shared worker binary from every assigned host (and loopback deploy-manifest
+paths when present). It does not tear down a run; use `cleanup` for that.
 
 Worker artifact semantics are not independently version-negotiated. The
 operator **MUST** invoke `deploy` after selecting, building, or updating the

@@ -322,7 +322,7 @@ func (o *Orchestrator) Deploy() error {
 	}
 
 	// LocalDeploy writes deploy-manifest.json under the control-host view of
-	// remote_root for cleanup of shared local artifact trees. Skip it for
+	// remote_root for undeploy of shared local artifact trees. Skip it for
 	// pure SSH runs: it copies+hashes local_artifacts into a local path and
 	// can stall deploy for tens of seconds with no effect on remote hosts.
 	if usesLocalRuntime(o.Profile) {
@@ -331,6 +331,35 @@ func (o *Orchestrator) Deploy() error {
 		}
 	}
 	progress.Printf("deploy: complete")
+	return nil
+}
+
+// Undeploy removes the shared worker binary from runtime hosts.
+// It is profile-scoped (no run_id / FSM), the inverse of Deploy.
+func (o *Orchestrator) Undeploy(yes bool) error {
+	if !yes {
+		return fmt.Errorf("undeploy requires --yes")
+	}
+	vr := o.Validate()
+	if !vr.Valid {
+		return fmt.Errorf("profile invalid: %v", vr.Errors)
+	}
+	progress.Printf("undeploy: start (profile=%s, shared binary)", o.Profile.Metadata.Name)
+	sessions, err := o.openSessions()
+	if err != nil {
+		return err
+	}
+	defer closeSessions(sessions)
+
+	if err := o.undeployFromHosts(sessions); err != nil {
+		return err
+	}
+	if usesLocalRuntime(o.Profile) {
+		if err := o.removeLocalDeployManifest(); err != nil {
+			return err
+		}
+	}
+	progress.Printf("undeploy: complete")
 	return nil
 }
 
@@ -897,7 +926,8 @@ func hasRunningProcesses(rs *state.RunState) bool {
 
 // Cleanup tears down a run according to its state: stop peers, drop TPC-C
 // objects when schema may exist, remove remote_root/<run_id> on every host,
-// then delete local results and state for the run.
+// then delete local results and state for the run. Shared worker binaries
+// under remote_root are left in place; use Undeploy to remove them.
 func (o *Orchestrator) Cleanup(ctx *Context, yes bool) error {
 	if !yes {
 		return fmt.Errorf("cleanup requires --yes")
@@ -944,9 +974,6 @@ func (o *Orchestrator) Cleanup(ctx *Context, yes bool) error {
 	}
 
 	if err := o.removeLocalResults(ctx.RunID); err != nil {
-		return err
-	}
-	if err := o.cleanupLocalDeployManifest(); err != nil {
 		return err
 	}
 	if err := o.removeLocalRunState(ctx.RunID); err != nil {
@@ -1050,10 +1077,7 @@ func (o *Orchestrator) removeLocalRunState(runID string) error {
 	return os.RemoveAll(dir)
 }
 
-func (o *Orchestrator) cleanupLocalDeployManifest() error {
-	if !usesLocalRuntime(o.Profile) {
-		return nil
-	}
+func (o *Orchestrator) removeLocalDeployManifest() error {
 	root, err := paths.ExpandHome(o.Expanded.RemoteRoot)
 	if err != nil {
 		return err
@@ -1064,12 +1088,12 @@ func (o *Orchestrator) cleanupLocalDeployManifest() error {
 	manifestPath := deploy.DeployManifestPath(root)
 	if _, err := os.Stat(manifestPath); err != nil {
 		if os.IsNotExist(err) {
-			progress.Printf("cleanup: no local deploy manifest under %s", root)
+			progress.Printf("undeploy: no local deploy manifest under %s", root)
 			return nil
 		}
 		return err
 	}
-	progress.Printf("cleanup: removing local deploy manifest paths under %s", root)
+	progress.Printf("undeploy: removing local deploy manifest paths under %s", root)
 	return deploy.Cleanup(root, true)
 }
 
