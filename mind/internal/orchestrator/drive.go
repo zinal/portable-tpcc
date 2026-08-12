@@ -853,6 +853,31 @@ func validateRemotePathUnder(sess remote.Session, base, elem string) error {
 	return nil
 }
 
+// loaderArtifactsOptional reports whether collect may proceed without this
+// loader's artifact-manifest. That is normal when load was skipped, or when
+// the run only executed later stages (e.g. start --warehouses N against an
+// already-loaded database) and never launched this loader instance.
+func (o *Orchestrator) loaderArtifactsOptional(ctx *Context, instance string) bool {
+	if o == nil || o.StateStore == nil || ctx == nil {
+		return false
+	}
+	rs, err := o.StateStore.Load(ctx.RunID)
+	if err != nil {
+		return false
+	}
+	for _, s := range rs.SkippedSteps {
+		if s == "load" {
+			return true
+		}
+	}
+	for _, p := range rs.Processes {
+		if p.Role == "loader" && p.Instance == instance {
+			return false
+		}
+	}
+	return true
+}
+
 func (o *Orchestrator) collectArtifacts(ctx *Context, sessions map[string]remote.Session) error {
 	collector := &collect.Collector{ResultRoot: o.Expanded.ResultRoot}
 	var manifests []collect.ArtifactManifest
@@ -877,7 +902,14 @@ func (o *Orchestrator) collectArtifacts(ctx *Context, sessions map[string]remote
 			return err
 		}
 		if !exists {
-			return fmt.Errorf("missing artifact-manifest for %s/%s", role, instance)
+			if role == "loader" && o.loaderArtifactsOptional(ctx, instance) {
+				progress.Printf(
+					"collect %s/%s: skip (no artifact-manifest; load did not run for this run_id)",
+					role, instance,
+				)
+				return nil
+			}
+			return fmt.Errorf("missing artifact-manifest for %s/%s at %s", role, instance, manifestRemote)
 		}
 		if err := validateRemotePathUnder(sess, remoteInstance, "artifact-manifest.json"); err != nil {
 			return err
@@ -927,7 +959,6 @@ func (o *Orchestrator) collectArtifacts(ctx *Context, sessions map[string]remote
 
 	for _, l := range ctx.RunConfig.LoadAssignment {
 		if err := collectOne("loader", l.Host, l.Instance); err != nil {
-			// Loaders may be skipped in some runs; keep going only if dir missing after skip.
 			return err
 		}
 	}

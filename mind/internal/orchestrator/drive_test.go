@@ -576,6 +576,82 @@ func TestCollectArtifactsRejectsLocalSymlinkPayloadEscape(t *testing.T) {
 	}
 }
 
+func TestCollectArtifactsSkipsMissingLoaderWhenLoadDidNotRun(t *testing.T) {
+	root := t.TempDir()
+	store := &state.Store{StateDir: filepath.Join(root, "state")}
+	o := &Orchestrator{
+		Expanded: config.ExpandedPaths{
+			RemoteRoot: filepath.Join(root, "remote"),
+			ResultRoot: filepath.Join(root, "results"),
+		},
+		StateStore: store,
+	}
+	ctx := &Context{
+		RunID: "run-1",
+		RunConfig: &config.RunConfig{
+			LoadAssignment: []config.LoadAssignmentJSON{
+				{Instance: "loader-a", Host: "host-a"},
+			},
+		},
+	}
+	if err := store.Save(&state.RunState{
+		SchemaVersion: 1,
+		RunID:         ctx.RunID,
+		State:         state.StateCollecting,
+		// start-only run: workers may exist, but no loader was launched.
+		Processes: map[string]state.Process{
+			"worker/worker-a": {
+				Role: "worker", Host: "host-a", Instance: "worker-a", State: "exited",
+			},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	sess := &fakeSession{files: map[string][]byte{}, alive: true}
+
+	if err := o.collectArtifacts(ctx, map[string]remote.Session{"host-a": sess}); err != nil {
+		t.Fatalf("expected soft-skip of missing loader, got %v", err)
+	}
+}
+
+func TestCollectArtifactsRequiresLoaderWhenLoadLaunched(t *testing.T) {
+	root := t.TempDir()
+	store := &state.Store{StateDir: filepath.Join(root, "state")}
+	o := &Orchestrator{
+		Expanded: config.ExpandedPaths{
+			RemoteRoot: filepath.Join(root, "remote"),
+			ResultRoot: filepath.Join(root, "results"),
+		},
+		StateStore: store,
+	}
+	ctx := &Context{
+		RunID: "run-1",
+		RunConfig: &config.RunConfig{
+			LoadAssignment: []config.LoadAssignmentJSON{
+				{Instance: "loader-a", Host: "host-a"},
+			},
+		},
+	}
+	if err := store.Save(&state.RunState{
+		SchemaVersion: 1,
+		RunID:         ctx.RunID,
+		State:         state.StateCollecting,
+		Processes: map[string]state.Process{
+			"loader/loader-a": {
+				Role: "loader", Host: "host-a", Instance: "loader-a", State: "exited",
+			},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	sess := &fakeSession{files: map[string][]byte{}, alive: true}
+
+	err := o.collectArtifacts(ctx, map[string]remote.Session{"host-a": sess})
+	if err == nil || !strings.Contains(err.Error(), "missing artifact-manifest for loader/loader-a") {
+		t.Fatalf("expected hard error for launched loader, got %v", err)
+	}
+}
+
 func TestCredentialFilesForRun(t *testing.T) {
 	root := t.TempDir()
 	caPath := filepath.Join(root, "root.pem")
