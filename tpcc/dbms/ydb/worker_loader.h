@@ -11,6 +11,7 @@ int RunWorkerFromRunConfig(
     const std::string& instance,
     const std::optional<std::string>& startAtRfc3339);
 int RunSchemaFromRunConfig(const std::string& runConfigPath, const std::string& instance);
+int RunIndexesFromRunConfig(const std::string& runConfigPath, const std::string& instance);
 int RunCleanFromRunConfig(const std::string& runConfigPath, const std::string& instance);
 
 } // namespace NTpcc

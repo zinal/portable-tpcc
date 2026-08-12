@@ -37,6 +37,15 @@ func SchemaArgv(runConfigPath, instance string) []string {
 	}
 }
 
+// IndexesArgv returns argv for the post-load indexes role.
+func IndexesArgv(runConfigPath, instance string) []string {
+	return []string{
+		"indexes",
+		"--run-config", runConfigPath,
+		"--instance", instance,
+	}
+}
+
 // CleanArgv returns argv for the clean admin helper (mind-tpcc cleanup).
 func CleanArgv(runConfigPath, instance string) []string {
 	return []string{
@@ -70,6 +79,7 @@ type PlanSnapshot struct {
 	WorkerArgv       map[string][]string    `json:"worker_argv"`
 	LoaderArgv       map[string][]string    `json:"loader_argv"`
 	SchemaArgv       []string               `json:"schema_argv,omitempty"`
+	IndexesArgv      []string               `json:"indexes_argv,omitempty"`
 	CheckArgvImport  []string               `json:"check_argv_after_import,omitempty"`
 	CheckArgvRun     []string               `json:"check_argv_after_run,omitempty"`
 }
@@ -86,8 +96,10 @@ func BuildPlanSnapshot(rc *RunConfig) *PlanSnapshot {
 		loaderArgv[l.Instance] = LoaderArgv("run-config.json", l.Instance)
 	}
 	schemaInstance := "schema-0"
+	indexesInstance := "indexes-0"
 	if len(rc.LoadAssignment) > 0 {
 		schemaInstance = rc.LoadAssignment[0].Instance + "-schema"
+		indexesInstance = rc.LoadAssignment[0].Instance + "-indexes"
 	}
 	return &PlanSnapshot{
 		RunID:            rc.RunID,
@@ -98,6 +110,7 @@ func BuildPlanSnapshot(rc *RunConfig) *PlanSnapshot {
 		WorkerArgv:       workerArgv,
 		LoaderArgv:       loaderArgv,
 		SchemaArgv:       SchemaArgv("run-config.json", schemaInstance),
+		IndexesArgv:      IndexesArgv("run-config.json", indexesInstance),
 		CheckArgvImport:  CheckArgv("run-config.json", "check-0", "after-import"),
 		CheckArgvRun:     CheckArgv("run-config.json", "check-0", "after-run"),
 	}

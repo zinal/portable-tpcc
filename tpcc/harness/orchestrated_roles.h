@@ -55,6 +55,12 @@ int RunOrchestratedSchema(
     const std::string& instance,
     std::function<void(const TRunConfigDocument&)> ensureSchema);
 
+// Post-load preparation: EnsureIndexes + EnsureStatistics (idempotent).
+int RunOrchestratedIndexes(
+    const TRunConfigDocument& doc,
+    const std::string& instance,
+    std::function<void(const TRunConfigDocument&)> ensureIndexes);
+
 // Admin helper for mind-tpcc cleanup (not a workload role).
 int RunOrchestratedClean(
     const TRunConfigDocument& doc,

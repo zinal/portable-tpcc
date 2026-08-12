@@ -111,6 +111,8 @@ func run(args []string, interrupt context.Context) int {
 		return runStage(opts, "schema")
 	case "load":
 		return runStage(opts, "load")
+	case "indexes":
+		return runStage(opts, "indexes")
 	case "check":
 		return runCheck(opts, cfg.CheckPhase)
 	case "start":
@@ -218,6 +220,8 @@ func runStage(opts orchestrator.Options, stage string) int {
 			return o.RunSchema(ctx)
 		case "load":
 			return o.RunLoad(ctx)
+		case "indexes":
+			return o.RunIndexes(ctx)
 		case "start":
 			return o.RunStart(ctx)
 		case "collect":
@@ -358,6 +362,7 @@ Commands:
   deploy      Deploy binaries and schema to runtime hosts
   schema      Apply database schema
   load        Run horizontal data load
+  indexes     Create secondary indexes and gather statistics
   check       Run checks (--after-import or --after-run)
   start       Arm workers and run measurement phases
   status      Show run state

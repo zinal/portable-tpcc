@@ -1,6 +1,5 @@
 #include "import.h"
 
-#include "init.h"
 #include "load_batch.h"
 
 #include <constants.h>
@@ -147,12 +146,6 @@ void ImportSync(const TImportConfig& config) {
 
     if (GetGlobalInterruptSource().stop_requested()) {
         throw std::runtime_error("YDB import interrupted or failed");
-    }
-
-    if (config.OwnsGlobalData) {
-        CreateIndexes(config.Connection);
-    } else {
-        LOG_I("Skipping CreateIndexes (owned by global-data loader)");
     }
 
     auto elapsed = std::chrono::duration<double>(Clock::now() - startTime).count();

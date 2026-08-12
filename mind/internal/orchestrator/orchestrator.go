@@ -393,6 +393,7 @@ func (o *Orchestrator) Run() error {
 		{"deploy", true, func() error { return o.Deploy(ctx) }},
 		{"schema", true, func() error { return o.schema(ctx) }},
 		{"load", true, func() error { return o.load(ctx) }},
+		{"indexes", true, func() error { return o.indexes(ctx) }},
 		{"check_after_import", o.Profile.Checks.AfterImport, func() error { return o.check(ctx, "after-import") }},
 		{"start", true, func() error { return o.start(ctx) }},
 		{"check_after_run", o.Profile.Checks.AfterRun, func() error { return o.check(ctx, "after-run") }},
@@ -497,9 +498,6 @@ func (o *Orchestrator) load(ctx *Context) error {
 		_ = o.stopPeers(ctx, sessions)
 		return err
 	}
-	if err := o.StateStore.Transition(ctx.RunID, state.StateCheckingImport); err != nil {
-		return err
-	}
 	progress.Printf("stage load: complete")
 	return nil
 }
@@ -507,6 +505,37 @@ func (o *Orchestrator) load(ctx *Context) error {
 // RunLoad runs horizontal loaders.
 func (o *Orchestrator) RunLoad(ctx *Context) error {
 	return o.load(ctx)
+}
+
+func (o *Orchestrator) indexes(ctx *Context) error {
+	progress.Printf("stage indexes: start (run_id=%s)", ctx.RunID)
+	if err := o.StateStore.Transition(ctx.RunID, state.StateIndexing); err != nil {
+		return err
+	}
+	sessions, err := o.openSessions()
+	if err != nil {
+		return err
+	}
+	defer closeSessions(sessions)
+
+	hostKey := ctx.RunConfig.LoadAssignment[0].Host
+	instance := "indexes-0"
+	argv := config.IndexesArgv("run-config.json", instance)
+	proc, err := o.launchRole(ctx, sessions, "indexes", hostKey, instance, argv)
+	if err != nil {
+		return err
+	}
+	if err := o.waitProcesses(ctx, []*launchedProc{proc}, 12*time.Hour, true); err != nil {
+		_ = o.stopPeers(ctx, sessions)
+		return err
+	}
+	progress.Printf("stage indexes: complete")
+	return nil
+}
+
+// RunIndexes creates secondary indexes and gathers statistics after load.
+func (o *Orchestrator) RunIndexes(ctx *Context) error {
+	return o.indexes(ctx)
 }
 
 func (o *Orchestrator) check(ctx *Context, phase string) error {

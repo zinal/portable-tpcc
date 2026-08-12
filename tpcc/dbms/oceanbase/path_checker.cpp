@@ -89,7 +89,7 @@ void CheckIndexExists(
     if (!indexes.contains(expectedIndex)) {
         throw std::runtime_error(
             "Table '" + tableName + "' is missing expected index '" + expectedIndex +
-            "'. Run 'tpcc import' to create indexes after bulk load.");
+            "'. Run 'tpcc indexes' after bulk load.");
     }
 }
 

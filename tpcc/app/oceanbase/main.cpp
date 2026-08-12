@@ -54,10 +54,11 @@ void PrintHelp() {
         "Commands:\n"
         "  schema    Create TPC-C schema (tables); alias: init\n"
         "  loader    Run orchestrated loader from run-config.json\n"
+        "  indexes   Create secondary indexes and ANALYZE (after load)\n"
         "  worker    Run orchestrated worker from run-config.json\n"
         "  check     Run TPC-C consistency checks\n"
         "  init      Alias for schema\n"
-        "  import    Load TPC-C data (standalone)\n"
+        "  import    Load TPC-C data (standalone; then run indexes)\n"
         "  run       Run the TPC-C benchmark (standalone)\n"
         "  clean     Drop all TPC-C tables (local admin)\n"
         "\n"
@@ -81,11 +82,12 @@ void PrintHelp() {
         "  --after-run           check: verify data after a measurement run\n"
         "\n"
         "Orchestrated mode (mind-tpcc):\n"
-        "  schema --run-config <path> --instance <name>\n"
-        "  loader --run-config <path> --instance <name>\n"
-        "  worker --run-config <path> --instance <name> --start-at=<RFC3339-UTC>\n"
-        "  check  --run-config <path> --instance <name> --after-import|--after-run\n"
-        "  clean  --run-config <path> --instance <name>\n";
+        "  schema  --run-config <path> --instance <name>\n"
+        "  loader  --run-config <path> --instance <name>\n"
+        "  indexes --run-config <path> --instance <name>\n"
+        "  worker  --run-config <path> --instance <name> --start-at=<RFC3339-UTC>\n"
+        "  check   --run-config <path> --instance <name> --after-import|--after-run\n"
+        "  clean   --run-config <path> --instance <name>\n";
 }
 
 ELogPriority ParseLogLevel(const std::string& level) {
@@ -98,12 +100,13 @@ ELogPriority ParseLogLevel(const std::string& level) {
 }
 
 bool IsValidCommand(const std::string& cmd) {
-    return cmd == "schema" || cmd == "init" || cmd == "import" || cmd == "run" ||
-           cmd == "worker" || cmd == "loader" || cmd == "clean" || cmd == "check";
+    return cmd == "schema" || cmd == "init" || cmd == "import" || cmd == "indexes" ||
+           cmd == "run" || cmd == "worker" || cmd == "loader" || cmd == "clean" || cmd == "check";
 }
 
 bool IsOrchestratedRole(const std::string& cmd) {
-    return cmd == "worker" || cmd == "loader" || cmd == "schema" || cmd == "check" || cmd == "clean";
+    return cmd == "worker" || cmd == "loader" || cmd == "schema" || cmd == "indexes" ||
+           cmd == "check" || cmd == "clean";
 }
 
 void ValidateWarehouseFlag() {
@@ -173,6 +176,7 @@ int RunOrchestrated(
     if (command == "worker") return NTpcc::RunWorkerFromRunConfig(runConfig, instance, startAt);
     if (command == "loader") return NTpcc::RunLoaderFromRunConfig(runConfig, instance);
     if (command == "schema") return NTpcc::RunSchemaFromRunConfig(runConfig, instance);
+    if (command == "indexes") return NTpcc::RunIndexesFromRunConfig(runConfig, instance);
     if (command == "check") return NTpcc::RunCheckFromRunConfig(runConfig, instance, afterImport, afterRun);
     if (command == "clean") return NTpcc::RunCleanFromRunConfig(runConfig, instance);
     return 1;
@@ -265,6 +269,13 @@ void RunImport() {
     config.LoadThreadCount = FLAGS_threads;
     config.Seed = FLAGS_seed;
     NTpcc::ImportSync(config);
+}
+
+void RunIndexes() {
+    NTpcc::CheckDbForImport(FLAGS_connection, FLAGS_path);
+    NTpcc::TObAdminAdapter admin(FLAGS_connection, FLAGS_path);
+    admin.EnsureIndexes();
+    admin.EnsureStatistics();
 }
 
 void RunBenchmark() {
@@ -378,6 +389,10 @@ int main(int argc, char* argv[]) {
             LOG_I("Importing TPC-C data (" << FLAGS_warehouses << " warehouses)...");
             RunImport();
             LOG_I("Data import complete");
+        } else if (command == "indexes") {
+            LOG_I("Creating secondary indexes and gathering statistics...");
+            RunIndexes();
+            LOG_I("Indexes and statistics ready");
         } else if (command == "run") {
             LOG_I("Running TPC-C benchmark...");
             RunBenchmark();

@@ -24,7 +24,7 @@ are to be interpreted as described in RFC 2119.
 ## 2. Layering
 
 ```text
-mind-tpcc  ──SSH──>  tpcc-<dbms>  (schema | loader | worker | check)
+mind-tpcc  ──SSH──>  tpcc-<dbms>  (schema | loader | indexes | worker | check)
                          │
                          ├─ shared: domain / generator / transactions /
                          │          runtime / harness / loader / checks / metrics
@@ -121,17 +121,21 @@ Lifecycle of the physical database objects for one workload path:
 | Method | Semantics |
 | --- | --- |
 | `EnsureSchema` | Create logical tables (idempotent). MAY drop/recreate when the path is empty; MUST NOT destroy foreign data silently. |
-| `EnsureIndexes` | Create access paths required by the workload (often after bulk load). |
-| `EnsureStatistics` | `ANALYZE` / equivalent so the planner or tablet layer is ready. |
+| `EnsureIndexes` | Create access paths required by the workload **after** bulk load. MUST be idempotent (skip existing indexes). |
+| `EnsureStatistics` | `ANALYZE` / equivalent so the planner or tablet layer is ready. MUST be idempotent. |
 | `Clean` | Remove all objects for this path. |
 | `Describe` | Adapter/server version strings for `result.json`. |
+
+Pipeline order for physical objects: `EnsureSchema` → bulk `PutBatch` (load)
+→ `EnsureIndexes` → `EnsureStatistics`. Loaders MUST NOT call index/statistics
+helpers; the dedicated `indexes` role owns that step.
 
 There is no `AcquireFence` / `ReleaseFence`. Multi-host start synchronization
 uses wall-clock `--start-at` (specification §7), not DBMS metadata.
 
 PostgreSQL reference: `InitSync` + `CreateIndexes` (`init.*`), `CleanSync`
-(`clean.*`), path checks (`path_checker.*`). Indexes are created after import;
-`ANALYZE` SHOULD follow.
+(`clean.*`), path checks (`path_checker.*`). The `indexes` role creates
+secondary indexes after import; `ANALYZE` SHOULD follow.
 
 ### 4.2. `ILoadAdapter`
 
@@ -400,7 +404,8 @@ Each `tpcc-<dbms>` binary **MUST** expose:
 | Role | Adapter use |
 | --- | --- |
 | `schema` | `EnsureSchema` (+ optional early indexes if required by the DBMS) |
-| `loader` | `PutBatch` over assigned ranges; then `EnsureIndexes` / `EnsureStatistics` as needed |
+| `loader` | `PutBatch` over assigned ranges only (no indexes/statistics) |
+| `indexes` | `EnsureIndexes` then `EnsureStatistics` (idempotent; after all loaders finish) |
 | `worker` | sessions for terminals; honor `--start-at` (specification §7); write diagnostics / `result.json` |
 | `check` | `ICheckAdapter` for `--after-import` / `--after-run` |
 

@@ -130,15 +130,16 @@ guidance (YDB fused commit, DDL/query differences, OceanBase notes) are in
 ### 4.3. Binaries
 
 `mind-tpcc` orchestrates. Each `tpcc-<dbms>` binary **MUST** expose the
-normative roles `schema`, `loader`, `worker`, and `check`. Non-DBMS logic
-comes from shared libraries; only the adapter/driver is DBMS-specific.
+normative roles `schema`, `loader`, `indexes`, `worker`, and `check`.
+Non-DBMS logic comes from shared libraries; only the adapter/driver is
+DBMS-specific.
 
 Binaries **MAY** keep standalone aliases for local use (`init` ≡ `schema`,
 `import` / `run` with flag-driven config, `clean` as local admin).
-Orchestrated workload remotes use the four normative role names
-(`schema`, `loader`, `worker`, `check`). `mind-tpcc cleanup` **MAY** also
-launch `clean --run-config --instance` as an admin helper to drop TPC-C
-objects with the same secret handling as other roles.
+Orchestrated workload remotes use the five normative role names
+(`schema`, `loader`, `indexes`, `worker`, `check`). `mind-tpcc cleanup`
+**MAY** also launch `clean --run-config --instance` as an admin helper to
+drop TPC-C objects with the same secret handling as other roles.
 
 ## 5. Configuration Model
 
@@ -323,14 +324,14 @@ aggregate carries the settings themselves.
 ## 9. Orchestrator Commands
 
 ```text
-mind-tpcc validate | plan | deploy | schema | load
+mind-tpcc validate | plan | deploy | schema | load | indexes
 mind-tpcc check [--after-import|--after-run]
 mind-tpcc start | status | stop | collect | consolidate
 mind-tpcc run | cleanup --yes
 ```
 
-`run` = validate → deploy → schema → load → check(after-import) → start
-phases → check(after-run) → collect → consolidate.
+`run` = validate → deploy → schema → load → indexes → check(after-import)
+→ start phases → check(after-run) → collect → consolidate.
 
 `cleanup --yes` tears down an existing run for the profile (explicit
 `--run-id`, else the newest matching run, including terminal states). Phases

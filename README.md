@@ -82,6 +82,9 @@ CONN='host=localhost port=5432 dbname=tpcc user=postgres password=YOUR_PASSWORD'
 # load
 ./tpcc-pgsql import --connection="$CONN" --path=portable_tpcc -w 10 -t 8
 
+# indexes + ANALYZE (after load)
+./tpcc-pgsql indexes --connection="$CONN" --path=portable_tpcc
+
 # check after load
 ./tpcc-pgsql check --connection="$CONN" --path=portable_tpcc -w 10 --after-import
 
@@ -144,12 +147,12 @@ cp mind/mind-tpcc ./mind-tpcc
 ./mind-tpcc plan     --profile ./profile-pgsql.yaml
 
 # Full pipeline:
-# validate → deploy → schema → load → check(after-import)
+# validate → deploy → schema → load → indexes → check(after-import)
 # → start → check(after-run) → collect → consolidate
 ./mind-tpcc run --profile ./profile-pgsql.yaml
 ```
 
-Or run stages individually: `deploy`, `schema`, `load`,
+Or run stages individually: `deploy`, `schema`, `load`, `indexes`,
 `check --after-import`, `start`, `check --after-run`, `collect`,
 `consolidate`.
 
@@ -165,8 +168,8 @@ clocks. Identical `host` values mean co-location on one machine.
 1. PostgreSQL is reachable and the database exists.
 2. `tpcc-pgsql` is built (and `mind-tpcc` for orchestration).
 3. Credentials are supplied (`--connection=...` or `TPCC_PASSWORD`).
-4. Flow: `schema` → `import`/`load` → `check --after-import` → `run`/`start`
-   → `check --after-run`.
+4. Flow: `schema` → `import`/`load` → `indexes` → `check --after-import`
+   → `run`/`start` → `check --after-run`.
 
 For a quick engineering smoke test, standalone with `-w 10` and a short
 `--duration` is enough. For settings closer to TPC-C 5.11, see the defaults
@@ -264,6 +267,9 @@ CONN='host=127.0.0.1;port=2881;user=root@test;password=YOUR_PASSWORD;database=tp
 # load
 ./tpcc-oceanbase import --connection="$CONN" --path=tpcc -w 10 -t 8
 
+# indexes + ANALYZE (after load)
+./tpcc-oceanbase indexes --connection="$CONN" --path=tpcc
+
 # check after load
 ./tpcc-oceanbase check --connection="$CONN" --path=tpcc -w 10 --after-import
 
@@ -328,12 +334,12 @@ cp mind/mind-tpcc ./mind-tpcc
 ./mind-tpcc plan     --profile ./profile-oceanbase.yaml
 
 # Full pipeline:
-# validate → deploy → schema → load → check(after-import)
+# validate → deploy → schema → load → indexes → check(after-import)
 # → start → check(after-run) → collect → consolidate
 ./mind-tpcc run --profile ./profile-oceanbase.yaml
 ```
 
-Or run stages individually: `deploy`, `schema`, `load`,
+Or run stages individually: `deploy`, `schema`, `load`, `indexes`,
 `check --after-import`, `start`, `check --after-run`, `collect`,
 `consolidate`.
 
@@ -405,8 +411,8 @@ local results + state):
 3. Credentials are supplied (`--connection=...` or `TPCC_PASSWORD`;
    optional `database.user` / `TPCC_OB_USER`).
 4. Binary is under `paths.local_artifacts` as `tpcc-oceanbase`.
-5. Flow: `schema` → `import`/`load` → `check --after-import` → `run`/`start`
-   → `check --after-run`.
+5. Flow: `schema` → `import`/`load` → `indexes` → `check --after-import`
+   → `run`/`start` → `check --after-run`.
 
 For a quick engineering smoke test, standalone with `-w 10` and a short
 `--duration` is enough. For settings closer to TPC-C 5.11, see the defaults

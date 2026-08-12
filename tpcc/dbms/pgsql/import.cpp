@@ -3,7 +3,6 @@
 #include "load_batch.h"
 
 #include <constants.h>
-#include "init.h"
 #include <log.h>
 #include <domain_util.h>
 
@@ -215,24 +214,6 @@ void ImportSync(const TImportConfig& config) {
 
     if (wasInterrupted) {
         throw std::runtime_error("Import was interrupted or failed. See logs.");
-    }
-
-    // Indexes/ANALYZE are DB-wide; only the global-data owner runs them so
-    // earlier-finishing shard loaders do not lock tables still being loaded.
-    if (config.OwnsGlobalData) {
-        CreateIndexes(config.ConnectionString, config.Path);
-
-        LOG_I("Running ANALYZE on TPC-C tables...");
-        {
-            pqxx::connection conn(config.ConnectionString);
-            SetSearchPath(conn, config.Path);
-            pqxx::nontransaction ntx(conn);
-            for (const auto* table : TPCC_TABLES) {
-                ntx.exec(fmt::format("ANALYZE {}", table));
-            }
-        }
-    } else {
-        LOG_I("Skipping CreateIndexes/ANALYZE (owned by global-data loader)");
     }
 
     auto elapsed = std::chrono::duration<double>(Clock::now() - startTime);

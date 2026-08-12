@@ -102,6 +102,18 @@ int RunSchemaFromRunConfig(const std::string& runConfigPath, const std::string& 
     });
 }
 
+int RunIndexesFromRunConfig(const std::string& runConfigPath, const std::string& instance) {
+    const auto doc = LoadRunConfigDocument(runConfigPath);
+    return RunOrchestratedIndexes(doc, instance, [instance](const TRunConfigDocument& d) {
+        const auto connection = BuildYdbConnectionConfig(d);
+        CheckDbForImport(connection);
+        TYdbAdminAdapter admin(connection, d.ScaleWarehouses);
+        admin.EnsureIndexes();
+        admin.EnsureStatistics();
+        LOG_I("Indexes and statistics ready (instance=" << instance << ")");
+    });
+}
+
 int RunCleanFromRunConfig(const std::string& runConfigPath, const std::string& instance) {
     const auto doc = LoadRunConfigDocument(runConfigPath);
     return RunOrchestratedClean(doc, instance, [instance](const TRunConfigDocument& d) {

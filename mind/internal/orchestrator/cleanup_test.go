@@ -23,6 +23,7 @@ func TestCleanupNeedsByState(t *testing.T) {
 		{state.StateDeploying, true, false},
 		{state.StateSchema, true, true},
 		{state.StateLoading, true, true},
+		{state.StateIndexing, true, true},
 		{state.StateMeasuring, true, true},
 		{state.StateCompleted, true, true},
 		{state.StateFailed, true, true},

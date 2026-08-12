@@ -179,9 +179,10 @@ Optional follow-ups (not required for correctness):
 3. Keep leading `*_w_id` in secondary index definitions on the parent table
    (documents the access path used by shared SQL).
 
-Index creation timing stays as today: defer `idx_customer_name` until after
-`COPY` (`CreateIndexes`); keep `idx_order` with table DDL (or move both
-post-load — either is fine if load path is updated consistently).
+Index creation timing: defer `idx_customer_name` until the post-load
+`indexes` role (`EnsureIndexes` / `CreateIndexes`); keep `idx_order` with
+table DDL (or move both post-load — either is fine if the indexes path is
+updated consistently).
 
 ## 5. Foreign keys
 

@@ -14,6 +14,7 @@ const (
 	StateDeploying      = "deploying"
 	StateSchema         = "schema"
 	StateLoading        = "loading"
+	StateIndexing       = "indexing"
 	StateCheckingImport = "checking_import"
 	StatePreparing      = "preparing"
 	StateArming         = "arming"
@@ -33,16 +34,17 @@ var pipelineOrder = map[string]int{
 	StateDeploying:      1,
 	StateSchema:         2,
 	StateLoading:        3,
-	StateCheckingImport: 4,
-	StatePreparing:      5,
-	StateArming:         6,
-	StateRamping:        7,
-	StateMeasuring:      8,
-	StateDraining:       9,
-	StateCheckingResult: 10,
-	StateCollecting:     11,
-	StateConsolidating:  12,
-	StateCompleted:      13,
+	StateIndexing:       4,
+	StateCheckingImport: 5,
+	StatePreparing:      6,
+	StateArming:         7,
+	StateRamping:        8,
+	StateMeasuring:      9,
+	StateDraining:       10,
+	StateCheckingResult: 11,
+	StateCollecting:     12,
+	StateConsolidating:  13,
+	StateCompleted:      14,
 }
 
 // RunState is mutable control-host state for a run.

@@ -61,12 +61,13 @@ void PrintHelp() {
         "Commands (normative roles):\n"
         "  schema    Create TPC-C schema (tables); alias: init\n"
         "  loader    Run orchestrated loader from run-config.json\n"
+        "  indexes   Create secondary indexes (after load)\n"
         "  worker    Run orchestrated worker from run-config.json\n"
         "  check     Run TPC-C consistency checks\n"
         "\n"
         "Legacy / local aliases:\n"
         "  init      ≡ schema\n"
-        "  import    Load TPC-C data (standalone)\n"
+        "  import    Load TPC-C data (standalone; then run indexes)\n"
         "  run       Run the TPC-C benchmark (standalone)\n"
         "  clean     Drop all TPC-C tables (local admin)\n"
         "\n"
@@ -96,11 +97,12 @@ void PrintHelp() {
         "  --after-run           check: verify data after a measurement run\n"
         "\n"
         "Orchestrated mode (mind-tpcc):\n"
-        "  schema --run-config <path> --instance <name>\n"
-        "  loader --run-config <path> --instance <name>\n"
-        "  worker --run-config <path> --instance <name> --start-at=<RFC3339-UTC>\n"
-        "  check  --run-config <path> --instance <name> --after-import|--after-run\n"
-        "  clean  --run-config <path> --instance <name>\n"
+        "  schema  --run-config <path> --instance <name>\n"
+        "  loader  --run-config <path> --instance <name>\n"
+        "  indexes --run-config <path> --instance <name>\n"
+        "  worker  --run-config <path> --instance <name> --start-at=<RFC3339-UTC>\n"
+        "  check   --run-config <path> --instance <name> --after-import|--after-run\n"
+        "  clean   --run-config <path> --instance <name>\n"
         "\n"
         "Simulation (for testing without real TPC-C transactions):\n"
         "  --simulate-select1    Run N SELECT 1 queries per transaction (default: 0 = disabled)\n"
@@ -108,6 +110,7 @@ void PrintHelp() {
         "Examples:\n"
         "  tpcc-ydb schema --endpoint=localhost:2136 --database=/local --path=tpcc\n"
         "  tpcc-ydb import -w 10 -t 8\n"
+        "  tpcc-ydb indexes\n"
         "  tpcc-ydb run -w 10 --duration=5 -t 4\n"
         "  tpcc-ydb check -w 10 --after-run\n"
         "  tpcc-ydb check -w 10 --after-import\n";
@@ -123,12 +126,13 @@ ELogPriority ParseLogLevel(const std::string& level) {
 }
 
 bool IsValidCommand(const std::string& cmd) {
-    return cmd == "schema" || cmd == "init" || cmd == "import" || cmd == "run" ||
-           cmd == "worker" || cmd == "loader" || cmd == "clean" || cmd == "check";
+    return cmd == "schema" || cmd == "init" || cmd == "import" || cmd == "indexes" ||
+           cmd == "run" || cmd == "worker" || cmd == "loader" || cmd == "clean" || cmd == "check";
 }
 
 bool IsOrchestratedRole(const std::string& cmd) {
-    return cmd == "worker" || cmd == "loader" || cmd == "schema" || cmd == "check" || cmd == "clean";
+    return cmd == "worker" || cmd == "loader" || cmd == "schema" || cmd == "indexes" ||
+           cmd == "check" || cmd == "clean";
 }
 
 void ValidateWarehouseFlag() {
@@ -217,6 +221,10 @@ int RunOrchestrated(
     if (command == "schema") {
         LOG_I("Starting orchestrated schema " << instance << "...");
         return RunOrchestratedSchema(runConfig, instance);
+    }
+    if (command == "indexes") {
+        LOG_I("Starting orchestrated indexes " << instance << "...");
+        return NTpcc::RunIndexesFromRunConfig(runConfig, instance);
     }
     if (command == "check") {
         LOG_I("Starting orchestrated check " << instance << "...");
@@ -366,6 +374,14 @@ void RunImport() {
     NTpcc::ImportSync(config);
 }
 
+void RunIndexes() {
+    auto connection = BuildConnectionConfig();
+    NTpcc::CheckDbForImport(connection);
+    NTpcc::TYdbAdminAdapter admin(connection, FLAGS_warehouses);
+    admin.EnsureIndexes();
+    admin.EnsureStatistics();
+}
+
 void RunBenchmark() {
     ValidateRunFlags();
     NTpcc::TRunConfig config;
@@ -472,7 +488,7 @@ int main(int argc, char* argv[]) {
 
     if (!IsValidCommand(command)) {
         std::cerr << "Unknown command: " << command << "\n";
-        std::cerr << "Valid commands: schema, init, import, run, worker, loader, clean, check\n";
+        std::cerr << "Valid commands: schema, init, import, indexes, run, worker, loader, clean, check\n";
         return 1;
     }
 
@@ -490,6 +506,10 @@ int main(int argc, char* argv[]) {
             LOG_I("Importing TPC-C data (" << FLAGS_warehouses << " warehouses)...");
             RunImport();
             LOG_I("Data import complete");
+        } else if (command == "indexes") {
+            LOG_I("Creating secondary indexes...");
+            RunIndexes();
+            LOG_I("Indexes ready");
         } else if (command == "run") {
             LOG_I("Running TPC-C benchmark...");
             RunBenchmark();

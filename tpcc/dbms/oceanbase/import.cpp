@@ -1,6 +1,5 @@
 #include "import.h"
 
-#include "init.h"
 #include "load_batch.h"
 #include "ob_connection.h"
 
@@ -196,15 +195,6 @@ void ImportSync(const TImportConfig& config) {
 
     if (wasInterrupted) {
         throw std::runtime_error("Import was interrupted or failed. See logs.");
-    }
-
-    // Indexes/ANALYZE are DB-wide; only the global-data owner runs them so
-    // earlier-finishing shard loaders do not lock tables still being loaded.
-    if (config.OwnsGlobalData) {
-        CreateIndexes(config.ConnectionString, config.Path);
-        AnalyzeTables(config.ConnectionString, config.Path);
-    } else {
-        LOG_I("Skipping CreateIndexes/ANALYZE (owned by global-data loader)");
     }
 
     auto elapsed = std::chrono::duration<double>(Clock::now() - startTime);

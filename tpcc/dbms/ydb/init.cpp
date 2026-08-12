@@ -244,16 +244,55 @@ void InitSync(const TYdbConnectionConfig& connectionConfig, int warehouseCount) 
     LOG_I("All YDB TPC-C tables created successfully");
 }
 
+namespace {
+
+bool IndexExists(TYdbConnection& connection, const std::string& table, const std::string& indexName) {
+    const std::string path = connection.TablePath(table);
+    bool found = false;
+    auto status = connection.TableClient().RetryOperationSync(
+        [&](NYdb::NTable::TSession session) {
+            auto result = session.DescribeTable(path).GetValueSync();
+            if (!result.IsSuccess()) {
+                return result;
+            }
+            for (const auto& index : result.GetTableDescription().GetIndexDescriptions()) {
+                if (index.GetIndexName() == indexName) {
+                    found = true;
+                    break;
+                }
+            }
+            return result;
+        });
+    ThrowIfFailed(status, "describe table " + table + " for index " + indexName);
+    return found;
+}
+
+void EnsureIndex(
+    TYdbConnection& connection,
+    const std::string& table,
+    const std::string& indexName,
+    const std::string& indexColumns)
+{
+    if (IndexExists(connection, table, indexName)) {
+        LOG_I("Index '" << indexName << "' already exists on `" << table << "`, skipping");
+        return;
+    }
+    Exec(connection.QueryClient(), fmt::format(R"(
+        ALTER TABLE `{}` ADD INDEX `{}` GLOBAL ON ({});
+    )", connection.RelativeTablePath(table), indexName, indexColumns),
+        "create " + indexName);
+    LOG_I("Created index '" << indexName << "' on `" << table << "`");
+}
+
+} // anonymous
+
 void CreateIndexes(const TYdbConnectionConfig& connectionConfig) {
     LOG_I("Creating YDB secondary indexes...");
     TYdbConnection connection(connectionConfig);
-    auto& client = connection.QueryClient();
-    Exec(client, fmt::format(R"(
-        ALTER TABLE `{}` ADD INDEX `idx_customer_name` GLOBAL ON (c_w_id, c_d_id, c_last, c_first);
-    )", connection.RelativeTablePath(TABLE_CUSTOMER)), "create idx_customer_name");
-    Exec(client, fmt::format(R"(
-        ALTER TABLE `{}` ADD INDEX `idx_order` GLOBAL ON (o_w_id, o_d_id, o_c_id, o_id);
-    )", connection.RelativeTablePath(TABLE_OORDER)), "create idx_order");
+    EnsureIndex(
+        connection, TABLE_CUSTOMER, INDEX_CUSTOMER_NAME, "c_w_id, c_d_id, c_last, c_first");
+    EnsureIndex(connection, TABLE_OORDER, INDEX_ORDER, "o_w_id, o_d_id, o_c_id, o_id");
+    LOG_I("YDB secondary indexes ready");
 }
 
 } // namespace NTpcc

@@ -114,6 +114,18 @@ int RunSchemaFromRunConfig(const std::string& runConfigPath, const std::string& 
     });
 }
 
+int RunIndexesFromRunConfig(const std::string& runConfigPath, const std::string& instance) {
+    const auto doc = LoadRunConfigDocument(runConfigPath);
+    return RunOrchestratedIndexes(doc, instance, [instance](const TRunConfigDocument& d) {
+        const std::string connection = BuildPgConnectionString(d);
+        CheckDbForImport(connection, d.Path);
+        TPgAdminAdapter admin(connection, d.Path);
+        admin.EnsureIndexes();
+        admin.EnsureStatistics();
+        LOG_I("Indexes and statistics ready (instance=" << instance << ")");
+    });
+}
+
 int RunCleanFromRunConfig(const std::string& runConfigPath, const std::string& instance) {
     const auto doc = LoadRunConfigDocument(runConfigPath);
     return RunOrchestratedClean(doc, instance, [instance](const TRunConfigDocument& d) {

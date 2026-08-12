@@ -407,8 +407,11 @@ affected rows и возвращает retryable abort при конфликте
 
 ### 5.11. Legacy import не создавал customer-name index
 
-**Устранено в `7b759a2`:** общий `ImportSync` вызывает `CreateIndexes` перед
-`ANALYZE` ([import.cpp](../tpcc/dbms/pgsql/import.cpp)).
+**Устранено в `7b759a2` (позже вынесено в роль `indexes`):** после load
+`EnsureIndexes` / `CreateIndexes` создаёт индекс, затем
+`EnsureStatistics` / `ANALYZE`
+([init.cpp](../tpcc/dbms/pgsql/init.cpp),
+[pg_admin_adapter.cpp](../tpcc/dbms/pgsql/pg_admin_adapter.cpp)).
 
 ### 5.12. Consistency checks использовали epsilon и carrier 0 как NULL
 
