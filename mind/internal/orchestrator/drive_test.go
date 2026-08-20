@@ -22,6 +22,7 @@ import (
 
 type fakeSession struct {
 	files      map[string][]byte
+	startFiles map[string][]byte
 	uploads    []string
 	writes     map[string][]byte
 	writeModes map[string]os.FileMode
@@ -91,6 +92,11 @@ func (f *fakeSession) Exists(remotePath string) (bool, error) {
 func (f *fakeSession) Remove(remotePath string) error {
 	f.removed = append(f.removed, remotePath)
 	delete(f.files, remotePath)
+	for suffix := range f.files {
+		if suffix != remotePath && strings.HasSuffix(remotePath, suffix) {
+			delete(f.files, suffix)
+		}
+	}
 	return nil
 }
 func (f *fakeSession) RemoveAll(remotePath string) error {
@@ -100,6 +106,15 @@ func (f *fakeSession) RemoveAll(remotePath string) error {
 func (f *fakeSession) StartDetached(workDir, binary string, argv []string, env map[string]string, stdoutPath, stderrPath string) (int, error) {
 	f.startArgv = append([]string{}, argv...)
 	f.startEnv = env
+	if len(f.startFiles) > 0 {
+		if f.files == nil {
+			f.files = map[string][]byte{}
+		}
+		for k, v := range f.startFiles {
+			cp := append([]byte(nil), v...)
+			f.files[k] = cp
+		}
+	}
 	return 123, nil
 }
 func (f *fakeSession) Signal(pid int, sig string) error {
@@ -140,10 +155,15 @@ func TestLaunchRoleStoresProcessInstanceNonce(t *testing.T) {
 		"instance_nonce": "nonce-1",
 	}
 	data, _ := json.Marshal(process)
-	sess := &fakeSession{files: map[string][]byte{
-		"process.json": data,
-		"tpcc-pgsql":   []byte("binary"),
-	}, alive: true}
+	sess := &fakeSession{
+		files: map[string][]byte{
+			"tpcc-pgsql": []byte("binary"),
+		},
+		startFiles: map[string][]byte{
+			"process.json": data,
+		},
+		alive: true,
+	}
 
 	proc, err := o.launchRole(ctx, map[string]remote.Session{"host-a": sess}, "worker", "host-a", "worker-a", nil)
 	if err != nil {
@@ -180,10 +200,15 @@ func TestLaunchRoleFailsWithoutProcessInstanceNonce(t *testing.T) {
 		"pid": 456,
 	}
 	data, _ := json.Marshal(process)
-	sess := &fakeSession{files: map[string][]byte{
-		"process.json": data,
-		"tpcc-pgsql":   []byte("binary"),
-	}, alive: true}
+	sess := &fakeSession{
+		files: map[string][]byte{
+			"tpcc-pgsql": []byte("binary"),
+		},
+		startFiles: map[string][]byte{
+			"process.json": data,
+		},
+		alive: true,
+	}
 
 	proc, err := o.launchRole(ctx, map[string]remote.Session{"host-a": sess}, "worker", "host-a", "worker-a", nil)
 	if err == nil || !strings.Contains(err.Error(), "missing instance_nonce") {
@@ -923,10 +948,15 @@ func TestLaunchRoleUploadsRunConfigAndCredentials(t *testing.T) {
 		"instance_nonce": "nonce-1",
 	}
 	data, _ := json.Marshal(process)
-	sess := &fakeSession{files: map[string][]byte{
-		"process.json": data,
-		"tpcc-ydb":     []byte("binary"),
-	}, alive: true}
+	sess := &fakeSession{
+		files: map[string][]byte{
+			"tpcc-ydb": []byte("binary"),
+		},
+		startFiles: map[string][]byte{
+			"process.json": data,
+		},
+		alive: true,
+	}
 
 	if _, err := o.launchRole(ctx, map[string]remote.Session{"host-a": sess}, "loader", "host-a", "loader-a", []string{"loader"}); err != nil {
 		t.Fatal(err)
@@ -969,10 +999,15 @@ func TestLaunchRoleDoesNotPassPasswordEnv(t *testing.T) {
 		"instance_nonce": "nonce-1",
 	}
 	data, _ := json.Marshal(process)
-	sess := &fakeSession{files: map[string][]byte{
-		"process.json": data,
-		"tpcc-pgsql":   []byte("binary"),
-	}, alive: true}
+	sess := &fakeSession{
+		files: map[string][]byte{
+			"tpcc-pgsql": []byte("binary"),
+		},
+		startFiles: map[string][]byte{
+			"process.json": data,
+		},
+		alive: true,
+	}
 
 	if _, err := o.launchRole(ctx, map[string]remote.Session{"host-a": sess}, "loader", "host-a", "loader-a", []string{"loader"}); err != nil {
 		t.Fatal(err)
@@ -1000,5 +1035,180 @@ func TestLaunchRoleDoesNotPassPasswordEnv(t *testing.T) {
 	}
 	if !cfgUploaded {
 		t.Fatalf("run-config not uploaded at launch: %v", sess.uploads)
+	}
+}
+
+func TestLaunchRoleClearsStaleInstanceMetadata(t *testing.T) {
+	store := &state.Store{StateDir: t.TempDir()}
+	o := &Orchestrator{
+		Profile:    &profile.Profile{},
+		Expanded:   config.ExpandedPaths{RemoteRoot: t.TempDir()},
+		StateStore: store,
+	}
+	ctx := &Context{
+		RunID:  "run-1",
+		RunDir: writeLaunchRunDir(t),
+		RunConfig: &config.RunConfig{
+			Binary: "tpcc-pgsql",
+		},
+	}
+	oldProcess, _ := json.Marshal(map[string]interface{}{
+		"pid":            111,
+		"instance_nonce": "old-nonce",
+	})
+	newProcess, _ := json.Marshal(map[string]interface{}{
+		"pid":            456,
+		"instance_nonce": "new-nonce",
+	})
+	oldManifest, _ := json.Marshal(collect.ArtifactManifest{
+		SchemaVersion: 1,
+		Instance:      "check-0",
+		InstanceNonce: "old-nonce",
+		Finalized:     true,
+		ExitStatus:    1,
+	})
+	sess := &fakeSession{
+		files: map[string][]byte{
+			"tpcc-pgsql":             []byte("binary"),
+			"process.json":           oldProcess,
+			"artifact-manifest.json": oldManifest,
+		},
+		startFiles: map[string][]byte{
+			"process.json": newProcess,
+		},
+		alive: true,
+	}
+
+	proc, err := o.launchRole(ctx, map[string]remote.Session{"host-a": sess}, "check", "host-a", "check-0", config.CheckArgv("run-config.json", "check-0", "after-import"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if proc.InstanceNonce != "new-nonce" {
+		t.Fatalf("nonce=%q, want new-nonce (stale process.json must not be reused)", proc.InstanceNonce)
+	}
+	removed := strings.Join(sess.removed, "\n")
+	if !strings.Contains(removed, "process.json") || !strings.Contains(removed, "artifact-manifest.json") {
+		t.Fatalf("stale metadata not removed: %v", sess.removed)
+	}
+	if _, ok := sess.files["artifact-manifest.json"]; ok {
+		t.Fatal("stale artifact-manifest.json still present after launch")
+	}
+}
+
+func TestWaitProcessesIncludesCheckReportDiagnostics(t *testing.T) {
+	store := &state.Store{StateDir: t.TempDir()}
+	o := &Orchestrator{StateStore: store}
+	ctx := &Context{RunID: "run-1"}
+	manifest := collect.ArtifactManifest{
+		SchemaVersion: 1,
+		Instance:      "check-0",
+		InstanceNonce: "nonce-1",
+		Finalized:     true,
+		ExitStatus:    1,
+	}
+	data, _ := json.Marshal(manifest)
+	report := []byte(`{
+		"schema_version": 1,
+		"phase": "after-import",
+		"passed": 7,
+		"failed": 2,
+		"skipped": 20,
+		"errors": 0,
+		"ok": false,
+		"checks": [
+			{"id": "stock_count", "title": "Stock cardinality", "status": "failed", "detail": "Query failed: [4012] Timeout"},
+			{"id": "order_line_count", "title": "Order-line cardinality (post-import)", "status": "failed", "detail": "Query failed: [4012] Timeout"},
+			{"id": "w_ytd", "title": "W_YTD equals sum(D_YTD)", "status": "skipped", "detail": "skipped: base cardinality failed"}
+		]
+	}`)
+	sess := &fakeSession{files: map[string][]byte{
+		"/done":                    data,
+		"checks/after-import.json": report,
+		"stderr.log":               []byte("INFO: Check report written to ./checks/after-import.json\n"),
+		"stdout.log":               []byte("Checking W_YTD equals sum(D_YTD) [Skipped]: skipped: base cardinality failed\n"),
+	}, alive: false}
+	proc := &launchedProc{
+		Role:          "check",
+		Host:          "host-a",
+		Instance:      "check-0",
+		Session:       sess,
+		PID:           123,
+		WorkDir:       "/run",
+		ProcPath:      "/run/check/check-0/process.json",
+		DonePath:      "/done",
+		Argv:          config.CheckArgv("run-config.json", "check-0", "after-import"),
+		InstanceNonce: "nonce-1",
+	}
+
+	err := o.waitProcesses(ctx, []*launchedProc{proc}, time.Second, true)
+	if err == nil {
+		t.Fatal("expected check failure")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "check/check-0 exited with status 1") {
+		t.Fatalf("missing exit status: %v", err)
+	}
+	if !strings.Contains(msg, "check after-import: 7 passed, 2 failed, 20 skipped, 0 errors") {
+		t.Fatalf("missing check summary: %v", err)
+	}
+	if !strings.Contains(msg, "[failed] Stock cardinality: Query failed: [4012] Timeout") {
+		t.Fatalf("missing stock failure: %v", err)
+	}
+	if !strings.Contains(msg, "[failed] Order-line cardinality (post-import)") {
+		t.Fatalf("missing order-line failure: %v", err)
+	}
+	if strings.Contains(msg, "W_YTD equals sum(D_YTD)") {
+		t.Fatalf("skipped checks should not dominate diagnostics: %v", err)
+	}
+	if !strings.Contains(msg, "Check report written") {
+		t.Fatalf("missing stderr tail: %v", err)
+	}
+}
+
+func TestWaitProcessesFallsBackToFailedStdoutLines(t *testing.T) {
+	store := &state.Store{StateDir: t.TempDir()}
+	o := &Orchestrator{StateStore: store}
+	ctx := &Context{RunID: "run-1"}
+	manifest := collect.ArtifactManifest{
+		SchemaVersion: 1,
+		Instance:      "check-0",
+		InstanceNonce: "nonce-1",
+		Finalized:     true,
+		ExitStatus:    1,
+	}
+	data, _ := json.Marshal(manifest)
+	sess := &fakeSession{files: map[string][]byte{
+		"/done": data,
+		"stdout.log": []byte("Checking Warehouse cardinality [OK]\n" +
+			"Checking Stock cardinality [Failed]: Query failed: [4012] Timeout\n" +
+			"Checking History cardinality (post-import) [OK]\n"),
+	}, alive: false}
+	proc := &launchedProc{
+		Role:          "check",
+		Host:          "host-a",
+		Instance:      "check-0",
+		Session:       sess,
+		PID:           123,
+		WorkDir:       "/run",
+		ProcPath:      "/run/check/check-0/process.json",
+		DonePath:      "/done",
+		Argv:          config.CheckArgv("run-config.json", "check-0", "after-import"),
+		InstanceNonce: "nonce-1",
+	}
+
+	err := o.waitProcesses(ctx, []*launchedProc{proc}, time.Second, true)
+	if err == nil || !strings.Contains(err.Error(), "Checking Stock cardinality [Failed]: Query failed: [4012] Timeout") {
+		t.Fatalf("expected failed stdout line in error, got %v", err)
+	}
+}
+
+func TestFormatCheckReport(t *testing.T) {
+	got := formatCheckReport([]byte(`{"ok":true,"passed":3,"failed":0,"skipped":0,"errors":0,"phase":"after-run"}`))
+	if got != "" {
+		t.Fatalf("ok report should be empty, got %q", got)
+	}
+	got = formatCheckReport([]byte(`not json`))
+	if got != "" {
+		t.Fatalf("invalid JSON should be empty, got %q", got)
 	}
 }

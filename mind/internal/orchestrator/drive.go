@@ -376,6 +376,7 @@ type launchedProc struct {
 	WorkDir   string
 	ProcPath  string // remote process.json path
 	DonePath  string // remote artifact-manifest.json path
+	Argv      []string
 
 	InstanceNonce string
 	// Finished is set when waitProcesses accepted a finalized artifact manifest.
@@ -441,6 +442,28 @@ func (o *Orchestrator) trackLaunch(proc *launchedProc) {
 	o.launched = append(o.launched, proc)
 }
 
+func (o *Orchestrator) clearStaleInstanceMetadata(sess remote.Session, instanceDir string) {
+	if sess == nil || instanceDir == "" {
+		return
+	}
+	var cleared []string
+	for _, name := range []string{"process.json", "ready.json", "result.json", "artifact-manifest.json"} {
+		path := filepath.Join(instanceDir, name)
+		exists, err := sess.Exists(path)
+		if err != nil || !exists {
+			continue
+		}
+		if err := sess.Remove(path); err != nil {
+			progress.Printf("warning: could not remove stale %s: %v", path, err)
+			continue
+		}
+		cleared = append(cleared, name)
+	}
+	if len(cleared) > 0 {
+		progress.Printf("cleared stale instance metadata: %s", strings.Join(cleared, ", "))
+	}
+}
+
 func (o *Orchestrator) launchRole(
 	ctx *Context,
 	sessions map[string]remote.Session,
@@ -478,6 +501,9 @@ func (o *Orchestrator) launchRole(
 	if err := o.ensureRemoteRunFiles(ctx, sess, runDir); err != nil {
 		return nil, fmt.Errorf("host %s: %w", hostKey, err)
 	}
+	// Drop leftover process.json / artifact-manifest.json from a previous
+	// attempt so waitProcesses cannot treat the old nonce as this launch.
+	o.clearStaleInstanceMetadata(sess, instanceDir)
 	progress.Printf("launch %s/%s on %s", role, instance, hostKey)
 	pid, err := sess.StartDetached(runDir, remoteBin, argv, nil, stdout, stderr)
 	if err != nil {
@@ -494,6 +520,7 @@ func (o *Orchestrator) launchRole(
 		WorkDir:   runDir,
 		ProcPath:  filepath.Join(instanceDir, "process.json"),
 		DonePath:  filepath.Join(instanceDir, "artifact-manifest.json"),
+		Argv:      append([]string(nil), argv...),
 	}
 	o.trackLaunch(proc)
 	_ = o.StateStore.UpsertProcess(ctx.RunID, state.Process{
@@ -557,12 +584,20 @@ func (o *Orchestrator) processMetadataTimeoutErr(proc *launchedProc) error {
 	return o.withProcessLogs(proc, b.String())
 }
 
-// withProcessLogs appends stderr/stdout tails from the instance directory.
+// withProcessLogs appends check-report failures and stderr/stdout tails.
 func (o *Orchestrator) withProcessLogs(proc *launchedProc, msg string) error {
 	var b strings.Builder
 	b.WriteString(msg)
+	diag := checkFailureDiagnostics(proc)
+	if diag != "" {
+		fmt.Fprintf(&b, "\n%s", diag)
+	}
 	instanceDir := processInstanceDir(proc)
 	for _, name := range []string{"stderr.log", "stdout.log"} {
+		if name == "stdout.log" && diag != "" {
+			// Structured check failures already cover stdout; the tail is mostly [Skipped].
+			continue
+		}
 		path := filepath.Join(instanceDir, name)
 		data, err := proc.Session.ReadFile(path)
 		if err != nil || len(bytes.TrimSpace(data)) == 0 {
@@ -575,6 +610,102 @@ func (o *Orchestrator) withProcessLogs(proc *launchedProc, msg string) error {
 		fmt.Fprintf(&b, "\n---- %s ----\n%s", name, strings.TrimSpace(string(data)))
 	}
 	return fmt.Errorf("%s", b.String())
+}
+
+func checkPhaseFromArgv(argv []string) string {
+	for _, a := range argv {
+		switch a {
+		case "--after-import":
+			return "after-import"
+		case "--after-run":
+			return "after-run"
+		}
+	}
+	return ""
+}
+
+type checkReportJSON struct {
+	Phase   string `json:"phase"`
+	OK      bool   `json:"ok"`
+	Passed  int    `json:"passed"`
+	Failed  int    `json:"failed"`
+	Skipped int    `json:"skipped"`
+	Errors  int    `json:"errors"`
+	Checks  []struct {
+		ID     string `json:"id"`
+		Title  string `json:"title"`
+		Status string `json:"status"`
+		Detail string `json:"detail"`
+	} `json:"checks"`
+}
+
+func formatCheckReport(data []byte) string {
+	var report checkReportJSON
+	if err := json.Unmarshal(data, &report); err != nil {
+		return ""
+	}
+	if report.OK && report.Failed == 0 && report.Errors == 0 {
+		return ""
+	}
+	phase := report.Phase
+	if phase == "" {
+		phase = "check"
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "check %s: %d passed, %d failed, %d skipped, %d errors",
+		phase, report.Passed, report.Failed, report.Skipped, report.Errors)
+	for _, c := range report.Checks {
+		if c.Status != "failed" && c.Status != "error" {
+			continue
+		}
+		title := c.Title
+		if title == "" {
+			title = c.ID
+		}
+		fmt.Fprintf(&b, "\n  [%s] %s", c.Status, title)
+		if c.Detail != "" {
+			fmt.Fprintf(&b, ": %s", c.Detail)
+		}
+	}
+	return b.String()
+}
+
+func failedCheckLogLines(data []byte) string {
+	var lines []string
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimRight(line, "\r")
+		if line == "" {
+			continue
+		}
+		if strings.Contains(line, "[Failed]") || strings.Contains(line, "[Error]") {
+			lines = append(lines, line)
+		}
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	return "failed checks:\n  " + strings.Join(lines, "\n  ")
+}
+
+func checkFailureDiagnostics(proc *launchedProc) string {
+	if proc == nil || proc.Role != "check" || proc.Session == nil {
+		return ""
+	}
+	if phase := checkPhaseFromArgv(proc.Argv); phase != "" && proc.WorkDir != "" {
+		path := filepath.Join(proc.WorkDir, "checks", phase+".json")
+		data, err := proc.Session.ReadFile(path)
+		if err == nil {
+			if diag := formatCheckReport(data); diag != "" {
+				return diag
+			}
+		}
+	}
+	instanceDir := processInstanceDir(proc)
+	data, err := proc.Session.ReadFile(filepath.Join(instanceDir, "stdout.log"))
+	if err != nil {
+		return ""
+	}
+	return failedCheckLogLines(data)
 }
 
 func (o *Orchestrator) loadProcessMetadata(ctx *Context, proc *launchedProc) (bool, error) {
