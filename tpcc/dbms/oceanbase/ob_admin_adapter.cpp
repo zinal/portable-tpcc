@@ -24,7 +24,7 @@ void TObAdminAdapter::EnsureIndexes() {
 }
 
 void TObAdminAdapter::EnsureStatistics() {
-    AnalyzeTables(ConnectionString_, Path_);
+    AnalyzeTables(ConnectionString_, Path_, SchemaOptions_);
 }
 
 void TObAdminAdapter::Clean() {

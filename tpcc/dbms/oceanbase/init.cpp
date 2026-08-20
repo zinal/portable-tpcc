@@ -263,6 +263,24 @@ bool IndexExists(TObConnection& conn, const std::string& database, const std::st
     return result.TryNextRow();
 }
 
+std::string QuoteSqlString(const std::string& value) {
+    if (value.empty()) {
+        throw std::invalid_argument("empty SQL string literal");
+    }
+    std::string quoted;
+    quoted.reserve(value.size() + 2);
+    quoted.push_back('\'');
+    for (unsigned char ch : value) {
+        if (ch == '\'' || ch == '\\' || ch == '\0') {
+            throw std::invalid_argument(
+                "invalid SQL string literal '" + value + "'");
+        }
+        quoted.push_back(static_cast<char>(ch));
+    }
+    quoted.push_back('\'');
+    return quoted;
+}
+
 } // namespace
 
 void InitSync(
@@ -367,15 +385,34 @@ void CreateIndexes(
     }
 }
 
-void AnalyzeTables(const std::string& connectionString, const std::string& path) {
-    LOG_I("Running ANALYZE TABLE on TPC-C tables...");
-    auto conn = ConnectToTargetDatabase(ConfigWithPath(connectionString, path));
+void AnalyzeTables(
+    const std::string& connectionString,
+    const std::string& path,
+    const TObSchemaOptions& options)
+{
+    auto cfg = ConfigWithPath(connectionString, path);
+    const std::string db = EffectiveDatabase(cfg);
+    auto conn = ConnectToTargetDatabase(cfg);
     // Fresh session: raise ob_query_timeout via connection property query_timeout.
-    // ANALYZE on large customer/stock/order_line otherwise hits [4012] Timeout.
+    // Gather on large customer/stock/order_line otherwise hits [4012] Timeout.
     conn->ConfigureBulkLoadSession();
+
+    if (!IsOceanBaseServer(*conn)) {
+        LOG_I("Running ANALYZE TABLE on TPC-C tables...");
+        for (const auto* table : TPCC_TABLES) {
+            LOG_I("Analyzing table `" << table << "`...");
+            conn->QuerySimple(fmt::format("ANALYZE TABLE {}", QuoteIdent(table)));
+        }
+        return;
+    }
+
+    const int degree = ResolveObAnalyzeDegree(options);
+    LOG_I("Gathering optimizer statistics via DBMS_STATS (degree=" << degree << ")...");
     for (const auto* table : TPCC_TABLES) {
-        LOG_I("Analyzing table `" << table << "`...");
-        conn->QuerySimple(fmt::format("ANALYZE TABLE {}", QuoteIdent(table)));
+        LOG_I("Gathering stats for `" << table << "`...");
+        conn->ExecuteSimple(fmt::format(
+            "CALL DBMS_STATS.GATHER_TABLE_STATS({}, {}, degree=>{})",
+            QuoteSqlString(db), QuoteSqlString(table), degree));
     }
 }
 

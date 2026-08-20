@@ -38,6 +38,11 @@ int ResolveObIndexParallel(const TObSchemaOptions& options) {
     return options.IndexParallel;
 }
 
+int ResolveObAnalyzeDegree(const TObSchemaOptions& options) {
+    const int partitions = ResolveObPartitionCount(options);
+    return partitions < 1 ? 1 : partitions;
+}
+
 std::string ObPartitioningStyle(const TObSchemaOptions& options) {
     return options.PartitionCount == -1 ? OB_PARTITIONING_NONE : OB_PARTITIONING_TABLEGROUP_HASH;
 }

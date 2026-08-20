@@ -17,6 +17,9 @@ void CreateIndexes(
     bool useLocalIndexes = false,
     int indexParallel = OB_DEFAULT_INDEX_PARALLEL);
 
-void AnalyzeTables(const std::string& connectionString, const std::string& path = {});
+void AnalyzeTables(
+    const std::string& connectionString,
+    const std::string& path = {},
+    const TObSchemaOptions& options = {});
 
 } // namespace NTpcc
