@@ -242,6 +242,7 @@ void TObConnection::CreateDatabaseIfNotExists(const std::string& database) {
 void TObConnection::ConfigureBulkLoadSession() {
     // OceanBase measures ob_query_timeout in microseconds. Connection property
     // query_timeout is in seconds (default OB_DEFAULT_QUERY_TIMEOUT_SECONDS).
+    // Applied for bulk import, CREATE INDEX, DBMS_STATS, and integrity checks.
     const int seconds = Impl_->Config.QueryTimeoutSeconds > 0
         ? Impl_->Config.QueryTimeoutSeconds
         : OB_DEFAULT_QUERY_TIMEOUT_SECONDS;

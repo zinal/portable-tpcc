@@ -36,8 +36,9 @@ database:
     partitions: 0
     # Omit FOREIGN KEY constraints at schema time when off (default on).
     foreign_keys: off
-    # Session ob_query_timeout for bulk import / CREATE INDEX / DBMS_STATS (seconds).
-    # Default 600. Also accepted as connection property query_timeout=….
+    # Session ob_query_timeout for bulk import / CREATE INDEX / DBMS_STATS /
+    # integrity checks (seconds). Default 600. Also accepted as connection
+    # property query_timeout=….
     # query_timeout: 600
     # CREATE INDEX degree of parallelism (PARALLEL n on a single index). Default 4.
     # Use 1 for serial index build.

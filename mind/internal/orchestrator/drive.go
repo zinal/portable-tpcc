@@ -691,6 +691,10 @@ func checkFailureDiagnostics(proc *launchedProc) string {
 	if proc == nil || proc.Role != "check" || proc.Session == nil {
 		return ""
 	}
+	// A leftover checks/*.json from a previous attempt is not this launch.
+	if proc.InstanceNonce == "" {
+		return ""
+	}
 	if phase := checkPhaseFromArgv(proc.Argv); phase != "" && proc.WorkDir != "" {
 		path := filepath.Join(proc.WorkDir, "checks", phase+".json")
 		data, err := proc.Session.ReadFile(path)

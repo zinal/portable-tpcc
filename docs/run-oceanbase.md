@@ -66,7 +66,7 @@ Client user: profile `database.user`, else `TPCC_OB_USER`, else `root@root`.
 | `--partitions` | `database.options.partitions` | HASH partition count. See below. |
 | `--foreign-keys` | `database.options.foreign_keys` | `on` (default) or `off`. |
 | `--index-parallel` | `database.options.index_parallel` | `CREATE INDEX … PARALLEL n` (default **4**, `1` = serial). |
-| `query_timeout=` in `--connection` | `database.options.query_timeout` | Session `ob_query_timeout` for bulk import / `CREATE INDEX` / `DBMS_STATS`, in **seconds** (default **600**). OceanBase server default is 10s. |
+| `query_timeout=` in `--connection` | `database.options.query_timeout` | Session `ob_query_timeout` for bulk import / `CREATE INDEX` / `DBMS_STATS` / integrity checks, in **seconds** (default **600**). OceanBase server default is 10s. |
 
 On a non-OceanBase MySQL server the partition options are ignored.
 
@@ -170,7 +170,7 @@ database:
   options:
     partitions: 0               # -1 off, 0 derive from scale.warehouses, N explicit (max 8192)
     foreign_keys: off           # omit FKs at schema time; default on
-    query_timeout: 600          # bulk import / CREATE INDEX / DBMS_STATS (seconds)
+    query_timeout: 600          # bulk import / CREATE INDEX / DBMS_STATS / check (seconds)
     index_parallel: 4           # CREATE INDEX DOP; default 4, 1 = serial
 
 scale:

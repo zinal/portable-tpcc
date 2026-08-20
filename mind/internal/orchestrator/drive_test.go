@@ -258,6 +258,45 @@ func TestWaitProcessMetadataTimesOutWhenMissing(t *testing.T) {
 	}
 }
 
+func TestWaitProcessMetadataTimeoutSkipsStaleCheckReport(t *testing.T) {
+	store := &state.Store{StateDir: t.TempDir()}
+	o := &Orchestrator{StateStore: store}
+	ctx := &Context{RunID: "run-1"}
+	proc := &launchedProc{
+		Role:     "check",
+		Host:     "host-a",
+		Instance: "check-0",
+		Session: &fakeSession{
+			files: map[string][]byte{
+				"checks/after-import.json": []byte(`{
+					"phase": "after-import",
+					"ok": false,
+					"passed": 7,
+					"failed": 2,
+					"skipped": 20,
+					"errors": 0,
+					"checks": [
+						{"title": "Stock cardinality", "status": "failed", "detail": "stale report"}
+					]
+				}`),
+			},
+			alive: true,
+		},
+		PID:      374563,
+		WorkDir:  "/run",
+		Argv:     config.CheckArgv("run-config.json", "check-0", "after-import"),
+		ProcPath: "/run/check/check-0/process.json",
+	}
+
+	err := o.waitProcessMetadata(ctx, proc, 0)
+	if err == nil || !strings.Contains(err.Error(), "timeout waiting") {
+		t.Fatalf("expected timeout error, got %v", err)
+	}
+	if strings.Contains(err.Error(), "Stock cardinality") || strings.Contains(err.Error(), "stale report") {
+		t.Fatalf("stale check report should not be attached before process metadata: %v", err)
+	}
+}
+
 func TestWaitProcessesReturnsOnInterrupt(t *testing.T) {
 	store := &state.Store{StateDir: t.TempDir()}
 	interrupt, cancel := context.WithCancel(context.Background())
