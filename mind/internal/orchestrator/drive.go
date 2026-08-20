@@ -357,16 +357,78 @@ func (o *Orchestrator) credentialFilesForRun() ([]credentialFile, error) {
 }
 
 type launchedProc struct {
-	Role     string
-	Host     string
-	Instance string
-	Session  remote.Session
-	PID      int
-	WorkDir  string
-	ProcPath string // remote process.json path
-	DonePath string // remote artifact-manifest.json path
+	Role      string
+	Host      string
+	Instance  string
+	Session   remote.Session
+	PID       int
+	LaunchPID int // PID from StartDetached (wrapper shell); never overwritten
+	WorkDir   string
+	ProcPath  string // remote process.json path
+	DonePath  string // remote artifact-manifest.json path
 
 	InstanceNonce string
+	// Finished is set when waitProcesses accepted a finalized artifact manifest.
+	Finished bool
+	// warnedAlive is set after logging that the process was still alive after Finished.
+	warnedAlive bool
+}
+
+func uniquePIDs(pids ...int) []int {
+	seen := map[int]struct{}{}
+	var out []int
+	for _, pid := range pids {
+		if pid <= 0 {
+			continue
+		}
+		if _, ok := seen[pid]; ok {
+			continue
+		}
+		seen[pid] = struct{}{}
+		out = append(out, pid)
+	}
+	return out
+}
+
+func (p *launchedProc) pids() []int {
+	if p == nil {
+		return nil
+	}
+	return uniquePIDs(p.LaunchPID, p.PID)
+}
+
+func (p *launchedProc) anyAlive() (bool, int, error) {
+	if p == nil || p.Session == nil {
+		return false, 0, nil
+	}
+	var lastErr error
+	for _, pid := range p.pids() {
+		alive, err := p.Session.IsAlive(pid)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if alive {
+			return true, pid, nil
+		}
+	}
+	return false, 0, lastErr
+}
+
+func signalPIDs(sess remote.Session, pids []int, sig string) {
+	if sess == nil {
+		return
+	}
+	for _, pid := range pids {
+		_ = sess.Signal(pid, sig)
+	}
+}
+
+func (o *Orchestrator) trackLaunch(proc *launchedProc) {
+	if o == nil || proc == nil {
+		return
+	}
+	o.launched = append(o.launched, proc)
 }
 
 func (o *Orchestrator) launchRole(
@@ -413,29 +475,33 @@ func (o *Orchestrator) launchRole(
 	}
 	progress.Printf("launch %s/%s: pid %d", role, instance, pid)
 	proc := &launchedProc{
-		Role:     role,
-		Host:     hostKey,
-		Instance: instance,
-		Session:  sess,
-		PID:      pid,
-		WorkDir:  runDir,
-		ProcPath: filepath.Join(instanceDir, "process.json"),
-		DonePath: filepath.Join(instanceDir, "artifact-manifest.json"),
+		Role:      role,
+		Host:      hostKey,
+		Instance:  instance,
+		Session:   sess,
+		PID:       pid,
+		LaunchPID: pid,
+		WorkDir:   runDir,
+		ProcPath:  filepath.Join(instanceDir, "process.json"),
+		DonePath:  filepath.Join(instanceDir, "artifact-manifest.json"),
 	}
+	o.trackLaunch(proc)
 	_ = o.StateStore.UpsertProcess(ctx.RunID, state.Process{
-		Role:     role,
-		Host:     hostKey,
-		Instance: instance,
-		PID:      pid,
-		State:    "running",
+		Role:      role,
+		Host:      hostKey,
+		Instance:  instance,
+		PID:       pid,
+		LaunchPID: pid,
+		State:     "running",
 	})
 	if err := o.waitProcessMetadata(ctx, proc, 2*time.Second); err != nil {
-		_ = sess.Signal(proc.PID, "TERM")
+		signalPIDs(sess, proc.pids(), "TERM")
 		_ = o.StateStore.UpsertProcess(ctx.RunID, state.Process{
 			Role:          role,
 			Host:          hostKey,
 			Instance:      instance,
 			PID:           proc.PID,
+			LaunchPID:     proc.LaunchPID,
 			InstanceNonce: proc.InstanceNonce,
 			State:         "failed",
 		})
@@ -525,6 +591,7 @@ func (o *Orchestrator) loadProcessMetadata(ctx *Context, proc *launchedProc) (bo
 		Host:          proc.Host,
 		Instance:      proc.Instance,
 		PID:           proc.PID,
+		LaunchPID:     proc.LaunchPID,
 		InstanceNonce: proc.InstanceNonce,
 		State:         "running",
 	})
@@ -641,10 +708,10 @@ func (o *Orchestrator) waitProcesses(ctx *Context, procs []*launchedProc, timeou
 					return err
 				}
 				if p.InstanceNonce != "" && manifest.InstanceNonce != p.InstanceNonce {
-					alive, err := p.Session.IsAlive(p.PID)
+					alive, _, err := p.anyAlive()
 					if err == nil && !alive {
 						_ = o.StateStore.UpsertProcess(ctx.RunID, state.Process{
-							Role: p.Role, Host: p.Host, Instance: p.Instance, PID: p.PID, InstanceNonce: p.InstanceNonce, State: "failed",
+							Role: p.Role, Host: p.Host, Instance: p.Instance, PID: p.PID, LaunchPID: p.LaunchPID, InstanceNonce: p.InstanceNonce, State: "failed",
 						})
 						_ = o.relayProcessLogs(p, cursors[key])
 						delete(remaining, key)
@@ -655,10 +722,10 @@ func (o *Orchestrator) waitProcesses(ctx *Context, procs []*launchedProc, timeou
 					continue
 				}
 				if !manifest.Finalized {
-					alive, err := p.Session.IsAlive(p.PID)
+					alive, _, err := p.anyAlive()
 					if err == nil && !alive {
 						_ = o.StateStore.UpsertProcess(ctx.RunID, state.Process{
-							Role: p.Role, Host: p.Host, Instance: p.Instance, PID: p.PID, InstanceNonce: p.InstanceNonce, State: "failed",
+							Role: p.Role, Host: p.Host, Instance: p.Instance, PID: p.PID, LaunchPID: p.LaunchPID, InstanceNonce: p.InstanceNonce, State: "failed",
 						})
 						_ = o.relayProcessLogs(p, cursors[key])
 						delete(remaining, key)
@@ -673,21 +740,26 @@ func (o *Orchestrator) waitProcesses(ctx *Context, procs []*launchedProc, timeou
 					st = "failed"
 				}
 				_ = o.StateStore.UpsertProcess(ctx.RunID, state.Process{
-					Role: p.Role, Host: p.Host, Instance: p.Instance, PID: p.PID, InstanceNonce: p.InstanceNonce, State: st,
+					Role: p.Role, Host: p.Host, Instance: p.Instance, PID: p.PID, LaunchPID: p.LaunchPID, InstanceNonce: p.InstanceNonce, State: st,
 				})
 				_ = o.relayProcessLogs(p, cursors[key])
 				progress.Printf("%s/%s finished (%s, exit=%d)", p.Role, p.Instance, st, manifest.ExitStatus)
+				p.Finished = true
+				if alive, pid, err := p.anyAlive(); err == nil && alive {
+					p.warnedAlive = true
+					progress.Printf("warning: %s/%s still running after finished (pid %d, exit=%d)", p.Role, p.Instance, pid, manifest.ExitStatus)
+				}
 				delete(remaining, key)
 				if abortOnFail && manifest.ExitStatus != 0 {
 					return o.withProcessLogs(p, fmt.Sprintf("%s/%s exited with status %d", p.Role, p.Instance, manifest.ExitStatus))
 				}
 				continue
 			}
-			alive, err := p.Session.IsAlive(p.PID)
+			alive, _, err := p.anyAlive()
 			if err == nil && !alive {
 				// Process died before writing manifest.
 				_ = o.StateStore.UpsertProcess(ctx.RunID, state.Process{
-					Role: p.Role, Host: p.Host, Instance: p.Instance, PID: p.PID, InstanceNonce: p.InstanceNonce, State: "failed",
+					Role: p.Role, Host: p.Host, Instance: p.Instance, PID: p.PID, LaunchPID: p.LaunchPID, InstanceNonce: p.InstanceNonce, State: "failed",
 				})
 				_ = o.relayProcessLogs(p, cursors[key])
 				delete(remaining, key)
@@ -737,11 +809,13 @@ func (o *Orchestrator) stopPeers(ctx *Context, sessions map[string]remote.Sessio
 			continue
 		}
 		progress.Printf("stop %s/%s pid %d (TERM)", proc.Role, proc.Instance, proc.PID)
-		if err := sess.Signal(proc.PID, "TERM"); err != nil && first == nil {
-			first = err
+		for _, pid := range uniquePIDs(proc.PID, proc.LaunchPID) {
+			if err := sess.Signal(pid, "TERM"); err != nil && first == nil {
+				first = err
+			}
 		}
 		_ = o.StateStore.UpsertProcess(ctx.RunID, state.Process{
-			Role: proc.Role, Host: proc.Host, Instance: proc.Instance, PID: proc.PID, State: "stopping",
+			Role: proc.Role, Host: proc.Host, Instance: proc.Instance, PID: proc.PID, LaunchPID: proc.LaunchPID, State: "stopping",
 		})
 		stopping++
 	}
@@ -755,19 +829,95 @@ func (o *Orchestrator) stopPeers(ctx *Context, sessions map[string]remote.Sessio
 	time.Sleep(grace)
 	rs, _ = o.StateStore.Load(ctx.RunID)
 	for _, proc := range rs.Processes {
-		if proc.PID <= 0 {
-			continue
-		}
 		sess, ok := sessions[proc.Host]
 		if !ok {
 			continue
 		}
-		alive, _ := sess.IsAlive(proc.PID)
-		if alive {
-			_ = sess.Signal(proc.PID, "KILL")
+		for _, pid := range uniquePIDs(proc.PID, proc.LaunchPID) {
+			alive, _ := sess.IsAlive(pid)
+			if alive {
+				_ = sess.Signal(pid, "KILL")
+			}
 		}
 	}
 	return first
+}
+
+func (o *Orchestrator) finishRemote(ctx *Context, sessions map[string]remote.Session) {
+	o.reapLaunched(ctx, sessions)
+	closeSessions(sessions)
+}
+
+func (o *Orchestrator) reapLaunched(ctx *Context, sessions map[string]remote.Session) {
+	if o == nil || len(sessions) == 0 {
+		return
+	}
+	var stopping []*launchedProc
+	for _, p := range o.launched {
+		if p == nil || p.Session == nil {
+			continue
+		}
+		if _, ok := sessions[p.Host]; !ok {
+			continue
+		}
+		alive, pid, err := p.anyAlive()
+		if err != nil || !alive {
+			continue
+		}
+		if p.Finished && !p.warnedAlive {
+			p.warnedAlive = true
+			progress.Printf("warning: %s/%s still running after finished (pid %d)", p.Role, p.Instance, pid)
+		}
+		if o.Opts.LeaveProcesses {
+			progress.Printf("leaving %s/%s pid %d running (--leave-processes)", p.Role, p.Instance, pid)
+			continue
+		}
+		stopping = append(stopping, p)
+	}
+	if len(stopping) == 0 {
+		return
+	}
+	for _, p := range stopping {
+		pid := p.PID
+		if pid <= 0 {
+			pid = p.LaunchPID
+		}
+		progress.Printf("stop %s/%s pid %d (TERM)", p.Role, p.Instance, pid)
+		signalPIDs(p.Session, p.pids(), "TERM")
+		if ctx != nil && o.StateStore != nil && ctx.RunID != "" {
+			_ = o.StateStore.UpsertProcess(ctx.RunID, state.Process{
+				Role: p.Role, Host: p.Host, Instance: p.Instance,
+				PID: p.PID, LaunchPID: p.LaunchPID, InstanceNonce: p.InstanceNonce,
+				State: "stopping",
+			})
+		}
+	}
+	grace := 15 * time.Second
+	if ctx != nil && ctx.RunConfig != nil && ctx.RunConfig.Phases.StopGraceMs > 0 {
+		grace = time.Duration(ctx.RunConfig.Phases.StopGraceMs) * time.Millisecond
+	}
+	deadline := time.Now().Add(grace)
+	for {
+		anyAlive := false
+		for _, p := range stopping {
+			if alive, _, err := p.anyAlive(); err == nil && alive {
+				anyAlive = true
+				break
+			}
+		}
+		if !anyAlive || time.Now().After(deadline) {
+			break
+		}
+		if err := o.sleep(100 * time.Millisecond); err != nil {
+			break
+		}
+	}
+	for _, p := range stopping {
+		if alive, pid, err := p.anyAlive(); err == nil && alive {
+			progress.Printf("stop %s/%s pid %d (KILL)", p.Role, p.Instance, pid)
+			signalPIDs(p.Session, p.pids(), "KILL")
+		}
+	}
 }
 
 func (o *Orchestrator) superviseWorkers(ctx *Context, workers []*launchedProc, token schedule.Token, sessions map[string]remote.Session) error {

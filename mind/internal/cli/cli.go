@@ -17,13 +17,14 @@ import (
 
 // Config holds global CLI flags.
 type Config struct {
-	ProfilePath  string
-	RunID        string
-	WorkerBinary string
-	SkipSteps    []string
-	Overrides    config.ProfileOverrides
-	Yes          bool
-	CheckPhase   string
+	ProfilePath    string
+	RunID          string
+	WorkerBinary   string
+	SkipSteps      []string
+	Overrides      config.ProfileOverrides
+	Yes            bool
+	CheckPhase     string
+	LeaveProcesses bool
 }
 
 // Run dispatches mind-tpcc subcommands (specification §9).
@@ -110,6 +111,8 @@ func run(args []string, interrupt context.Context) int {
 			i++
 		case "--yes":
 			cfg.Yes = true
+		case "--leave-processes":
+			cfg.LeaveProcesses = true
 		case "--after-import":
 			cfg.CheckPhase = "after-import"
 		case "--after-run":
@@ -123,12 +126,13 @@ func run(args []string, interrupt context.Context) int {
 	}
 
 	opts := orchestrator.Options{
-		ProfilePath:  cfg.ProfilePath,
-		RunID:        cfg.RunID,
-		WorkerBinary: cfg.WorkerBinary,
-		SkipSteps:    cfg.SkipSteps,
-		Overrides:    cfg.Overrides,
-		Interrupt:    interrupt,
+		ProfilePath:    cfg.ProfilePath,
+		RunID:          cfg.RunID,
+		WorkerBinary:   cfg.WorkerBinary,
+		SkipSteps:      cfg.SkipSteps,
+		Overrides:      cfg.Overrides,
+		Interrupt:      interrupt,
+		LeaveProcesses: cfg.LeaveProcesses,
 	}
 
 	switch cmd {
@@ -433,6 +437,8 @@ Options:
   --measurement <duration> Override phases.measurement, e.g. 2m, 120m
   --skip <step>            Skip pipeline step
   --yes                    Non-interactive confirmation
+  --leave-processes        Debug: do not kill remote processes this
+                           invocation launched when mind-tpcc exits
 `)
 	fmt.Println(usage)
 }

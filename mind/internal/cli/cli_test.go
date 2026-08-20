@@ -1,6 +1,11 @@
 package cli
 
-import "testing"
+import (
+	"io"
+	"os"
+	"strings"
+	"testing"
+)
 
 func TestRun_helpWithoutProfile(t *testing.T) {
 	for _, args := range [][]string{
@@ -50,8 +55,31 @@ func TestRun_overrideFlagsAcceptedOnValidate(t *testing.T) {
 		"--warehouses", "1",
 		"--ramp-up", "10s",
 		"--measurement", "1m",
+		"--leave-processes",
 	})
 	if code != 0 {
 		t.Fatalf("validate with overrides=%d, want 0", code)
+	}
+}
+
+func TestRun_helpMentionsLeaveProcesses(t *testing.T) {
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	code := Run([]string{"--help"})
+	_ = w.Close()
+	os.Stdout = old
+	if code != 0 {
+		t.Fatalf("help=%d, want 0", code)
+	}
+	out, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), "--leave-processes") {
+		t.Fatalf("help missing --leave-processes:\n%s", out)
 	}
 }

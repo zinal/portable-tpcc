@@ -37,6 +37,10 @@ type Options struct {
 	// Interrupt, when cancelled, aborts long waits so callers can release the
 	// profile lock via defer (SIGINT/SIGTERM). Nil means not interruptible.
 	Interrupt context.Context
+	// LeaveProcesses, when true, skips stopping remote processes this
+	// invocation launched. Debug-only: the default is to reap leftovers on
+	// stage exit so a finished-looking manifest cannot orphan a live process.
+	LeaveProcesses bool
 }
 
 // Orchestrator coordinates mind-tpcc stages.
@@ -45,6 +49,8 @@ type Orchestrator struct {
 	Profile    *profile.Profile
 	Expanded   config.ExpandedPaths
 	StateStore *state.Store
+	// launched is the remote processes started by this mind-tpcc invocation.
+	launched []*launchedProc
 }
 
 // Context holds materialized configuration for a run.
@@ -496,7 +502,7 @@ func (o *Orchestrator) schema(ctx *Context) error {
 	if err != nil {
 		return err
 	}
-	defer closeSessions(sessions)
+	defer o.finishRemote(ctx, sessions)
 
 	hostKey := ctx.RunConfig.LoadAssignment[0].Host
 	instance := "schema-0"
@@ -528,7 +534,7 @@ func (o *Orchestrator) load(ctx *Context) error {
 	if err != nil {
 		return err
 	}
-	defer closeSessions(sessions)
+	defer o.finishRemote(ctx, sessions)
 
 	var procs []*launchedProc
 	for _, l := range ctx.RunConfig.LoadAssignment {
@@ -566,7 +572,7 @@ func (o *Orchestrator) indexes(ctx *Context) error {
 	if err != nil {
 		return err
 	}
-	defer closeSessions(sessions)
+	defer o.finishRemote(ctx, sessions)
 
 	hostKey := ctx.RunConfig.LoadAssignment[0].Host
 	instance := "indexes-0"
@@ -613,7 +619,7 @@ func (o *Orchestrator) check(ctx *Context, phase string) error {
 		if err != nil {
 			return err
 		}
-		defer closeSessions(sessions)
+		defer o.finishRemote(ctx, sessions)
 
 		hostKey := ctx.RunConfig.LoadAssignment[0].Host
 		instance := "check-0"
@@ -668,7 +674,7 @@ func (o *Orchestrator) start(ctx *Context) error {
 	if err != nil {
 		return err
 	}
-	defer closeSessions(sessions)
+	defer o.finishRemote(ctx, sessions)
 
 	token := schedule.Compute(ctx.RunConfig, time.Now().UTC())
 	progress.Printf("stage start: start-at %s", token.StartAt)
@@ -980,7 +986,7 @@ func (o *Orchestrator) Cleanup(ctx *Context, yes bool) error {
 		if err != nil {
 			return err
 		}
-		defer closeSessions(sessions)
+		defer o.finishRemote(ctx, sessions)
 
 		if hasRunningProcesses(rs) {
 			progress.Printf("cleanup: stopping running processes")
