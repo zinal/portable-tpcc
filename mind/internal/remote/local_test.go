@@ -2,6 +2,7 @@ package remote_test
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -49,6 +50,84 @@ func TestLocalSession_uploadStartAlive(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	t.Fatal("script did not create marker")
+}
+
+func TestLocalSession_uploadReplacesBusyExecutable(t *testing.T) {
+	sleepPath, err := exec.LookPath("sleep")
+	if err != nil {
+		t.Skip("sleep not found on PATH")
+	}
+	root := t.TempDir()
+	sess, err := remote.NewLocal("local", "127.0.0.1", root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sess.Close()
+
+	src := filepath.Join(root, "sleep.bin")
+	data, err := os.ReadFile(sleepPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(src, data, 0755); err != nil {
+		t.Fatal(err)
+	}
+	remoteBin := "bin/tpcc-busy"
+	if err := sess.Upload(src, remoteBin); err != nil {
+		t.Fatal(err)
+	}
+	pid, err := sess.StartDetached(
+		"run",
+		filepath.Join(root, remoteBin),
+		[]string{"30"},
+		nil,
+		"run/stdout.log",
+		"run/stderr.log",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pid <= 0 {
+		t.Fatal("expected pid")
+	}
+	defer sess.Signal(pid, "KILL")
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		alive, err := sess.IsAlive(pid)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if alive {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("process did not start")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	replacement := filepath.Join(root, "replacement.bin")
+	if err := os.WriteFile(replacement, []byte("#!/bin/sh\necho replaced\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := sess.Upload(replacement, remoteBin); err != nil {
+		t.Fatalf("upload over busy executable: %v", err)
+	}
+	alive, err := sess.IsAlive(pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !alive {
+		t.Fatal("running process should survive inode unlink")
+	}
+	got, err := os.ReadFile(filepath.Join(root, remoteBin))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "#!/bin/sh\necho replaced\n" {
+		t.Fatalf("replaced content = %q", got)
+	}
 }
 
 func TestIsLoopback(t *testing.T) {

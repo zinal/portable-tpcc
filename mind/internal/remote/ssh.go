@@ -227,6 +227,14 @@ func chmodCmd(remotePath string, mode os.FileMode) string {
 	return fmt.Sprintf("chmod %04o %s", mode.Perm(), remotePathExpr(remotePath))
 }
 
+// writeFileCmd unlinks remotePath, then writes stdin to a new inode.
+// Linux rejects open-for-write of a running executable (ETXTBSY); over SSH
+// that often surfaces as EOF from a bare `cat > dest`.
+func writeFileCmd(remotePath string) string {
+	expr := remotePathExpr(remotePath)
+	return fmt.Sprintf("rm -f -- %s && cat > %s", expr, expr)
+}
+
 func (s *SSH) chmod(remotePath string, mode os.FileMode) error {
 	_, stderr, exit, err := s.run(chmodCmd(remotePath, mode))
 	if err != nil {
@@ -293,7 +301,7 @@ func (s *SSH) WriteFileMode(remotePath string, data []byte, mode os.FileMode) er
 	if err != nil {
 		return err
 	}
-	cmd := fmt.Sprintf("cat > %s", remotePathExpr(remotePath))
+	cmd := writeFileCmd(remotePath)
 	if err := session.Start(cmd); err != nil {
 		return err
 	}

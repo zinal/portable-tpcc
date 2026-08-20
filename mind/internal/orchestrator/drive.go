@@ -211,6 +211,16 @@ func (o *Orchestrator) deployToHosts(sessions map[string]remote.Session) error {
 			return fmt.Errorf("host %s mkdir: %w", hostKey, err)
 		}
 		remoteBin := remoteBinaryPath(root, binName)
+		exists, err := sess.Exists(remoteBin)
+		if err != nil {
+			return fmt.Errorf("host %s check binary: %w", hostKey, err)
+		}
+		if exists {
+			progress.Printf("deploy %s: remove existing %s", hostKey, remoteBin)
+			if err := sess.Remove(remoteBin); err != nil {
+				return fmt.Errorf("host %s remove existing binary: %w", hostKey, err)
+			}
+		}
 		progress.Printf("deploy %s: upload binary %s", hostKey, remoteBin)
 		if err := sess.Upload(binLocal, remoteBin); err != nil {
 			return fmt.Errorf("host %s upload binary: %w", hostKey, err)

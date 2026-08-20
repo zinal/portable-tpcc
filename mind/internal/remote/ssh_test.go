@@ -53,6 +53,18 @@ func TestStartDetachedShellCmdRejectsInvalidEnvKey(t *testing.T) {
 	}
 }
 
+func TestWriteFileCmdUnlinksFirst(t *testing.T) {
+	cmd := writeFileCmd("ob-work/tpcc-oceanbase")
+	want := "rm -f -- 'ob-work/tpcc-oceanbase' && cat > 'ob-work/tpcc-oceanbase'"
+	if cmd != want {
+		t.Fatalf("cmd=%q, want %q", cmd, want)
+	}
+	home := writeFileCmd("~/tpcc-oceanbase")
+	if !strings.Contains(home, `rm -f -- "$HOME"/'tpcc-oceanbase'`) || !strings.Contains(home, `cat > "$HOME"/'tpcc-oceanbase'`) {
+		t.Fatalf("home cmd=%q", home)
+	}
+}
+
 func TestReadRemotePID(t *testing.T) {
 	pid, err := readRemotePID(strings.NewReader("4321\n"), time.Second)
 	if err != nil {
