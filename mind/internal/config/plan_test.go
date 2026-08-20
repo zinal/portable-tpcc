@@ -41,7 +41,13 @@ func TestCheckArgvIncludesThreads(t *testing.T) {
 		t.Fatalf("CheckArgv=%v, want %v", got, want)
 	}
 	serial := CheckArgv("run-config.json", "check-0", "after-run", 0)
-	if len(serial) != 5 {
-		t.Fatalf("serial CheckArgv=%v, want no --threads", serial)
+	wantSerial := []string{
+		"check",
+		"--run-config", "run-config.json",
+		"--instance", "check-0",
+		"--after-run",
+	}
+	if !reflect.DeepEqual(serial, wantSerial) {
+		t.Fatalf("serial CheckArgv=%v, want %v", serial, wantSerial)
 	}
 }
