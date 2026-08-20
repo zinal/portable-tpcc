@@ -408,27 +408,36 @@ the check report (§9.2), not only `exited with status N`.
 
 Orchestrated `check` uses instance `check-0` on the first loader host.
 `--after-import` and `--after-run` are separate invocations.
+
 `mind-tpcc` passes `--threads=N` from CLI `--threads` when that flag is set,
 otherwise from `runtime.check_concurrency` (0 / omit =
 `min(scale.warehouses, 32)`). CLI `--threads` is a launch-time override; it
-MUST NOT rewrite an already materialized `run-config.json`. Adapters MUST honor
-`TCheckRequest.CheckConcurrency` as parallel DBMS sessions. Warehouse-scoped
-scans use inclusive `w_id` chunks of size 1 (`kWarehouseCheckRange`) so HASH
-partition pruning (OceanBase) and per-warehouse parallelism apply on every
-adapter. SQL predicates stay those of TPC-C §3.3.2; only scheduling and
-warehouse filter bounds change.
+MUST NOT rewrite an already materialized `run-config.json`. Every
+`tpcc-<dbms>` binary MUST accept the same orchestrated forms (`--threads=N`,
+`--threads N`, `-t N`). A missing or non-positive value on the binary means
+one session; `mind-tpcc` MUST pass a resolved positive N. Adapters MUST honor
+`TCheckRequest.CheckConcurrency` as parallel DBMS sessions. When that value is
+greater than one, each parallel worker MUST open its own DBMS session.
 
-A change to check scheduling (concurrency wiring, chunk size, or which catalog
-ids are warehouse-ranged) MUST be applied to every adapter. Do not leave one
-DBMS serial or on a private range size. Do not rewrite §3.3.2 predicates for
-speed (PX / `PARALLEL` hints, skipped catalog entries, DBMS-only SQL
-“optimizations”) unless explicitly requested. Dialect translation that keeps
-the same condition (for example OceanBase `LEFT JOIN` + `UNION ALL` instead of
-`FULL JOIN`) is allowed.
+Warehouse-scoped scans use inclusive `w_id` chunks of size 1
+(`kWarehouseCheckRange`) so HASH partition pruning (OceanBase) and
+per-warehouse parallelism apply on every adapter. Which catalog identifiers
+are warehouse-ranged MUST be the same on every adapter. Adapters MUST NOT use
+a private chunk size.
+
+SQL predicates stay those of TPC-C §3.3.2; only scheduling and warehouse
+filter bounds change. A change to check scheduling (concurrency wiring, chunk
+size, or which catalog ids are warehouse-ranged) MUST be applied to every
+adapter. Do not leave one DBMS serial or on a private range size. Do not
+rewrite §3.3.2 predicates for speed (PX / `PARALLEL` hints, skipped catalog
+entries, DBMS-only SQL “optimizations”) unless explicitly requested. Dialect
+translation that keeps the same condition (for example OceanBase `LEFT JOIN` +
+`UNION ALL` instead of `FULL JOIN`) is allowed.
 
 Stdout `Checking … [OK]/[Failed]/[Skipped]` is informative: one line per
-catalog id after that job completes (all warehouse chunks). The JSON report is
-the structured contract for orchestrator diagnostics and consolidate.
+catalog id after that job completes (all warehouse chunks). Per-chunk progress
+lines are not required. The JSON report is the structured contract for
+orchestrator diagnostics and consolidate.
 
 The check role MUST write `{run_dir}/checks/{phase}.json` on the runtime host
 before the artifact manifest (`phase` is `after-import` or `after-run`).
@@ -445,8 +454,9 @@ The report MUST be JSON with at least:
 | `checks[].status` | `passed`, `failed`, `skipped`, or `error` |
 
 If the adapter exposes a query/statement timeout in the profile or connection
-string, **check sessions MUST use it**. Worker OLTP sessions MAY keep the DBMS
-default so a hung transaction fails fast. OceanBase:
+string, **every check session MUST use it**, including each parallel worker
+session. Worker OLTP sessions MAY keep the DBMS default so a hung transaction
+fails fast. OceanBase:
 `database.options.query_timeout` (seconds, default 600) sets session
 `ob_query_timeout` for load, indexes, statistics, and check; the server
 default without that SET is 10s. See [run-oceanbase.md](run-oceanbase.md).
