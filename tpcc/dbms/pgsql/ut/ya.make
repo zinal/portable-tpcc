@@ -4,6 +4,7 @@ SUBSCRIBER(g:tpcc)
 
 SRCS(
     partition_config_ut.cpp
+    run_config_ut.cpp
 )
 
 PEERDIR(

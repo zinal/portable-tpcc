@@ -88,6 +88,7 @@ func TestBuildRunConfig_usesPasswordFileNotEnv(t *testing.T) {
 			Endpoint:    "localhost:5432",
 			Database:    "tpcc",
 			Path:        "portable_tpcc",
+			User:        "bench",
 			PasswordEnv: "TPCC_PASSWORD",
 		},
 		Scale:   profile.Scale{Warehouses: 1},
@@ -119,6 +120,9 @@ func TestBuildRunConfig_usesPasswordFileNotEnv(t *testing.T) {
 	}
 	if rc.Database.PasswordEnv != "" {
 		t.Fatalf("password_env=%q, want empty in orchestrated run-config", rc.Database.PasswordEnv)
+	}
+	if rc.Database.User != "bench" {
+		t.Fatalf("user=%q want bench", rc.Database.User)
 	}
 }
 

@@ -117,7 +117,7 @@ Required even for loopback (`127.0.0.1`) profiles.
 | `database` | all | yes | DBMS database name/path (`dbname`, YDB path, OceanBase `database=`). |
 | `path` | all | recommended | TPC-C object location (PG schema, YDB table prefix, OceanBase tables database). |
 | `password_env` | pgsql, oceanbase; ydb login | see DBMS | Control-host **env var name** (not the secret). Pattern `[A-Za-z_][A-Za-z0-9_]*`. |
-| `user` | ydb, oceanbase | see DBMS | YDB login user, or OceanBase `user@tenant`. Rejected for `pgsql`. |
+| `user` | pgsql, ydb, oceanbase | see DBMS | PostgreSQL role (default `postgres`), YDB login user, or OceanBase `user@tenant`. |
 | `auth_scheme` | ydb | no | `anonymous` \| `login` \| `sa_key`. Inferred if omitted. |
 | `sa_key_file` | ydb | for `sa_key` | Service-account JSON on the control host. Delivered as `sa-key.json`. |
 | `ca_file` | ydb | no | PEM CA bundle. Delivered as `ca.pem`. |
@@ -140,7 +140,7 @@ argv, SSH/`nohup` command lines, stored profiles, or logs.
 | `foreign_keys` | bool or `on`/`off`/`true`/`false`/`1`/`0` | `on` | FOREIGN KEY constraints at schema time. |
 
 See [pgsql-partitioning-design.md](pgsql-partitioning-design.md).
-PostgreSQL user: `TPCC_PG_USER` or `postgres` — not a profile field.
+PostgreSQL user: `database.user`, else `postgres`.
 
 #### YDB authentication
 
@@ -277,7 +277,6 @@ Standalone / individual `mind-tpcc check` still need `--after-import` or
 | Variable | Used by | Meaning |
 | --- | --- | --- |
 | name in `password_env` | `mind-tpcc`, workers | Password for PostgreSQL, OceanBase, or YDB login. |
-| `TPCC_PG_USER` | `tpcc-pgsql` (orchestrated) | PostgreSQL user; default `postgres`. |
 | `TPCC_OB_USER` | `tpcc-oceanbase` | OceanBase user when `database.user` is omitted; default `root@root`. |
 | `--password-env` / `--token-env` target | `tpcc-ydb` standalone | Login password or IAM/token string. |
 | `SSH_AUTH_SOCK` | SSH | Used when `ssh.use_agent: true`. |

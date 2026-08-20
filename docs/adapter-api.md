@@ -299,10 +299,10 @@ embedded result settings (specification §5 / §8), not only in logs.
 
 Adapters parse the `database` object from `run-config.json`:
 
-- `dbms`, `endpoint`, `database`, `path`, `password_env`, `password_file`,
-  `options`;
+- `dbms`, `endpoint`, `database`, `path`, `user`, `password_env`,
+  `password_file`, `options`;
 - YDB additionally: `auth_scheme` (`anonymous` | `login` | `sa_key`),
-  `user`, `sa_key_file`, `ca_file`;
+  `sa_key_file`, `ca_file`;
 - passwords and tokens **never** in argv or stored secret values;
   orchestrated runs prefer `password_file` (worker-local path); standalone
   may use an environment variable named in `password_env` (and similar
