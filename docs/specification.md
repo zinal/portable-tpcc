@@ -293,7 +293,8 @@ Consolidation:
    `counters`, `histograms`) and their counter/histogram invariants
    before merge — missing or null fields, negative counters, a non-zero
    completed count (`*_ok + *_user_aborted`) without a response-time
-   histogram, and `histogram.total_count` that does not equal that
+   histogram, missing histogram `min_recorded` / `max_recorded` /
+   `sum_values`, and `histogram.total_count` that does not equal that
    completed count are errors, not zeros;
 4. merge counters and histogram buckets (including min/max/sum);
 5. compute min/max/avg, percentiles and throughput only after the merge;
@@ -476,7 +477,9 @@ is required unless explicitly disabled in the profile (recorded in run-state).
 Reject unknown fields/DBMS, bad instance names, empty instance lists, more
 instances than warehouses, manual assignment fields in the profile, invalid
 mix, non-positive sizes/timeouts, secret literals, and retry-after-ambiguous
-commit.
+commit. `runtime.histogram.unit`, if present, MUST be `ms` or `us`.
+`runtime.histogram.highest`, if present, MUST be greater than zero (omitted
+uses the built-in default rather than silently substituting it for `<= 0`).
 
 Additionally, compare effective (default-merged) launch parameters against the
 fixed TPC-C 5.11 requirements used by built-in defaults: terminals per

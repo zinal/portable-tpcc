@@ -128,8 +128,50 @@ func TestParse_acceptsHistogramUnitHighest(t *testing.T) {
 	if p.Runtime.Histogram.Unit != "ms" {
 		t.Fatalf("unit=%q", p.Runtime.Histogram.Unit)
 	}
-	if p.Runtime.Histogram.Highest != 60000 {
-		t.Fatalf("highest=%d", p.Runtime.Histogram.Highest)
+	if p.Runtime.Histogram.Highest == nil || *p.Runtime.Histogram.Highest != 60000 {
+		t.Fatalf("highest=%v", p.Runtime.Histogram.Highest)
+	}
+}
+
+func TestParse_decodesExplicitZeroHighest(t *testing.T) {
+	path := filepath.Join("..", "..", "testdata", "profile.valid.yaml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	patched := strings.Replace(
+		string(data),
+		"runtime:\n  pacing: enabled\n",
+		"runtime:\n  pacing: enabled\n  histogram:\n    highest: 0\n",
+		1,
+	)
+	p, err := profile.Parse([]byte(patched))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Runtime.Histogram.Highest == nil || *p.Runtime.Histogram.Highest != 0 {
+		t.Fatalf("expected explicit highest=0, got %v", p.Runtime.Histogram.Highest)
+	}
+}
+
+func TestParse_rejectsRetryAmbiguousCommit(t *testing.T) {
+	path := filepath.Join("..", "..", "testdata", "profile.valid.yaml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	patched := strings.Replace(
+		string(data),
+		"    jitter: full\n",
+		"    jitter: full\n    retry_ambiguous_commit: false\n",
+		1,
+	)
+	if patched == string(data) {
+		t.Fatal("failed to inject retry_ambiguous_commit into test fixture")
+	}
+	_, err = profile.Parse([]byte(patched))
+	if err == nil || !strings.Contains(err.Error(), "retry_ambiguous_commit") {
+		t.Fatalf("expected unknown-field error for retry_ambiguous_commit, got %v", err)
 	}
 }
 

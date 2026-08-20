@@ -74,6 +74,17 @@ func ValidThinkTimeDistribution(value string) bool {
 	}
 }
 
+// ValidHistogramUnit reports whether value is a known latency unit.
+// Empty input means "use the built-in default".
+func ValidHistogramUnit(value string) bool {
+	switch value {
+	case "", "ms", "us":
+		return true
+	default:
+		return false
+	}
+}
+
 // ResolveWorkload merges profile overrides onto built-in defaults.
 func ResolveWorkload(w profile.Workload) WorkloadBlock {
 	out := DefaultWorkload()

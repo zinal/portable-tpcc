@@ -276,6 +276,52 @@ func TestValidate_thinkTimeDistribution(t *testing.T) {
 	}
 }
 
+func TestValidate_histogramKnobs(t *testing.T) {
+	path := filepath.Join("..", "..", "testdata", "profile.valid.yaml")
+	p, err := profile.ParseFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	p.Runtime.Histogram.Unit = "us"
+	highest := int64(60000)
+	p.Runtime.Histogram.Highest = &highest
+	res := validate.Profile(p)
+	if !res.Valid {
+		t.Fatalf("expected valid histogram knobs, errors: %v", res.Errors)
+	}
+
+	p.Runtime.Histogram.Unit = "ns"
+	res = validate.Profile(p)
+	if res.Valid {
+		t.Fatal("expected invalid histogram unit")
+	}
+	if !strings.Contains(strings.Join(res.Errors, "\n"), "runtime.histogram.unit") {
+		t.Fatalf("expected unit error, got %v", res.Errors)
+	}
+
+	p, err = profile.ParseFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zero := int64(0)
+	p.Runtime.Histogram.Highest = &zero
+	res = validate.Profile(p)
+	if res.Valid {
+		t.Fatal("expected highest=0 to fail structural validation")
+	}
+	if !strings.Contains(strings.Join(res.Errors, "\n"), "runtime.histogram.highest") {
+		t.Fatalf("expected highest error, got %v", res.Errors)
+	}
+
+	negative := int64(-1)
+	p.Runtime.Histogram.Highest = &negative
+	res = validate.Profile(p)
+	if res.Valid {
+		t.Fatal("expected highest<0 to fail structural validation")
+	}
+}
+
 func TestValidate_ydbAuthSchemes(t *testing.T) {
 	path := filepath.Join("..", "..", "testdata", "profile.valid.yaml")
 	base, err := profile.ParseFile(path)
