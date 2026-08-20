@@ -101,6 +101,7 @@ func (f *fakeSession) StartDetached(workDir, binary string, argv []string, env m
 }
 func (f *fakeSession) Signal(pid int, sig string) error {
 	f.signals++
+	f.alive = false
 	return nil
 }
 func (f *fakeSession) IsAlive(pid int) (bool, error) {
@@ -125,8 +126,8 @@ func TestLaunchRoleStoresProcessInstanceNonce(t *testing.T) {
 		StateStore: store,
 	}
 	ctx := &Context{
-		RunID:   "run-1",
-		RunDir:  writeLaunchRunDir(t),
+		RunID:  "run-1",
+		RunDir: writeLaunchRunDir(t),
 		RunConfig: &config.RunConfig{
 			Binary: "tpcc-pgsql",
 		},
@@ -145,8 +146,8 @@ func TestLaunchRoleStoresProcessInstanceNonce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if proc.PID != 456 || proc.InstanceNonce != "nonce-1" {
-		t.Fatalf("process metadata = pid %d nonce %q", proc.PID, proc.InstanceNonce)
+	if proc.PID != 456 || proc.LaunchPID != 123 || proc.InstanceNonce != "nonce-1" {
+		t.Fatalf("process metadata = pid %d launch_pid %d nonce %q", proc.PID, proc.LaunchPID, proc.InstanceNonce)
 	}
 	rs, err := store.Load(ctx.RunID)
 	if err != nil {
@@ -166,8 +167,8 @@ func TestLaunchRoleFailsWithoutProcessInstanceNonce(t *testing.T) {
 		StateStore: store,
 	}
 	ctx := &Context{
-		RunID:   "run-1",
-		RunDir:  writeLaunchRunDir(t),
+		RunID:  "run-1",
+		RunDir: writeLaunchRunDir(t),
 		RunConfig: &config.RunConfig{
 			Binary: "tpcc-pgsql",
 		},
@@ -185,8 +186,8 @@ func TestLaunchRoleFailsWithoutProcessInstanceNonce(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "missing instance_nonce") {
 		t.Fatalf("expected missing nonce error, got proc=%v err=%v", proc, err)
 	}
-	if sess.signals != 1 {
-		t.Fatalf("Signal called %d times, want 1", sess.signals)
+	if sess.signals != 2 {
+		t.Fatalf("Signal called %d times, want 2 (launch pid and metadata pid)", sess.signals)
 	}
 	rs, err := store.Load(ctx.RunID)
 	if err != nil {
@@ -394,7 +395,7 @@ func TestWaitProcessesRelaysRemoteLogs(t *testing.T) {
 	sess := &fakeSession{files: map[string][]byte{
 		"/done":      data,
 		"stderr.log": []byte("Warehouse 1 loaded (1/10)\nWarehouse 2 loaded (2/10)\n"),
-	}, alive: true}
+	}, alive: false}
 	proc := &launchedProc{
 		Role:          "loader",
 		Host:          "host-a",
@@ -415,6 +416,117 @@ func TestWaitProcessesRelaysRemoteLogs(t *testing.T) {
 	}
 	if !strings.Contains(out, "loader/loader-a finished (exited, exit=0)") {
 		t.Fatalf("missing finish progress line: %q", out)
+	}
+}
+
+func TestWaitProcessesWarnsWhenFinishedButAlive(t *testing.T) {
+	var buf bytes.Buffer
+	progress.SetWriter(&buf)
+	defer progress.SetWriter(nil)
+
+	store := &state.Store{StateDir: t.TempDir()}
+	o := &Orchestrator{StateStore: store}
+	ctx := &Context{RunID: "run-1"}
+	manifest := collect.ArtifactManifest{
+		SchemaVersion: 1,
+		Instance:      "indexes-0",
+		InstanceNonce: "nonce-1",
+		Finalized:     true,
+		ExitStatus:    0,
+	}
+	data, _ := json.Marshal(manifest)
+	sess := &fakeSession{files: map[string][]byte{"/done": data}, alive: true}
+	proc := &launchedProc{
+		Role:          "indexes",
+		Host:          "host-a",
+		Instance:      "indexes-0",
+		Session:       sess,
+		PID:           373180,
+		LaunchPID:     373179,
+		DonePath:      "/done",
+		InstanceNonce: "nonce-1",
+	}
+
+	if err := o.waitProcesses(ctx, []*launchedProc{proc}, time.Second, true); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "indexes/indexes-0 finished (exited, exit=0)") {
+		t.Fatalf("missing finish line: %q", out)
+	}
+	if !strings.Contains(out, "warning: indexes/indexes-0 still running after finished") {
+		t.Fatalf("missing unexpected-alive warning: %q", out)
+	}
+	if !proc.Finished || !proc.warnedAlive {
+		t.Fatalf("Finished=%v warnedAlive=%v", proc.Finished, proc.warnedAlive)
+	}
+}
+
+func TestReapLaunchedStopsUnexpectedAlive(t *testing.T) {
+	var buf bytes.Buffer
+	progress.SetWriter(&buf)
+	defer progress.SetWriter(nil)
+
+	store := &state.Store{StateDir: t.TempDir()}
+	o := &Orchestrator{StateStore: store}
+	ctx := &Context{RunID: "run-1", RunConfig: &config.RunConfig{}}
+	sess := &fakeSession{alive: true}
+	proc := &launchedProc{
+		Role:      "indexes",
+		Host:      "host-a",
+		Instance:  "indexes-0",
+		Session:   sess,
+		PID:       373180,
+		LaunchPID: 373179,
+		Finished:  true,
+	}
+	o.launched = []*launchedProc{proc}
+	o.reapLaunched(ctx, map[string]remote.Session{"host-a": sess})
+	if sess.signals < 2 {
+		t.Fatalf("Signal called %d times, want launch+binary pids", sess.signals)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "warning: indexes/indexes-0 still running after finished") {
+		t.Fatalf("missing warning: %q", out)
+	}
+	if !strings.Contains(out, "stop indexes/indexes-0") {
+		t.Fatalf("missing stop: %q", out)
+	}
+}
+
+func TestReapLaunchedLeaveProcessesSkipsStop(t *testing.T) {
+	var buf bytes.Buffer
+	progress.SetWriter(&buf)
+	defer progress.SetWriter(nil)
+
+	store := &state.Store{StateDir: t.TempDir()}
+	o := &Orchestrator{
+		StateStore: store,
+		Opts:       Options{LeaveProcesses: true},
+	}
+	ctx := &Context{RunID: "run-1"}
+	sess := &fakeSession{alive: true}
+	proc := &launchedProc{
+		Role:        "indexes",
+		Host:        "host-a",
+		Instance:    "indexes-0",
+		Session:     sess,
+		PID:         373180,
+		LaunchPID:   373179,
+		Finished:    true,
+		warnedAlive: true,
+	}
+	o.launched = []*launchedProc{proc}
+	o.reapLaunched(ctx, map[string]remote.Session{"host-a": sess})
+	if sess.signals != 0 {
+		t.Fatalf("Signal called %d times, want 0 with --leave-processes", sess.signals)
+	}
+	if !sess.alive {
+		t.Fatal("process should still be alive with --leave-processes")
+	}
+	out := buf.String()
+	if !strings.Contains(out, "leaving indexes/indexes-0") || !strings.Contains(out, "--leave-processes") {
+		t.Fatalf("missing leave-processes message: %q", out)
 	}
 }
 
@@ -769,8 +881,8 @@ func TestLaunchRoleUploadsRunConfigAndCredentials(t *testing.T) {
 		StateStore: store,
 	}
 	ctx := &Context{
-		RunID:   "run-1",
-		RunDir:  writeLaunchRunDir(t),
+		RunID:  "run-1",
+		RunDir: writeLaunchRunDir(t),
 		RunConfig: &config.RunConfig{
 			Binary: "tpcc-ydb",
 		},
@@ -815,8 +927,8 @@ func TestLaunchRoleDoesNotPassPasswordEnv(t *testing.T) {
 		StateStore: store,
 	}
 	ctx := &Context{
-		RunID:   "run-1",
-		RunDir:  writeLaunchRunDir(t),
+		RunID:  "run-1",
+		RunDir: writeLaunchRunDir(t),
 		RunConfig: &config.RunConfig{
 			Binary: "tpcc-pgsql",
 		},

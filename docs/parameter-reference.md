@@ -65,6 +65,7 @@ Shared binaries stay until `undeploy`.
 | `--skip <step>` | none | Skip a `run` pipeline step. Repeatable. Names: `deploy`, `schema`, `load`, `indexes`, `check_after_import`, `start`, `check_after_run`, `collect`, `consolidate`. |
 | `--yes` | false | Required for `cleanup` and `undeploy`. |
 | `--after-import` / `--after-run` | — | Select the `check` phase. |
+| `--leave-processes` | false | Debug: leave remote processes running when `mind-tpcc` exits. Default is to stop leftovers this invocation launched (and warn if a process is still alive after it reported finished). |
 
 ## Profile YAML
 

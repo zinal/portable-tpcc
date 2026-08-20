@@ -65,6 +65,7 @@ type Process struct {
 	Host          string `json:"host"`
 	Instance      string `json:"instance"`
 	PID           int    `json:"pid,omitempty"`
+	LaunchPID     int    `json:"launch_pid,omitempty"`
 	InstanceNonce string `json:"instance_nonce,omitempty"`
 	State         string `json:"state"`
 	UpdatedAt     string `json:"updated_at"`
