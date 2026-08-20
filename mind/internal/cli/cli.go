@@ -25,6 +25,7 @@ type Config struct {
 	Yes            bool
 	CheckPhase     string
 	LeaveProcesses bool
+	CheckThreads   *int
 }
 
 // Run dispatches mind-tpcc subcommands (specification §9).
@@ -52,71 +53,87 @@ func run(args []string, interrupt context.Context) int {
 	cmd := args[0]
 	rest := args[1:]
 	for i := 0; i < len(rest); i++ {
-		switch rest[i] {
-		case "--profile":
-			if i+1 >= len(rest) {
-				fmt.Fprintln(os.Stderr, "--profile requires a value")
-				return 2
-			}
-			cfg.ProfilePath = rest[i+1]
-			i++
-		case "--run-id":
-			if i+1 >= len(rest) {
-				fmt.Fprintln(os.Stderr, "--run-id requires a value")
-				return 2
-			}
-			cfg.RunID = rest[i+1]
-			i++
-		case "--worker-binary":
-			if i+1 >= len(rest) {
-				fmt.Fprintln(os.Stderr, "--worker-binary requires a value")
-				return 2
-			}
-			cfg.WorkerBinary = rest[i+1]
-			i++
-		case "--skip":
-			if i+1 >= len(rest) {
-				fmt.Fprintln(os.Stderr, "--skip requires a value")
-				return 2
-			}
-			cfg.SkipSteps = append(cfg.SkipSteps, rest[i+1])
-			i++
-		case "--warehouses":
-			if i+1 >= len(rest) {
-				fmt.Fprintln(os.Stderr, "--warehouses requires a value")
-				return 2
-			}
-			w, err := strconv.Atoi(rest[i+1])
+		arg := rest[i]
+		switch {
+		case arg == "--profile" || strings.HasPrefix(arg, "--profile="):
+			val, next, err := requireFlagValue(rest, i, "--profile")
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "--warehouses: invalid integer %q\n", rest[i+1])
+				fmt.Fprintln(os.Stderr, err)
+				return 2
+			}
+			cfg.ProfilePath = val
+			i = next
+		case arg == "--run-id" || strings.HasPrefix(arg, "--run-id="):
+			val, next, err := requireFlagValue(rest, i, "--run-id")
+			if err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 2
+			}
+			cfg.RunID = val
+			i = next
+		case arg == "--worker-binary" || strings.HasPrefix(arg, "--worker-binary="):
+			val, next, err := requireFlagValue(rest, i, "--worker-binary")
+			if err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 2
+			}
+			cfg.WorkerBinary = val
+			i = next
+		case arg == "--skip" || strings.HasPrefix(arg, "--skip="):
+			val, next, err := requireFlagValue(rest, i, "--skip")
+			if err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 2
+			}
+			cfg.SkipSteps = append(cfg.SkipSteps, val)
+			i = next
+		case arg == "--warehouses" || strings.HasPrefix(arg, "--warehouses="):
+			w, next, err := requireFlagInt(rest, i, "--warehouses")
+			if err != nil {
+				fmt.Fprintln(os.Stderr, err)
 				return 2
 			}
 			cfg.Overrides.Warehouses = &w
-			i++
-		case "--ramp-up":
-			if i+1 >= len(rest) {
-				fmt.Fprintln(os.Stderr, "--ramp-up requires a value")
+			i = next
+		case arg == "--ramp-up" || strings.HasPrefix(arg, "--ramp-up="):
+			val, next, err := requireFlagValue(rest, i, "--ramp-up")
+			if err != nil {
+				fmt.Fprintln(os.Stderr, err)
 				return 2
 			}
-			v := rest[i+1]
-			cfg.Overrides.RampUp = &v
-			i++
-		case "--measurement":
-			if i+1 >= len(rest) {
-				fmt.Fprintln(os.Stderr, "--measurement requires a value")
+			cfg.Overrides.RampUp = &val
+			i = next
+		case arg == "--measurement" || strings.HasPrefix(arg, "--measurement="):
+			val, next, err := requireFlagValue(rest, i, "--measurement")
+			if err != nil {
+				fmt.Fprintln(os.Stderr, err)
 				return 2
 			}
-			v := rest[i+1]
-			cfg.Overrides.Measurement = &v
-			i++
-		case "--yes":
+			cfg.Overrides.Measurement = &val
+			i = next
+		case arg == "--threads" || strings.HasPrefix(arg, "--threads="):
+			n, next, err := requireFlagNonNegativeInt(rest, i, "--threads")
+			if err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 2
+			}
+			cfg.CheckThreads = &n
+			i = next
+		case arg == "--yes":
 			cfg.Yes = true
-		case "--leave-processes":
+		case arg == "--leave-processes":
 			cfg.LeaveProcesses = true
-		case "--after-import":
+		case arg == "--after-import":
 			cfg.CheckPhase = "after-import"
-		case "--after-run":
+		case arg == "--after-run":
 			cfg.CheckPhase = "after-run"
+		default:
+			if strings.HasPrefix(arg, "-") {
+				fmt.Fprintf(os.Stderr, "error: unknown flag %s\n", arg)
+				return 2
+			}
+			fmt.Fprintf(os.Stderr, "error: unexpected argument %q\n", arg)
+			return 2
 		}
 	}
 
@@ -133,6 +150,7 @@ func run(args []string, interrupt context.Context) int {
 		Overrides:      cfg.Overrides,
 		Interrupt:      interrupt,
 		LeaveProcesses: cfg.LeaveProcesses,
+		CheckThreads:   cfg.CheckThreads,
 	}
 
 	switch cmd {
@@ -222,7 +240,7 @@ func runPlan(opts orchestrator.Options) int {
 	}
 	var plan *config.PlanSnapshot
 	if err := withMaterializedProfileLock(o, func(ctx *orchestrator.Context) error {
-		plan = config.BuildPlanSnapshot(ctx.RunConfig)
+		plan = config.BuildPlanSnapshot(ctx.RunConfig, o.Opts.CheckThreads)
 		return nil
 	}); err != nil {
 		return exitErr(err)
@@ -403,6 +421,40 @@ func withExistingRunCleanup(o *orchestrator.Orchestrator, fn func(*orchestrator.
 	return fn(ctx)
 }
 
+func requireFlagValue(rest []string, i int, name string) (string, int, error) {
+	arg := rest[i]
+	if prefix := name + "="; strings.HasPrefix(arg, prefix) {
+		return arg[len(prefix):], i, nil
+	}
+	if i+1 >= len(rest) {
+		return "", i, fmt.Errorf("%s requires a value", name)
+	}
+	return rest[i+1], i + 1, nil
+}
+
+func requireFlagInt(rest []string, i int, name string) (int, int, error) {
+	raw, next, err := requireFlagValue(rest, i, name)
+	if err != nil {
+		return 0, i, err
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, i, fmt.Errorf("%s: invalid integer %q", name, raw)
+	}
+	return n, next, nil
+}
+
+func requireFlagNonNegativeInt(rest []string, i int, name string) (int, int, error) {
+	n, next, err := requireFlagInt(rest, i, name)
+	if err != nil {
+		return 0, i, err
+	}
+	if n < 0 {
+		return 0, i, fmt.Errorf("%s must not be negative", name)
+	}
+	return n, next, nil
+}
+
 func printUsage() {
 	usage := strings.TrimSpace(`
 mind-tpcc — portable-tpcc orchestrator
@@ -435,10 +487,13 @@ Options:
   --warehouses <n>         Override scale.warehouses (must be <= profile value)
   --ramp-up <duration>     Override phases.ramp_up (warmup), e.g. 30s, 5m
   --measurement <duration> Override phases.measurement, e.g. 2m, 120m
+  --threads <n>            Override check session concurrency (0 = auto)
   --skip <step>            Skip pipeline step
   --yes                    Non-interactive confirmation
   --leave-processes        Debug: do not kill remote processes this
                            invocation launched when mind-tpcc exits
+  --after-import           check: post-import integrity phase
+  --after-run              check: post-measurement integrity phase
 `)
 	fmt.Println(usage)
 }

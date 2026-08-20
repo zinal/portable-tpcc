@@ -41,6 +41,9 @@ type Options struct {
 	// invocation launched. Debug-only: the default is to reap leftovers on
 	// stage exit so a finished-looking manifest cannot orphan a live process.
 	LeaveProcesses bool
+	// CheckThreads, when non-nil, overrides runtime.check_concurrency for
+	// this invocation's check argv. It does not rewrite run-config.json.
+	CheckThreads *int
 }
 
 // Orchestrator coordinates mind-tpcc stages.
@@ -305,7 +308,7 @@ func (o *Orchestrator) Plan() (*config.PlanSnapshot, error) {
 	if err != nil {
 		return nil, err
 	}
-	return config.BuildPlanSnapshot(ctx.RunConfig), nil
+	return config.BuildPlanSnapshot(ctx.RunConfig, o.Opts.CheckThreads), nil
 }
 
 // Deploy uploads the shared worker binary to runtime hosts.
@@ -623,7 +626,12 @@ func (o *Orchestrator) check(ctx *Context, phase string) error {
 
 		hostKey := ctx.RunConfig.LoadAssignment[0].Host
 		instance := "check-0"
-		argv := config.CheckArgv("run-config.json", instance, phase, ctx.RunConfig.Runtime.CheckConcurrency)
+		threads := config.EffectiveCheckConcurrency(
+			ctx.RunConfig.Scale.Warehouses,
+			ctx.RunConfig.Runtime.CheckConcurrency,
+			o.Opts.CheckThreads,
+		)
+		argv := config.CheckArgv("run-config.json", instance, phase, threads)
 		proc, err := o.launchRole(ctx, sessions, "check", hostKey, instance, argv)
 		if err != nil {
 			return err

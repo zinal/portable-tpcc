@@ -73,6 +73,16 @@ func ResolveCheckConcurrency(warehouses, configured int) int {
 	return warehouses
 }
 
+// EffectiveCheckConcurrency is the session count passed as --threads to check.
+// cliThreads, when non-nil, overrides runtime.check_concurrency for this
+// invocation and does not rewrite run-config.json.
+func EffectiveCheckConcurrency(warehouses, configured int, cliThreads *int) int {
+	if cliThreads != nil {
+		configured = *cliThreads
+	}
+	return ResolveCheckConcurrency(warehouses, configured)
+}
+
 // CheckArgv returns argv for the check role.
 func CheckArgv(runConfigPath, instance, phase string, threads int) []string {
 	flag := "--after-run"
@@ -108,7 +118,8 @@ type PlanSnapshot struct {
 
 // BuildPlanSnapshot creates a plan output from run config.
 // Worker argv omit --start-at; that value is computed at start time.
-func BuildPlanSnapshot(rc *RunConfig) *PlanSnapshot {
+// checkThreads, when non-nil, overrides runtime.check_concurrency in check argv.
+func BuildPlanSnapshot(rc *RunConfig, checkThreads *int) *PlanSnapshot {
 	workerArgv := make(map[string][]string)
 	for _, w := range rc.WorkerAssignment {
 		workerArgv[w.Instance] = WorkerArgv("run-config.json", w.Instance, "")
@@ -123,6 +134,7 @@ func BuildPlanSnapshot(rc *RunConfig) *PlanSnapshot {
 		schemaInstance = rc.LoadAssignment[0].Instance + "-schema"
 		indexesInstance = rc.LoadAssignment[0].Instance + "-indexes"
 	}
+	threads := EffectiveCheckConcurrency(rc.Scale.Warehouses, rc.Runtime.CheckConcurrency, checkThreads)
 	return &PlanSnapshot{
 		RunID:            rc.RunID,
 		ProfileName:      rc.ProfileName,
@@ -133,8 +145,8 @@ func BuildPlanSnapshot(rc *RunConfig) *PlanSnapshot {
 		LoaderArgv:       loaderArgv,
 		SchemaArgv:       SchemaArgv("run-config.json", schemaInstance),
 		IndexesArgv:      IndexesArgv("run-config.json", indexesInstance),
-		CheckArgvImport:  CheckArgv("run-config.json", "check-0", "after-import", rc.Runtime.CheckConcurrency),
-		CheckArgvRun:     CheckArgv("run-config.json", "check-0", "after-run", rc.Runtime.CheckConcurrency),
+		CheckArgvImport:  CheckArgv("run-config.json", "check-0", "after-import", threads),
+		CheckArgvRun:     CheckArgv("run-config.json", "check-0", "after-run", threads),
 	}
 }
 

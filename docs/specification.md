@@ -408,12 +408,15 @@ the check report (§9.2), not only `exited with status N`.
 
 Orchestrated `check` uses instance `check-0` on the first loader host.
 `--after-import` and `--after-run` are separate invocations.
-`mind-tpcc` passes `--threads=N` from `runtime.check_concurrency` (0 / omit =
-`min(scale.warehouses, 32)`). Adapters MUST honor `TCheckRequest.CheckConcurrency`
-as parallel DBMS sessions. Warehouse-scoped scans use inclusive `w_id` chunks of
-size 1 (`kWarehouseCheckRange`) so HASH partition pruning (OceanBase) and
-per-warehouse parallelism apply on every adapter. SQL predicates stay those of
-TPC-C §3.3.2; only scheduling and warehouse filter bounds change.
+`mind-tpcc` passes `--threads=N` from CLI `--threads` when that flag is set,
+otherwise from `runtime.check_concurrency` (0 / omit =
+`min(scale.warehouses, 32)`). CLI `--threads` is a launch-time override; it
+MUST NOT rewrite an already materialized `run-config.json`. Adapters MUST honor
+`TCheckRequest.CheckConcurrency` as parallel DBMS sessions. Warehouse-scoped
+scans use inclusive `w_id` chunks of size 1 (`kWarehouseCheckRange`) so HASH
+partition pruning (OceanBase) and per-warehouse parallelism apply on every
+adapter. SQL predicates stay those of TPC-C §3.3.2; only scheduling and
+warehouse filter bounds change.
 
 A change to check scheduling (concurrency wiring, chunk size, or which catalog
 ids are warehouse-ranged) MUST be applied to every adapter. Do not leave one

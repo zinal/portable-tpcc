@@ -139,8 +139,8 @@ from a single `check.cpp`.
 
 - Honor `TCheckRequest.CheckConcurrency`. Orchestrated `check` MUST parse
   `--threads` the same way as PostgreSQL (`ParseOrchestratedArgs`).
-  `mind-tpcc` `CheckArgv` MUST pass `--threads=N` from
-  `runtime.check_concurrency` (specification §9.2).
+  `mind-tpcc` `CheckArgv` MUST pass `--threads=N` from CLI `--threads` when
+  set, otherwise `runtime.check_concurrency` (specification §9.2).
 - Use `kWarehouseCheckRange` in `tpcc/checks/adapter.h` for warehouse-scoped
   scans. Do not reintroduce adapter-private chunk sizes (historically 50/10).
 - Which catalog ids are warehouse-ranged MUST match across pgsql, ydb, and
