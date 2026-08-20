@@ -23,15 +23,12 @@
 Эти исправления проходят unit tests и в основном корректны. После повторного
 аудита устранены fail-open классификация intentional rollback, неполный учёт
 measurement boundaries, игнорирование unknown YAML fields и пробел
-post-import coverage для delivered `OL_AMOUNT` / `O_CARRIER_ID`. Позднее
-закрыта fail-open обработка неполного worker result: отсутствующие
-measurement fields и несогласованные counters/histograms больше не
-интерпретируются как нули.
+post-import coverage для delivered `OL_AMOUNT` / `O_CARRIER_ID`.
 
-Проверка на `19df199` уточнила, что stale-worker защита закрывает исходную
-проблему только частично. Кроме того, новые soft-conformance и
-response-time statistics содержат отдельные ошибки, описанные в активной
-секции.
+Проверка на `19df199` уточнила, что stale-worker и malformed-artifact защита
+закрывают исходные проблемы только частично. Кроме того, новые
+soft-conformance и response-time statistics содержат отдельные ошибки,
+описанные в активной секции.
 
 Документ разделён на:
 
@@ -147,6 +144,28 @@ instance, run-config hash и warehouse assignment. Однако эти знач�
 Старый `result.json` от предыдущей попытки того же run может быть принят как
 актуальный. Нужна сквозная проверка ожидаемого process/instance nonce либо
 атомарная очистка/staging instance directory перед каждым launch.
+
+### 3.5. Неполный worker result всё ещё обрабатывается fail-open
+
+**Критичность: высокая. Частично исправленное прежнее замечание.**
+
+Присутствующие counters/histograms теперь валидируются строго, но допускаются:
+
+- отсутствующие или `null` counters;
+- отсутствующие или `null` histograms;
+- отсутствующий либо неверного типа `exit_status`;
+- отрицательные counters;
+- ненулевые completed counters без соответствующего response-time histogram;
+- несовпадение `histogram.total_count` с completed count transaction type.
+
+Связанный код:
+
+- [consolidate.go:101-121](../mind/internal/consolidate/consolidate.go#L101-L121);
+- [consolidate.go:207-250](../mind/internal/consolidate/consolidate.go#L207-L250).
+
+Такой artifact способен дать `workers_complete=true` и throughput без
+response-time data. Обязательные measurement fields и их перекрёстные
+инварианты должны проверяться до merge.
 
 ### 3.6. Microsecond histogram содержит только millisecond precision
 
@@ -309,14 +328,12 @@ Portable-tpcc предоставляет engineering workload и исходны�
 
 ## 5. Исторические полностью устранённые ошибки
 
-Ниже сохранены первоначальные замечания, которые больше не воспроизводятся.
-Аудит на commit `19df199` закрыл 5.1-5.14 и 5.17-5.19; 5.16 закрыт позднее
-fail-closed проверкой measurement fields.
+Ниже сохранены первоначальные замечания, которые больше не воспроизводятся на
+commit `19df199`.
 
-Нумерация сохраняет исторические IDs. Пункты 5.15 и 5.20 исключены из
+Нумерация сохраняет исторические IDs. Пункты 5.15, 5.16 и 5.20 исключены из
 этой секции после повторной проверки: соответствующие исправления оказались
-частичными и описаны как активные замечания 3.4 и 3.7. Пункт 5.16 возвращён
-сюда после fail-closed проверки measurement fields.
+частичными и описаны как активные замечания 3.4, 3.5 и 3.7.
 
 ### 5.1. Intentional rollback не учитывался в tpmC и RT
 
@@ -428,17 +445,6 @@ affected rows и возвращает retryable abort при конфликте
   ([phase_controller.h](../tpcc/runtime/phase_controller.h),
   [terminal.cpp](../tpcc/dbms/pgsql/terminal.cpp)).
 
-### 5.16. Неполный worker result обрабатывался fail-open
-
-**Устранено:** consolidator требует integer `exit_status`, object `counters`
-и object `histograms` до merge. Отсутствующие или `null` поля, отрицательные
-counters, ненулевой completed count (`*_ok + *_user_aborted`) без
-response-time histogram и `histogram.total_count`, не равный completed count,
-дают ошибку, а не нули. `AllowIncomplete` по-прежнему разрешает non-zero
-`exit_status` / отсутствующий `result.json`, но не malformed measurement
-payload
-([consolidate.go](../mind/internal/consolidate/consolidate.go)).
-
 ### 5.17. Unknown YAML fields не отклонялись
 
 **Устранено в `e344bf0`/`a997ab8`:** `profile.Parse` использует
@@ -484,19 +490,19 @@ settings, но `THistogram` layout `linear_exp` использует тольк�
 | DB workload core | Основные пять транзакций реализованы; intentional rollback fail-closed по ITEM not-found и подтверждённому rollback |
 | Initial population | Cardinalities и delivery timestamps корректны; synthetic dates приняты; a-string и C constants остаются; post-import coverage для delivered amount/carrier добавлена |
 | Runtime | Think time, Stock-Level и measurement boundaries исправлены для default |
-| Consolidation | Unexpected worker names и identity/config mismatch отвергаются; incomplete measurement fields и counter/histogram mismatches отвергаются; same-run stale attempts остаются |
+| Consolidation | Unexpected worker names и identity/config mismatch отвергаются; same-run stale attempts и отсутствующие measurement fields остаются |
 | Delivery | Синхронная модель — принятое отклонение; конкурентная обработка исправлена |
 | RTE / ACID / checkpoints / disclosure | Внешние или вне области по принятому решению |
 | Launch-parameter checks | Soft TPC-C 5.11 status присутствует, но имеет false-positive/false-negative cases из 3.7 |
 | Reporting | Min/max/avg и percentiles добавлены, но precision и metadata validation требуют исправления |
 | DBMS adapters | Практически реализован только PostgreSQL |
 
-Повторный аудит не обнаружил возврата historical defects 5.1-5.14, 5.16 и 5.17-5.19
+Повторный аудит не обнаружил возврата historical defects 5.1-5.14 и 5.17-5.19
 или deadlock/data-corruption регрессий в ITEM/STOCK locking, Stock-Level
 binding, think-time sampling, timestamp population и carrier checks.
 
-При этом stale-attempt fix оказался частичным (3.4), а новые
-soft-conformance и response-time statistics добавили
+При этом stale-attempt и malformed-measurement fixes оказались частичными
+(3.4-3.5), а новые soft-conformance и response-time statistics добавили
 ошибки 3.6-3.9. Сравнение результатов до и после
 `884230e`/`a997ab8`/`19df199` требует учитывать ожидаемые изменения workload:
 tpmC включает intentional rollback, rollback New-Order создаёт полную
