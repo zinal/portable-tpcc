@@ -415,6 +415,18 @@ size 1 (`kWarehouseCheckRange`) so HASH partition pruning (OceanBase) and
 per-warehouse parallelism apply on every adapter. SQL predicates stay those of
 TPC-C §3.3.2; only scheduling and warehouse filter bounds change.
 
+A change to check scheduling (concurrency wiring, chunk size, or which catalog
+ids are warehouse-ranged) MUST be applied to every adapter. Do not leave one
+DBMS serial or on a private range size. Do not rewrite §3.3.2 predicates for
+speed (PX / `PARALLEL` hints, skipped catalog entries, DBMS-only SQL
+“optimizations”) unless explicitly requested. Dialect translation that keeps
+the same condition (for example OceanBase `LEFT JOIN` + `UNION ALL` instead of
+`FULL JOIN`) is allowed.
+
+Stdout `Checking … [OK]/[Failed]/[Skipped]` is informative: one line per
+catalog id after that job completes (all warehouse chunks). The JSON report is
+the structured contract for orchestrator diagnostics and consolidate.
+
 The check role MUST write `{run_dir}/checks/{phase}.json` on the runtime host
 before the artifact manifest (`phase` is `after-import` or `after-run`).
 `collect` copies those files to `results/<run_id>/checks/`.
@@ -428,10 +440,6 @@ The report MUST be JSON with at least:
 | `passed`, `failed`, `skipped`, `errors` | counts |
 | `checks[]` | entries with `id`, `title`, `status`, `detail` |
 | `checks[].status` | `passed`, `failed`, `skipped`, or `error` |
-
-Human-readable stdout (`Checking … [OK]/[Failed]/[Skipped]`) is informative.
-The JSON report is the structured contract for orchestrator diagnostics and
-consolidate.
 
 If the adapter exposes a query/statement timeout in the profile or connection
 string, **check sessions MUST use it**. Worker OLTP sessions MAY keep the DBMS
