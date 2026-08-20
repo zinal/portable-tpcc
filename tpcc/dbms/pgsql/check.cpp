@@ -613,8 +613,10 @@ std::unique_ptr<pqxx::connection> OpenCheckConnection(
 }
 
 // Runs check jobs using up to `concurrency` dedicated PostgreSQL sessions.
-// SQL predicates are unchanged; only scheduling is parallel. Results are recorded
-// in job order (catalog order when jobs are built that way).
+// SQL predicates are unchanged; only scheduling is parallel.
+// Catalog ids run one at a time (specification §9.2) so Checking … [OK]/[Failed]
+// is printed as soon as that job's warehouse chunks finish. Chunks of the
+// current id still share the session pool.
 void RunCheckJobs(
     TCheckReport& report,
     const std::string& connectionString,
@@ -627,28 +629,22 @@ void RunCheckJobs(
         return;
     }
 
-    size_t taskCount = 0;
+    size_t maxTasks = 0;
     for (const auto& job : jobs) {
-        taskCount += job.Tasks.size();
+        maxTasks = std::max(maxTasks, job.Tasks.size());
     }
-    if (taskCount == 0) {
+    if (maxTasks == 0) {
         return;
     }
 
-    const size_t workers = concurrency <= 1
+    const size_t poolSize = concurrency <= 1
         ? 1
-        : std::min(static_cast<size_t>(concurrency), taskCount);
+        : std::min(static_cast<size_t>(concurrency), maxTasks);
 
-    struct TFlatTask {
-        size_t JobIndex = 0;
-        size_t TaskIndex = 0;
-    };
-    std::vector<TFlatTask> flat;
-    flat.reserve(taskCount);
-    for (size_t ji = 0; ji < jobs.size(); ++ji) {
-        for (size_t ti = 0; ti < jobs[ji].Tasks.size(); ++ti) {
-            flat.push_back(TFlatTask{ji, ti});
-        }
+    std::vector<std::unique_ptr<pqxx::connection>> conns;
+    conns.reserve(poolSize);
+    for (size_t i = 0; i < poolSize; ++i) {
+        conns.push_back(OpenCheckConnection(connectionString, path));
     }
 
     struct TJobOutcome {
@@ -656,28 +652,30 @@ void RunCheckJobs(
         std::mutex DetailMutex;
         std::string Detail;
     };
-    std::vector<TJobOutcome> outcomes(jobs.size());
-    std::atomic<size_t> nextTask{0};
-    std::exception_ptr workerSetupError;
-    std::mutex setupErrorMutex;
 
-    auto workerFn = [&](size_t /*workerIndex*/) {
-        try {
-            auto conn = OpenCheckConnection(connectionString, path);
-            pqxx::nontransaction txn(*conn);
+    for (auto& job : jobs) {
+        if (job.Tasks.empty()) {
+            RecordResult(report, job.Id, ECheckStatus::Passed, {}, print);
+            continue;
+        }
+
+        const size_t workers = std::min(poolSize, job.Tasks.size());
+        TJobOutcome outcome;
+        std::atomic<size_t> nextTask{0};
+
+        auto workerFn = [&](size_t workerIndex) {
+            pqxx::nontransaction txn(*conns[workerIndex]);
             for (;;) {
                 const size_t idx = nextTask.fetch_add(1, std::memory_order_relaxed);
-                if (idx >= flat.size()) {
+                if (idx >= job.Tasks.size()) {
                     break;
                 }
-                const auto& item = flat[idx];
-                auto& outcome = outcomes[item.JobIndex];
                 // Skip remaining chunks once the check has already failed.
                 if (outcome.Failed.load(std::memory_order_relaxed)) {
                     continue;
                 }
                 try {
-                    jobs[item.JobIndex].Tasks[item.TaskIndex](txn);
+                    job.Tasks[idx](txn);
                 } catch (const std::exception& ex) {
                     bool expected = false;
                     if (outcome.Failed.compare_exchange_strong(expected, true)) {
@@ -686,41 +684,30 @@ void RunCheckJobs(
                     }
                 }
             }
-        } catch (...) {
-            std::lock_guard lock(setupErrorMutex);
-            if (!workerSetupError) {
-                workerSetupError = std::current_exception();
+        };
+
+        if (workers == 1) {
+            workerFn(0);
+        } else {
+            std::vector<std::thread> threads;
+            threads.reserve(workers);
+            for (size_t i = 0; i < workers; ++i) {
+                threads.emplace_back(workerFn, i);
+            }
+            for (auto& t : threads) {
+                t.join();
             }
         }
-    };
 
-    if (workers == 1) {
-        workerFn(0);
-    } else {
-        std::vector<std::thread> threads;
-        threads.reserve(workers);
-        for (size_t i = 0; i < workers; ++i) {
-            threads.emplace_back(workerFn, i);
-        }
-        for (auto& t : threads) {
-            t.join();
-        }
-    }
-
-    if (workerSetupError) {
-        std::rethrow_exception(workerSetupError);
-    }
-
-    for (size_t i = 0; i < jobs.size(); ++i) {
-        if (outcomes[i].Failed.load()) {
+        if (outcome.Failed.load()) {
             std::string detail;
             {
-                std::lock_guard lock(outcomes[i].DetailMutex);
-                detail = outcomes[i].Detail;
+                std::lock_guard lock(outcome.DetailMutex);
+                detail = outcome.Detail;
             }
-            RecordResult(report, jobs[i].Id, ECheckStatus::Failed, detail, print);
+            RecordResult(report, job.Id, ECheckStatus::Failed, detail, print);
         } else {
-            RecordResult(report, jobs[i].Id, ECheckStatus::Passed, {}, print);
+            RecordResult(report, job.Id, ECheckStatus::Passed, {}, print);
         }
     }
 }

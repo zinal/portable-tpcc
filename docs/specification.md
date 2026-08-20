@@ -418,6 +418,10 @@ MUST NOT rewrite an already materialized `run-config.json`. Every
 one session; `mind-tpcc` MUST pass a resolved positive N. Adapters MUST honor
 `TCheckRequest.CheckConcurrency` as parallel DBMS sessions. When that value is
 greater than one, each parallel worker MUST open its own DBMS session.
+Catalog ids run one after another in catalog order; parallel sessions apply
+to warehouse chunks of the catalog id currently running. Mixing several
+catalog ids in one work-stealing queue delays the stdout progress line until
+the whole suite finishes and MUST NOT be used.
 
 Warehouse-scoped scans use inclusive `w_id` chunks of size 1
 (`kWarehouseCheckRange`) so HASH partition pruning (OceanBase) and
