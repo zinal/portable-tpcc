@@ -83,9 +83,11 @@ parallelism (`1` when partitioning is off).
 
 Integrity checks scan warehouse-scoped tables one `w_id` at a time (same
 chunk size as PostgreSQL and YDB) and open `--threads` parallel sessions so
-HASH partition pruning can apply. Under `mind-tpcc`, `--threads` comes from
-CLI `--threads` when set, otherwise `runtime.check_concurrency`
-(`0` / omit = `min(scale.warehouses, 32)`).
+HASH partition pruning can apply. Catalog ids run one after another; the
+parallel sessions apply to the current id's warehouse chunks, so
+`Checking … [OK]` appears as each check finishes. Under `mind-tpcc`,
+`--threads` comes from CLI `--threads` when set, otherwise
+`runtime.check_concurrency` (`0` / omit = `min(scale.warehouses, 32)`).
 TPC-C §3.3.2 predicates are unchanged.
 
 | Value | Meaning |
