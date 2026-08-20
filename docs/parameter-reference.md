@@ -62,10 +62,13 @@ Shared binaries stay until `undeploy`.
 | `--warehouses <n>` | profile `scale.warehouses` | Override; must be positive and **≤** profile value. Cannot disagree with an already materialized run-config. |
 | `--ramp-up <duration>` | profile `phases.ramp_up` | Warmup override (`30s`, `5m`, …). |
 | `--measurement <duration>` | profile `phases.measurement` | Measurement override. |
+| `--threads <n>` | profile `runtime.check_concurrency` | Check session concurrency for this invocation. `0` = auto (`min(scale.warehouses, 32)`). Does not rewrite an existing run-config. |
 | `--skip <step>` | none | Skip a `run` pipeline step. Repeatable. Names: `deploy`, `schema`, `load`, `indexes`, `check_after_import`, `start`, `check_after_run`, `collect`, `consolidate`. |
 | `--yes` | false | Required for `cleanup` and `undeploy`. |
 | `--after-import` / `--after-run` | — | Select the `check` phase. |
 | `--leave-processes` | false | Debug: leave remote processes running when `mind-tpcc` exits. Default is to stop leftovers this invocation launched (and warn if a process is still alive after it reported finished). |
+
+Unknown flags and extra positional arguments fail the invocation (exit 2).
 
 ## Profile YAML
 
@@ -241,7 +244,7 @@ All listed fields except `async_work_drain` are required.
 | `think_time_distribution` | `exponential` | `exponential` (TPC-C §5.2.5.4) \| `compatibility` \| `constant` (`constant` is an alias of `compatibility`: fixed mean think time). |
 | `threads_per_loader` | `0` | Import concurrency. `0` = auto (min of assigned warehouses, host CPUs, adapter max). |
 | `threads_per_worker` | `1` if ≤ 0 | Worker coroutine threads. Unlike loaders, `0`/omit materializes as **1**, not CPU auto. |
-| `check_concurrency` | `0` | Parallel DBMS sessions for integrity checks. `0` / omit = auto (`min(scale.warehouses, 32)`). `1` = serial. Passed to `tpcc-<dbms> check` as `--threads=N`. |
+| `check_concurrency` | `0` | Parallel DBMS sessions for integrity checks. `0` / omit = auto (`min(scale.warehouses, 32)`). `1` = serial. Passed to `tpcc-<dbms> check` as `--threads=N`. `mind-tpcc --threads` overrides this for the current invocation without rewriting run-config. |
 | `max_inflight_per_worker` | `64` if ≤ 0 | Max in-flight transactions per worker (standalone CLI default is **100**). |
 | `retry.max_attempts` | `4` | Retry attempts. |
 | `retry.initial_backoff` | `10ms` | Initial backoff. |
@@ -320,7 +323,7 @@ clean   --run-config <path> --instance <name>
 | `--warmup` | `0` | Warmup minutes; `0` = adaptive. |
 | `--skip-warmup` | `false` | Skip warmup; start measurement immediately. |
 | `--duration` | `10` | Measurement minutes (> 0). |
-| `-t` / `--threads` | `0` | Run/import: `0` = auto. Check: parallel DBMS sessions (`<=0` = 1 session). Orchestrated check gets `--threads` from `runtime.check_concurrency`. |
+| `-t` / `--threads` | `0` | Run/import: `0` = auto. Check: parallel DBMS sessions (`<=0` = 1 session). Orchestrated check gets `--threads` from `mind-tpcc --threads` when set, otherwise `runtime.check_concurrency`. |
 | `-m` / `--max-inflight` | `100` | Max in-flight transactions (> 0). |
 | `--no-delays` | `false` | Disable keying and think time (engineering). |
 | `--think-time-distribution` | `exponential` | `exponential` \| `compatibility` \| `constant`. |

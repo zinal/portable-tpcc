@@ -46,6 +46,32 @@ func TestPlan_snapshot(t *testing.T) {
 	if len(plan.LoadAssignment) != 1 || plan.LoadAssignment[0].Threads != 2 {
 		t.Fatalf("loader threads %v, want [2]", plan.LoadAssignment)
 	}
+	if len(plan.CheckArgvImport) == 0 || plan.CheckArgvImport[len(plan.CheckArgvImport)-1] != "--threads=10" {
+		t.Fatalf("check argv %v, want --threads=10", plan.CheckArgvImport)
+	}
+}
+
+func TestPlanHonorsCheckThreadsOverride(t *testing.T) {
+	dir := t.TempDir()
+	profilePath := writeTestProfile(t, dir, "")
+	if err := os.MkdirAll(filepath.Join(dir, "dist"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	threads := 16
+	o, err := orchestrator.New(orchestrator.Options{
+		ProfilePath:  profilePath,
+		CheckThreads: &threads,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := o.Plan()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := plan.CheckArgvImport; len(got) == 0 || got[len(got)-1] != "--threads=16" {
+		t.Fatalf("check argv %v, want --threads=16", plan.CheckArgvImport)
+	}
 }
 
 func TestMaterializePreservesActiveRunState(t *testing.T) {
