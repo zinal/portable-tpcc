@@ -253,8 +253,11 @@ Evaluates shared catalog entries against the live database:
 - optional sample content checks once a cross-DB canonical row encoding
   exists (open decision in the main specification).
 
-The adapter returns a structured pass/fail with native detail; the orchestrator
-stores results under `results/<run_id>/checks/`.
+The adapter returns a structured pass/fail with native detail. In orchestrated
+mode the check role writes `{run_dir}/checks/{phase}.json` on the runtime host;
+`collect` copies it to `results/<run_id>/checks/`. JSON shape, process
+metadata timing, and query-timeout rules are in
+[specification.md](specification.md) §9.1–§9.2.
 
 ### 4.5. `IErrorClassifier`
 
@@ -411,7 +414,7 @@ Each `tpcc-<dbms>` binary **MUST** expose:
 | `loader` | `PutBatch` over assigned ranges only (no indexes/statistics) |
 | `indexes` | `EnsureIndexes` then `EnsureStatistics` (idempotent; after all loaders finish) |
 | `worker` | sessions for terminals; honor `--start-at` (specification §7); write diagnostics / `result.json` |
-| `check` | `ICheckAdapter` for `--after-import` / `--after-run` |
+| `check` | `ICheckAdapter` for `--after-import` / `--after-run` (process contract: specification §9.1–§9.2) |
 
 Orchestrated remotes pass at least `--run-config`, `--instance`, and for
 workers `--start-at=<RFC3339-UTC>`.
@@ -450,7 +453,7 @@ port is the reference adapter.
 ## 9. Related documents
 
 - [specification.md](specification.md) — product architecture, config, phases,
-  results, orchestrator commands.
+  results, orchestrator commands, remote process contract (§9.1–§9.2).
 - [alignment-plan.md](alignment-plan.md) — phased implementation plan and
   accepted API decisions.
 - [dependencies.md](dependencies.md) — third-party libraries and port status.

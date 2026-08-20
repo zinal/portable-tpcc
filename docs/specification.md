@@ -261,8 +261,8 @@ There is no DB-scoped control fence. Operators MUST NOT run two control
 processes against the same database path concurrently. Loss of a worker
 during measurement fails the run; terminals are not reassigned.
 
-Process supervision may use `nohup` plus an instance lock and `process.json`
-(PID, start time, nonce) so stop/restart does not signal the wrong process.
+Orchestrated remotes (schema, loader, indexes, worker, check, and cleanup
+`clean`) follow the process contract in §9.1.
 
 ## 8. Results
 
@@ -361,6 +361,73 @@ error, not a compatibility mode that `consolidate` is required to reconcile.
 
 Skipped steps are recorded in the run-state and aggregate.
 
+### 9.1. Remote process contract
+
+`mind-tpcc` launches each orchestrated role as a detached process on a runtime
+host (`nohup` or equivalent) under
+`{paths.remote_root}/{run_id}/{role}/{instance}/`. Re-running a role for the
+same `run_id` reuses that instance directory.
+
+Before a new launch, `mind-tpcc` MUST discard leftover `process.json`,
+`ready.json`, `result.json`, and `artifact-manifest.json` from that directory
+so a previous attempt cannot be adopted as this process. A leftover
+`checks/{phase}.json` MUST NOT be treated as this launch unless `process.json`
+for the new nonce was observed.
+
+Each launched binary MUST write `process.json` in the instance directory
+**immediately after start**, before connecting to the database or doing other
+role work. The file MUST include at least:
+
+- OS pid of the binary;
+- `instance_nonce` unique to this launch;
+- `run_id`, instance name, and role.
+
+The orchestrator uses `process.json` to bind supervision (stop/signal) to this
+launch and to reject stale artifacts. It waits only briefly for the file.
+Any role that can run longer than that wait (load, indexes, check, workers)
+MUST still emit `process.json` first; otherwise the launch is reported as a
+metadata timeout while the process is still running.
+
+After role work, the binary MUST write `artifact-manifest.json` in the same
+directory with the same `instance_nonce`, `finalized: true`, and
+`exit_status`. `mind-tpcc` MUST accept a finalized manifest only when its
+nonce matches the launched `process.json`. A non-zero `exit_status` fails the
+stage.
+
+`stdout.log` and `stderr.log` in the instance directory are the process
+stdio. On check failure, `mind-tpcc` SHOULD also print failed/error items from
+the check report (§9.2), not only `exited with status N`.
+
+### 9.2. Integrity-check reports
+
+Orchestrated `check` uses instance `check-0` on the first loader host.
+`--after-import` and `--after-run` are separate invocations.
+
+The check role MUST write `{run_dir}/checks/{phase}.json` on the runtime host
+before the artifact manifest (`phase` is `after-import` or `after-run`).
+`collect` copies those files to `results/<run_id>/checks/`.
+
+The report MUST be JSON with at least:
+
+| Field | Meaning |
+| --- | --- |
+| `ok` | `true` iff `failed == 0` and `errors == 0` |
+| `phase` | `after-import` or `after-run` |
+| `passed`, `failed`, `skipped`, `errors` | counts |
+| `checks[]` | entries with `id`, `title`, `status`, `detail` |
+| `checks[].status` | `passed`, `failed`, `skipped`, or `error` |
+
+Human-readable stdout (`Checking … [OK]/[Failed]/[Skipped]`) is informative.
+The JSON report is the structured contract for orchestrator diagnostics and
+consolidate.
+
+If the adapter exposes a query/statement timeout in the profile or connection
+string, **check sessions MUST use it**. Worker OLTP sessions MAY keep the DBMS
+default so a hung transaction fails fast. OceanBase:
+`database.options.query_timeout` (seconds, default 600) sets session
+`ob_query_timeout` for load, indexes, statistics, and check; the server
+default without that SET is 10s. See [run-oceanbase.md](run-oceanbase.md).
+
 Secrets: the profile names a control-host environment variable
 (`password_env`); `mind-tpcc` delivers the value to workers as a mode-0600
 `password_file` beside `run-config.json` and must not place the secret in
@@ -400,7 +467,9 @@ visible in the result settings/options.
   classes, optional FKs as a recorded physical option, optional
   `CREATE INDEX … PARALLEL n` (`database.options.index_parallel`, default 4),
   `DBMS_STATS.GATHER_TABLE_STATS` with gather DOP equal to the HASH partition
-  count.
+  count. Session `ob_query_timeout` (`database.options.query_timeout`, default
+  600s) MUST apply to load, indexes, statistics, and integrity-check sessions
+  (specification §9.2); worker OLTP sessions MAY keep the server default (10s).
 
 See [adapter-api.md](adapter-api.md) §5–§6 for the full logical/physical and
 query-binding contract.
