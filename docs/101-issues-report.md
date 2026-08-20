@@ -334,8 +334,12 @@ limit.
 **Код:** `mind/internal/consolidate/consolidate.go:72-120,154-193`.
 
 Невалидные result JSON, counters, histogram и неожиданные worker приводят к
-ошибке, а не пропускаются. Консолидация теперь fail-closed по умолчанию; режим
-неполного engineering aggregate доступен только через явный `AllowIncomplete`.
+ошибке, а не пропускаются. Отсутствующие или `null` `counters`/`histograms`/
+`exit_status`, отрицательные counters и несовпадение completed count с
+`histogram.total_count` тоже отвергаются до merge. Консолидация fail-closed
+по умолчанию; режим неполного engineering aggregate (`AllowIncomplete`)
+допускает non-zero `exit_status` или отсутствующий `result.json`, но не
+malformed measurement payload.
 
 ### IR-016. Supervisor некорректно обрабатывает незавершённый manifest
 

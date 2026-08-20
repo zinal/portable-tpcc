@@ -117,15 +117,34 @@ func (c *Consolidator) ConsolidateWithOptions(runID string, rc *config.RunConfig
 		if err := validateWorkerNonceConsistency(rawWorkers, name, partial); err != nil {
 			return nil, fmt.Errorf("worker %s: %w", name, err)
 		}
-		if exit, ok := partial["exit_status"].(float64); ok && int(exit) != 0 {
+		exit, err := requireExitStatus(partial["exit_status"], name)
+		if err != nil {
+			return nil, err
+		}
+		if exit != 0 {
 			workersComplete = false
-			incompleteWorkers = append(incompleteWorkers, fmt.Sprintf("%s: exit_status=%d", name, int(exit)))
+			incompleteWorkers = append(incompleteWorkers, fmt.Sprintf("%s: exit_status=%d", name, exit))
 		}
-		if err := mergeWorkerCounters(counters, partial["counters"], name); err != nil {
+		workerCounters, err := parseWorkerCounters(partial["counters"], name)
+		if err != nil {
 			return nil, err
 		}
-		if err := mergeWorkerHistograms(mergedHist, partial["histograms"], name); err != nil {
+		workerHists, err := parseWorkerHistograms(partial["histograms"], name)
+		if err != nil {
 			return nil, err
+		}
+		if err := validateCounterHistogramInvariants(workerCounters, workerHists, name); err != nil {
+			return nil, err
+		}
+		for k, v := range workerCounters {
+			counters[k] += v
+		}
+		for tx, h := range workerHists {
+			cur := mergedHist[tx]
+			if err := histogram.Merge(&cur, h); err != nil {
+				return nil, fmt.Errorf("merge histogram %s from %s: %w", tx, name, err)
+			}
+			mergedHist[tx] = cur
 		}
 		if readyPath := filepath.Join(rawWorkers, name, "ready.json"); true {
 			if cal, ok := readWorkerClockCalibration(readyPath); ok {
@@ -207,49 +226,112 @@ func (c *Consolidator) ConsolidateWithOptions(runID string, rc *config.RunConfig
 	return agg, nil
 }
 
-func mergeWorkerCounters(counters map[string]int64, raw interface{}, worker string) error {
+func requireExitStatus(raw interface{}, worker string) (int64, error) {
 	if raw == nil {
-		return nil
+		return 0, fmt.Errorf("worker %s: missing exit_status", worker)
+	}
+	n, err := jsonNumberAsInt64(raw)
+	if err != nil {
+		return 0, fmt.Errorf("worker %s: exit_status: %w", worker, err)
+	}
+	return n, nil
+}
+
+func parseWorkerCounters(raw interface{}, worker string) (map[string]int64, error) {
+	if raw == nil {
+		return nil, fmt.Errorf("worker %s: missing counters", worker)
 	}
 	ctr, ok := raw.(map[string]interface{})
 	if !ok {
-		return fmt.Errorf("worker %s: counters must be an object, got %T", worker, raw)
+		return nil, fmt.Errorf("worker %s: counters must be an object, got %T", worker, raw)
 	}
+	out := make(map[string]int64, len(ctr))
 	for k, v := range ctr {
 		n, err := jsonNumberAsInt64(v)
 		if err != nil {
-			return fmt.Errorf("worker %s: counter %q: %w", worker, k, err)
+			return nil, fmt.Errorf("worker %s: counter %q: %w", worker, k, err)
 		}
-		counters[k] += n
+		if n < 0 {
+			return nil, fmt.Errorf("worker %s: counter %q is negative (%d)", worker, k, n)
+		}
+		out[k] = n
 	}
-	return nil
+	return out, nil
 }
 
-func mergeWorkerHistograms(merged map[string]histogram.Raw, raw interface{}, worker string) error {
+func parseWorkerHistograms(raw interface{}, worker string) (map[string]histogram.Raw, error) {
 	if raw == nil {
-		return nil
+		return nil, fmt.Errorf("worker %s: missing histograms", worker)
 	}
 	hists, ok := raw.(map[string]interface{})
 	if !ok {
-		return fmt.Errorf("worker %s: histograms must be an object, got %T", worker, raw)
+		return nil, fmt.Errorf("worker %s: histograms must be an object, got %T", worker, raw)
 	}
+	out := make(map[string]histogram.Raw, len(hists))
 	for tx, payload := range hists {
 		bytes, err := json.Marshal(payload)
 		if err != nil {
-			return fmt.Errorf("worker %s: histogram %s: encode: %w", worker, tx, err)
+			return nil, fmt.Errorf("worker %s: histogram %s: encode: %w", worker, tx, err)
 		}
 		var h histogram.Raw
 		if err := json.Unmarshal(bytes, &h); err != nil {
-			return fmt.Errorf("worker %s: histogram %s: decode: %w", worker, tx, err)
+			return nil, fmt.Errorf("worker %s: histogram %s: decode: %w", worker, tx, err)
 		}
 		if err := histogram.Validate(h); err != nil {
-			return fmt.Errorf("worker %s: histogram %s: %w", worker, tx, err)
+			return nil, fmt.Errorf("worker %s: histogram %s: %w", worker, tx, err)
 		}
-		cur := merged[tx]
-		if err := histogram.Merge(&cur, h); err != nil {
-			return fmt.Errorf("merge histogram %s from %s: %w", tx, worker, err)
+		out[tx] = h
+	}
+	return out, nil
+}
+
+var counterSuffixes = []string{"_user_aborted", "_retried", "_failed", "_ok"}
+
+func transactionTypeFromCounter(key string) (string, bool) {
+	for _, suffix := range counterSuffixes {
+		if strings.HasSuffix(key, suffix) && len(key) > len(suffix) {
+			return strings.TrimSuffix(key, suffix), true
 		}
-		merged[tx] = cur
+	}
+	return "", false
+}
+
+func completedCount(counters map[string]int64, tx string) (int64, error) {
+	ok := counters[tx+"_ok"]
+	aborted := counters[tx+"_user_aborted"]
+	if aborted > 0 && ok > math.MaxInt64-aborted {
+		return 0, fmt.Errorf("%s completed count overflows", tx)
+	}
+	return ok + aborted, nil
+}
+
+func validateCounterHistogramInvariants(counters map[string]int64, hists map[string]histogram.Raw, worker string) error {
+	seen := make(map[string]bool, len(counters)+len(hists))
+	for k := range counters {
+		if tx, ok := transactionTypeFromCounter(k); ok {
+			seen[tx] = true
+		}
+	}
+	for tx := range hists {
+		seen[tx] = true
+	}
+	txs := make([]string, 0, len(seen))
+	for tx := range seen {
+		txs = append(txs, tx)
+	}
+	sort.Strings(txs)
+	for _, tx := range txs {
+		completed, err := completedCount(counters, tx)
+		if err != nil {
+			return fmt.Errorf("worker %s: %w", worker, err)
+		}
+		h, hasHist := hists[tx]
+		if completed > 0 && !hasHist {
+			return fmt.Errorf("worker %s: %s completed count %d has no response-time histogram", worker, tx, completed)
+		}
+		if hasHist && h.TotalCount != uint64(completed) {
+			return fmt.Errorf("worker %s: %s histogram.total_count %d != completed count %d", worker, tx, h.TotalCount, completed)
+		}
 	}
 	return nil
 }

@@ -61,6 +61,9 @@ func writeWorkerArtifacts(t *testing.T, root, runID, workerName, sha string, rc 
 		"counters": map[string]interface{}{
 			"new_order_ok": 10,
 		},
+		"histograms": map[string]interface{}{
+			"new_order": measurementHistogram(10),
+		},
 	}
 	for k, v := range resultExtras {
 		result[k] = v
@@ -81,6 +84,45 @@ func writeWorkerArtifacts(t *testing.T, root, runID, workerName, sha string, rc 
 	}
 	readyData, _ := json.MarshalIndent(ready, "", "  ")
 	if err := os.WriteFile(filepath.Join(workerDir, "ready.json"), readyData, 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func measurementHistogram(count uint64) map[string]interface{} {
+	buckets := make([]uint64, 9)
+	if count > 0 {
+		buckets[0] = count
+	}
+	return map[string]interface{}{
+		"layout":       "linear_exp",
+		"unit":         "ms",
+		"hdr_till":     4,
+		"max_value":    64,
+		"total_count":  count,
+		"min_recorded": uint64(0),
+		"max_recorded": uint64(0),
+		"sum_values":   uint64(0),
+		"buckets":      buckets,
+	}
+}
+
+func patchWorkerResult(t *testing.T, root, runID, worker string, patch func(map[string]interface{})) {
+	t.Helper()
+	path := filepath.Join(root, runID, "raw", "worker", worker, "result.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result map[string]interface{}
+	if err := json.Unmarshal(data, &result); err != nil {
+		t.Fatal(err)
+	}
+	patch(result)
+	out, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, out, 0644); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -124,7 +166,7 @@ func TestConsolidate_mergesHistograms(t *testing.T) {
 	sha := writeRunConfig(t, root, runID, rc)
 	writeWorkerArtifacts(t, root, runID, "worker-a", sha, rc, map[string]interface{}{
 		"counters": map[string]interface{}{
-			"new_order_ok": 100,
+			"new_order_ok": 4,
 		},
 		"histograms": map[string]interface{}{
 			"new_order": map[string]interface{}{
@@ -318,6 +360,9 @@ func TestConsolidate_includesUserAbortedInThroughput(t *testing.T) {
 		"counters": map[string]interface{}{
 			"new_order_ok":           99,
 			"new_order_user_aborted": 1,
+		},
+		"histograms": map[string]interface{}{
+			"new_order": measurementHistogram(100),
 		},
 	})
 	writePassingChecks(t, root, runID)
@@ -534,6 +579,130 @@ func TestConsolidateAllowIncompleteReturnsAggregate(t *testing.T) {
 	}
 	if agg.Status.WorkersComplete {
 		t.Fatalf("expected workers_complete=false, got %+v", agg.Status)
+	}
+}
+
+func TestConsolidate_rejectsIncompleteMeasurement(t *testing.T) {
+	cases := []struct {
+		name  string
+		patch func(map[string]interface{})
+		want  string
+	}{
+		{
+			name:  "missing counters",
+			patch: func(m map[string]interface{}) { delete(m, "counters") },
+			want:  "missing counters",
+		},
+		{
+			name:  "null counters",
+			patch: func(m map[string]interface{}) { m["counters"] = nil },
+			want:  "missing counters",
+		},
+		{
+			name:  "missing histograms",
+			patch: func(m map[string]interface{}) { delete(m, "histograms") },
+			want:  "missing histograms",
+		},
+		{
+			name:  "null histograms",
+			patch: func(m map[string]interface{}) { m["histograms"] = nil },
+			want:  "missing histograms",
+		},
+		{
+			name:  "missing exit_status",
+			patch: func(m map[string]interface{}) { delete(m, "exit_status") },
+			want:  "missing exit_status",
+		},
+		{
+			name:  "non-integer exit_status",
+			patch: func(m map[string]interface{}) { m["exit_status"] = "0" },
+			want:  "exit_status",
+		},
+		{
+			name: "negative counter",
+			patch: func(m map[string]interface{}) {
+				m["counters"] = map[string]interface{}{"new_order_ok": -1}
+				m["histograms"] = map[string]interface{}{}
+			},
+			want: "negative",
+		},
+		{
+			name: "completed without histogram",
+			patch: func(m map[string]interface{}) {
+				m["counters"] = map[string]interface{}{"new_order_ok": 10}
+				m["histograms"] = map[string]interface{}{}
+			},
+			want: "no response-time histogram",
+		},
+		{
+			name: "histogram total_count mismatch",
+			patch: func(m map[string]interface{}) {
+				m["counters"] = map[string]interface{}{"new_order_ok": 10}
+				m["histograms"] = map[string]interface{}{"new_order": measurementHistogram(4)}
+			},
+			want: "histogram.total_count",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			runID := "run-malformed"
+			rc := minimalRunConfig(runID)
+			sha := writeRunConfig(t, root, runID, rc)
+			writeWorkerArtifacts(t, root, runID, "worker-a", sha, rc, nil)
+			patchWorkerResult(t, root, runID, "worker-a", tc.patch)
+
+			cons := &consolidate.Consolidator{ResultRoot: root}
+			_, err := cons.Consolidate(runID, rc)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("expected error containing %q, got %v", tc.want, err)
+			}
+		})
+	}
+}
+
+func TestConsolidate_allowsZeroCompletedWithoutHistogram(t *testing.T) {
+	root := t.TempDir()
+	runID := "run-zero-completed"
+	rc := minimalRunConfig(runID)
+	sha := writeRunConfig(t, root, runID, rc)
+	writeWorkerArtifacts(t, root, runID, "worker-a", sha, rc, map[string]interface{}{
+		"counters":   map[string]interface{}{"new_order_failed": 3},
+		"histograms": map[string]interface{}{},
+	})
+	writePassingChecks(t, root, runID)
+
+	cons := &consolidate.Consolidator{ResultRoot: root}
+	agg, err := cons.Consolidate(runID, rc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !agg.Status.WorkersComplete {
+		t.Fatalf("expected workers_complete=true, got %+v", agg.Status)
+	}
+	meas := agg.Metrics["measurement"].(map[string]interface{})
+	if got := meas["new_order_count"].(int64); got != 0 {
+		t.Fatalf("new_order_count=%v, want 0", got)
+	}
+}
+
+func TestConsolidateAllowIncompleteStillRejectsMalformedMeasurement(t *testing.T) {
+	root := t.TempDir()
+	runID := "run-allow-malformed"
+	rc := minimalRunConfig(runID)
+	sha := writeRunConfig(t, root, runID, rc)
+	writeWorkerArtifacts(t, root, runID, "worker-a", sha, rc, nil)
+	patchWorkerResult(t, root, runID, "worker-a", func(m map[string]interface{}) {
+		delete(m, "counters")
+	})
+
+	cons := &consolidate.Consolidator{ResultRoot: root}
+	_, err := cons.ConsolidateWithOptions(runID, rc, consolidate.Options{
+		MaxClockSkewMs:  100,
+		AllowIncomplete: true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "missing counters") {
+		t.Fatalf("expected malformed measurement error, got %v", err)
 	}
 }
 
