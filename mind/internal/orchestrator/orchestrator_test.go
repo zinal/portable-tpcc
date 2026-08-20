@@ -403,6 +403,93 @@ func TestRequireWorkerBinaryNeedsExplicitDeploy(t *testing.T) {
 	}
 }
 
+func TestCheckAfterImportRequiresIndexes(t *testing.T) {
+	dir := t.TempDir()
+	profilePath := writeTestProfile(t, dir, "")
+	o, err := orchestrator.New(orchestrator.Options{ProfilePath: profilePath, RunID: "run-check-early"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, err := o.Materialize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := o.StateStore.Transition(ctx.RunID, state.StateLoading); err != nil {
+		t.Fatal(err)
+	}
+	err = o.RunCheck(ctx, "after-import")
+	if err == nil || !strings.Contains(err.Error(), "requires the indexes stage") {
+		t.Fatalf("expected indexes-required error, got %v", err)
+	}
+	got, err := o.StateStore.Load(ctx.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != state.StateLoading {
+		t.Fatalf("state=%q, want loading (must not enter checking_import)", got.State)
+	}
+}
+
+func TestCheckAfterImportRevertsOnLaunchFailure(t *testing.T) {
+	dir := t.TempDir()
+	profilePath := writeTestProfile(t, dir, "")
+	o, err := orchestrator.New(orchestrator.Options{ProfilePath: profilePath, RunID: "run-check-revert"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, err := o.Materialize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := o.StateStore.Transition(ctx.RunID, state.StateIndexing); err != nil {
+		t.Fatal(err)
+	}
+	err = o.RunCheck(ctx, "after-import")
+	if err == nil {
+		t.Fatal("expected check to fail without a deployed worker binary")
+	}
+	if strings.Contains(err.Error(), "requires the indexes stage") {
+		t.Fatalf("indexes already completed; got %v", err)
+	}
+	got, err := o.StateStore.Load(ctx.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != state.StateIndexing {
+		t.Fatalf("state=%q, want indexing after failed check revert", got.State)
+	}
+}
+
+func TestIndexesAllowedAfterStuckCheckingImport(t *testing.T) {
+	dir := t.TempDir()
+	profilePath := writeTestProfile(t, dir, "")
+	o, err := orchestrator.New(orchestrator.Options{ProfilePath: profilePath, RunID: "run-unstick"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, err := o.Materialize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := o.StateStore.Transition(ctx.RunID, state.StateCheckingImport); err != nil {
+		t.Fatal(err)
+	}
+	err = o.RunIndexes(ctx)
+	if err == nil {
+		t.Fatal("expected indexes to fail without a deployed worker binary")
+	}
+	if strings.Contains(err.Error(), "invalid state transition") {
+		t.Fatalf("indexes must be allowed from checking_import, got %v", err)
+	}
+	got, err := o.StateStore.Load(ctx.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != state.StateIndexing {
+		t.Fatalf("state=%q, want indexing", got.State)
+	}
+}
+
 func TestRunAcquiresProfileLockBeforeMaterialize(t *testing.T) {
 	dir := t.TempDir()
 	profilePath := writeTestProfile(t, dir, "")
