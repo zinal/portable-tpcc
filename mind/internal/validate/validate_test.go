@@ -75,6 +75,76 @@ func TestValidate_tpccSettingsDeviationsDoNotFail(t *testing.T) {
 	}
 }
 
+func TestValidate_tpccSettingsAllowNewOrderRemainderAndLongerWaits(t *testing.T) {
+	path := filepath.Join("..", "..", "testdata", "profile.valid.yaml")
+	p, err := profile.ParseFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Phases.Measurement = "120m"
+	p.Workload.TransactionMix = profile.TransactionMix{
+		NewOrder:    44,
+		Payment:     44,
+		OrderStatus: 4,
+		Delivery:    4,
+		StockLevel:  4,
+	}
+	p.Workload.KeyingTimeMs.NewOrder = 20000
+	p.Workload.ThinkTimeMs.Payment = 15000
+	res := validate.Profile(p)
+	if !res.Valid {
+		t.Fatalf("expected valid profile, errors: %v", res.Errors)
+	}
+	if !res.TPCCSettingsConformant {
+		t.Fatalf("expected conformant settings, deviations: %v", res.TPCCSettingsDeviations)
+	}
+}
+
+func TestValidate_rejectsNonPositiveMeasurement(t *testing.T) {
+	path := filepath.Join("..", "..", "testdata", "profile.valid.yaml")
+	p, err := profile.ParseFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Phases.Measurement = "0s"
+	res := validate.Profile(p)
+	if res.Valid {
+		t.Fatal("expected zero measurement to fail structural validation")
+	}
+	if !strings.Contains(strings.Join(res.Errors, "\n"), "phases.measurement") {
+		t.Fatalf("expected measurement error, got %v", res.Errors)
+	}
+}
+
+func TestValidate_rejectsNegativePhaseDuration(t *testing.T) {
+	path := filepath.Join("..", "..", "testdata", "profile.valid.yaml")
+	p, err := profile.ParseFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Phases.RampUp = "-5s"
+	res := validate.Profile(p)
+	if res.Valid {
+		t.Fatal("expected negative ramp_up to fail structural validation")
+	}
+	if !strings.Contains(strings.Join(res.Errors, "\n"), "must not be negative") {
+		t.Fatalf("expected negative duration error, got %v", res.Errors)
+	}
+}
+
+func TestValidate_acceptsZeroRampUp(t *testing.T) {
+	path := filepath.Join("..", "..", "testdata", "profile.valid.yaml")
+	p, err := profile.ParseFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Phases.RampUp = "0s"
+	res := validate.Profile(p)
+	if !res.Valid {
+		t.Fatalf("zero ramp_up must remain structurally valid, errors: %v", res.Errors)
+	}
+}
+
 func TestValidate_rejectsManualAssignment(t *testing.T) {
 	path := filepath.Join("..", "..", "testdata", "profile.valid.yaml")
 	p, err := profile.ParseFile(path)

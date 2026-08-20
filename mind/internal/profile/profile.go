@@ -230,6 +230,9 @@ func ParseDurationMs(s string) (int64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("invalid duration %q: %w", s, err)
 	}
+	if d < 0 {
+		return 0, fmt.Errorf("invalid duration %q: must not be negative", s)
+	}
 	return d.Milliseconds(), nil
 }
 

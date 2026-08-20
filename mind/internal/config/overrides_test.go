@@ -84,3 +84,21 @@ func TestOverridesMatchRunConfig(t *testing.T) {
 		t.Fatalf("expected conflict, got %v", err)
 	}
 }
+
+func TestApplyOverrides_rejectsNonPositiveMeasurement(t *testing.T) {
+	p := &profile.Profile{Phases: profile.Phases{Measurement: "120m"}}
+	zero := "0s"
+	err := config.ApplyOverrides(p, config.ProfileOverrides{Measurement: &zero})
+	if err == nil || !strings.Contains(err.Error(), "greater than zero") {
+		t.Fatalf("expected positive measurement error, got %v", err)
+	}
+}
+
+func TestApplyOverrides_rejectsNegativeRampUp(t *testing.T) {
+	p := &profile.Profile{Phases: profile.Phases{RampUp: "5m"}}
+	neg := "-5s"
+	err := config.ApplyOverrides(p, config.ProfileOverrides{RampUp: &neg})
+	if err == nil || !strings.Contains(err.Error(), "must not be negative") {
+		t.Fatalf("expected negative duration error, got %v", err)
+	}
+}

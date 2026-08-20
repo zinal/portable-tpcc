@@ -4,9 +4,9 @@ import (
 	"fmt"
 )
 
-// TPC-C 5.11 minimum transaction mix percentages (§5.2.3).
+// TPC-C 5.11 minimum transaction mix percentages (Clause 5.2.3 / 5.2.5.7).
+// New-Order has no mix minimum: its measured rate is the reported throughput.
 const (
-	TPCCMinMixNewOrderPct    = 45
 	TPCCMinMixPaymentPct     = 43
 	TPCCMinMixOrderStatusPct = 4
 	TPCCMinMixDeliveryPct    = 4
@@ -88,10 +88,10 @@ func mixDeviations(m TransactionMixJSON) []string {
 	type named struct {
 		name string
 		w    int
-		min  int
+		min  int // 0 = no Clause 5.2.3 minimum (New-Order)
 	}
 	items := []named{
-		{"new_order", m.NewOrder, TPCCMinMixNewOrderPct},
+		{"new_order", m.NewOrder, 0},
 		{"payment", m.Payment, TPCCMinMixPaymentPct},
 		{"order_status", m.OrderStatus, TPCCMinMixOrderStatusPct},
 		{"delivery", m.Delivery, TPCCMinMixDeliveryPct},
@@ -106,6 +106,9 @@ func mixDeviations(m TransactionMixJSON) []string {
 	}
 	var out []string
 	for _, it := range items {
+		if it.min <= 0 {
+			continue
+		}
 		// weight/sum*100 >= min  <=>  weight*100 >= min*sum
 		if it.w*100 < it.min*sum {
 			out = append(out, fmt.Sprintf(
@@ -132,9 +135,10 @@ func timingDeviations(field string, got, want TxTimingJSON) []string {
 	}
 	var out []string
 	for _, it := range items {
-		if it.g != it.w {
+		// Clause 5.2.5.2 / 5.2.5.7: keying time and mean think time are minima.
+		if it.g < it.w {
 			out = append(out, fmt.Sprintf(
-				"workload.%s.%s=%d; TPC-C requires %d",
+				"workload.%s.%s=%d; TPC-C requires >= %d",
 				field, it.name, it.g, it.w,
 			))
 		}
