@@ -46,6 +46,10 @@ func (l *Local) Upload(localPath, remotePath string) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
 		return err
 	}
+	// Unlink first so a running executable can be replaced (ETXTBSY).
+	if err := os.Remove(dst); err != nil && !os.IsNotExist(err) {
+		return err
+	}
 	in, err := os.Open(localPath)
 	if err != nil {
 		return err

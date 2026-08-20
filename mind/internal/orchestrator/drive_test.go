@@ -28,6 +28,7 @@ type fakeSession struct {
 	alive      bool
 	downloads  int
 	signals    int
+	removed    []string
 	removedAll []string
 	startArgv  []string
 	startEnv   map[string]string
@@ -88,6 +89,8 @@ func (f *fakeSession) Exists(remotePath string) (bool, error) {
 	return false, nil
 }
 func (f *fakeSession) Remove(remotePath string) error {
+	f.removed = append(f.removed, remotePath)
+	delete(f.files, remotePath)
 	return nil
 }
 func (f *fakeSession) RemoveAll(remotePath string) error {
@@ -854,6 +857,34 @@ func TestDeployToHostsUploadsOnlyBinary(t *testing.T) {
 	}
 	if len(sess.writes) != 0 {
 		t.Fatalf("deploy must not write password file: %v", sess.writes)
+	}
+	if len(sess.removed) != 0 {
+		t.Fatalf("first deploy should not remove a missing binary: %v", sess.removed)
+	}
+}
+
+func TestDeployToHostsRemovesExistingBinary(t *testing.T) {
+	root := t.TempDir()
+	binPath := filepath.Join(root, "tpcc-ydb")
+	if err := os.WriteFile(binPath, []byte("bin"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	remoteRoot := filepath.Join(root, "remote")
+	o := &Orchestrator{
+		Profile:  &profile.Profile{Database: profile.Database{DBMS: "ydb"}},
+		Expanded: config.ExpandedPaths{RemoteRoot: remoteRoot},
+		Opts:     Options{WorkerBinary: binPath},
+	}
+	remoteBin := filepath.Join(remoteRoot, "tpcc-ydb")
+	sess := &fakeSession{files: map[string][]byte{remoteBin: []byte("old")}}
+	if err := o.deployToHosts(map[string]remote.Session{"host-a": sess}); err != nil {
+		t.Fatal(err)
+	}
+	if len(sess.removed) != 1 || sess.removed[0] != remoteBin {
+		t.Fatalf("removed=%v, want [%q]", sess.removed, remoteBin)
+	}
+	if len(sess.uploads) != 1 || sess.uploads[0] != remoteBin {
+		t.Fatalf("uploads=%v, want [%q]", sess.uploads, remoteBin)
 	}
 }
 
