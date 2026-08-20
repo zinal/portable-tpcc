@@ -1,6 +1,8 @@
 package histogram_test
 
 import (
+	"encoding/json"
+	"math"
 	"strings"
 	"testing"
 
@@ -8,11 +10,34 @@ import (
 )
 
 func validHist(total uint64, buckets []uint64) histogram.Raw {
-	return histogram.Raw{
+	h := histogram.Raw{
 		Layout: "linear_exp", Unit: "ms", HdrTill: 4, MaxValue: 64,
-		TotalCount: total, MinRecorded: 0, MaxRecorded: 3, SumValues: 6,
-		Buckets: buckets,
+		TotalCount: total, Buckets: buckets,
 	}
+	if total == 0 {
+		return h
+	}
+	first, last := -1, -1
+	for i, c := range buckets {
+		if c == 0 {
+			continue
+		}
+		if first < 0 {
+			first = i
+		}
+		last = i
+	}
+	if first < 0 || last >= 4 {
+		return h
+	}
+	h.MinRecorded = uint64(first)
+	h.MaxRecorded = uint64(last)
+	var sum uint64
+	for i := first; i <= last; i++ {
+		sum += uint64(i) * buckets[i]
+	}
+	h.SumValues = sum
+	return h
 }
 
 func TestExpectedBucketCount(t *testing.T) {
@@ -77,6 +102,20 @@ func TestValidateRejectsInconsistentPayload(t *testing.T) {
 	bad.SumValues = 20
 	if err := histogram.Validate(bad); err == nil || !strings.Contains(err.Error(), "min_recorded") {
 		t.Fatalf("expected min_recorded error, got %v", err)
+	}
+
+	empty := validHist(0, []uint64{0, 0, 0, 0, 0, 0, 0, 0, 0})
+	empty.MaxRecorded = 99
+	if err := histogram.Validate(empty); err == nil || !strings.Contains(err.Error(), "empty histogram") {
+		t.Fatalf("expected empty extrema error, got %v", err)
+	}
+
+	zeroed := h
+	zeroed.MinRecorded = 0
+	zeroed.MaxRecorded = 0
+	zeroed.SumValues = 0
+	if err := histogram.Validate(zeroed); err == nil || !strings.Contains(err.Error(), "max_recorded") {
+		t.Fatalf("expected zero extrema vs occupied buckets error, got %v", err)
 	}
 }
 
@@ -180,5 +219,45 @@ func TestMergeEmptyDoesNotClobberMin(t *testing.T) {
 	}
 	if m.MinRecorded != 5 || m.MaxRecorded != 8 || m.SumValues != 13 {
 		t.Fatalf("empty merge clobbered extrema/sum: %#v", m)
+	}
+}
+
+func TestMergeRejectsCountOverflow(t *testing.T) {
+	full := histogram.Raw{
+		Layout: "linear_exp", Unit: "ms", HdrTill: 4, MaxValue: 64,
+		TotalCount: math.MaxUint64, MinRecorded: 0, MaxRecorded: 0, SumValues: 0,
+		Buckets: []uint64{math.MaxUint64, 0, 0, 0, 0, 0, 0, 0, 0},
+	}
+	one := validHist(1, []uint64{1, 0, 0, 0, 0, 0, 0, 0, 0})
+	var m histogram.Raw
+	if err := histogram.Merge(&m, full); err != nil {
+		t.Fatal(err)
+	}
+	if err := histogram.Merge(&m, one); err == nil || !strings.Contains(err.Error(), "overflow") {
+		t.Fatalf("expected overflow, got %v", err)
+	}
+}
+
+func TestUnmarshalJSONRequiresExtremaFields(t *testing.T) {
+	missing := []byte(`{
+		"layout":"linear_exp","unit":"ms","hdr_till":4,"max_value":64,
+		"total_count":4,"buckets":[1,1,1,1,0,0,0,0,0]
+	}`)
+	var h histogram.Raw
+	err := json.Unmarshal(missing, &h)
+	if err == nil || !strings.Contains(err.Error(), "min_recorded") {
+		t.Fatalf("expected missing min_recorded, got %v", err)
+	}
+
+	present := []byte(`{
+		"layout":"linear_exp","unit":"ms","hdr_till":4,"max_value":64,
+		"total_count":4,"min_recorded":0,"max_recorded":3,"sum_values":6,
+		"buckets":[1,1,1,1,0,0,0,0,0]
+	}`)
+	if err := json.Unmarshal(present, &h); err != nil {
+		t.Fatal(err)
+	}
+	if err := histogram.Validate(h); err != nil {
+		t.Fatal(err)
 	}
 }

@@ -1,6 +1,7 @@
 package histogram
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 )
@@ -18,6 +19,48 @@ type Raw struct {
 	MaxRecorded uint64   `json:"max_recorded"`
 	SumValues   uint64   `json:"sum_values"`
 	Buckets     []uint64 `json:"buckets"`
+}
+
+type rawJSON struct {
+	Layout      string   `json:"layout"`
+	Unit        string   `json:"unit"`
+	HdrTill     uint64   `json:"hdr_till"`
+	MaxValue    uint64   `json:"max_value"`
+	TotalCount  uint64   `json:"total_count"`
+	MinRecorded *uint64  `json:"min_recorded"`
+	MaxRecorded *uint64  `json:"max_recorded"`
+	SumValues   *uint64  `json:"sum_values"`
+	Buckets     []uint64 `json:"buckets"`
+}
+
+// UnmarshalJSON requires extrema/sum fields to be present so omitted keys
+// cannot decode as zeros and be published as min/max/avg=0.
+func (h *Raw) UnmarshalJSON(data []byte) error {
+	var payload rawJSON
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return err
+	}
+	if payload.MinRecorded == nil {
+		return fmt.Errorf("histogram missing min_recorded")
+	}
+	if payload.MaxRecorded == nil {
+		return fmt.Errorf("histogram missing max_recorded")
+	}
+	if payload.SumValues == nil {
+		return fmt.Errorf("histogram missing sum_values")
+	}
+	*h = Raw{
+		Layout:      payload.Layout,
+		Unit:        payload.Unit,
+		HdrTill:     payload.HdrTill,
+		MaxValue:    payload.MaxValue,
+		TotalCount:  payload.TotalCount,
+		MinRecorded: *payload.MinRecorded,
+		MaxRecorded: *payload.MaxRecorded,
+		SumValues:   *payload.SumValues,
+		Buckets:     payload.Buckets,
+	}
+	return nil
 }
 
 // ExpectedBucketCount mirrors THistogram::GetTotalBuckets for linear_exp.
@@ -61,7 +104,11 @@ func Validate(h Raw) error {
 	}
 	var sum uint64
 	for _, c := range h.Buckets {
-		sum += c
+		next, err := addUint64(sum, c)
+		if err != nil {
+			return fmt.Errorf("histogram bucket counts overflow uint64")
+		}
+		sum = next
 	}
 	if sum != h.TotalCount {
 		return fmt.Errorf("histogram total_count %d != sum(buckets) %d", h.TotalCount, sum)
@@ -70,13 +117,67 @@ func Validate(h Raw) error {
 		if h.SumValues != 0 {
 			return fmt.Errorf("histogram sum_values %d != 0 for empty histogram", h.SumValues)
 		}
+		if h.MinRecorded != 0 || h.MaxRecorded != 0 {
+			return fmt.Errorf("histogram min_recorded/max_recorded must be 0 for empty histogram")
+		}
 		return nil
 	}
 	if h.MinRecorded > h.MaxRecorded {
 		return fmt.Errorf("histogram min_recorded %d > max_recorded %d", h.MinRecorded, h.MaxRecorded)
 	}
-	if h.SumValues < h.MaxRecorded {
-		return fmt.Errorf("histogram sum_values %d < max_recorded %d", h.SumValues, h.MaxRecorded)
+	if err := validateSumBounds(h); err != nil {
+		return err
+	}
+	return validateExtremaBuckets(h)
+}
+
+func validateSumBounds(h Raw) error {
+	if h.TotalCount == 1 {
+		if h.MinRecorded != h.MaxRecorded || h.SumValues != h.MinRecorded {
+			return fmt.Errorf("histogram single-sample min_recorded=%d max_recorded=%d sum_values=%d",
+				h.MinRecorded, h.MaxRecorded, h.SumValues)
+		}
+		return nil
+	}
+	lower, err := mulUint64(h.MinRecorded, h.TotalCount-1)
+	if err != nil {
+		return fmt.Errorf("histogram sum_values lower bound overflows uint64")
+	}
+	lower, err = addUint64(lower, h.MaxRecorded)
+	if err != nil {
+		return fmt.Errorf("histogram sum_values lower bound overflows uint64")
+	}
+	if h.SumValues < lower {
+		return fmt.Errorf("histogram sum_values %d below min/max bound %d", h.SumValues, lower)
+	}
+	if upper, err := mulUint64(h.MaxRecorded, h.TotalCount); err == nil && h.SumValues > upper {
+		return fmt.Errorf("histogram sum_values %d above max_recorded*%d bound %d",
+			h.SumValues, h.TotalCount, upper)
+	}
+	return nil
+}
+
+func validateExtremaBuckets(h Raw) error {
+	first, last := -1, -1
+	for i, c := range h.Buckets {
+		if c == 0 {
+			continue
+		}
+		if first < 0 {
+			first = i
+		}
+		last = i
+	}
+	if first < 0 {
+		return fmt.Errorf("histogram total_count %d but all buckets are empty", h.TotalCount)
+	}
+	if got := bucketIndex(h, h.MinRecorded); got != first {
+		return fmt.Errorf("histogram min_recorded %d is in bucket %d, first occupied is %d",
+			h.MinRecorded, got, first)
+	}
+	if got := bucketIndex(h, h.MaxRecorded); got != last {
+		return fmt.Errorf("histogram max_recorded %d is in bucket %d, last occupied is %d",
+			h.MaxRecorded, got, last)
 	}
 	return nil
 }
@@ -110,18 +211,30 @@ func Merge(dst *Raw, src Raw) error {
 		return fmt.Errorf("histogram bucket length mismatch: %d vs %d", len(dst.Buckets), len(src.Buckets))
 	}
 	for i := range src.Buckets {
-		dst.Buckets[i] += src.Buckets[i]
+		next, err := addUint64(dst.Buckets[i], src.Buckets[i])
+		if err != nil {
+			return fmt.Errorf("histogram bucket %d count overflow", i)
+		}
+		dst.Buckets[i] = next
+	}
+	total, err := addUint64(dst.TotalCount, src.TotalCount)
+	if err != nil {
+		return fmt.Errorf("histogram total_count overflow")
+	}
+	sum, err := addUint64(dst.SumValues, src.SumValues)
+	if err != nil {
+		return fmt.Errorf("histogram sum_values overflow")
 	}
 	if src.TotalCount > 0 {
 		if dst.TotalCount == 0 || src.MinRecorded < dst.MinRecorded {
 			dst.MinRecorded = src.MinRecorded
 		}
+		if dst.TotalCount == 0 || src.MaxRecorded > dst.MaxRecorded {
+			dst.MaxRecorded = src.MaxRecorded
+		}
 	}
-	dst.TotalCount += src.TotalCount
-	if src.MaxRecorded > dst.MaxRecorded {
-		dst.MaxRecorded = src.MaxRecorded
-	}
-	dst.SumValues += src.SumValues
+	dst.TotalCount = total
+	dst.SumValues = sum
 	return nil
 }
 
@@ -163,6 +276,40 @@ func bucketUpperBound(h Raw, bucketIndex int) uint64 {
 		current++
 	}
 	return bucketStart + bucketSize
+}
+
+// bucketIndex mirrors THistogram::GetBucketIndex.
+func bucketIndex(h Raw, value uint64) int {
+	if value < h.HdrTill {
+		return int(value)
+	}
+	bucketStart := h.HdrTill
+	bucketSize := h.HdrTill
+	idx := int(h.HdrTill)
+	for idx < len(h.Buckets)-1 {
+		bucketEnd := bucketStart + bucketSize
+		if value < bucketEnd {
+			return idx
+		}
+		bucketStart = bucketEnd
+		bucketSize *= 2
+		idx++
+	}
+	return len(h.Buckets) - 1
+}
+
+func addUint64(a, b uint64) (uint64, error) {
+	if b > math.MaxUint64-a {
+		return 0, fmt.Errorf("uint64 overflow")
+	}
+	return a + b, nil
+}
+
+func mulUint64(a, b uint64) (uint64, error) {
+	if a != 0 && b > math.MaxUint64/a {
+		return 0, fmt.Errorf("uint64 overflow")
+	}
+	return a * b, nil
 }
 
 // Percentiles returns p50/p90/p95/p99 for a merged histogram.

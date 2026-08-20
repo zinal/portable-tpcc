@@ -242,6 +242,34 @@ func TestConsolidate_rejectsBadCounterType(t *testing.T) {
 	}
 }
 
+func TestConsolidate_rejectsMissingHistogramExtrema(t *testing.T) {
+	root := t.TempDir()
+	runID := "run-missing-extrema"
+	rc := minimalRunConfig(runID)
+	sha := writeRunConfig(t, root, runID, rc)
+	writeWorkerArtifacts(t, root, runID, "worker-a", sha, rc, map[string]interface{}{
+		"counters": map[string]interface{}{
+			"new_order_ok": 4,
+		},
+		"histograms": map[string]interface{}{
+			"new_order": map[string]interface{}{
+				"layout":      "linear_exp",
+				"unit":        "ms",
+				"hdr_till":    4,
+				"max_value":   64,
+				"total_count": 4,
+				"buckets":     []uint64{1, 1, 1, 1, 0, 0, 0, 0, 0},
+			},
+		},
+	})
+
+	cons := &consolidate.Consolidator{ResultRoot: root}
+	_, err := cons.Consolidate(runID, rc)
+	if err == nil || !strings.Contains(err.Error(), "min_recorded") {
+		t.Fatalf("expected missing min_recorded error, got %v", err)
+	}
+}
+
 func TestConsolidate_rejectsCorruptHistogram(t *testing.T) {
 	root := t.TempDir()
 	runID := "run-bad-hist"

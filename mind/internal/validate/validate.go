@@ -121,6 +121,12 @@ func Profile(p *profile.Profile) *Result {
 	if p.Runtime.Retry.MaxAttempts < 0 {
 		res.Add("runtime.retry.max_attempts must not be negative")
 	}
+	if !config.ValidHistogramUnit(p.Runtime.Histogram.Unit) {
+		res.Add("runtime.histogram.unit must be \"ms\" or \"us\"")
+	}
+	if p.Runtime.Histogram.Highest != nil && *p.Runtime.Histogram.Highest <= 0 {
+		res.Add("runtime.histogram.highest must be greater than zero")
+	}
 
 	wl := config.ResolveWorkload(p.Workload)
 	if err := validateMix(wl.TransactionMix); err != nil {

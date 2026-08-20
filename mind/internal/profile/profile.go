@@ -124,16 +124,16 @@ type Phases struct {
 }
 
 type Runtime struct {
-	Pacing                string      `yaml:"pacing"`
-	ThinkTimeDistribution string      `yaml:"think_time_distribution"`
-	ThreadsPerLoader      int         `yaml:"threads_per_loader"`
-	ThreadsPerWorker      int         `yaml:"threads_per_worker"`
-	MaxInflightPerWorker  int         `yaml:"max_inflight_per_worker"`
+	Pacing                string `yaml:"pacing"`
+	ThinkTimeDistribution string `yaml:"think_time_distribution"`
+	ThreadsPerLoader      int    `yaml:"threads_per_loader"`
+	ThreadsPerWorker      int    `yaml:"threads_per_worker"`
+	MaxInflightPerWorker  int    `yaml:"max_inflight_per_worker"`
 	// CheckConcurrency is parallel DBMS sessions for integrity checks.
 	// 0 / omit = auto (min(scale.warehouses, 32)).
-	CheckConcurrency int `yaml:"check_concurrency"`
-	Retry                 RetryPolicy `yaml:"retry"`
-	Histogram             Histogram   `yaml:"histogram"`
+	CheckConcurrency int         `yaml:"check_concurrency"`
+	Retry            RetryPolicy `yaml:"retry"`
+	Histogram        Histogram   `yaml:"histogram"`
 }
 
 type RetryPolicy struct {
@@ -146,9 +146,11 @@ type RetryPolicy struct {
 // Histogram configures the worker linear_exp latency histogram.
 // Only unit and highest affect layout; buckets are [0, hdr_till) linear
 // then exponential up to highest (hdr_till is an implementation default).
+// Highest is a pointer so omitted (use default) is distinct from an explicit
+// non-positive value, which is a structural error.
 type Histogram struct {
 	Unit    string `yaml:"unit"`
-	Highest int64  `yaml:"highest"`
+	Highest *int64 `yaml:"highest"`
 }
 
 type Checks struct {

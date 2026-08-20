@@ -250,8 +250,8 @@ All listed fields except `async_work_drain` are required.
 | `retry.initial_backoff` | `10ms` | Initial backoff. |
 | `retry.max_backoff` | `500ms` | Max backoff (≥ initial). |
 | `retry.jitter` | `full` | `full` \| `none`. |
-| `histogram.unit` | `us` | Latency unit for `linear_exp` histograms. |
-| `histogram.highest` | `120000000` | Histogram max value. Worker derives `hdr_till` (default 4096, capped by `highest`). |
+| `histogram.unit` | `us` | Latency unit for `linear_exp` histograms. If set, MUST be `ms` or `us`. |
+| `histogram.highest` | `120000000` | Histogram max value. If set, MUST be greater than zero; omitted uses the default. Worker derives `hdr_till` (default 4096, capped by `highest`). |
 
 `retry_ambiguous_commit` is **not** a profile field. Run-config always
 materializes `false` (no retry after an ambiguous commit). Do not add it to

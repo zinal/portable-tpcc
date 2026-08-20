@@ -262,10 +262,16 @@ func BuildRunConfig(in BuildInput) (*RunConfig, error) {
 
 	hist := DefaultHistogram()
 	if p.Runtime.Histogram.Unit != "" {
+		if !ValidHistogramUnit(p.Runtime.Histogram.Unit) {
+			return nil, fmt.Errorf("runtime.histogram.unit must be \"ms\" or \"us\"")
+		}
 		hist.Unit = p.Runtime.Histogram.Unit
 	}
-	if p.Runtime.Histogram.Highest > 0 {
-		hist.Highest = p.Runtime.Histogram.Highest
+	if p.Runtime.Histogram.Highest != nil {
+		if *p.Runtime.Histogram.Highest <= 0 {
+			return nil, fmt.Errorf("runtime.histogram.highest must be greater than zero")
+		}
+		hist.Highest = *p.Runtime.Histogram.Highest
 	}
 
 	pacing := p.Runtime.Pacing
