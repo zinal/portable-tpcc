@@ -293,10 +293,35 @@ func TestValidate_ydbAuthSchemes(t *testing.T) {
 	t.Run("pgsql_rejects_ydb_fields", func(t *testing.T) {
 		p := *base
 		p.Database.AuthScheme = "login"
-		p.Database.User = "root"
 		res := validate.Profile(&p)
 		if res.Valid {
 			t.Fatal("expected pgsql profile with ydb auth fields to fail")
+		}
+	})
+}
+
+func TestValidate_pgsqlUser(t *testing.T) {
+	path := filepath.Join("..", "..", "testdata", "profile.valid.yaml")
+	base, err := profile.ParseFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("accepts_user", func(t *testing.T) {
+		p := *base
+		p.Database.User = "bench"
+		res := validate.Profile(&p)
+		if !res.Valid {
+			t.Fatalf("expected valid pgsql profile with user, errors: %v", res.Errors)
+		}
+	})
+
+	t.Run("accepts_omitted_user", func(t *testing.T) {
+		p := *base
+		p.Database.User = ""
+		res := validate.Profile(&p)
+		if !res.Valid {
+			t.Fatalf("expected valid pgsql profile without user, errors: %v", res.Errors)
 		}
 	})
 }

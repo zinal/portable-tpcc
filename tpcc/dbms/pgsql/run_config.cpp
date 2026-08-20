@@ -9,7 +9,6 @@
 #include <nlohmann/json.hpp>
 
 #include <cstdio>
-#include <cstdlib>
 #include <fstream>
 #include <limits>
 #include <sstream>
@@ -297,6 +296,7 @@ TRunConfigDocument LoadRunConfigDocument(const std::string& path) {
         doc.Endpoint = db.value("endpoint", "");
         doc.Database = db.value("database", "");
         doc.Path = db.value("path", "");
+        doc.User = db.value("user", "");
         doc.PasswordEnv = db.value("password_env", "");
         doc.PasswordFile = db.value("password_file", "");
         if (db.contains("options")) {
@@ -518,9 +518,10 @@ std::string BuildPgConnectionString(const TRunConfigDocument& doc) {
         throw std::runtime_error("database.endpoint must be host or host:port");
     }
 
+    // Prefer profile/run-config user, then postgres.
     std::string user = "postgres";
-    if (const char* u = std::getenv("TPCC_PG_USER")) {
-        user = u;
+    if (!doc.User.empty()) {
+        user = doc.User;
     }
 
     return "host=" + LibpqQuoteValue(host) +

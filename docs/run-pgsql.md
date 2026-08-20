@@ -52,17 +52,16 @@ Do not put passwords in profile YAML/JSON. Pass them via the connection string
 host (orchestrated). `mind-tpcc` copies that value to a mode-0600 `db-password`
 file on each worker and points `run-config.json` at `password_file`.
 
-PostgreSQL login user is **not** a profile field. The client user is
-`postgres`, or `TPCC_PG_USER` when that environment variable is set.
+Client user: profile `database.user`, else `postgres`.
 
 ## PostgreSQL-specific settings
 
 | Standalone | Profile | Meaning |
 | --- | --- | --- |
-| `--connection` | `database.endpoint` + `database` + `password_env` | libpq string vs orchestrated `host` or `host:port` (default port **5432**). Endpoint must not contain `user=` / `password=`. |
+| `--connection` | `database.endpoint` + `database` + `user` + `password_env` | libpq string vs orchestrated `host` or `host:port` (default port **5432**). Endpoint must not contain `user=` / `password=`. |
 | `-p` / `--path` | `database.path` | PostgreSQL schema for TPC-C tables. Empty → server `search_path` (`public`). |
 | — | `database.dbms: pgsql` | Required in the profile. |
-| — | *(not set)* | `database.user` is rejected for `pgsql`. Use `TPCC_PG_USER`. |
+| — | `database.user` | PostgreSQL login role. Default `postgres` when omitted. |
 | `--partitioning` | `database.options.partitioning` | `none` (default) or `warehouse_hash`. |
 | `--partition-count` | `database.options.partition_count` | HASH modulus when `warehouse_hash`. Standalone `0` or omitted profile key → derive from `-w` / `scale.warehouses`. Profile value, if set, must be a positive integer (max **1024**). |
 | `--foreign_keys` | `database.options.foreign_keys` | `on` (default) or `off`. |
@@ -132,6 +131,7 @@ database:
   endpoint: localhost:5432          # host or host:port; no user=/password=
   database: tpcc
   path: portable_tpcc
+  user: postgres                    # optional; default postgres
   password_env: TPCC_PASSWORD
   options:
     partitioning: warehouse_hash    # omit or "none" for unpartitioned tables
@@ -165,7 +165,6 @@ checks:
 
 ```bash
 export TPCC_PASSWORD='...'
-# export TPCC_PG_USER=myuser   # if not postgres
 
 mkdir -p dist
 cp tpcc/app/pgsql/tpcc-pgsql dist/

@@ -21,6 +21,7 @@ database:
   endpoint: localhost:5432
   database: tpcc
   path: portable_tpcc
+  user: postgres
   password_env: TPCC_PASSWORD
   options: {}
 

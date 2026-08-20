@@ -386,23 +386,9 @@ func validateDatabaseAuth(p *profile.Profile, res *Result) {
 	switch db.DBMS {
 	case "ydb":
 		validateYdbAuth(db, res)
-	case "oceanbase":
+	case "pgsql", "oceanbase":
 		if db.AuthScheme != "" {
 			res.Add("database.auth_scheme is only supported for dbms=ydb")
-		}
-		if db.SaKeyFile != "" {
-			res.Add("database.sa_key_file is only supported for dbms=ydb")
-		}
-		if db.CaFile != "" {
-			res.Add("database.ca_file is only supported for dbms=ydb")
-		}
-		validatePasswordEnvRequired(db.PasswordEnv, res)
-	default:
-		if db.AuthScheme != "" {
-			res.Add("database.auth_scheme is only supported for dbms=ydb")
-		}
-		if db.User != "" {
-			res.Add("database.user is only supported for dbms=ydb or dbms=oceanbase")
 		}
 		if db.SaKeyFile != "" {
 			res.Add("database.sa_key_file is only supported for dbms=ydb")
