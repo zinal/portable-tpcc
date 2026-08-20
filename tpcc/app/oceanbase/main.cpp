@@ -66,7 +66,7 @@ void PrintHelp() {
         "\n"
         "Options:\n"
         "  --connection          OceanBase connection string\n"
-        "                        (query_timeout=<seconds> for bulk/index/stats; default 600)\n"
+                        "                        (query_timeout=<seconds> for bulk/index/stats/check; default 600)\n"
         "  -p, --path            OceanBase database name for benchmark tables\n"
         "  --partitions          -1 off, 0 derive from -w, N explicit (default: 0)\n"
         "                        Also DBMS_STATS gather DOP on indexes (1 if partitioning is off)\n"

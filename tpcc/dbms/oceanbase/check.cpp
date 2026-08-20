@@ -466,6 +466,7 @@ TCheckReport RunObChecks(const std::string& connectionString, const TCheckReques
 
     try {
         auto conn = ConnectToTargetDatabase(ConfigWithPath(connectionString, request.Path));
+        conn->ConfigureBulkLoadSession();
 
         RunOne(report, "cardinality.warehouse", print,
                [&] { BaseCheckWarehouseTable(*conn, request.WarehouseCount); });
@@ -587,32 +588,39 @@ int RunCheckFromRunConfig(
     }
 
     const auto doc = LoadRunConfigDocument(runConfigPath);
-    const std::string connection = BuildObConnectionString(doc);
-    CheckDbForRun(connection, doc.ScaleWarehouses, doc.Path);
-
-    TCheckRequest req;
-    req.WarehouseCount = doc.ScaleWarehouses;
-    req.Phase = afterImport ? ECheckPhase::AfterImport : ECheckPhase::AfterRun;
-    req.Path = doc.Path;
-    req.RunId = doc.RunId;
-    req.Instance = instance;
-
-    TObCheckAdapter adapter(connection);
-    const auto report = adapter.Run(req);
-
-    const std::string checksDir = doc.RunDir + "/checks";
-    const std::string reportPath = checksDir + "/" + report.Phase + ".json";
-    WriteCheckReportJson(reportPath, report);
-
     const std::string instanceDir = InstanceWorkDir(doc, "check", instance);
     EnsureInstanceDir(instanceDir);
     const auto paths = MakeArtifactPaths(instanceDir);
     const std::string nonce = GenerateInstanceNonce();
     WriteProcessJson(paths, doc, instance, "check", static_cast<int>(::getpid()), nonce);
-    WriteArtifactManifest(paths, instance, nonce, report.Ok() ? 0 : 1);
 
-    LOG_I("Check report written to " << reportPath);
-    return report.Ok() ? 0 : 1;
+    int exitCode = 1;
+    try {
+        const std::string connection = BuildObConnectionString(doc);
+        CheckDbForRun(connection, doc.ScaleWarehouses, doc.Path);
+
+        TCheckRequest req;
+        req.WarehouseCount = doc.ScaleWarehouses;
+        req.Phase = afterImport ? ECheckPhase::AfterImport : ECheckPhase::AfterRun;
+        req.Path = doc.Path;
+        req.RunId = doc.RunId;
+        req.Instance = instance;
+
+        TObCheckAdapter adapter(connection);
+        const auto report = adapter.Run(req);
+
+        const std::string checksDir = doc.RunDir + "/checks";
+        const std::string reportPath = checksDir + "/" + report.Phase + ".json";
+        WriteCheckReportJson(reportPath, report);
+        LOG_I("Check report written to " << reportPath);
+        exitCode = report.Ok() ? 0 : 1;
+    } catch (const std::exception& ex) {
+        LOG_E("Check failed: " << ex.what());
+        exitCode = 1;
+    }
+
+    WriteArtifactManifest(paths, instance, nonce, exitCode);
+    return exitCode;
 }
 
 } // namespace NTpcc
