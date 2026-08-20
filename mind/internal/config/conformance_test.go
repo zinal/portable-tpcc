@@ -86,3 +86,27 @@ func TestTPCSettingsDeviations_zeroMeasurementIsNonConformant(t *testing.T) {
 		t.Fatalf("expected zero measurement deviation, got %#v", devs)
 	}
 }
+
+func TestTPCSettingsDeviations_newOrderHasNoMixMinimum(t *testing.T) {
+	rc := conformingRunConfig()
+	// 44/44/4/4/4 meets Clause 5.2.3 (Payment ≥ 43%, others ≥ 4%; New-Order n/a).
+	rc.Workload.TransactionMix = config.TransactionMixJSON{
+		NewOrder:    44,
+		Payment:     44,
+		OrderStatus: 4,
+		Delivery:    4,
+		StockLevel:  4,
+	}
+	if devs := config.TPCSettingsDeviations(rc); len(devs) != 0 {
+		t.Fatalf("expected no deviations for 44/44/4/4/4 mix, got %#v", devs)
+	}
+}
+
+func TestTPCSettingsDeviations_allowsLongerKeyingAndThinkTimes(t *testing.T) {
+	rc := conformingRunConfig()
+	rc.Workload.KeyingTimeMs.NewOrder = 20000
+	rc.Workload.ThinkTimeMs.Payment = 15000
+	if devs := config.TPCSettingsDeviations(rc); len(devs) != 0 {
+		t.Fatalf("times above Clause 5.2.5.7 minima must remain conformant, got %#v", devs)
+	}
+}

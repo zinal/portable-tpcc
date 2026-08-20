@@ -45,8 +45,12 @@ func ApplyOverrides(p *profile.Profile, o ProfileOverrides) error {
 		p.Phases.RampUp = *o.RampUp
 	}
 	if o.Measurement != nil {
-		if _, err := profile.ParseDurationMs(*o.Measurement); err != nil {
+		ms, err := profile.ParseDurationMs(*o.Measurement)
+		if err != nil {
 			return fmt.Errorf("--measurement: %w", err)
+		}
+		if ms <= 0 {
+			return fmt.Errorf("--measurement must be greater than zero")
 		}
 		p.Phases.Measurement = *o.Measurement
 	}

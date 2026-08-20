@@ -194,13 +194,13 @@ All fields optional; zeros/omissions keep the built-in default.
 | Field | Default | TPC-C 5.11 |
 | --- | --- | --- |
 | `terminals_per_warehouse` | `10` | must be 10 (values > 10 also break Stock-Level uniqueness) |
-| `transaction_mix.new_order` | `45` | ≥ 45% |
+| `transaction_mix.new_order` | `45` | no Clause 5.2.3 minimum (typical remainder after other minima) |
 | `transaction_mix.payment` | `43` | ≥ 43% |
 | `transaction_mix.order_status` | `4` | ≥ 4% |
 | `transaction_mix.delivery` | `4` | ≥ 4% |
 | `transaction_mix.stock_level` | `4` | ≥ 4% |
-| `keying_time_ms.*` | 18000 / 3000 / 2000 / 2000 / 2000 | same means (ms) |
-| `think_time_ms.*` | 12000 / 12000 / 10000 / 5000 / 5000 | same means (ms) |
+| `keying_time_ms.*` | 18000 / 3000 / 2000 / 2000 / 2000 | minima (ms); larger values remain TPC-C conformant |
+| `think_time_ms.*` | 12000 / 12000 / 10000 / 5000 / 5000 | minimum means (ms); larger values remain TPC-C conformant |
 
 Mix weights must all be positive. Percentages are weight/sum. Deviations from
 TPC-C 5.11 are reported by `validate` / `start` / `aggregate` and do **not**
@@ -227,7 +227,7 @@ All listed fields except `async_work_drain` are required.
 | --- | --- |
 | `start_lead` | Wall-clock budget before `--start-at` (`start-at = now + start_lead`). |
 | `ramp_up` | Warmup; samples are excluded from measurement metrics. |
-| `measurement` | Measurement interval. TPC-C 5.11 requires ≥ **120 minutes**. |
+| `measurement` | Measurement interval; must be **> 0**. TPC-C 5.11 requires ≥ **120 minutes** (shorter positive values are a soft deviation). |
 | `transaction_drain` | Drain after measurement. |
 | `async_work_drain` | Defaults to `transaction_drain`. No-op: adapters report `async_delivery = false`. |
 | `stop_grace` | Grace period when stopping processes. |
@@ -371,10 +371,12 @@ clean   --run-config <path> --instance <name>
 (default-merged) settings with:
 
 - `terminals_per_warehouse = 10`
-- mix minima 45 / 43 / 4 / 4 / 4 percent
+- mix minima Payment 43% / Order-Status 4% / Delivery 4% / Stock-Level 4%
+  (New-Order has no Clause 5.2.3 minimum)
 - `runtime.pacing = enabled`
 - `think_time_distribution = exponential`
-- standard keying and think-time means (see `workload` above)
+- keying times and mean think times ≥ Clause 5.2.5.7 minima (see `workload`
+  above); larger values are allowed
 - `phases.measurement` ≥ 120 minutes
 
 Deviations set `tpcc_settings_conformant: false` and populate

@@ -132,3 +132,23 @@ func TestParse_acceptsHistogramUnitHighest(t *testing.T) {
 		t.Fatalf("highest=%d", p.Runtime.Histogram.Highest)
 	}
 }
+
+func TestParseDurationMs(t *testing.T) {
+	ms, err := profile.ParseDurationMs("5m")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ms != 5*60*1000 {
+		t.Fatalf("5m=%d", ms)
+	}
+	if _, err := profile.ParseDurationMs("-5s"); err == nil || !strings.Contains(err.Error(), "must not be negative") {
+		t.Fatalf("expected negative duration error, got %v", err)
+	}
+	zero, err := profile.ParseDurationMs("0s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if zero != 0 {
+		t.Fatalf("0s=%d", zero)
+	}
+}

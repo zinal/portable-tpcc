@@ -142,8 +142,10 @@ func Profile(p *profile.Profile) *Result {
 	if _, err := profile.ParseDurationMs(p.Phases.RampUp); err != nil {
 		res.Add("phases.ramp_up: " + err.Error())
 	}
-	if _, err := profile.ParseDurationMs(p.Phases.Measurement); err != nil {
+	if ms, err := profile.ParseDurationMs(p.Phases.Measurement); err != nil {
 		res.Add("phases.measurement: " + err.Error())
+	} else if ms <= 0 {
+		res.Add("phases.measurement must be greater than zero")
 	}
 	if _, err := profile.ParseDurationMs(p.Phases.TransactionDrain); err != nil {
 		res.Add("phases.transaction_drain: " + err.Error())
