@@ -398,7 +398,9 @@ visible in the result settings/options.
   [pgsql-partitioning-design.md](pgsql-partitioning-design.md)).
 - **OceanBase:** warehouse partitioning, cached statements, clear error
   classes, optional FKs as a recorded physical option, optional
-  `CREATE INDEX … PARALLEL n` (`database.options.index_parallel`, default 4).
+  `CREATE INDEX … PARALLEL n` (`database.options.index_parallel`, default 4),
+  `DBMS_STATS.GATHER_TABLE_STATS` with gather DOP equal to the HASH partition
+  count.
 
 See [adapter-api.md](adapter-api.md) §5–§6 for the full logical/physical and
 query-binding contract.

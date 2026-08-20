@@ -9,7 +9,7 @@
 
 namespace NTpcc {
 
-// Default session ob_query_timeout for bulk import / CREATE INDEX / ANALYZE.
+// Default session ob_query_timeout for bulk import / CREATE INDEX / DBMS_STATS.
 // OceanBase server default is 10s; connection property query_timeout overrides.
 constexpr int OB_DEFAULT_QUERY_TIMEOUT_SECONDS = 600;
 
@@ -44,7 +44,7 @@ struct TObConnection {
     void CreateDatabaseIfNotExists(const std::string& database);
     // Raise session ob_query_timeout from QueryTimeoutSeconds (connection property
     // query_timeout; default OB_DEFAULT_QUERY_TIMEOUT_SECONDS). Used for bulk
-    // import, CREATE INDEX, and ANALYZE TABLE.
+    // import, CREATE INDEX, and DBMS_STATS gather.
     void ConfigureBulkLoadSession();
     void BeginRepeatableRead();
     void Commit();

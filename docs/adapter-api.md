@@ -369,7 +369,9 @@ Adapters MUST:
 - Optional foreign keys as a recorded physical option.
 - Parallel `CREATE INDEX` via `PARALLEL n` (`database.options.index_parallel`,
   default 4; DOP for one index, not concurrent DDL).
-- Post-index `ANALYZE` (or OceanBase equivalent statistics gather).
+- Post-index `DBMS_STATS.GATHER_TABLE_STATS` with `degree` equal to the HASH
+  partition count (`1` when partitioning is off). Non-OceanBase MySQL targets
+  keep `ANALYZE TABLE`.
 - MariaDB-compatible connectors are fine for transport; validation MUST run
   against real OceanBase, not only MariaDB.
 

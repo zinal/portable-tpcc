@@ -56,7 +56,7 @@ void PrintHelp() {
         "Commands:\n"
         "  schema    Create TPC-C schema (tables); alias: init\n"
         "  loader    Run orchestrated loader from run-config.json\n"
-        "  indexes   Create secondary indexes and ANALYZE (after load)\n"
+        "  indexes   Create secondary indexes and gather statistics (after load)\n"
         "  worker    Run orchestrated worker from run-config.json\n"
         "  check     Run TPC-C consistency checks\n"
         "  init      Alias for schema\n"
@@ -66,9 +66,10 @@ void PrintHelp() {
         "\n"
         "Options:\n"
         "  --connection          OceanBase connection string\n"
-        "                        (query_timeout=<seconds> for bulk/ANALYZE; default 600)\n"
+        "                        (query_timeout=<seconds> for bulk/index/stats; default 600)\n"
         "  -p, --path            OceanBase database name for benchmark tables\n"
         "  --partitions          -1 off, 0 derive from -w, N explicit (default: 0)\n"
+        "                        Also DBMS_STATS gather DOP on indexes (1 if partitioning is off)\n"
         "  --foreign-keys        on | off (default: on)\n"
         "  --index-parallel      CREATE INDEX DOP (PARALLEL n); 1 = serial (default: 4)\n"
         "  -w, --warehouses      Number of warehouses (default: 1)\n"
@@ -278,9 +279,7 @@ void RunImport() {
 
 void RunIndexes() {
     NTpcc::CheckDbForIndexes(FLAGS_connection, FLAGS_path);
-    NTpcc::TObSchemaOptions options;
-    options.IndexParallel = FLAGS_index_parallel;
-    NTpcc::ResolveObIndexParallel(options);
+    auto options = BuildSchemaOptions();
     NTpcc::TObAdminAdapter admin(FLAGS_connection, FLAGS_path, options);
     admin.EnsureIndexes();
     admin.EnsureStatistics();

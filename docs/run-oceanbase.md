@@ -66,7 +66,7 @@ Client user: profile `database.user`, else `TPCC_OB_USER`, else `root@root`.
 | `--partitions` | `database.options.partitions` | HASH partition count. See below. |
 | `--foreign-keys` | `database.options.foreign_keys` | `on` (default) or `off`. |
 | `--index-parallel` | `database.options.index_parallel` | `CREATE INDEX … PARALLEL n` (default **4**, `1` = serial). |
-| `query_timeout=` in `--connection` | `database.options.query_timeout` | Session `ob_query_timeout` for bulk import / `CREATE INDEX` / `ANALYZE`, in **seconds** (default **600**). OceanBase server default is 10s. |
+| `query_timeout=` in `--connection` | `database.options.query_timeout` | Session `ob_query_timeout` for bulk import / `CREATE INDEX` / `DBMS_STATS`, in **seconds** (default **600**). OceanBase server default is 10s. |
 
 On a non-OceanBase MySQL server the partition options are ignored.
 
@@ -77,7 +77,9 @@ Unknown `database.options.*` keys are rejected for `dbms=oceanbase`.
 
 OceanBase creates a binding `TABLEGROUP` and HASH-partitions warehouse-scoped
 tables by warehouse id (`w_id` / `*_w_id`). Partition count is set **only at
-schema time** (`tpcc-oceanbase schema` / `mind-tpcc` schema stage).
+schema time** (`tpcc-oceanbase schema` / `mind-tpcc` schema stage). The same
+value is reused at `indexes` as the `DBMS_STATS.GATHER_TABLE_STATS` degree of
+parallelism (`1` when partitioning is off).
 
 | Value | Meaning |
 | --- | --- |
@@ -122,8 +124,9 @@ $BIN schema --connection="$CONN" --path=tpcc -w 10 \
 # load
 $BIN import --connection="$CONN" --path=tpcc -w 10 -t 8
 
-# indexes + ANALYZE (after load); CREATE INDEX uses PARALLEL 4 by default
-$BIN indexes --connection="$CONN" --path=tpcc
+# indexes + statistics (after load); CREATE INDEX uses PARALLEL 4 by default.
+# DBMS_STATS gather DOP equals HASH partition count (--partitions / -w; 1 if -1).
+$BIN indexes --connection="$CONN" --path=tpcc -w 10 --partitions=0
 #   --index-parallel=8   # raise DOP for a single CREATE INDEX
 #   --index-parallel=1   # serial index build
 
@@ -167,7 +170,7 @@ database:
   options:
     partitions: 0               # -1 off, 0 derive from scale.warehouses, N explicit (max 8192)
     foreign_keys: off           # omit FKs at schema time; default on
-    query_timeout: 600          # bulk import / CREATE INDEX / ANALYZE (seconds)
+    query_timeout: 600          # bulk import / CREATE INDEX / DBMS_STATS (seconds)
     index_parallel: 4           # CREATE INDEX DOP; default 4, 1 = serial
 
 scale:

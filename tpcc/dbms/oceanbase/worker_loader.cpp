@@ -129,7 +129,8 @@ int RunIndexesFromRunConfig(const std::string& runConfigPath, const std::string&
         admin.EnsureIndexes();
         admin.EnsureStatistics();
         LOG_I("Indexes and statistics ready (instance=" << instance
-              << ", index_parallel=" << options.IndexParallel << ")");
+              << ", index_parallel=" << options.IndexParallel
+              << ", analyze_degree=" << ResolveObAnalyzeDegree(options) << ")");
     });
 }
 
