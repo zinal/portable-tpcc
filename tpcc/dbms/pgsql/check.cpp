@@ -76,19 +76,25 @@ void BaseCheckDistrictTable(pqxx::nontransaction& txn, int expectedWhNumber) {
         throw std::runtime_error(fmt::format("District ID range [{}, {}] instead of [{}, {}]", minDist, maxDist, DISTRICT_LOW_ID, DISTRICT_HIGH_ID));
 }
 
-void BaseCheckCustomerTable(pqxx::nontransaction& txn, int expectedWhNumber) {
+void BaseCheckCustomerTable(pqxx::nontransaction& txn, int startWh, int endWh) {
     auto r = txn.exec(fmt::format(
         "SELECT COUNT(*) AS count, "
         "MAX(C_W_ID), MIN(C_W_ID), MAX(C_D_ID), MIN(C_D_ID), MAX(C_ID), MIN(C_ID) "
-        "FROM {}", TABLE_CUSTOMER)).front();
+        "FROM {} WHERE C_W_ID >= {} AND C_W_ID <= {}",
+        TABLE_CUSTOMER, startWh, endWh)).front();
 
-    int expectedCount = expectedWhNumber * CUSTOMERS_PER_DISTRICT * DISTRICT_COUNT;
+    const int rangeWh = endWh - startWh + 1;
+    int expectedCount = rangeWh * CUSTOMERS_PER_DISTRICT * DISTRICT_COUNT;
     auto rowCount = r[0].as<int64_t>();
     if (rowCount != expectedCount)
-        throw std::runtime_error(fmt::format("Customer count is {} and not {}", rowCount, expectedCount));
+        throw std::runtime_error(fmt::format(
+            "Customer count is {} and not {} (w_id [{},{}])",
+            rowCount, expectedCount, startWh, endWh));
 
-    if (r[2].as<int>() != 1 || r[1].as<int>() != expectedWhNumber)
-        throw std::runtime_error(fmt::format("Customer warehouse range [{}, {}] instead of [1, {}]", r[2].as<int>(), r[1].as<int>(), expectedWhNumber));
+    if (r[2].as<int>() != startWh || r[1].as<int>() != endWh)
+        throw std::runtime_error(fmt::format(
+            "Customer warehouse range [{}, {}] instead of [{}, {}]",
+            r[2].as<int>(), r[1].as<int>(), startWh, endWh));
     if (r[4].as<int>() != DISTRICT_LOW_ID || r[3].as<int>() != DISTRICT_HIGH_ID)
         throw std::runtime_error("Customer district range mismatch");
     if (r[6].as<int>() != 1 || r[5].as<int>() != CUSTOMERS_PER_DISTRICT)
@@ -106,36 +112,46 @@ void BaseCheckItemTable(pqxx::nontransaction& txn) {
         throw std::runtime_error("Item ID range mismatch");
 }
 
-void BaseCheckStockTable(pqxx::nontransaction& txn, int expectedWhNumber) {
+void BaseCheckStockTable(pqxx::nontransaction& txn, int startWh, int endWh) {
     auto r = txn.exec(fmt::format(
         "SELECT COUNT(*), COUNT(DISTINCT S_W_ID), MAX(S_W_ID), MIN(S_W_ID), MAX(S_I_ID), MIN(S_I_ID) "
-        "FROM {}", TABLE_STOCK)).front();
+        "FROM {} WHERE S_W_ID >= {} AND S_W_ID <= {}",
+        TABLE_STOCK, startWh, endWh)).front();
 
-    int expectedCount = expectedWhNumber * ITEM_COUNT;
+    const int rangeWh = endWh - startWh + 1;
+    int expectedCount = rangeWh * ITEM_COUNT;
     auto rowCount = r[0].as<int64_t>();
     if (rowCount != expectedCount)
-        throw std::runtime_error(fmt::format("Stock count is {} and not {}", rowCount, expectedCount));
+        throw std::runtime_error(fmt::format(
+            "Stock count is {} and not {} (w_id [{},{}])",
+            rowCount, expectedCount, startWh, endWh));
 
     auto whCount = r[1].as<int>();
-    if (whCount != expectedWhNumber)
-        throw std::runtime_error(fmt::format("Stock warehouse count is {} and not {}", whCount, expectedWhNumber));
-    if (r[3].as<int>() != 1 || r[2].as<int>() != expectedWhNumber)
+    if (whCount != rangeWh)
+        throw std::runtime_error(fmt::format(
+            "Stock warehouse count is {} and not {} (w_id [{},{}])",
+            whCount, rangeWh, startWh, endWh));
+    if (r[3].as<int>() != startWh || r[2].as<int>() != endWh)
         throw std::runtime_error("Stock warehouse range mismatch");
     if (r[5].as<int>() != 1 || r[4].as<int>() != ITEM_COUNT)
         throw std::runtime_error("Stock item range mismatch");
 }
 
-void BaseCheckOorderTable(pqxx::nontransaction& txn, int expectedWhNumber) {
+void BaseCheckOorderTable(pqxx::nontransaction& txn, int startWh, int endWh) {
     auto r = txn.exec(fmt::format(
         "SELECT COUNT(*), MAX(O_W_ID), MIN(O_W_ID), MAX(O_D_ID), MIN(O_D_ID), MAX(O_ID), MIN(O_ID) "
-        "FROM {}", TABLE_OORDER)).front();
+        "FROM {} WHERE O_W_ID >= {} AND O_W_ID <= {}",
+        TABLE_OORDER, startWh, endWh)).front();
 
-    int expectedCount = expectedWhNumber * CUSTOMERS_PER_DISTRICT * DISTRICT_COUNT;
+    const int rangeWh = endWh - startWh + 1;
+    int expectedCount = rangeWh * CUSTOMERS_PER_DISTRICT * DISTRICT_COUNT;
     auto rowCount = r[0].as<int64_t>();
     if (rowCount != expectedCount)
-        throw std::runtime_error(fmt::format("Order count is {} and not {}", rowCount, expectedCount));
+        throw std::runtime_error(fmt::format(
+            "Order count is {} and not {} (w_id [{},{}])",
+            rowCount, expectedCount, startWh, endWh));
 
-    if (r[2].as<int>() != 1 || r[1].as<int>() != expectedWhNumber)
+    if (r[2].as<int>() != startWh || r[1].as<int>() != endWh)
         throw std::runtime_error("Order warehouse range mismatch");
     if (r[4].as<int>() != DISTRICT_LOW_ID || r[3].as<int>() != DISTRICT_HIGH_ID)
         throw std::runtime_error("Order district range mismatch");
@@ -143,18 +159,22 @@ void BaseCheckOorderTable(pqxx::nontransaction& txn, int expectedWhNumber) {
         throw std::runtime_error("Order ID range mismatch");
 }
 
-void BaseCheckNewOrderTable(pqxx::nontransaction& txn, int expectedWhNumber) {
+void BaseCheckNewOrderTable(pqxx::nontransaction& txn, int startWh, int endWh) {
     auto r = txn.exec(fmt::format(
         "SELECT COUNT(*), MAX(NO_W_ID), MIN(NO_W_ID), MAX(NO_D_ID), MIN(NO_D_ID), MAX(NO_O_ID), MIN(NO_O_ID) "
-        "FROM {}", TABLE_NEW_ORDER)).front();
+        "FROM {} WHERE NO_W_ID >= {} AND NO_W_ID <= {}",
+        TABLE_NEW_ORDER, startWh, endWh)).front();
 
+    const int rangeWh = endWh - startWh + 1;
     const auto newOrdersPerDistrict = CUSTOMERS_PER_DISTRICT - FIRST_UNPROCESSED_O_ID + 1;
-    int expectedCount = expectedWhNumber * newOrdersPerDistrict * DISTRICT_COUNT;
+    int expectedCount = rangeWh * newOrdersPerDistrict * DISTRICT_COUNT;
     auto rowCount = r[0].as<int64_t>();
     if (rowCount != expectedCount)
-        throw std::runtime_error(fmt::format("New order count is {} and not {}", rowCount, expectedCount));
+        throw std::runtime_error(fmt::format(
+            "New order count is {} and not {} (w_id [{},{}])",
+            rowCount, expectedCount, startWh, endWh));
 
-    if (r[2].as<int>() != 1 || r[1].as<int>() != expectedWhNumber)
+    if (r[2].as<int>() != startWh || r[1].as<int>() != endWh)
         throw std::runtime_error("New order warehouse range mismatch");
     if (r[4].as<int>() != DISTRICT_LOW_ID || r[3].as<int>() != DISTRICT_HIGH_ID)
         throw std::runtime_error("New order district range mismatch");
@@ -162,18 +182,21 @@ void BaseCheckNewOrderTable(pqxx::nontransaction& txn, int expectedWhNumber) {
         throw std::runtime_error("New order ID range mismatch");
 }
 
-void BaseCheckOrderLineTable(pqxx::nontransaction& txn, int expectedWhNumber) {
+void BaseCheckOrderLineTable(pqxx::nontransaction& txn, int startWh, int endWh) {
     auto r = txn.exec(fmt::format(
         "SELECT MIN(order_count) AS min_orders, MAX(order_count) AS max_orders, COUNT(*) AS district_count "
         "FROM ("
         "  SELECT OL_W_ID, OL_D_ID, COUNT(DISTINCT OL_O_ID) AS order_count "
-        "  FROM {} GROUP BY OL_W_ID, OL_D_ID"
-        ") sub", TABLE_ORDER_LINE)).front();
+        "  FROM {} WHERE OL_W_ID >= {} AND OL_W_ID <= {} GROUP BY OL_W_ID, OL_D_ID"
+        ") sub", TABLE_ORDER_LINE, startWh, endWh)).front();
 
-    int expectedDistrictCount = expectedWhNumber * DISTRICT_COUNT;
+    const int rangeWh = endWh - startWh + 1;
+    int expectedDistrictCount = rangeWh * DISTRICT_COUNT;
     auto districtCount = r[2].as<int64_t>();
     if (districtCount != expectedDistrictCount)
-        throw std::runtime_error(fmt::format("Order line district count is {} and not {}", districtCount, expectedDistrictCount));
+        throw std::runtime_error(fmt::format(
+            "Order line district count is {} and not {} (w_id [{},{}])",
+            districtCount, expectedDistrictCount, startWh, endWh));
 
     auto minOrders = r[0].as<int64_t>();
     auto maxOrders = r[1].as<int64_t>();
@@ -182,15 +205,20 @@ void BaseCheckOrderLineTable(pqxx::nontransaction& txn, int expectedWhNumber) {
             minOrders, maxOrders, CUSTOMERS_PER_DISTRICT, CUSTOMERS_PER_DISTRICT));
 }
 
-void BaseCheckHistoryTable(pqxx::nontransaction& txn, int expectedWhNumber) {
+void BaseCheckHistoryTable(pqxx::nontransaction& txn, int startWh, int endWh) {
     auto r = txn.exec(fmt::format(
-        "SELECT COUNT(*), MAX(H_C_W_ID), MIN(H_C_W_ID) FROM {}", TABLE_HISTORY)).front();
+        "SELECT COUNT(*), MAX(H_C_W_ID), MIN(H_C_W_ID) FROM {} "
+        "WHERE H_C_W_ID >= {} AND H_C_W_ID <= {}",
+        TABLE_HISTORY, startWh, endWh)).front();
 
-    int expectedCount = expectedWhNumber * CUSTOMERS_PER_DISTRICT * DISTRICT_COUNT;
+    const int rangeWh = endWh - startWh + 1;
+    int expectedCount = rangeWh * CUSTOMERS_PER_DISTRICT * DISTRICT_COUNT;
     auto rowCount = r[0].as<int64_t>();
     if (rowCount != expectedCount)
-        throw std::runtime_error(fmt::format("History count is {} and not {}", rowCount, expectedCount));
-    if (r[2].as<int>() != 1 || r[1].as<int>() != expectedWhNumber)
+        throw std::runtime_error(fmt::format(
+            "History count is {} and not {} (w_id [{},{}])",
+            rowCount, expectedCount, startWh, endWh));
+    if (r[2].as<int>() != startWh || r[1].as<int>() != endWh)
         throw std::runtime_error("History warehouse range mismatch");
 }
 
@@ -210,32 +238,37 @@ void ConsistencyCheck3321(pqxx::nontransaction& txn) {
     CheckNoRows(txn, sql);
 }
 
-void ConsistencyCheck3322(pqxx::nontransaction& txn) {
+void ConsistencyCheck3322(pqxx::nontransaction& txn, int startWh, int endWh) {
     // D_NEXT_O_ID - 1 = max(O_ID); when new-orders exist, also = max(NO_O_ID).
     // IS DISTINCT FROM so NULL aggregates do not fail open.
     std::string sql = fmt::format(
         "SELECT d.D_W_ID, d.D_ID, d.D_NEXT_O_ID, o.max_o_id, n.max_no_o_id "
         "FROM {} AS d "
-        "LEFT JOIN (SELECT O_W_ID, O_D_ID, MAX(O_ID) AS max_o_id FROM {} GROUP BY O_W_ID, O_D_ID) AS o "
+        "LEFT JOIN (SELECT O_W_ID, O_D_ID, MAX(O_ID) AS max_o_id FROM {} "
+        "           WHERE O_W_ID >= {} AND O_W_ID <= {} GROUP BY O_W_ID, O_D_ID) AS o "
         "  ON d.D_W_ID = o.O_W_ID AND d.D_ID = o.O_D_ID "
-        "LEFT JOIN (SELECT NO_W_ID, NO_D_ID, MAX(NO_O_ID) AS max_no_o_id FROM {} GROUP BY NO_W_ID, NO_D_ID) AS n "
+        "LEFT JOIN (SELECT NO_W_ID, NO_D_ID, MAX(NO_O_ID) AS max_no_o_id FROM {} "
+        "           WHERE NO_W_ID >= {} AND NO_W_ID <= {} GROUP BY NO_W_ID, NO_D_ID) AS n "
         "  ON d.D_W_ID = n.NO_W_ID AND d.D_ID = n.NO_D_ID "
-        "WHERE o.max_o_id IS NULL "
+        "WHERE d.D_W_ID >= {} AND d.D_W_ID <= {} "
+        "   AND (o.max_o_id IS NULL "
         "   OR (d.D_NEXT_O_ID - 1) IS DISTINCT FROM o.max_o_id "
-        "   OR (n.max_no_o_id IS NOT NULL AND n.max_no_o_id IS DISTINCT FROM o.max_o_id) "
+        "   OR (n.max_no_o_id IS NOT NULL AND n.max_no_o_id IS DISTINCT FROM o.max_o_id)) "
         "LIMIT 1",
-        TABLE_DISTRICT, TABLE_OORDER, TABLE_NEW_ORDER);
-    CheckNoRows(txn, sql);
+        TABLE_DISTRICT, TABLE_OORDER, startWh, endWh, TABLE_NEW_ORDER, startWh, endWh,
+        startWh, endWh);
+    CheckNoRows(txn, sql, fmt::format("3.3.2.2 w_id [{},{}]", startWh, endWh));
 }
 
-void ConsistencyCheck3323(pqxx::nontransaction& txn) {
+void ConsistencyCheck3323(pqxx::nontransaction& txn, int startWh, int endWh) {
     // max(NO_O_ID) - min(NO_O_ID) + 1 = count(*) for each warehouse/district
     std::string sql = fmt::format(
         "SELECT NO_W_ID, NO_D_ID, COUNT(*) - (MAX(NO_O_ID) - MIN(NO_O_ID) + 1) AS delta "
-        "FROM {} GROUP BY NO_W_ID, NO_D_ID "
+        "FROM {} WHERE NO_W_ID >= {} AND NO_W_ID <= {} "
+        "GROUP BY NO_W_ID, NO_D_ID "
         "HAVING COUNT(*) - (MAX(NO_O_ID) - MIN(NO_O_ID) + 1) != 0 LIMIT 1",
-        TABLE_NEW_ORDER);
-    CheckNoRows(txn, sql);
+        TABLE_NEW_ORDER, startWh, endWh);
+    CheckNoRows(txn, sql, fmt::format("3.3.2.3 w_id [{},{}]", startWh, endWh));
 }
 
 void ConsistencyCheck3324(pqxx::nontransaction& txn, int startWh, int endWh) {
@@ -322,28 +355,32 @@ void ConsistencyCheck3327(pqxx::nontransaction& txn, int startWh, int endWh) {
     CheckNoRows(txn, sql, fmt::format("3.3.2.7 w_id [{},{}]", startWh, endWh));
 }
 
-void ConsistencyCheck3328(pqxx::nontransaction& txn) {
+void ConsistencyCheck3328(pqxx::nontransaction& txn, int startWh, int endWh) {
     // W_YTD = sum(H_AMOUNT) grouped by warehouse
     std::string sql = fmt::format(
         "SELECT w.W_ID, w.W_YTD, h.sum_h "
         "FROM {} AS w "
-        "LEFT JOIN (SELECT H_W_ID, SUM(H_AMOUNT) AS sum_h FROM {} GROUP BY H_W_ID) AS h "
+        "LEFT JOIN (SELECT H_W_ID, SUM(H_AMOUNT) AS sum_h FROM {} "
+        "           WHERE H_W_ID >= {} AND H_W_ID <= {} GROUP BY H_W_ID) AS h "
         "  ON w.W_ID = h.H_W_ID "
-        "WHERE w.W_YTD IS DISTINCT FROM COALESCE(h.sum_h, 0) LIMIT 1",
-        TABLE_WAREHOUSE, TABLE_HISTORY);
-    CheckNoRows(txn, sql);
+        "WHERE w.W_ID >= {} AND w.W_ID <= {} "
+        "  AND w.W_YTD IS DISTINCT FROM COALESCE(h.sum_h, 0) LIMIT 1",
+        TABLE_WAREHOUSE, TABLE_HISTORY, startWh, endWh, startWh, endWh);
+    CheckNoRows(txn, sql, fmt::format("3.3.2.8 w_id [{},{}]", startWh, endWh));
 }
 
-void ConsistencyCheck3329(pqxx::nontransaction& txn) {
+void ConsistencyCheck3329(pqxx::nontransaction& txn, int startWh, int endWh) {
     // D_YTD = sum(H_AMOUNT) grouped by warehouse+district
     std::string sql = fmt::format(
         "SELECT d.D_W_ID, d.D_ID, d.D_YTD, h.sum_h "
         "FROM {} AS d "
-        "LEFT JOIN (SELECT H_W_ID, H_D_ID, SUM(H_AMOUNT) AS sum_h FROM {} GROUP BY H_W_ID, H_D_ID) AS h "
+        "LEFT JOIN (SELECT H_W_ID, H_D_ID, SUM(H_AMOUNT) AS sum_h FROM {} "
+        "           WHERE H_W_ID >= {} AND H_W_ID <= {} GROUP BY H_W_ID, H_D_ID) AS h "
         "  ON d.D_W_ID = h.H_W_ID AND d.D_ID = h.H_D_ID "
-        "WHERE d.D_YTD IS DISTINCT FROM COALESCE(h.sum_h, 0) LIMIT 1",
-        TABLE_DISTRICT, TABLE_HISTORY);
-    CheckNoRows(txn, sql);
+        "WHERE d.D_W_ID >= {} AND d.D_W_ID <= {} "
+        "  AND d.D_YTD IS DISTINCT FROM COALESCE(h.sum_h, 0) LIMIT 1",
+        TABLE_DISTRICT, TABLE_HISTORY, startWh, endWh, startWh, endWh);
+    CheckNoRows(txn, sql, fmt::format("3.3.2.9 w_id [{},{}]", startWh, endWh));
 }
 
 void ConsistencyCheck33210(pqxx::nontransaction& txn, int startWh, int endWh) {
@@ -441,54 +478,67 @@ void PostImportCheckDistrictYtd(pqxx::nontransaction& txn) {
     CheckNoRows(txn, sql, fmt::format("D_YTD must be {} after import", expectedYtd));
 }
 
-void PostImportCheckNoCarriers(pqxx::nontransaction& txn) {
+void PostImportCheckNoCarriers(pqxx::nontransaction& txn, int startWh, int endWh) {
     std::string sql = fmt::format(
         "SELECT O_W_ID, O_D_ID, O_ID, O_CARRIER_ID FROM {} "
-        "WHERE O_ID >= {} AND O_CARRIER_ID IS NOT NULL LIMIT 1",
-        TABLE_OORDER, FIRST_UNPROCESSED_O_ID);
-    CheckNoRows(txn, sql, "Unprocessed orders must have NULL O_CARRIER_ID after import");
+        "WHERE O_W_ID >= {} AND O_W_ID <= {} AND O_ID >= {} AND O_CARRIER_ID IS NOT NULL LIMIT 1",
+        TABLE_OORDER, startWh, endWh, FIRST_UNPROCESSED_O_ID);
+    CheckNoRows(txn, sql, fmt::format(
+        "Unprocessed orders must have NULL O_CARRIER_ID after import (w_id [{},{}])",
+        startWh, endWh));
 }
 
-void PostImportCheckCarrierRange(pqxx::nontransaction& txn) {
+void PostImportCheckCarrierRange(pqxx::nontransaction& txn, int startWh, int endWh) {
     // TPC-C §4.3.3.1: initially delivered orders have O_CARRIER_ID randomly selected
     // unique within [1 .. 10].
     std::string sql = fmt::format(
         "SELECT O_W_ID, O_D_ID, O_ID, O_CARRIER_ID FROM {} "
-        "WHERE O_ID < {} AND (O_CARRIER_ID IS NULL OR O_CARRIER_ID < 1 OR O_CARRIER_ID > 10) "
+        "WHERE O_W_ID >= {} AND O_W_ID <= {} AND O_ID < {} "
+        "AND (O_CARRIER_ID IS NULL OR O_CARRIER_ID < 1 OR O_CARRIER_ID > 10) "
         "LIMIT 1",
-        TABLE_OORDER, FIRST_UNPROCESSED_O_ID);
-    CheckNoRows(txn, sql, "Delivered orders must have O_CARRIER_ID in [1..10] after import");
+        TABLE_OORDER, startWh, endWh, FIRST_UNPROCESSED_O_ID);
+    CheckNoRows(txn, sql, fmt::format(
+        "Delivered orders must have O_CARRIER_ID in [1..10] after import (w_id [{},{}])",
+        startWh, endWh));
 }
 
-void PostImportCheckNoDeliveryDates(pqxx::nontransaction& txn) {
+void PostImportCheckNoDeliveryDates(pqxx::nontransaction& txn, int startWh, int endWh) {
     std::string sql = fmt::format(
         "SELECT ol.OL_W_ID, ol.OL_D_ID, ol.OL_O_ID FROM {} AS ol "
-        "WHERE ol.OL_O_ID >= {} AND ol.OL_DELIVERY_D IS NOT NULL LIMIT 1",
-        TABLE_ORDER_LINE, FIRST_UNPROCESSED_O_ID);
-    CheckNoRows(txn, sql, "Unprocessed order lines must have NULL OL_DELIVERY_D after import");
+        "WHERE ol.OL_W_ID >= {} AND ol.OL_W_ID <= {} "
+        "AND ol.OL_O_ID >= {} AND ol.OL_DELIVERY_D IS NOT NULL LIMIT 1",
+        TABLE_ORDER_LINE, startWh, endWh, FIRST_UNPROCESSED_O_ID);
+    CheckNoRows(txn, sql, fmt::format(
+        "Unprocessed order lines must have NULL OL_DELIVERY_D after import (w_id [{},{}])",
+        startWh, endWh));
 }
 
-void PostImportCheckDeliveryEqualsEntry(pqxx::nontransaction& txn) {
+void PostImportCheckDeliveryEqualsEntry(pqxx::nontransaction& txn, int startWh, int endWh) {
     // TPC-C §4.3.3.1: for initially delivered orders, OL_DELIVERY_D = O_ENTRY_D.
     std::string sql = fmt::format(
         "SELECT ol.OL_W_ID, ol.OL_D_ID, ol.OL_O_ID, ol.OL_NUMBER "
         "FROM {} AS ol "
         "JOIN {} AS o ON o.O_W_ID = ol.OL_W_ID AND o.O_D_ID = ol.OL_D_ID AND o.O_ID = ol.OL_O_ID "
-        "WHERE ol.OL_O_ID < {} AND "
+        "WHERE ol.OL_W_ID >= {} AND ol.OL_W_ID <= {} AND ol.OL_O_ID < {} AND "
         "(ol.OL_DELIVERY_D IS NULL OR ol.OL_DELIVERY_D IS DISTINCT FROM o.O_ENTRY_D) "
         "LIMIT 1",
-        TABLE_ORDER_LINE, TABLE_OORDER, FIRST_UNPROCESSED_O_ID);
-    CheckNoRows(txn, sql, "Delivered order lines must have OL_DELIVERY_D = O_ENTRY_D after import");
+        TABLE_ORDER_LINE, TABLE_OORDER, startWh, endWh, FIRST_UNPROCESSED_O_ID);
+    CheckNoRows(txn, sql, fmt::format(
+        "Delivered order lines must have OL_DELIVERY_D = O_ENTRY_D after import (w_id [{},{}])",
+        startWh, endWh));
 }
 
-void PostImportCheckDeliveredAmountZero(pqxx::nontransaction& txn) {
+void PostImportCheckDeliveredAmountZero(pqxx::nontransaction& txn, int startWh, int endWh) {
     // TPC-C §4.3.3.1: for initially delivered order lines, OL_AMOUNT = 0.00.
     std::string sql = fmt::format(
         "SELECT OL_W_ID, OL_D_ID, OL_O_ID, OL_NUMBER, OL_AMOUNT FROM {} "
-        "WHERE OL_O_ID < {} AND OL_AMOUNT IS DISTINCT FROM 0.00 "
+        "WHERE OL_W_ID >= {} AND OL_W_ID <= {} AND OL_O_ID < {} "
+        "AND OL_AMOUNT IS DISTINCT FROM 0.00 "
         "LIMIT 1",
-        TABLE_ORDER_LINE, FIRST_UNPROCESSED_O_ID);
-    CheckNoRows(txn, sql, "Delivered order lines must have OL_AMOUNT = 0.00 after import");
+        TABLE_ORDER_LINE, startWh, endWh, FIRST_UNPROCESSED_O_ID);
+    CheckNoRows(txn, sql, fmt::format(
+        "Delivered order lines must have OL_AMOUNT = 0.00 after import (w_id [{},{}])",
+        startWh, endWh));
 }
 
 void RecordResult(TCheckReport& report, const std::string& id, ECheckStatus status,
@@ -682,21 +732,15 @@ std::vector<TCheckJob> BuildCardinalityJobs(const TCheckRequest& request, bool a
                  [wh](pqxx::nontransaction& txn) { BaseCheckWarehouseTable(txn, wh); });
     AddSingleJob(jobs, "cardinality.district",
                  [wh](pqxx::nontransaction& txn) { BaseCheckDistrictTable(txn, wh); });
-    AddSingleJob(jobs, "cardinality.customer",
-                 [wh](pqxx::nontransaction& txn) { BaseCheckCustomerTable(txn, wh); });
+    AddRangedJob(jobs, "cardinality.customer", wh, kWarehouseCheckRange, BaseCheckCustomerTable);
     AddSingleJob(jobs, "cardinality.item",
                  [](pqxx::nontransaction& txn) { BaseCheckItemTable(txn); });
-    AddSingleJob(jobs, "cardinality.stock",
-                 [wh](pqxx::nontransaction& txn) { BaseCheckStockTable(txn, wh); });
+    AddRangedJob(jobs, "cardinality.stock", wh, kWarehouseCheckRange, BaseCheckStockTable);
     if (afterImport) {
-        AddSingleJob(jobs, "cardinality.oorder",
-                     [wh](pqxx::nontransaction& txn) { BaseCheckOorderTable(txn, wh); });
-        AddSingleJob(jobs, "cardinality.new_order",
-                     [wh](pqxx::nontransaction& txn) { BaseCheckNewOrderTable(txn, wh); });
-        AddSingleJob(jobs, "cardinality.order_line",
-                     [wh](pqxx::nontransaction& txn) { BaseCheckOrderLineTable(txn, wh); });
-        AddSingleJob(jobs, "cardinality.history",
-                     [wh](pqxx::nontransaction& txn) { BaseCheckHistoryTable(txn, wh); });
+        AddRangedJob(jobs, "cardinality.oorder", wh, kWarehouseCheckRange, BaseCheckOorderTable);
+        AddRangedJob(jobs, "cardinality.new_order", wh, kWarehouseCheckRange, BaseCheckNewOrderTable);
+        AddRangedJob(jobs, "cardinality.order_line", wh, kWarehouseCheckRange, BaseCheckOrderLineTable);
+        AddRangedJob(jobs, "cardinality.history", wh, kWarehouseCheckRange, BaseCheckHistoryTable);
     }
     return jobs;
 }
@@ -707,39 +751,35 @@ std::vector<TCheckJob> BuildConsistencyJobs(const TCheckRequest& request, bool a
 
     AddSingleJob(jobs, "consistency.3.3.2.1",
                  [](pqxx::nontransaction& txn) { ConsistencyCheck3321(txn); });
-    AddSingleJob(jobs, "consistency.3.3.2.2",
-                 [](pqxx::nontransaction& txn) { ConsistencyCheck3322(txn); });
-    AddSingleJob(jobs, "consistency.3.3.2.3",
-                 [](pqxx::nontransaction& txn) { ConsistencyCheck3323(txn); });
-    AddRangedJob(jobs, "consistency.3.3.2.4", wh, 50, ConsistencyCheck3324);
-    AddRangedJob(jobs, "consistency.3.3.2.5", wh, 50, ConsistencyCheck3325);
-    AddRangedJob(jobs, "consistency.3.3.2.6", wh, 50, ConsistencyCheck3326);
-    AddRangedJob(jobs, "consistency.3.3.2.7", wh, 10, ConsistencyCheck3327);
-    AddSingleJob(jobs, "consistency.3.3.2.8",
-                 [](pqxx::nontransaction& txn) { ConsistencyCheck3328(txn); });
-    AddSingleJob(jobs, "consistency.3.3.2.9",
-                 [](pqxx::nontransaction& txn) { ConsistencyCheck3329(txn); });
-    AddRangedJob(jobs, "consistency.3.3.2.10", wh, 10, ConsistencyCheck33210);
-    AddRangedJob(jobs, "consistency.3.3.2.12", wh, 10, ConsistencyCheck33212);
+    AddRangedJob(jobs, "consistency.3.3.2.2", wh, kWarehouseCheckRange, ConsistencyCheck3322);
+    AddRangedJob(jobs, "consistency.3.3.2.3", wh, kWarehouseCheckRange, ConsistencyCheck3323);
+    AddRangedJob(jobs, "consistency.3.3.2.4", wh, kWarehouseCheckRange, ConsistencyCheck3324);
+    AddRangedJob(jobs, "consistency.3.3.2.5", wh, kWarehouseCheckRange, ConsistencyCheck3325);
+    AddRangedJob(jobs, "consistency.3.3.2.6", wh, kWarehouseCheckRange, ConsistencyCheck3326);
+    AddRangedJob(jobs, "consistency.3.3.2.7", wh, kWarehouseCheckRange, ConsistencyCheck3327);
+    AddRangedJob(jobs, "consistency.3.3.2.8", wh, kWarehouseCheckRange, ConsistencyCheck3328);
+    AddRangedJob(jobs, "consistency.3.3.2.9", wh, kWarehouseCheckRange, ConsistencyCheck3329);
+    AddRangedJob(jobs, "consistency.3.3.2.10", wh, kWarehouseCheckRange, ConsistencyCheck33210);
+    AddRangedJob(jobs, "consistency.3.3.2.12", wh, kWarehouseCheckRange, ConsistencyCheck33212);
 
     if (afterImport) {
-        AddRangedJob(jobs, "consistency.3.3.2.11", wh, 50, ConsistencyCheck33211);
+        AddRangedJob(jobs, "consistency.3.3.2.11", wh, kWarehouseCheckRange, ConsistencyCheck33211);
         AddSingleJob(jobs, "post_import.d_next_o_id",
                      [](pqxx::nontransaction& txn) { PostImportCheckNextOrderId(txn); });
         AddSingleJob(jobs, "post_import.w_ytd",
                      [](pqxx::nontransaction& txn) { PostImportCheckWarehouseYtd(txn); });
         AddSingleJob(jobs, "post_import.d_ytd",
                      [](pqxx::nontransaction& txn) { PostImportCheckDistrictYtd(txn); });
-        AddSingleJob(jobs, "post_import.o_carrier_id",
-                     [](pqxx::nontransaction& txn) { PostImportCheckNoCarriers(txn); });
-        AddSingleJob(jobs, "post_import.o_carrier_id_range",
-                     [](pqxx::nontransaction& txn) { PostImportCheckCarrierRange(txn); });
-        AddSingleJob(jobs, "post_import.ol_delivery_d",
-                     [](pqxx::nontransaction& txn) { PostImportCheckNoDeliveryDates(txn); });
-        AddSingleJob(jobs, "post_import.ol_delivery_eq_entry",
-                     [](pqxx::nontransaction& txn) { PostImportCheckDeliveryEqualsEntry(txn); });
-        AddSingleJob(jobs, "post_import.ol_amount_delivered",
-                     [](pqxx::nontransaction& txn) { PostImportCheckDeliveredAmountZero(txn); });
+        AddRangedJob(jobs, "post_import.o_carrier_id", wh, kWarehouseCheckRange,
+                     PostImportCheckNoCarriers);
+        AddRangedJob(jobs, "post_import.o_carrier_id_range", wh, kWarehouseCheckRange,
+                     PostImportCheckCarrierRange);
+        AddRangedJob(jobs, "post_import.ol_delivery_d", wh, kWarehouseCheckRange,
+                     PostImportCheckNoDeliveryDates);
+        AddRangedJob(jobs, "post_import.ol_delivery_eq_entry", wh, kWarehouseCheckRange,
+                     PostImportCheckDeliveryEqualsEntry);
+        AddRangedJob(jobs, "post_import.ol_amount_delivered", wh, kWarehouseCheckRange,
+                     PostImportCheckDeliveredAmountZero);
     }
     return jobs;
 }

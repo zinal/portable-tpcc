@@ -92,6 +92,8 @@ runtime:
   # 0 / omitted = auto (min of assigned warehouses, host CPUs, adapter max)
   threads_per_loader: 0
   threads_per_worker: 4
+  # 0 / omitted = auto (min of scale.warehouses and 32)
+  check_concurrency: 0
   max_inflight_per_worker: 64
   retry:
     max_attempts: 4

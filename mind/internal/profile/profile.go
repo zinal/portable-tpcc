@@ -129,6 +129,9 @@ type Runtime struct {
 	ThreadsPerLoader      int         `yaml:"threads_per_loader"`
 	ThreadsPerWorker      int         `yaml:"threads_per_worker"`
 	MaxInflightPerWorker  int         `yaml:"max_inflight_per_worker"`
+	// CheckConcurrency is parallel DBMS sessions for integrity checks.
+	// 0 / omit = auto (min(scale.warehouses, 32)).
+	CheckConcurrency int `yaml:"check_concurrency"`
 	Retry                 RetryPolicy `yaml:"retry"`
 	Histogram             Histogram   `yaml:"histogram"`
 }

@@ -95,7 +95,7 @@ void PrintHelp() {
         "  loader  --run-config <path> --instance <name>\n"
         "  indexes --run-config <path> --instance <name>\n"
         "  worker  --run-config <path> --instance <name> --start-at=<RFC3339-UTC>\n"
-        "  check   --run-config <path> --instance <name> --after-import|--after-run\n"
+        "  check   --run-config <path> --instance <name> --after-import|--after-run [--threads=N]\n"
         "  clean   --run-config <path> --instance <name>\n"
         "\n"
         "Simulation (for testing without real TPC-C transactions):\n"

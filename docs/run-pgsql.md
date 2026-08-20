@@ -99,14 +99,14 @@ $BIN import --connection="$CONN" --path=portable_tpcc -w 10 -t 8
 $BIN indexes --connection="$CONN" --path=portable_tpcc
 
 # check after load
-$BIN check --connection="$CONN" --path=portable_tpcc -w 10 --after-import
+$BIN check --connection="$CONN" --path=portable_tpcc -w 10 -t 10 --after-import
 
 # measurement run (durations in minutes)
 $BIN run --connection="$CONN" --path=portable_tpcc -w 10 \
   --duration=5 -t 4
 
 # check after run
-$BIN check --connection="$CONN" --path=portable_tpcc -w 10 --after-run
+$BIN check --connection="$CONN" --path=portable_tpcc -w 10 -t 10 --after-run
 
 # drop TPC-C tables
 $BIN clean --connection="$CONN" --path=portable_tpcc
