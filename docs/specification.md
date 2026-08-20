@@ -170,7 +170,7 @@ split across workers.
 Mix weights MUST be positive and form a complete distribution. Values that
 differ from any TPC-C edition are still accepted.
 
-Examples: [profile.v1.yaml](examples/profile.v1.yaml),
+Examples: [profile.ydb.v1.yaml](examples/profile.ydb.v1.yaml),
 [run-config.v1.json](examples/run-config.v1.json).
 
 ## 6. Load

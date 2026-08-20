@@ -7,7 +7,7 @@ Architecture draft:
 
 - [specification](docs/specification.md);
 - [shared libraries and adapter API](docs/adapter-api.md);
-- [profile example (YDB)](docs/examples/profile.v1.yaml);
+- [profile example (YDB)](docs/examples/profile.ydb.v1.yaml);
 - [profile example (OceanBase)](docs/examples/profile.oceanbase.v1.yaml);
 - [run-config example](docs/examples/run-config.v1.json);
 - [start-token example](docs/examples/start-token.v1.json);

@@ -54,7 +54,7 @@ soft-conformance и response-time statistics содержат отдельные
 ./ya make tpcc/domain/ut tpcc/transactions/ut tpcc/runtime/ut \
   tpcc/metrics/ut tpcc/checks/ut
 go test ./...
-go run ./cmd/mind-tpcc validate --profile ../../docs/examples/profile.v1.yaml
+go run ./cmd/mind-tpcc validate --profile ../../docs/examples/profile.ydb.v1.yaml
 ```
 
 Unit-test команды завершились успешно. Последняя команда ожидаемо завершилась
@@ -241,7 +241,7 @@ Default orchestrated histogram использует `us`, но фактичес�
   worker;
 - `highest <= 0` молча заменяется default вместо structural error.
 
-Дополнительно [profile.v1.yaml](examples/profile.v1.yaml) содержит
+Дополнительно [profile.ydb.v1.yaml](examples/profile.ydb.v1.yaml) содержит
 `retry_ambiguous_commit`, которого нет в `profile.RetryPolicy`. После включения
 `KnownFields(true)` официальный пример больше не проходит `mind-tpcc validate`.
 
@@ -249,7 +249,7 @@ Default orchestrated histogram использует `us`, но фактичес�
 
 - [profile.go:126-148](../mind/internal/profile/profile.go#L126-L148);
 - [validate.go:98-120](../mind/internal/validate/validate.go#L98-L120);
-- [profile.v1.yaml:86-91](examples/profile.v1.yaml#L86-L91).
+- [profile.ydb.v1.yaml:86-91](examples/profile.ydb.v1.yaml#L86-L91).
 
 ## 4. Принятые ограничения и отклонения
 
