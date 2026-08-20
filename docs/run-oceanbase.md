@@ -81,6 +81,12 @@ schema time** (`tpcc-oceanbase schema` / `mind-tpcc` schema stage). The same
 value is reused at `indexes` as the `DBMS_STATS.GATHER_TABLE_STATS` degree of
 parallelism (`1` when partitioning is off).
 
+Integrity checks scan warehouse-scoped tables one `w_id` at a time (same
+chunk size as PostgreSQL and YDB) and open `--threads` parallel sessions so
+HASH partition pruning can apply. Under `mind-tpcc`, `--threads` comes from
+`runtime.check_concurrency` (`0` / omit = `min(scale.warehouses, 32)`).
+TPC-C §3.3.2 predicates are unchanged.
+
 | Value | Meaning |
 | --- | --- |
 | `-1` | No tablegroup / no HASH partitions (plain tables) |
@@ -130,15 +136,15 @@ $BIN indexes --connection="$CONN" --path=tpcc -w 10 --partitions=0
 #   --index-parallel=8   # raise DOP for a single CREATE INDEX
 #   --index-parallel=1   # serial index build
 
-# check after load
-$BIN check --connection="$CONN" --path=tpcc -w 10 --after-import
+# check after load ( -t N parallel sessions; omit for a single session )
+$BIN check --connection="$CONN" --path=tpcc -w 10 -t 10 --after-import
 
 # measurement run (durations in minutes)
 $BIN run --connection="$CONN" --path=tpcc -w 10 \
   --duration=5 -t 4
 
 # check after run
-$BIN check --connection="$CONN" --path=tpcc -w 10 --after-run
+$BIN check --connection="$CONN" --path=tpcc -w 10 -t 10 --after-run
 
 # drop TPC-C tables
 $BIN clean --connection="$CONN" --path=tpcc
@@ -239,6 +245,7 @@ workers:
 runtime:
   threads_per_loader: 4   # 0 / omit = auto (CPU-capped per loader process)
   threads_per_worker: 4
+  check_concurrency: 0    # 0 / omit = auto (min of warehouses and 32)
   max_inflight_per_worker: 256
 ```
 
@@ -254,7 +261,7 @@ tpcc-oceanbase schema --run-config run-config.json --instance schema-0
 tpcc-oceanbase loader --run-config run-config.json --instance <loader>
 tpcc-oceanbase indexes --run-config run-config.json --instance indexes-0
 tpcc-oceanbase worker --run-config run-config.json --instance <worker> --start-at=<UTC>
-tpcc-oceanbase check  --run-config run-config.json --instance check-0 --after-import|--after-run
+tpcc-oceanbase check  --run-config run-config.json --instance check-0 --after-import|--after-run [--threads=N]
 tpcc-oceanbase clean  --run-config run-config.json --instance clean-0   # mind-tpcc cleanup
 ```
 

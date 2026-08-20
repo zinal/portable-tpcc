@@ -55,18 +55,40 @@ func CleanArgv(runConfigPath, instance string) []string {
 	}
 }
 
+// DefaultCheckConcurrencyCap limits auto-selected parallel check sessions.
+const DefaultCheckConcurrencyCap = 32
+
+// ResolveCheckConcurrency returns DBMS check sessions.
+// configured > 0 is used as-is; 0 / omit is min(warehouses, DefaultCheckConcurrencyCap).
+func ResolveCheckConcurrency(warehouses, configured int) int {
+	if configured > 0 {
+		return configured
+	}
+	if warehouses < 1 {
+		return 1
+	}
+	if warehouses > DefaultCheckConcurrencyCap {
+		return DefaultCheckConcurrencyCap
+	}
+	return warehouses
+}
+
 // CheckArgv returns argv for the check role.
-func CheckArgv(runConfigPath, instance, phase string) []string {
+func CheckArgv(runConfigPath, instance, phase string, threads int) []string {
 	flag := "--after-run"
 	if phase == "after-import" {
 		flag = "--after-import"
 	}
-	return []string{
+	argv := []string{
 		"check",
 		"--run-config", runConfigPath,
 		"--instance", instance,
 		flag,
 	}
+	if threads > 0 {
+		argv = append(argv, fmt.Sprintf("--threads=%d", threads))
+	}
+	return argv
 }
 
 // PlanSnapshot describes planned operations without side effects.
@@ -111,8 +133,8 @@ func BuildPlanSnapshot(rc *RunConfig) *PlanSnapshot {
 		LoaderArgv:       loaderArgv,
 		SchemaArgv:       SchemaArgv("run-config.json", schemaInstance),
 		IndexesArgv:      IndexesArgv("run-config.json", indexesInstance),
-		CheckArgvImport:  CheckArgv("run-config.json", "check-0", "after-import"),
-		CheckArgvRun:     CheckArgv("run-config.json", "check-0", "after-run"),
+		CheckArgvImport:  CheckArgv("run-config.json", "check-0", "after-import", rc.Runtime.CheckConcurrency),
+		CheckArgvRun:     CheckArgv("run-config.json", "check-0", "after-run", rc.Runtime.CheckConcurrency),
 	}
 }
 

@@ -241,6 +241,7 @@ All listed fields except `async_work_drain` are required.
 | `think_time_distribution` | `exponential` | `exponential` (TPC-C §5.2.5.4) \| `compatibility` \| `constant` (`constant` is an alias of `compatibility`: fixed mean think time). |
 | `threads_per_loader` | `0` | Import concurrency. `0` = auto (min of assigned warehouses, host CPUs, adapter max). |
 | `threads_per_worker` | `1` if ≤ 0 | Worker coroutine threads. Unlike loaders, `0`/omit materializes as **1**, not CPU auto. |
+| `check_concurrency` | `0` | Parallel DBMS sessions for integrity checks. `0` / omit = auto (`min(scale.warehouses, 32)`). `1` = serial. Passed to `tpcc-<dbms> check` as `--threads=N`. |
 | `max_inflight_per_worker` | `64` if ≤ 0 | Max in-flight transactions per worker (standalone CLI default is **100**). |
 | `retry.max_attempts` | `4` | Retry attempts. |
 | `retry.initial_backoff` | `10ms` | Initial backoff. |
@@ -306,7 +307,7 @@ schema  --run-config <path> --instance <name>
 loader  --run-config <path> --instance <name>
 indexes --run-config <path> --instance <name>
 worker  --run-config <path> --instance <name> --start-at=<RFC3339-UTC>
-check   --run-config <path> --instance <name> --after-import|--after-run
+check   --run-config <path> --instance <name> --after-import|--after-run [--threads=N]
 clean   --run-config <path> --instance <name>
 ```
 
@@ -319,7 +320,7 @@ clean   --run-config <path> --instance <name>
 | `--warmup` | `0` | Warmup minutes; `0` = adaptive. |
 | `--skip-warmup` | `false` | Skip warmup; start measurement immediately. |
 | `--duration` | `10` | Measurement minutes (> 0). |
-| `-t` / `--threads` | `0` | Run/import: `0` = auto. Check: PG serial unless set; YDB `0` = auto chunks. |
+| `-t` / `--threads` | `0` | Run/import: `0` = auto. Check: parallel DBMS sessions (`<=0` = 1 session). Orchestrated check gets `--threads` from `runtime.check_concurrency`. |
 | `-m` / `--max-inflight` | `100` | Max in-flight transactions (> 0). |
 | `--no-delays` | `false` | Disable keying and think time (engineering). |
 | `--think-time-distribution` | `exponential` | `exponential` \| `compatibility` \| `constant`. |

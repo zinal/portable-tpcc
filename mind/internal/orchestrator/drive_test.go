@@ -284,7 +284,7 @@ func TestWaitProcessMetadataTimeoutSkipsStaleCheckReport(t *testing.T) {
 		},
 		PID:      374563,
 		WorkDir:  "/run",
-		Argv:     config.CheckArgv("run-config.json", "check-0", "after-import"),
+		Argv:     config.CheckArgv("run-config.json", "check-0", "after-import", 0),
 		ProcPath: "/run/check/check-0/process.json",
 	}
 
@@ -1118,7 +1118,7 @@ func TestLaunchRoleClearsStaleInstanceMetadata(t *testing.T) {
 		alive: true,
 	}
 
-	proc, err := o.launchRole(ctx, map[string]remote.Session{"host-a": sess}, "check", "host-a", "check-0", config.CheckArgv("run-config.json", "check-0", "after-import"))
+	proc, err := o.launchRole(ctx, map[string]remote.Session{"host-a": sess}, "check", "host-a", "check-0", config.CheckArgv("run-config.json", "check-0", "after-import", 0))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1175,7 +1175,7 @@ func TestWaitProcessesIncludesCheckReportDiagnostics(t *testing.T) {
 		WorkDir:       "/run",
 		ProcPath:      "/run/check/check-0/process.json",
 		DonePath:      "/done",
-		Argv:          config.CheckArgv("run-config.json", "check-0", "after-import"),
+		Argv:          config.CheckArgv("run-config.json", "check-0", "after-import", 0),
 		InstanceNonce: "nonce-1",
 	}
 
@@ -1231,7 +1231,7 @@ func TestWaitProcessesFallsBackToFailedStdoutLines(t *testing.T) {
 		WorkDir:       "/run",
 		ProcPath:      "/run/check/check-0/process.json",
 		DonePath:      "/done",
-		Argv:          config.CheckArgv("run-config.json", "check-0", "after-import"),
+		Argv:          config.CheckArgv("run-config.json", "check-0", "after-import", 0),
 		InstanceNonce: "nonce-1",
 	}
 

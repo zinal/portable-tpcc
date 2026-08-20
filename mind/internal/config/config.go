@@ -121,6 +121,7 @@ type RunRuntime struct {
 	ThinkTimeDistribution string        `json:"think_time_distribution"`
 	Retry                 RetryJSON     `json:"retry"`
 	Histogram             HistogramJSON `json:"histogram"`
+	CheckConcurrency      int           `json:"check_concurrency,omitempty"`
 }
 
 type RetryJSON struct {
@@ -344,6 +345,7 @@ func BuildRunConfig(in BuildInput) (*RunConfig, error) {
 			ThinkTimeDistribution: thinkDist,
 			Retry:                 retry,
 			Histogram:             hist,
+			CheckConcurrency:      ResolveCheckConcurrency(p.Scale.Warehouses, p.Runtime.CheckConcurrency),
 		},
 	}, nil
 }

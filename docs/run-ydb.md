@@ -95,10 +95,10 @@ BIN=./tpcc/app/ydb/tpcc-ydb
 $BIN schema --endpoint=localhost:2136 --database=/local --path=tpcc -w 10
 $BIN import --endpoint=localhost:2136 --database=/local --path=tpcc -w 10 -t 8
 $BIN indexes --endpoint=localhost:2136 --database=/local --path=tpcc
-$BIN check --endpoint=localhost:2136 --database=/local --path=tpcc -w 10 --after-import
+$BIN check --endpoint=localhost:2136 --database=/local --path=tpcc -w 10 -t 10 --after-import
 $BIN run --endpoint=localhost:2136 --database=/local --path=tpcc -w 10 \
   --duration=5 -t 4
-$BIN check --endpoint=localhost:2136 --database=/local --path=tpcc -w 10 --after-run
+$BIN check --endpoint=localhost:2136 --database=/local --path=tpcc -w 10 -t 10 --after-run
 $BIN clean --endpoint=localhost:2136 --database=/local --path=tpcc
 ```
 
@@ -229,7 +229,7 @@ tpcc-ydb schema --run-config run-config.json --instance schema-0
 tpcc-ydb loader --run-config run-config.json --instance <loader>
 tpcc-ydb indexes --run-config run-config.json --instance indexes-0
 tpcc-ydb worker --run-config run-config.json --instance <worker> --start-at=<UTC>
-tpcc-ydb check  --run-config run-config.json --instance check-0 --after-import|--after-run
+tpcc-ydb check  --run-config run-config.json --instance check-0 --after-import|--after-run [--threads=N]
 tpcc-ydb clean  --run-config run-config.json --instance clean-0   # mind-tpcc cleanup
 ```
 

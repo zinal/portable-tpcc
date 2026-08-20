@@ -256,8 +256,13 @@ Evaluates shared catalog entries against the live database:
 The adapter returns a structured pass/fail with native detail. In orchestrated
 mode the check role writes `{run_dir}/checks/{phase}.json` on the runtime host;
 `collect` copies it to `results/<run_id>/checks/`. JSON shape, process
-metadata timing, and query-timeout rules are in
-[specification.md](specification.md) §9.1–§9.2.
+metadata timing, query-timeout rules, check session concurrency, and
+warehouse-range chunk size are in
+[specification.md](specification.md) §9.1–§9.2. Adapters MUST use
+`TCheckRequest.CheckConcurrency` for parallel sessions and
+`kWarehouseCheckRange` (1) for warehouse-scoped scans. Dialect differences
+(OceanBase `LEFT JOIN` + `UNION ALL` instead of `FULL JOIN`) are allowed;
+predicates MUST match the PostgreSQL reference set.
 
 ### 4.5. `IErrorClassifier`
 

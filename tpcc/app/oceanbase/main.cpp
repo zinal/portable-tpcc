@@ -34,7 +34,7 @@ DEFINE_uint64(seed, 1, "Deterministic data generation seed");
 DEFINE_int32(warmup, 0, "Warmup duration in minutes (0 = adaptive)");
 DEFINE_bool(skip_warmup, false, "Skip warmup entirely and start measurement immediately");
 DEFINE_int32(duration, 10, "Benchmark run duration in minutes");
-DEFINE_int32(threads, 0, "Number of threads (coroutines for run, importers for import); 0 = auto");
+DEFINE_int32(threads, 0, "Number of threads (coroutines for run, importers for import, parallel DB sessions for check); 0 = auto for run/import, serial for check");
 DEFINE_int32(max_inflight, NTpcc::DEFAULT_MAX_INFLIGHT, "Max inflight transactions");
 DEFINE_bool(no_delays, false, "Disable keying and think time delays");
 DEFINE_string(think_time_distribution, "exponential",
@@ -76,7 +76,9 @@ void PrintHelp() {
         "  --warmup              Warmup duration in minutes, 0 = adaptive (default: 0)\n"
         "  --skip-warmup         Skip warmup entirely (default: false)\n"
         "  --duration            Benchmark run duration in minutes (default: 10)\n"
-        "  -t, --threads         Number of threads; 0 = auto (default: 0)\n"
+        "  -t, --threads         Number of threads (coroutines for run, importers for import,\n"
+        "                        parallel DB sessions for check); 0 = auto for run/import,\n"
+        "                        serial (1 session) for check (default: 0)\n"
         "  -m, --max-inflight    Max inflight transactions (default: 100)\n"
         "  --no-delays           Disable keying and think time delays (default: false)\n"
         "  --think-time-distribution  exponential, compatibility, or constant\n"
@@ -90,7 +92,7 @@ void PrintHelp() {
         "  loader  --run-config <path> --instance <name>\n"
         "  indexes --run-config <path> --instance <name>\n"
         "  worker  --run-config <path> --instance <name> --start-at=<RFC3339-UTC>\n"
-        "  check   --run-config <path> --instance <name> --after-import|--after-run\n"
+        "  check   --run-config <path> --instance <name> --after-import|--after-run [--threads=N]\n"
         "  clean   --run-config <path> --instance <name>\n";
 }
 
@@ -146,10 +148,12 @@ bool ParseOrchestratedArgs(
     std::string& instance,
     std::optional<std::string>& startAt,
     bool& afterImport,
-    bool& afterRun)
+    bool& afterRun,
+    int& threads)
 {
     afterImport = false;
     afterRun = false;
+    threads = 0;
     for (int i = 2; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "--run-config" && i + 1 < argc) {
@@ -164,6 +168,10 @@ bool ParseOrchestratedArgs(
             afterImport = true;
         } else if (arg == "--after-run" || arg == "--after_run") {
             afterRun = true;
+        } else if (arg.rfind("--threads=", 0) == 0) {
+            threads = std::stoi(arg.substr(std::string("--threads=").size()));
+        } else if ((arg == "--threads" || arg == "-t") && i + 1 < argc) {
+            threads = std::stoi(argv[++i]);
         }
     }
     return !runConfig.empty() && !instance.empty();
@@ -175,13 +183,19 @@ int RunOrchestrated(
     const std::string& instance,
     const std::optional<std::string>& startAt,
     bool afterImport,
-    bool afterRun)
+    bool afterRun,
+    int threads)
 {
     if (command == "worker") return NTpcc::RunWorkerFromRunConfig(runConfig, instance, startAt);
     if (command == "loader") return NTpcc::RunLoaderFromRunConfig(runConfig, instance);
     if (command == "schema") return NTpcc::RunSchemaFromRunConfig(runConfig, instance);
     if (command == "indexes") return NTpcc::RunIndexesFromRunConfig(runConfig, instance);
-    if (command == "check") return NTpcc::RunCheckFromRunConfig(runConfig, instance, afterImport, afterRun);
+    if (command == "check") {
+        const int checkConcurrency = threads <= 0 ? 1 : threads;
+        LOG_I("Starting orchestrated check " << instance
+              << " (concurrency=" << checkConcurrency << ")...");
+        return NTpcc::RunCheckFromRunConfig(runConfig, instance, afterImport, afterRun, checkConcurrency);
+    }
     if (command == "clean") return NTpcc::RunCleanFromRunConfig(runConfig, instance);
     return 1;
 }
@@ -322,8 +336,9 @@ void RunCheck() {
         throw std::runtime_error("specify only one of --after-import or --after-run");
     }
     const bool afterImport = FLAGS_after_import;
+    const int checkConcurrency = FLAGS_threads <= 0 ? 1 : FLAGS_threads;
     NTpcc::CheckDbForRun(FLAGS_connection, FLAGS_warehouses, FLAGS_path);
-    NTpcc::CheckSync(FLAGS_connection, FLAGS_warehouses, afterImport, FLAGS_path);
+    NTpcc::CheckSync(FLAGS_connection, FLAGS_warehouses, afterImport, FLAGS_path, checkConcurrency);
 }
 
 } // anonymous
@@ -345,7 +360,8 @@ int main(int argc, char* argv[]) {
             std::optional<std::string> startAt;
             bool afterImport = false;
             bool afterRun = false;
-            if (ParseOrchestratedArgs(argc, argv, runConfig, instance, startAt, afterImport, afterRun)) {
+            int threads = 0;
+            if (ParseOrchestratedArgs(argc, argv, runConfig, instance, startAt, afterImport, afterRun, threads)) {
                 if (earlyCommand == "worker" && !startAt.has_value()) {
                     std::cerr << "Error: worker requires --start-at=<RFC3339-UTC>\n";
                     return 1;
@@ -356,7 +372,7 @@ int main(int argc, char* argv[]) {
                 }
                 NTpcc::InitLogging(TLOG_INFO);
                 try {
-                    return RunOrchestrated(earlyCommand, runConfig, instance, startAt, afterImport, afterRun);
+                    return RunOrchestrated(earlyCommand, runConfig, instance, startAt, afterImport, afterRun, threads);
                 } catch (const std::exception& ex) {
                     LOG_E("Fatal error: " << ex.what());
                     return 1;

@@ -408,6 +408,12 @@ the check report (§9.2), not only `exited with status N`.
 
 Orchestrated `check` uses instance `check-0` on the first loader host.
 `--after-import` and `--after-run` are separate invocations.
+`mind-tpcc` passes `--threads=N` from `runtime.check_concurrency` (0 / omit =
+`min(scale.warehouses, 32)`). Adapters MUST honor `TCheckRequest.CheckConcurrency`
+as parallel DBMS sessions. Warehouse-scoped scans use inclusive `w_id` chunks of
+size 1 (`kWarehouseCheckRange`) so HASH partition pruning (OceanBase) and
+per-warehouse parallelism apply on every adapter. SQL predicates stay those of
+TPC-C §3.3.2; only scheduling and warehouse filter bounds change.
 
 The check role MUST write `{run_dir}/checks/{phase}.json` on the runtime host
 before the artifact manifest (`phase` is `after-import` or `after-run`).

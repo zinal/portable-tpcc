@@ -623,7 +623,7 @@ func (o *Orchestrator) check(ctx *Context, phase string) error {
 
 		hostKey := ctx.RunConfig.LoadAssignment[0].Host
 		instance := "check-0"
-		argv := config.CheckArgv("run-config.json", instance, phase)
+		argv := config.CheckArgv("run-config.json", instance, phase, ctx.RunConfig.Runtime.CheckConcurrency)
 		proc, err := o.launchRole(ctx, sessions, "check", hostKey, instance, argv)
 		if err != nil {
 			return err

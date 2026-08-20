@@ -115,6 +115,9 @@ func Profile(p *profile.Profile) *Result {
 	if p.Runtime.MaxInflightPerWorker < 0 {
 		res.Add("runtime.max_inflight_per_worker must not be negative")
 	}
+	if p.Runtime.CheckConcurrency < 0 {
+		res.Add("runtime.check_concurrency must not be negative")
+	}
 	if p.Runtime.Retry.MaxAttempts < 0 {
 		res.Add("runtime.retry.max_attempts must not be negative")
 	}
