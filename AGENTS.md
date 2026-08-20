@@ -2,6 +2,21 @@
 
 This document defines mandatory rules for automated agents (Cursor, Cloud Agents, and similar tools) working with the **portable-tpcc** repository.
 
+**Protocol and requirements** (remote process contract, check reports, role
+behavior, configuration model) are defined in
+[`docs/specification.md`](docs/specification.md). Adapter surfaces are in
+[`docs/adapter-api.md`](docs/adapter-api.md). Per-DBMS settings are in
+[`docs/run-ydb.md`](docs/run-ydb.md),
+[`docs/run-pgsql.md`](docs/run-pgsql.md),
+[`docs/run-oceanbase.md`](docs/run-oceanbase.md), and
+[`docs/parameter-reference.md`](docs/parameter-reference.md).
+
+When a task involves orchestration, remote launches, artifacts, integrity
+checks, or profile/run-config semantics, **read the specification first**. Do
+not reconstruct those rules from source. If code and spec disagree, treat the
+spec as the requirement, implement or flag the gap, and do not silently
+“fix” the protocol in only one DBMS copy.
+
 ## 1. Preserve the coding style
 
 Before making changes, study the surrounding code and **preserve the style used in the repository**:
@@ -18,7 +33,12 @@ If a task affects multiple subsystems, follow the style of **each specific direc
 
 **Do not make changes until you have completed this analysis:**
 
-1. **Understand the task** — determine which directories and components are affected and whether the proposed solution fits the repository architecture.
+1. **Understand the task** — determine which directories and components are
+   affected and whether the proposed solution fits the repository
+   architecture. For protocol, orchestrator/binary interaction, check reports,
+   or configuration requirements, read
+   [`docs/specification.md`](docs/specification.md) (especially §9.1–§9.2 for
+   remote processes and integrity checks).
 2. **Study the context** — read the files to be modified and their immediate consumers/dependencies; inspect `ya.make` for ya modules or `go.mod` for `mind/`.
 3. **Assess the scope** — minimize the diff; do not refactor or “improve” code outside the task’s scope.
 4. **Check the restrictions** — make sure the plan does not violate the prohibitions in sections 4 and 5 below.
@@ -87,9 +107,25 @@ Files in these directories may be **read** to understand the build and dependenc
 
 ## 5. Recommended workflow
 
-1. Read this document and [`README.md`](README.md).
+1. Read this document, [`README.md`](README.md), and
+   [`docs/specification.md`](docs/specification.md) for protocol and
+   requirements (do not infer them from source when the spec defines them).
 2. Determine which directories are affected and check the restrictions (sections 4–5).
 3. Study the style and dependencies of the target files.
 4. Plan a minimal diff and obtain the user’s approval if exceptions to the prohibitions are required.
 5. Make the changes, then build and test the affected components.
-6. Explain in the commit/PR which restrictions were taken into account and why the changes are safe for TPC-E compatibility.
+6. Explain in the commit/PR which restrictions were taken into account and why the changes are safe for TPC-C compatibility.
+
+## 6. Specification map (protocol)
+
+| Topic | Where |
+| --- | --- |
+| Remote `process.json` / nonce / `artifact-manifest.json` | [specification.md](docs/specification.md) §9.1 |
+| Integrity-check JSON reports and query timeout | [specification.md](docs/specification.md) §9.2 |
+| Adapter check/session API | [adapter-api.md](docs/adapter-api.md) §4.4, §7 |
+| OceanBase `query_timeout` / physical options | [specification.md](docs/specification.md) §11, [run-oceanbase.md](docs/run-oceanbase.md) |
+| Profile and CLI parameters | [parameter-reference.md](docs/parameter-reference.md) |
+
+Check role sources (implementation, not the protocol source of truth):
+`tpcc/checks/` (catalog + JSON writer), `tpcc/dbms/{pgsql,ydb,oceanbase}/check.cpp`,
+`mind/internal/orchestrator/` (launch, wait, diagnostics).
