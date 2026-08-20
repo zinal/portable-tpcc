@@ -590,34 +590,67 @@ func (o *Orchestrator) RunIndexes(ctx *Context) error {
 
 func (o *Orchestrator) check(ctx *Context, phase string) error {
 	progress.Printf("stage check (%s): start (run_id=%s)", phase, ctx.RunID)
+	rs, err := o.StateStore.Load(ctx.RunID)
+	if err != nil {
+		return err
+	}
 	if phase == "after-import" {
-		if err := o.StateStore.Transition(ctx.RunID, state.StateCheckingImport); err != nil {
-			return err
-		}
-	} else {
-		if err := o.StateStore.Transition(ctx.RunID, state.StateCheckingResult); err != nil {
+		if err := requireIndexesForImportCheck(rs); err != nil {
 			return err
 		}
 	}
-	sessions, err := o.openSessions()
-	if err != nil {
+	prev := rs.State
+	target := state.StateCheckingResult
+	if phase == "after-import" {
+		target = state.StateCheckingImport
+	}
+	if err := o.StateStore.Transition(ctx.RunID, target); err != nil {
 		return err
 	}
-	defer closeSessions(sessions)
 
-	hostKey := ctx.RunConfig.LoadAssignment[0].Host
-	instance := "check-0"
-	argv := config.CheckArgv("run-config.json", instance, phase)
-	proc, err := o.launchRole(ctx, sessions, "check", hostKey, instance, argv)
+	err = func() error {
+		sessions, err := o.openSessions()
+		if err != nil {
+			return err
+		}
+		defer closeSessions(sessions)
+
+		hostKey := ctx.RunConfig.LoadAssignment[0].Host
+		instance := "check-0"
+		argv := config.CheckArgv("run-config.json", instance, phase)
+		proc, err := o.launchRole(ctx, sessions, "check", hostKey, instance, argv)
+		if err != nil {
+			return err
+		}
+		if err := o.waitProcesses(ctx, []*launchedProc{proc}, 2*time.Hour, true); err != nil {
+			_ = o.stopPeers(ctx, sessions)
+			return err
+		}
+		return nil
+	}()
 	if err != nil {
-		return err
-	}
-	if err := o.waitProcesses(ctx, []*launchedProc{proc}, 2*time.Hour, true); err != nil {
-		_ = o.stopPeers(ctx, sessions)
+		if rerr := o.StateStore.RevertTo(ctx.RunID, prev); rerr != nil {
+			return fmt.Errorf("%w (also failed to revert state to %s: %v)", err, prev, rerr)
+		}
 		return err
 	}
 	progress.Printf("stage check (%s): complete", phase)
 	return nil
+}
+
+func requireIndexesForImportCheck(rs *state.RunState) error {
+	for _, step := range rs.SkippedSteps {
+		if step == "indexes" {
+			return nil
+		}
+	}
+	if state.IsTerminal(rs.State) || rs.State == state.StateStopping {
+		return nil
+	}
+	if state.Reached(rs.State, state.StateIndexing) {
+		return nil
+	}
+	return fmt.Errorf("check --after-import requires the indexes stage (current state is %s); run 'mind-tpcc indexes' first", rs.State)
 }
 
 // RunCheck records check phase and executes the check role.

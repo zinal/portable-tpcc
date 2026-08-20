@@ -107,3 +107,134 @@ func TestTransitionAllowsForwardAndStopping(t *testing.T) {
 		t.Fatalf("completed and failed should be terminal")
 	}
 }
+
+func TestTransitionAllowsIndexesAfterPrematureCheck(t *testing.T) {
+	store := &state.Store{StateDir: t.TempDir()}
+	rs := &state.RunState{
+		SchemaVersion: 1,
+		RunID:         "run-1",
+		State:         state.StateCheckingImport,
+	}
+	if err := store.Save(rs); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Transition("run-1", state.StateIndexing); err != nil {
+		t.Fatalf("recovery transition checking_import -> indexing failed: %v", err)
+	}
+	got, err := store.Load("run-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != state.StateIndexing {
+		t.Fatalf("state=%q, want %q", got.State, state.StateIndexing)
+	}
+}
+
+func TestTransitionRecoveryMatrix(t *testing.T) {
+	cases := []struct {
+		from, to string
+		ok       bool
+	}{
+		{state.StateCheckingImport, state.StateIndexing, true},
+		{state.StateCheckingResult, state.StateIndexing, true},
+		{state.StateDraining, state.StateIndexing, true},
+		{state.StateCollecting, state.StateIndexing, true},
+		{state.StateConsolidating, state.StateIndexing, true},
+		{state.StateCheckingImport, state.StateLoading, false},
+		{state.StateCheckingImport, state.StateSchema, false},
+		{state.StateCheckingImport, state.StatePreparing, true},
+		{state.StateMeasuring, state.StateIndexing, false},
+		{state.StatePreparing, state.StateIndexing, false},
+		{state.StateArming, state.StateIndexing, false},
+		{state.StateRamping, state.StateIndexing, false},
+		{state.StateFailed, state.StateIndexing, false},
+		{state.StateCompleted, state.StateIndexing, false},
+		{state.StateLoading, state.StateIndexing, true},
+		{state.StateIndexing, state.StateCheckingImport, true},
+		{state.StateLoading, state.StateCheckingImport, true},
+	}
+	for _, tc := range cases {
+		store := &state.Store{StateDir: t.TempDir()}
+		rs := &state.RunState{SchemaVersion: 1, RunID: "run-1", State: tc.from}
+		if err := store.Save(rs); err != nil {
+			t.Fatal(err)
+		}
+		err := store.Transition("run-1", tc.to)
+		if tc.ok {
+			if err != nil {
+				t.Fatalf("%s -> %s: unexpected error %v", tc.from, tc.to, err)
+			}
+			continue
+		}
+		if err == nil || !strings.Contains(err.Error(), "invalid state transition") {
+			t.Fatalf("%s -> %s: expected invalid transition, got %v", tc.from, tc.to, err)
+		}
+		got, err := store.Load("run-1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.State != tc.from {
+			t.Fatalf("%s -> %s: state became %q", tc.from, tc.to, got.State)
+		}
+	}
+}
+
+func TestRevertToRestoresPreviousNonTerminalState(t *testing.T) {
+	store := &state.Store{StateDir: t.TempDir()}
+	rs := &state.RunState{
+		SchemaVersion: 1,
+		RunID:         "run-1",
+		State:         state.StateCheckingImport,
+	}
+	if err := store.Save(rs); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RevertTo("run-1", state.StateLoading); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.Load("run-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != state.StateLoading {
+		t.Fatalf("state=%q, want %q", got.State, state.StateLoading)
+	}
+}
+
+func TestRevertToDoesNotOverrideTerminal(t *testing.T) {
+	store := &state.Store{StateDir: t.TempDir()}
+	rs := &state.RunState{
+		SchemaVersion: 1,
+		RunID:         "run-1",
+		State:         state.StateFailed,
+		Error:         "boom",
+	}
+	if err := store.Save(rs); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RevertTo("run-1", state.StateLoading); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.Load("run-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != state.StateFailed {
+		t.Fatalf("state=%q, want failed", got.State)
+	}
+}
+
+func TestReached(t *testing.T) {
+	if !state.Reached(state.StateIndexing, state.StateIndexing) {
+		t.Fatal("indexing should reach indexing")
+	}
+	if !state.Reached(state.StateCheckingImport, state.StateIndexing) {
+		t.Fatal("checking_import should reach indexing")
+	}
+	if state.Reached(state.StateLoading, state.StateIndexing) {
+		t.Fatal("loading should not reach indexing")
+	}
+	if state.Reached(state.StateFailed, state.StateIndexing) {
+		t.Fatal("failed is not a pipeline state")
+	}
+}

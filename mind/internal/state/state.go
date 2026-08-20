@@ -166,6 +166,9 @@ func validateTransition(oldState, newState string) error {
 	if oldState == StateStopping {
 		return fmt.Errorf("invalid state transition %s -> %s", oldState, newState)
 	}
+	if allowedRecovery(oldState, newState) {
+		return nil
+	}
 	oldOrder, oldOK := pipelineOrder[oldState]
 	newOrder, newOK := pipelineOrder[newState]
 	if !oldOK || !newOK {
@@ -175,6 +178,49 @@ func validateTransition(oldState, newState string) error {
 		return fmt.Errorf("invalid state transition %s -> %s", oldState, newState)
 	}
 	return nil
+}
+
+// Reached reports whether current is at least as far along the pipeline as min.
+func Reached(current, min string) bool {
+	curOrder, curOK := pipelineOrder[current]
+	minOrder, minOK := pipelineOrder[min]
+	return curOK && minOK && curOrder >= minOrder
+}
+
+// indexing is idempotent (EnsureIndexes). Operators may need to run it after a
+// verification stage was entered too early or failed — otherwise a mistaken
+// `check --after-import` leaves the run stuck in checking_import.
+func allowedRecovery(oldState, newState string) bool {
+	if newState != StateIndexing {
+		return false
+	}
+	switch oldState {
+	case StateCheckingImport, StateCheckingResult, StateDraining, StateCollecting, StateConsolidating:
+		return true
+	default:
+		return false
+	}
+}
+
+// RevertTo moves a non-terminal run back to previous after a stage was entered
+// but did not complete. Terminal states are left unchanged so a later Fail()
+// still wins.
+func (s *Store) RevertTo(runID, previous string) error {
+	rs, err := s.Load(runID)
+	if err != nil {
+		return err
+	}
+	if IsTerminal(rs.State) {
+		return nil
+	}
+	if previous == "" {
+		previous = StatePlanned
+	}
+	if rs.State == previous {
+		return nil
+	}
+	rs.State = previous
+	return s.Save(rs)
 }
 
 // Fail records failure state and error message.
