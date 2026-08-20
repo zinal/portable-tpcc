@@ -121,11 +121,38 @@ Files in these directories may be **read** to understand the build and dependenc
 | Topic | Where |
 | --- | --- |
 | Remote `process.json` / nonce / `artifact-manifest.json` | [specification.md](docs/specification.md) §9.1 |
-| Integrity-check JSON reports and query timeout | [specification.md](docs/specification.md) §9.2 |
-| Adapter check/session API | [adapter-api.md](docs/adapter-api.md) §4.4, §7 |
+| Integrity-check JSON, query timeout, session concurrency, warehouse-range size | [specification.md](docs/specification.md) §9.2 |
+| Adapter check/session API | [adapter-api.md](docs/adapter-api.md) §3.6, §4.4, §7 |
 | OceanBase `query_timeout` / physical options | [specification.md](docs/specification.md) §11, [run-oceanbase.md](docs/run-oceanbase.md) |
 | Profile and CLI parameters | [parameter-reference.md](docs/parameter-reference.md) |
 
 Check role sources (implementation, not the protocol source of truth):
-`tpcc/checks/` (catalog + JSON writer), `tpcc/dbms/{pgsql,ydb,oceanbase}/check.cpp`,
+`tpcc/checks/` (catalog, `kWarehouseCheckRange`, JSON writer),
+`tpcc/dbms/{pgsql,ydb,oceanbase}/check.cpp`,
+`mind/internal/config/plan.go` (`CheckArgv`, `ResolveCheckConcurrency`),
 `mind/internal/orchestrator/` (launch, wait, diagnostics).
+
+### Integrity-check edits
+
+Changing checks is a **cross-adapter** change. Do not reconstruct scheduling
+from a single `check.cpp`.
+
+- Honor `TCheckRequest.CheckConcurrency`. Orchestrated `check` MUST parse
+  `--threads` the same way as PostgreSQL (`ParseOrchestratedArgs`).
+  `mind-tpcc` `CheckArgv` MUST pass `--threads=N` from
+  `runtime.check_concurrency` (specification §9.2).
+- Use `kWarehouseCheckRange` in `tpcc/checks/adapter.h` for warehouse-scoped
+  scans. Do not reintroduce adapter-private chunk sizes (historically 50/10).
+- Which catalog ids are warehouse-ranged MUST match across pgsql, ydb, and
+  oceanbase. Do not leave one adapter serial or on a different range size.
+- Speed-ups MUST be scheduling (parallel sessions, `w_id` filters), not
+  rewritten TPC-C §3.3.2 predicates, PX/`PARALLEL` hints, skipped catalog
+  entries, or DBMS-only SQL “optimizations”, unless the user explicitly asks.
+- Dialect translation is allowed (OceanBase `LEFT JOIN` + `UNION ALL` instead
+  of `FULL JOIN`) when the condition stays equivalent to the PostgreSQL
+  reference.
+- Each parallel check worker opens its own session and MUST apply the same
+  query timeout as other check sessions (specification §9.2).
+- Stdout `Checking … [OK]/[Failed]` is one line per catalog id after that
+  job finishes (all warehouse chunks). Do not treat missing per-chunk
+  progress as a bug to fix unless asked; the JSON report is the contract.

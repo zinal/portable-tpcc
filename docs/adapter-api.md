@@ -101,7 +101,10 @@ are empty.
 Shared check **catalog**: identifier, expected semantics, result shape.
 Adapters supply the DBMS-specific query or scan that evaluates each check.
 This is integrity / infrastructure checking, not TPC-C edition conformance.
-PostgreSQL evaluates the shared catalog via `TPgCheckAdapter`.
+PostgreSQL, YDB, and OceanBase each evaluate the same catalog
+(`TPgCheckAdapter` / `TYdbCheckAdapter` / `TObCheckAdapter`). Scheduling
+(parallel sessions, `kWarehouseCheckRange`) is a shared requirement
+(specification §9.2), not an adapter-private optimization.
 
 ### 3.7. `tpcc/metrics`
 
