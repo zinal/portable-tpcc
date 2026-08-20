@@ -367,6 +367,8 @@ Adapters MUST:
   DB-wide `item`.
 - Cached prepared statements with bound parameters.
 - Optional foreign keys as a recorded physical option.
+- Parallel `CREATE INDEX` via `PARALLEL n` (`database.options.index_parallel`,
+  default 4; DOP for one index, not concurrent DDL).
 - Post-index `ANALYZE` (or OceanBase equivalent statistics gather).
 - MariaDB-compatible connectors are fine for transport; validation MUST run
   against real OceanBase, not only MariaDB.

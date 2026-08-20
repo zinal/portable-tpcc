@@ -60,6 +60,9 @@ struct TRunConfigDocument {
     // OceanBase session query timeout for bulk load / index / ANALYZE (seconds).
     // Emitted as connection property query_timeout; 0 means use adapter default.
     int QueryTimeoutSeconds = 0;
+    // OceanBase CREATE INDEX degree of parallelism (PARALLEL n).
+    // 0 means use adapter default (OB_DEFAULT_INDEX_PARALLEL); 1 = serial.
+    int IndexParallel = 0;
 
     int ScaleWarehouses = 0;
     int64_t Seed = 0;

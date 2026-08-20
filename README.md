@@ -271,8 +271,10 @@ CONN='host=127.0.0.1;port=2881;user=root@test;password=YOUR_PASSWORD;database=tp
 # load
 ./tpcc-oceanbase import --connection="$CONN" --path=tpcc -w 10 -t 8
 
-# indexes + ANALYZE (after load)
+# indexes + ANALYZE (after load); CREATE INDEX uses PARALLEL 4 by default
 ./tpcc-oceanbase indexes --connection="$CONN" --path=tpcc
+#   --index-parallel=8   # raise DOP for a single CREATE INDEX
+#   --index-parallel=1   # serial index build
 
 # check after load
 ./tpcc-oceanbase check --connection="$CONN" --path=tpcc -w 10 --after-import
@@ -293,6 +295,8 @@ Useful flags:
 - `--partitions` — see [Schema partitioning](#schema-partitioning) above.
 - `--foreign-keys=off` — omit FOREIGN KEY constraints at schema time
   (default `on`).
+- `--index-parallel=N` — OceanBase `CREATE INDEX … PARALLEL N` (DOP for a
+  single index; default `4`, `1` = serial).
 - `--no-delays` — disable keying/think time (engineering runs);
 - `--help` — full command list.
 
@@ -314,6 +318,7 @@ database:
     # partitions: 64            # optional explicit HASH partition count
     foreign_keys: off           # omit FKs at schema time; default on
     query_timeout: 600          # Session ob_query_timeout for bulk import / CREATE INDEX / ANALYZE (seconds).
+    index_parallel: 4           # CREATE INDEX DOP (PARALLEL n); default 4, 1 = serial
 ```
 
 For OceanBase, optional `database.user` sets the client login (`user@tenant`).
