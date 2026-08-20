@@ -300,7 +300,12 @@ void InitSync(
     }
 }
 
-void CreateIndexes(const std::string& connectionString, const std::string& path, bool useLocalIndexes) {
+void CreateIndexes(
+    const std::string& connectionString,
+    const std::string& path,
+    bool useLocalIndexes,
+    int indexParallel)
+{
     LOG_I("Creating secondary indexes...");
 
     try {
@@ -310,18 +315,33 @@ void CreateIndexes(const std::string& connectionString, const std::string& path,
         // Fresh session: raise ob_query_timeout via connection property query_timeout.
         conn->ConfigureBulkLoadSession();
 
-        const bool localIndexes = useLocalIndexes || IsOceanBaseServer(*conn);
-        const char* localSuffix = localIndexes ? " LOCAL" : "";
+        TObSchemaOptions parallelOpts;
+        parallelOpts.IndexParallel = indexParallel;
+        indexParallel = ResolveObIndexParallel(parallelOpts);
+
+        const bool oceanbase = IsOceanBaseServer(*conn);
+        const bool localIndexes = useLocalIndexes || oceanbase;
+        if (!oceanbase && indexParallel > 1) {
+            LOG_W("Ignoring OceanBase index_parallel: target is not OceanBase");
+        }
+        std::string indexSuffix;
+        if (localIndexes) {
+            indexSuffix += " LOCAL";
+        }
+        if (oceanbase && indexParallel > 1) {
+            indexSuffix += fmt::format(" PARALLEL {}", indexParallel);
+            LOG_I("CREATE INDEX DOP: PARALLEL " << indexParallel);
+        }
 
         const std::vector<std::pair<const char*, std::string>> indexes = {
             {INDEX_CUSTOMER_NAME,
              fmt::format(
                  "CREATE INDEX {} ON customer (c_w_id, c_d_id, c_last, c_first){}",
-                 INDEX_CUSTOMER_NAME, localSuffix)},
+                 INDEX_CUSTOMER_NAME, indexSuffix)},
             {INDEX_ORDER,
              fmt::format(
                  "CREATE INDEX {} ON oorder (o_w_id, o_d_id, o_c_id, o_id){}",
-                 INDEX_ORDER, localSuffix)},
+                 INDEX_ORDER, indexSuffix)},
         };
 
         for (const auto& [name, sql] : indexes) {

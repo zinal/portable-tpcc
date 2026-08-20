@@ -31,6 +31,13 @@ int ResolveObPartitionCount(const TObSchemaOptions& options) {
     return std::max(1, options.WarehouseCount);
 }
 
+int ResolveObIndexParallel(const TObSchemaOptions& options) {
+    if (options.IndexParallel < 1) {
+        throw std::runtime_error("index_parallel must be a positive integer");
+    }
+    return options.IndexParallel;
+}
+
 std::string ObPartitioningStyle(const TObSchemaOptions& options) {
     return options.PartitionCount == -1 ? OB_PARTITIONING_NONE : OB_PARTITIONING_TABLEGROUP_HASH;
 }

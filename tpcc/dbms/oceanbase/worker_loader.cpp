@@ -23,6 +23,7 @@ TObSchemaOptions MakeSchemaOptions(const TRunConfigDocument& d) {
     options.PartitionCount = d.PartitionCount;
     options.WarehouseCount = d.ScaleWarehouses;
     options.EnableForeignKeys = d.ForeignKeys;
+    options.IndexParallel = d.IndexParallel > 0 ? d.IndexParallel : OB_DEFAULT_INDEX_PARALLEL;
     return options;
 }
 
@@ -123,10 +124,12 @@ int RunIndexesFromRunConfig(const std::string& runConfigPath, const std::string&
     return RunOrchestratedIndexes(doc, instance, [instance](const TRunConfigDocument& d) {
         const std::string connection = BuildObConnectionString(d);
         CheckDbForIndexes(connection, d.Path);
-        TObAdminAdapter admin(connection, d.Path);
+        auto options = MakeSchemaOptions(d);
+        TObAdminAdapter admin(connection, d.Path, options);
         admin.EnsureIndexes();
         admin.EnsureStatistics();
-        LOG_I("Indexes and statistics ready (instance=" << instance << ")");
+        LOG_I("Indexes and statistics ready (instance=" << instance
+              << ", index_parallel=" << options.IndexParallel << ")");
     });
 }
 

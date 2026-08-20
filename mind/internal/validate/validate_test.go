@@ -382,6 +382,7 @@ func TestValidate_oceanbaseOptions(t *testing.T) {
 			"partitions":     0,
 			"foreign_keys":   "off",
 			"query_timeout":  1800,
+			"index_parallel": 8,
 		}
 		res := validate.Profile(&p)
 		if !res.Valid {
@@ -404,6 +405,24 @@ func TestValidate_oceanbaseOptions(t *testing.T) {
 		res := validate.Profile(&p)
 		if res.Valid {
 			t.Fatal("expected query_timeout=0 to fail")
+		}
+	})
+
+	t.Run("accepts_index_parallel", func(t *testing.T) {
+		p := obBase()
+		p.Database.Options = map[string]interface{}{"index_parallel": 1}
+		res := validate.Profile(&p)
+		if !res.Valid {
+			t.Fatalf("expected index_parallel=1 to be valid, errors: %v", res.Errors)
+		}
+	})
+
+	t.Run("rejects_non_positive_index_parallel", func(t *testing.T) {
+		p := obBase()
+		p.Database.Options = map[string]interface{}{"index_parallel": 0}
+		res := validate.Profile(&p)
+		if res.Valid {
+			t.Fatal("expected index_parallel=0 to fail")
 		}
 	})
 

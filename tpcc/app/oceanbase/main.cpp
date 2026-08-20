@@ -26,6 +26,8 @@ DEFINE_string(connection, "host=127.0.0.1;port=2881;user=root@test;password=tpcc
 DEFINE_string(path, "", "OceanBase database name for benchmark tables (default: connection database)");
 DEFINE_int32(partitions, 0, "OceanBase hash partitions: -1 = off, 0 = derive from --warehouses, N = explicit");
 DEFINE_string(foreign_keys, "on", "Foreign keys: on or off");
+DEFINE_int32(index_parallel, NTpcc::OB_DEFAULT_INDEX_PARALLEL,
+             "CREATE INDEX degree of parallelism (OceanBase PARALLEL n); 1 = serial");
 
 DEFINE_int32(warehouses, 1, "Number of warehouses");
 DEFINE_uint64(seed, 1, "Deterministic data generation seed");
@@ -68,6 +70,7 @@ void PrintHelp() {
         "  -p, --path            OceanBase database name for benchmark tables\n"
         "  --partitions          -1 off, 0 derive from -w, N explicit (default: 0)\n"
         "  --foreign-keys        on | off (default: on)\n"
+        "  --index-parallel      CREATE INDEX DOP (PARALLEL n); 1 = serial (default: 4)\n"
         "  -w, --warehouses      Number of warehouses (default: 1)\n"
         "  --warmup              Warmup duration in minutes, 0 = adaptive (default: 0)\n"
         "  --skip-warmup         Skip warmup entirely (default: false)\n"
@@ -246,7 +249,9 @@ NTpcc::TObSchemaOptions BuildSchemaOptions() {
     options.PartitionCount = FLAGS_partitions;
     options.WarehouseCount = FLAGS_warehouses;
     options.EnableForeignKeys = foreignKeys;
+    options.IndexParallel = FLAGS_index_parallel;
     NTpcc::ResolveObPartitionCount(options);
+    NTpcc::ResolveObIndexParallel(options);
     return options;
 }
 
@@ -273,7 +278,10 @@ void RunImport() {
 
 void RunIndexes() {
     NTpcc::CheckDbForIndexes(FLAGS_connection, FLAGS_path);
-    NTpcc::TObAdminAdapter admin(FLAGS_connection, FLAGS_path);
+    NTpcc::TObSchemaOptions options;
+    options.IndexParallel = FLAGS_index_parallel;
+    NTpcc::ResolveObIndexParallel(options);
+    NTpcc::TObAdminAdapter admin(FLAGS_connection, FLAGS_path, options);
     admin.EnsureIndexes();
     admin.EnsureStatistics();
 }

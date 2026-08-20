@@ -166,6 +166,11 @@ void ValidateRunConfigDocument(const TRunConfigDocument& doc) {
     opts.WarehouseCount = doc.ScaleWarehouses;
     opts.EnableForeignKeys = doc.ForeignKeys;
     ResolveObPartitionCount(opts);
+    if (doc.IndexParallel < 0) {
+        throw std::runtime_error("database.options.index_parallel must be a positive integer");
+    }
+    opts.IndexParallel = doc.IndexParallel > 0 ? doc.IndexParallel : OB_DEFAULT_INDEX_PARALLEL;
+    ResolveObIndexParallel(opts);
     if (doc.QueryTimeoutSeconds < 0) {
         throw std::runtime_error("database.options.query_timeout must be a positive integer (seconds)");
     }
@@ -297,6 +302,14 @@ TRunConfigDocument LoadRunConfigDocument(const std::string& path) {
                     if (doc.QueryTimeoutSeconds <= 0) {
                         throw std::runtime_error(
                             "database.options.query_timeout must be a positive integer (seconds)");
+                    }
+                } else if (key == "index_parallel") {
+                    doc.IndexParallel = ReadInt(
+                        options, "index_parallel", OB_DEFAULT_INDEX_PARALLEL,
+                        "database.options.index_parallel");
+                    if (doc.IndexParallel < 1) {
+                        throw std::runtime_error(
+                            "database.options.index_parallel must be a positive integer");
                     }
                 } else {
                     throw std::runtime_error("unknown database.options." + key + " for dbms=oceanbase");

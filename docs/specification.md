@@ -397,7 +397,8 @@ visible in the result settings/options.
   warehouse `HASH` partitions (see
   [pgsql-partitioning-design.md](pgsql-partitioning-design.md)).
 - **OceanBase:** warehouse partitioning, cached statements, clear error
-  classes, optional FKs as a recorded physical option.
+  classes, optional FKs as a recorded physical option, optional
+  `CREATE INDEX … PARALLEL n` (`database.options.index_parallel`, default 4).
 
 See [adapter-api.md](adapter-api.md) §5–§6 for the full logical/physical and
 query-binding contract.

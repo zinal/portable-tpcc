@@ -317,6 +317,10 @@ func validateOceanbaseOptions(options map[string]interface{}, res *Result) {
 			if _, ok := asPositiveInt(value); !ok {
 				res.Add("database.options.query_timeout must be a positive integer (seconds)")
 			}
+		case "index_parallel":
+			if _, ok := asPositiveInt(value); !ok {
+				res.Add("database.options.index_parallel must be a positive integer")
+			}
 		default:
 			res.Add(fmt.Sprintf("unknown database.options.%s for dbms=oceanbase", key))
 		}

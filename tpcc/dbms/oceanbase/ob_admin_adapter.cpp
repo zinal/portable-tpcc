@@ -20,7 +20,7 @@ void TObAdminAdapter::EnsureSchema() {
 }
 
 void TObAdminAdapter::EnsureIndexes() {
-    CreateIndexes(ConnectionString_, Path_);
+    CreateIndexes(ConnectionString_, Path_, false, SchemaOptions_.IndexParallel);
 }
 
 void TObAdminAdapter::EnsureStatistics() {
