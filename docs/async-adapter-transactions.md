@@ -1,8 +1,14 @@
 # Async `ITpccTransaction` migration plan
 
-Status: **proposed** (implementation not started).  
-Related contract: [adapter-api.md](adapter-api.md) §4.3 (transaction ops that
-touch the DBMS MUST be async), §5 (PostgreSQL / YDB / OceanBase notes).  
+Status: **proposed** (implementation not started; Phase 0.1 / 0.3 docs
+landed).  
+Related contract: [adapter-api.md](adapter-api.md) §4.3.0 (transaction ops
+that touch the DBMS MUST return incomplete futures; MUST NOT `.Get()` /
+`GetValueSync()` on the task-queue thread), §5 (PostgreSQL / YDB / OceanBase
+notes); [specification.md](specification.md) §4.2, §7.  
+Interim ops: [parameter-reference.md](parameter-reference.md)
+(`runtime.threads_per_worker`), [run-pgsql.md](run-pgsql.md),
+[run-oceanbase.md](run-oceanbase.md), [run-ydb.md](run-ydb.md).  
 Reference implementation: [ydb-platform/tpcc-postgres-cpp](https://github.com/ydb-platform/tpcc-postgres-cpp)
 (session returns incomplete futures; workflows `co_await TSuspendWithFuture`).
 
@@ -100,13 +106,19 @@ maintain for large `Execute` switches.
 
 ### 3.2. Spec clarification (docs)
 
-Update [adapter-api.md](adapter-api.md) §4.3 so that:
+Normative text is in [adapter-api.md](adapter-api.md) §4.3.0 and
+[specification.md](specification.md) §4.2 / §7:
 
 - “MAY run blocking SDK IO on a bounded `IExecutor`” remains true for the
   **session / connector** layer;
 - `ITpccTransaction` methods that touch the DBMS **MUST** return incomplete
   futures to the caller (MUST NOT `.Get()` / `GetValueSync()` on the
   task-queue thread).
+
+Interim thread-pinning guidance is in
+[parameter-reference.md](parameter-reference.md) and the per-DBMS run
+guides. Remaining Phase 0 work is 0.2 (shared UT / helper) with the first
+code PR.
 
 ## 4. Current-state notes per DBMS
 
@@ -139,11 +151,12 @@ Update [adapter-api.md](adapter-api.md) §4.3 so that:
 
 | # | Change | Outcome |
 | --- | --- | --- |
-| 0.1 | Clarify async caller rules in `adapter-api.md` §4.3 | Normative text matches target |
+| 0.1 | Clarify async caller rules in `adapter-api.md` §4.3.0 and specification §4.2 / §7 | **Done** (normative text matches target) |
 | 0.2 | Shared test helper or UT: incomplete `Execute` does not block the calling thread when session future is delayed | Guards against reintroducing `.Get()` |
-| 0.3 | Document interim ops guidance: until phases 1–2 land, OB/PG paced scale should not rely on auto `threads≈WH/1000`; pin `threads_per_worker` near desired concurrency | Avoid repeating the 2-thread regression |
+| 0.3 | Document interim ops guidance: until phases 1–2 land, OB/PG paced scale should not rely on auto `threads≈WH/1000`; pin `threads_per_worker` near desired concurrency | **Done** (parameter-reference + run guides) |
 
-Phase 0 MAY ship as part of the first code PR or as docs-only ahead of it.
+Phase 0.2 MAY ship with the first code PR. 0.1 and 0.3 shipped docs-only ahead
+of it.
 
 ### Phase 1 — PostgreSQL worker async adapter
 
@@ -205,8 +218,9 @@ for per-op / commit paths.
 
 | PR | Contents |
 | --- | --- |
-| **This PR** | This plan document + link from `adapter-api.md` |
-| **PR A** | Phase 0 (spec wording) + Phase 1 (PostgreSQL) + shared helpers + tests |
+| Plan document | `docs/async-adapter-transactions.md` + short pointer from `adapter-api.md` (landed) |
+| Phase 0 docs | Spec / adapter-api wording (0.1) + interim thread pinning (0.3) |
+| **PR A** | Phase 0.2 (shared UT / helpers) + Phase 1 (PostgreSQL) |
 | **PR B** | Phase 2 (OceanBase), thin diff on top of A |
 | **PR C** | Phase 3 (YDB async bridge) |
 | **PR D** | Phase 4 polish / optional diagnostics |

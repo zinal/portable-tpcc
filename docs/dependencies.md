@@ -6,6 +6,8 @@ to implement all adapters described in [specification.md](specification.md)
 and [adapter-api.md](adapter-api.md).
 
 Alignment sequencing: [alignment-plan.md](alignment-plan.md).
+Worker `ITpccTransaction` async migration:
+[async-adapter-transactions.md](async-adapter-transactions.md).
 TPC-C 5.11 conformance notes:
 [tpcc-5.11-conformance-analysis.md](tpcc-5.11-conformance-analysis.md).
 
@@ -73,11 +75,15 @@ Architecture / product (see [alignment-plan.md](alignment-plan.md) Phase 6):
 
 1. **PutBatch row payloads** — PG adapter regenerates from seed; shared-loader
    serialized rows are not yet consumed.
-2. Open decisions from specification §14 (ambiguous-commit policy, canonical
+2. **Worker `ITpccTransaction` still blocks the scheduler** — PG/OB `.Get()`,
+   YDB `GetValueSync()`, so paced `Inflight ≈ ThreadCount`. Target contract:
+   [adapter-api.md](adapter-api.md) §4.3.0; sequence:
+   [async-adapter-transactions.md](async-adapter-transactions.md).
+3. Open decisions from specification §14 (ambiguous-commit policy, canonical
    row bytes, minimum PG version). Histogram layout resolved as `linear_exp`
    (`unit` + `highest`).
-3. Broader unit/integration test coverage.
-4. OceanBase integration validation against real multi-node deployments.
+4. Broader unit/integration test coverage.
+5. OceanBase integration validation against real multi-node deployments.
 
 TPC-C 5.11 engineering deviations and open defects:
 [tpcc-5.11-conformance-analysis.md](tpcc-5.11-conformance-analysis.md).

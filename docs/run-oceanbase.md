@@ -116,6 +116,22 @@ database:
     partitions: 64   # or 0 to derive from scale.warehouses, or -1 to disable
 ```
 
+## Worker threads and inflight
+
+`runtime.max_inflight_per_worker` / `--max-inflight` is the admission cap.
+Scheduler `-t` / `runtime.threads_per_worker` runs terminal coroutines. The
+intended paced model is many in-flight transactions per scheduler thread
+([adapter-api.md](adapter-api.md) §4.3.0).
+
+**Until** `TObTpccTransaction` stops calling `.Get()` on the task-queue
+thread ([async-adapter-transactions.md](async-adapter-transactions.md)),
+observed `Inflight` stays ≈ `ThreadCount` (for example auto 2 threads at
+1200 WH/worker with `max_inflight=100` still shows `Inflight:2`). Paced
+scale SHOULD pin `threads_per_worker` (or standalone `-t`) near the desired
+concurrency instead of auto `threads=0` (`ComputeRunLayout` ≈
+`ceil(warehouses / 1000)`). After that migration, auto threads + default
+`max_inflight=100` is the intended setting.
+
 ## Standalone local run
 
 ```bash
@@ -247,7 +263,10 @@ workers:
 
 runtime:
   threads_per_loader: 4   # 0 / omit = auto (CPU-capped per loader process)
-  threads_per_worker: 4   # 0 / omit = auto on each worker (ComputeRunLayout)
+  # Until ITpccTransaction is async on the scheduler, pin this near desired
+  # concurrency. Auto (0) is ComputeRunLayout ≈ warehouses/1000 and collapses
+  # Inflight to ThreadCount while adapters still .Get() on the task queue.
+  threads_per_worker: 4
   check_concurrency: 0    # 0 / omit = auto (min of warehouses and 32)
   max_inflight_per_worker: 256  # omit defaults to 100 (CLI / postgres-cpp aligned)
 ```

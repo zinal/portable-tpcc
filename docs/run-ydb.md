@@ -85,6 +85,22 @@ Orchestrated `auth_scheme` must be `anonymous`, `login`, or `sa_key`.
 `password_env` is required for `login` and must be an environment variable
 name matching `[A-Za-z_][A-Za-z0-9_]*`, not a secret literal.
 
+## Worker threads and inflight
+
+`runtime.max_inflight_per_worker` / `--max-inflight` is the admission cap.
+Scheduler `-t` / `runtime.threads_per_worker` runs terminal coroutines. The
+intended paced model is many in-flight transactions per scheduler thread
+([adapter-api.md](adapter-api.md) §4.3.0).
+
+**Until** the YDB worker path stops calling `GetValueSync()` on the
+task-queue thread (execute/commit **and** `GetSession`;
+[async-adapter-transactions.md](async-adapter-transactions.md)), observed
+`Inflight` stays ≈ `ThreadCount`. Paced scale SHOULD pin
+`threads_per_worker` (or standalone `-t`) near the desired concurrency
+instead of auto `threads=0` (`ComputeRunLayout` ≈ `ceil(warehouses / 1000)`).
+`ExecuteFinalAndCommit` fusion stays required and MUST become an async
+pipeline, not a sync wrapper.
+
 ## Standalone local run
 
 Anonymous local database:

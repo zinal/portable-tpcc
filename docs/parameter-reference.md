@@ -243,7 +243,7 @@ All listed fields except `async_work_drain` are required.
 | `pacing` | `enabled` | `enabled` \| `disabled`. TPC-C requires enabled (keying + think time). |
 | `think_time_distribution` | `exponential` | `exponential` (TPC-C §5.2.5.4) \| `compatibility` \| `constant` (`constant` is an alias of `compatibility`: fixed mean think time). |
 | `threads_per_loader` | `0` | Import concurrency. `0` = auto (min of assigned warehouses, host CPUs, adapter max). |
-| `threads_per_worker` | `0` | Worker coroutine threads. `0` / omit keeps `threads: 0` in the assignment so each worker applies the same CPU + warehouse auto as standalone `--threads=0` / tpcc-postgres-cpp (see `ComputeRunLayout`). Explicit `N > 0` pins that many threads per worker. |
+| `threads_per_worker` | `0` | Worker coroutine threads. `0` / omit keeps `threads: 0` in the assignment so each worker applies the same CPU + warehouse auto as standalone `--threads=0` / tpcc-postgres-cpp (see `ComputeRunLayout`, ≈ `ceil(warehouses / 1000)` plus CPU caps). Explicit `N > 0` pins that many threads per worker. |
 | `check_concurrency` | `0` | Parallel DBMS sessions for integrity checks. `0` / omit = auto (`min(scale.warehouses, 32)`). `1` = serial. Passed to `tpcc-<dbms> check` as `--threads=N`. `mind-tpcc --threads` overrides this for the current invocation without rewriting run-config. |
 | `max_inflight_per_worker` | `100` if ≤ 0 | Max in-flight transactions per worker. Matches standalone `tpcc-* --max_inflight` / tpcc-postgres-cpp default. Override when a shard needs a higher cap (also bounded by adapter `MaxRecommendedInflight`). |
 | `retry.max_attempts` | `4` | Retry attempts. |
@@ -256,6 +256,18 @@ All listed fields except `async_work_drain` are required.
 `retry_ambiguous_commit` is **not** a profile field. Run-config always
 materializes `false` (no retry after an ambiguous commit). Do not add it to
 YAML (`KnownFields` will reject it).
+
+Until worker `ITpccTransaction` methods return incomplete futures
+([adapter-api.md](adapter-api.md) §4.3.0,
+[async-adapter-transactions.md](async-adapter-transactions.md)), paced
+PostgreSQL / OceanBase / YDB runs SHOULD NOT rely on auto
+`threads_per_worker: 0`. That heuristic (`ComputeRunLayout` ≈
+`ceil(warehouses / 1000)`) assumes many in-flight transactions per scheduler
+thread. Pin `threads_per_worker` (or standalone `-t`) near the desired
+concurrency (often close to `max_inflight_per_worker` or host CPU). Observed
+`Inflight` otherwise sticks to `ThreadCount` even when `max_inflight` is
+large. After the async migration, auto threads + default `max_inflight=100`
+is the intended paced-scale setting.
 
 HDR-style `lowest` / `significant_figures` are rejected.
 
@@ -323,8 +335,8 @@ clean   --run-config <path> --instance <name>
 | `--warmup` | `0` | Warmup minutes; `0` = adaptive. |
 | `--skip-warmup` | `false` | Skip warmup; start measurement immediately. |
 | `--duration` | `10` | Measurement minutes (> 0). |
-| `-t` / `--threads` | `0` | Run/import: `0` = auto. Check: parallel DBMS sessions (`<=0` = 1 session). Orchestrated check gets `--threads` from `mind-tpcc --threads` when set, otherwise `runtime.check_concurrency`. |
-| `-m` / `--max-inflight` | `100` | Max in-flight transactions (> 0). |
+| `-t` / `--threads` | `0` | Run/import: `0` = auto. Check: parallel DBMS sessions (`<=0` = 1 session). Orchestrated check gets `--threads` from `mind-tpcc --threads` when set, otherwise `runtime.check_concurrency`. Worker auto (`0`) is `ComputeRunLayout` (≈ `ceil(warehouses / 1000)` plus CPU caps) and is only effective once `ITpccTransaction` is non-blocking on the scheduler; until then pin `-t` for paced runs (same as `runtime.threads_per_worker`). |
+| `-m` / `--max-inflight` | `100` | Max in-flight transactions (> 0). Caps admission; observed `Inflight` exceeds `ThreadCount` only when adapter futures stay incomplete. |
 | `--no-delays` | `false` | Disable keying and think time (engineering). |
 | `--think-time-distribution` | `exponential` | `exponential` \| `compatibility` \| `constant`. |
 | `--high-res-histogram` | `false` | High-resolution histograms. |

@@ -113,12 +113,28 @@ checks, error classification, and capabilities. SDK types stay inside the
 adapter.
 
 Session surface (async; methods return `TFuture<…>` — see
-[adapter-api.md](adapter-api.md)):
+[adapter-api.md](adapter-api.md) §4.3):
 
 ```text
 Begin / Execute / ExecuteBatch / ExecuteFinalAndCommit
-Commit / Rollback / Cancel
+Commit / Rollback / Cancel / ExecuteSelect1
 ```
+
+Worker methods that touch the DBMS MUST return a future that MAY still be
+incomplete when the method returns. The caller MUST NOT block waiting for
+DBMS IO. Adapters MUST NOT complete those methods with `.Get()` /
+`GetValueSync()` (or equivalent) on the task-queue thread. Blocking SDK IO
+MAY run on a bounded `IExecutor` at the **session / connector** layer
+(`PgSession`, `TObSession`) or via the YDB SDK async API; that offload does
+not license the `ITpccTransaction` wrapper to wait on the scheduler.
+Workflows resume incomplete futures only via `TSuspendWithFuture` on the
+task queue.
+
+Until adapters comply, paced `Inflight` collapses to scheduler
+`ThreadCount` even when `max_inflight` is large. Target model and sequence:
+[async-adapter-transactions.md](async-adapter-transactions.md). Interim
+thread pinning: [parameter-reference.md](parameter-reference.md)
+(`runtime.threads_per_worker`).
 
 Semantic operations are a closed set of tagged structs (`std::variant` or
 equivalent), not opaque `void*` blobs.
@@ -201,6 +217,19 @@ shared across adapters, and DBMS-specific index/stats readiness.
 Workers build terminals for their warehouse ranges from the run-config.
 Logical inputs are fixed before the first attempt and MUST NOT be regenerated
 on retry.
+
+Admission uses `max_inflight` (profile `runtime.max_inflight_per_worker`,
+standalone `--max-inflight`). Scheduler `threads` (`runtime.threads_per_worker`
+/ `--threads`) run terminal coroutines. When `ITpccTransaction` returns
+incomplete futures, many transactions MAY be in flight per scheduler thread
+(up to `max_inflight`). Completing DBMS IO on the task-queue thread makes
+`Inflight ≈ ThreadCount` and MUST NOT be used on the worker path
+([adapter-api.md](adapter-api.md) §4.3.0). `ComputeRunLayout` auto threads
+(`threads=0`) assume that model (`ceil(warehouses / 1000)` plus CPU caps);
+until adapters comply, paced scale SHOULD pin `threads_per_worker` near the
+desired concurrency rather than relying on that heuristic
+([async-adapter-transactions.md](async-adapter-transactions.md),
+[parameter-reference.md](parameter-reference.md)).
 
 Normalized errors: `retryable_abort`, `not_committed`, `ambiguous_commit`
 (no blind retry), `permanent`, `integrity` (fail the run), `cancelled`.
@@ -510,9 +539,11 @@ visible in the result settings/options.
 
 - **YDB:** warehouse-leading keys, range partitions, typed bulk load; no
   exact values as `Double`; no hidden SDK retries; prefer
-  `ExecuteFinalAndCommit` for the last statement.
+  `ExecuteFinalAndCommit` for the last statement as an async fused pipeline
+  (no `GetValueSync()` on the task-queue thread; adapter-api §4.3.0).
 - **PostgreSQL:** prepared statements, `COPY`, DECIMAL, SQLSTATE mapping,
-  bounded IO if using blocking libpqxx, `ANALYZE` after indexes. Optional
+  blocking libpqxx IO on a bounded `IExecutor` in `PgSession` (not inside
+  `ITpccTransaction` on the scheduler), `ANALYZE` after indexes. Optional
   warehouse `HASH` partitions (see
   [pgsql-partitioning-design.md](pgsql-partitioning-design.md)).
 - **OceanBase:** warehouse partitioning, cached statements, clear error
@@ -522,6 +553,8 @@ visible in the result settings/options.
   count. Session `ob_query_timeout` (`database.options.query_timeout`, default
   600s) MUST apply to load, indexes, statistics, and integrity-check sessions
   (specification §9.2); worker OLTP sessions MAY keep the server default (10s).
+  Blocking connector IO belongs on a bounded `IExecutor` in `TObSession`;
+  `ITpccTransaction` MUST NOT `.Get()` on the scheduler (adapter-api §4.3.0).
 
 See [adapter-api.md](adapter-api.md) §5–§6 for the full logical/physical and
 query-binding contract.
@@ -536,6 +569,7 @@ tpcc/
 mind/
 docs/specification.md
 docs/adapter-api.md
+docs/async-adapter-transactions.md
 docs/examples/
 ```
 
@@ -547,6 +581,8 @@ Build with existing `ya make` (C++). Use Go-native tools for Golang. No alternat
 - Multi-host workers cover warehouses without duplicate home terminals.
 - Phases sync; warmup excluded from measurement.
 - Load is safely retryable; post-import checks pass.
+- Worker DBMS IO does not block scheduler threads; observed `Inflight` can
+  exceed `ThreadCount` up to `max_inflight` (adapter-api §4.3.0).
 - Aggregate embeds concrete settings and reproduces merged metrics from raw
   worker files without DBMS access.
 - No secrets in stored configs/results.
@@ -565,3 +601,5 @@ Build with existing `ya make` (C++). Use Go-native tools for Golang. No alternat
 5. Minimum supported YDB / PostgreSQL / OceanBase versions.
 
 Further alignment sequencing: [alignment-plan.md](alignment-plan.md).
+Worker `ITpccTransaction` async migration:
+[async-adapter-transactions.md](async-adapter-transactions.md).

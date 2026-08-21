@@ -76,6 +76,21 @@ load still replaces warehouse ranges via explicit deletes.
 
 Unknown `database.options.*` keys are rejected for `dbms=pgsql`.
 
+## Worker threads and inflight
+
+`runtime.max_inflight_per_worker` / `--max-inflight` is the admission cap.
+Scheduler `-t` / `runtime.threads_per_worker` runs terminal coroutines. The
+intended paced model (tpcc-postgres-cpp, [adapter-api.md](adapter-api.md)
+§4.3.0) is many in-flight transactions per scheduler thread.
+
+**Until** `TPgTpccTransaction` stops calling `.Get()` on the task-queue
+thread ([async-adapter-transactions.md](async-adapter-transactions.md)),
+observed `Inflight` stays ≈ `ThreadCount`. Paced scale SHOULD pin
+`threads_per_worker` (or standalone `-t`) near the desired concurrency
+instead of auto `threads=0` (`ComputeRunLayout` ≈ `ceil(warehouses / 1000)`).
+After that migration, auto threads + default `max_inflight=100` is the
+intended setting.
+
 ## Standalone local run
 
 ```bash

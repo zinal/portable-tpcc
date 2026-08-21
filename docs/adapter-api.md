@@ -80,7 +80,10 @@ TPC-C workflows are shared under `tpcc/transactions/`.
 ### 3.4. `tpcc/runtime`
 
 - Terminal state machines, keying/think times, admission / inflight limits.
-- Coroutine scheduler and futures (`TFuture`, task queue).
+- Coroutine scheduler and futures (`TFuture`, task queue,
+  `TSuspendWithFuture`). After an incomplete adapter future, workflows resume
+  only on the task queue; they MUST NOT be resumed on IO / SDK callback
+  threads (`tpcc/runtime/coro_traits.h`).
 - Phase controller (prepare → ramp-up → measurement → drain).
 - Retry loop driven by normalized error classes (§5).
 - Bounded drain for async Delivery-style work.
@@ -170,7 +173,7 @@ Normative surface (also sketched in specification §4.2). Methods are
 decision: coroutine/`TFuture` ABI).
 
 ```text
-ISessionFactory::CreateSession() -> TFuture<ITpccSession>   # or sync create + async ops
+ISessionFactory::CreateSession() -> ITpccSession   # MAY be sync if it does not block on the DBMS
 
 ITpccSession::Begin(isolation) -> TFuture<ITpccTransaction>
 
@@ -180,19 +183,58 @@ ITpccTransaction::ExecuteFinalAndCommit(op)-> TFuture<{TOperationResult, TCommit
 ITpccTransaction::Commit()                 -> TFuture<TCommitResult>
 ITpccTransaction::Rollback()               -> TFuture<TCommitResult>
 ITpccTransaction::Cancel()                 -> TFuture<TCommitResult>
+ITpccTransaction::ExecuteSelect1()         -> TFuture<TOperationResult>  # --simulate-select1 probe
 ```
 
 `CreateSession` MAY be synchronous if session construction does not block on
-the DBMS; all transaction operations that touch the database MUST be async.
+the DBMS. If acquire contacts the DBMS (YDB `GetSession`, …), that wait MUST
+run off the task-queue thread (async `Begin`, a non-blocking factory, or a
+bounded `IExecutor`) — not as `.Get()` / `GetValueSync()` on the scheduler.
 
-Adapters MAY run blocking SDK IO on a bounded `IExecutor` (PostgreSQL /
-libpqxx pattern) and resume coroutines on the shared scheduler.
+#### 4.3.0. Async caller rules (worker hot path)
 
-**Migration:** the worker `ITpccTransaction` implementations currently block
-the task-queue thread (`.Get()` / `GetValueSync`) before returning a ready
-future, which prevents `Inflight` from exceeding scheduler `ThreadCount`.
-The planned fix and sequencing are in
-[async-adapter-transactions.md](async-adapter-transactions.md).
+`ITpccSession::Begin` and every `ITpccTransaction` method that touches the
+database (`Execute`, `ExecuteBatch`, `ExecuteFinalAndCommit`, `Commit`,
+`Rollback`, `Cancel`, `ExecuteSelect1`) MUST be asynchronous: they MUST
+return a `TFuture` that MAY still be incomplete when the method returns.
+
+The **caller** of those methods MUST NOT block waiting for DBMS IO.
+Implementations MUST NOT call `.Get()`, `GetValueSync()`, or an equivalent
+blocking wait on the task-queue (scheduler) thread inside those methods.
+Shared workflows await the outer future with `TSuspendWithFuture` and resume
+only on the task queue (`tpcc/runtime/coro_traits.h`: do not resume
+task-queue coroutines on IO / SDK callback threads).
+
+**Session / connector layer:** adapters MAY run blocking SDK IO (libpqxx,
+MariaDB C API, …) on a bounded `IExecutor` and complete a `TPromise` from
+that pool (`PgSession`, `TObSession`). YDB SHOULD use the SDK async API and
+bridge to `NTpcc::TFuture`. That offload is an implementation of the session
+layer. It does **not** license the `ITpccTransaction` wrapper to wait on the
+scheduler thread.
+
+**Preferred adapter style:** keep `ITpccTransaction` signatures unchanged.
+Inside `Execute(op)` (and the other entry points), chain session/SDK futures
+with `Subscribe` (or a small shared helper), parse results, and issue the
+next round-trip without blocking the caller. Continuations MAY run on the
+IO / SDK callback thread; they MUST only complete promises and parse local
+results — they MUST NOT touch task-queue coroutine state. The outer
+incomplete future is what `TSuspendWithFuture` awaits.
+
+**Optional later:** pass `ITaskQueue` + a thread hint into the transaction
+and implement multi-step ops as coroutines with `co_await TSuspendWithFuture`
+when chaining becomes hard to maintain.
+
+Loader, indexes, check, and schema admin paths MAY still wait synchronously
+until a follow-up. The rules above are the **worker** hot path.
+
+**Current implementations** (PostgreSQL, OceanBase, YDB) still complete
+`ITpccTransaction` methods with a blocking wait before returning a ready
+future. That collapses `Inflight` to scheduler `ThreadCount` even when
+`max_inflight` is large. The target model and migration sequence are in
+[async-adapter-transactions.md](async-adapter-transactions.md). Until that
+lands, paced runs SHOULD pin worker threads rather than relying on auto
+`threads≈warehouses/1000` — see [parameter-reference.md](parameter-reference.md)
+(`runtime.threads_per_worker`).
 
 #### 4.3.1. Operation results and semantic encoding
 
@@ -248,7 +290,9 @@ IO layer for:
 The PostgreSQL runner wires the shared `TTerminal` (`tpcc/harness`) through
 `TPgSessionFactory` (`ISessionFactory`); `PgSession` and `PgConnectionPool`
 stay behind that boundary. Shared workflows MUST take the abstract async
-`ITpccTransaction` surface, not `PgSession&`.
+`ITpccTransaction` surface, not `PgSession&`. `TPgTpccTransaction` MUST
+return those incomplete `PgSession` futures to the caller (chain / map);
+it MUST NOT `.Get()` them on the task-queue thread (§4.3.0).
 
 ### 4.4. `ICheckAdapter`
 
@@ -360,7 +404,9 @@ Adapters MUST:
 - `DECIMAL` for money/tax; prepared `exec_params`; `COPY` for load.
 - Secondary indexes (`idx_customer_name`, `idx_order`) after bulk load, then
   `ANALYZE`.
-- Blocking libpqxx: IO MUST run on a bounded pool (current `IExecutor` pattern).
+- Blocking libpqxx: IO MUST run on a bounded pool (current `IExecutor`
+  pattern) **in `PgSession`**. `TPgTpccTransaction` MUST chain those
+  incomplete futures (§4.3.0); it MUST NOT `.Get()` on the scheduler thread.
 - Optional warehouse `HASH` partitioning on local tables
   (`database.options.partitioning=warehouse_hash`,
   `database.options.partition_count`); see
@@ -372,7 +418,13 @@ Adapters MUST:
   document split policy in `options` / settings.
 - Typed `BulkUpsert` (or equivalent) for `PutBatch`.
 - Prefer set-oriented YQL and **`ExecuteFinalAndCommit`** so the last
-  statement and commit are one round trip.
+  statement and commit are one round trip. Fusion MUST be an async
+  pipeline (one incomplete outer future), not a sync wrapper around
+  `GetValueSync()`.
+- Bridge YDB SDK execute/commit futures to `NTpcc::TFuture` without
+  `GetValueSync()` on the task-queue thread (§4.3.0). Session acquire
+  (`GetSession`) MUST also leave the scheduler (async `Begin` / factory
+  or executor offload).
 - Do not store exact values as `Double`.
 - Do not hide retries inside SDK helpers; classify and bubble errors.
 - System tables, compaction, and index implementation details stay inside the
@@ -383,6 +435,9 @@ Adapters MUST:
 - Partition / tablegroup by warehouse for local tables; separate placement for
   DB-wide `item`.
 - Cached prepared statements with bound parameters.
+- Blocking MariaDB C API: IO MUST run on a bounded `IExecutor` **in
+  `TObSession`**. `TObTpccTransaction` MUST chain those incomplete
+  futures (§4.3.0); it MUST NOT `.Get()` on the scheduler thread.
 - Optional foreign keys as a recorded physical option.
 - Parallel `CREATE INDEX` via `PARALLEL n` (`database.options.index_parallel`,
   default 4; DOP for one index, not concurrent DDL).
@@ -452,9 +507,9 @@ comes from shared libraries and the distributed `run-config.json`.
 | `tpcc/domain`, `runtime`, `metrics` | Present |
 | `tpcc/transactions` | Async `ITpccSession` + `TSemanticOp`; five shared workflows |
 | `tpcc/generator`, `loader`, `checks` | Present; PG PutBatch still regenerates rows from seed |
-| `tpcc/dbms/pgsql` | Concrete admin/load/session/check + terminal runtime |
-| `tpcc/dbms/ydb` | In progress |
-| `tpcc/dbms/oceanbase` | Connector/C admin/load/session/check + terminal runtime |
+| `tpcc/dbms/pgsql` | Concrete admin/load/session/check + terminal runtime; worker `ITpccTransaction` still `.Get()`s on the scheduler (gap: [async-adapter-transactions.md](async-adapter-transactions.md)) |
+| `tpcc/dbms/ydb` | In progress; worker path uses `GetValueSync()` on the scheduler (same gap) |
+| `tpcc/dbms/oceanbase` | Connector/C admin/load/session/check + terminal runtime; worker `ITpccTransaction` still `.Get()`s on the scheduler (same gap) |
 | `mind-tpcc` | Phase 5 remote drive / consolidate present |
 
 Alignment sequencing and accepted API decisions:
@@ -467,7 +522,10 @@ port is the reference adapter.
 ## 9. Related documents
 
 - [specification.md](specification.md) — product architecture, config, phases,
-  results, orchestrator commands, remote process contract (§9.1–§9.2).
+  results, orchestrator commands, remote process contract (§9.1–§9.2);
+  session surface and worker inflight vs threads (§4.2, §7).
+- [async-adapter-transactions.md](async-adapter-transactions.md) — worker
+  `ITpccTransaction` async migration (target model, sequence, acceptance).
 - [alignment-plan.md](alignment-plan.md) — phased implementation plan and
   accepted API decisions.
 - [dependencies.md](dependencies.md) — third-party libraries and port status.
