@@ -247,9 +247,9 @@ workers:
 
 runtime:
   threads_per_loader: 4   # 0 / omit = auto (CPU-capped per loader process)
-  threads_per_worker: 4
+  threads_per_worker: 4   # 0 / omit = auto on each worker (ComputeRunLayout)
   check_concurrency: 0    # 0 / omit = auto (min of warehouses and 32)
-  max_inflight_per_worker: 256
+  max_inflight_per_worker: 256  # omit defaults to 100 (CLI / postgres-cpp aligned)
 ```
 
 With three workers and 300 warehouses, each worker typically owns a contiguous

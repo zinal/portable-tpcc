@@ -176,12 +176,12 @@ func Profile(p *profile.Profile) *Result {
 		res.Add("loader assignment invalid: " + err.Error())
 	}
 	threads := p.Runtime.ThreadsPerWorker
-	if threads <= 0 {
-		threads = 1
+	if threads < 0 {
+		threads = 0
 	}
 	maxInflight := p.Runtime.MaxInflightPerWorker
 	if maxInflight <= 0 {
-		maxInflight = 64
+		maxInflight = config.DefaultMaxInflightPerWorker
 	}
 	_, err = assignment.BuildWorkerAssignments(
 		p.WorkerInstances(),

@@ -243,9 +243,9 @@ All listed fields except `async_work_drain` are required.
 | `pacing` | `enabled` | `enabled` \| `disabled`. TPC-C requires enabled (keying + think time). |
 | `think_time_distribution` | `exponential` | `exponential` (TPC-C §5.2.5.4) \| `compatibility` \| `constant` (`constant` is an alias of `compatibility`: fixed mean think time). |
 | `threads_per_loader` | `0` | Import concurrency. `0` = auto (min of assigned warehouses, host CPUs, adapter max). |
-| `threads_per_worker` | `1` if ≤ 0 | Worker coroutine threads. Unlike loaders, `0`/omit materializes as **1**, not CPU auto. |
+| `threads_per_worker` | `0` | Worker coroutine threads. `0` / omit keeps `threads: 0` in the assignment so each worker applies the same CPU + warehouse auto as standalone `--threads=0` / tpcc-postgres-cpp (see `ComputeRunLayout`). Explicit `N > 0` pins that many threads per worker. |
 | `check_concurrency` | `0` | Parallel DBMS sessions for integrity checks. `0` / omit = auto (`min(scale.warehouses, 32)`). `1` = serial. Passed to `tpcc-<dbms> check` as `--threads=N`. `mind-tpcc --threads` overrides this for the current invocation without rewriting run-config. |
-| `max_inflight_per_worker` | `64` if ≤ 0 | Max in-flight transactions per worker (standalone CLI default is **100**). |
+| `max_inflight_per_worker` | `100` if ≤ 0 | Max in-flight transactions per worker. Matches standalone `tpcc-* --max_inflight` / tpcc-postgres-cpp default. Override when a shard needs a higher cap (also bounded by adapter `MaxRecommendedInflight`). |
 | `retry.max_attempts` | `4` | Retry attempts. |
 | `retry.initial_backoff` | `10ms` | Initial backoff. |
 | `retry.max_backoff` | `500ms` | Max backoff (≥ initial). |

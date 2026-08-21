@@ -102,9 +102,16 @@ type WorkerAssignmentJSON struct {
 	Instance        string  `json:"instance"`
 	Host            string  `json:"host"`
 	WarehouseRanges [][]int `json:"warehouse_ranges"`
-	Threads         int     `json:"threads"`
-	MaxInflight     int     `json:"max_inflight"`
+	// Threads is coroutine scheduler threads for this worker. 0 means auto
+	// (ComputeRunLayout on the worker: CPU + warehouse heuristic).
+	Threads int `json:"threads"`
+	// MaxInflight caps concurrent transactions / pool size on this worker.
+	MaxInflight int `json:"max_inflight"`
 }
+
+// DefaultMaxInflightPerWorker matches standalone tpcc-* --max_inflight and
+// tpcc-postgres-cpp DEFAULT_MAX_INFLIGHT when the profile omits the field.
+const DefaultMaxInflightPerWorker = 100
 
 type PhasesJSON struct {
 	StartLeadMs        int64 `json:"start_lead_ms"`
@@ -188,13 +195,16 @@ func BuildRunConfig(in BuildInput) (*RunConfig, error) {
 	if err != nil {
 		return nil, err
 	}
+	// threads_per_worker <= 0 keeps 0 in the assignment so the worker applies
+	// ComputeRunLayout auto (CPU + warehouses), matching standalone --threads=0
+	// and tpcc-postgres-cpp. Do not materialize 1 here.
 	threads := p.Runtime.ThreadsPerWorker
-	if threads <= 0 {
-		threads = 1
+	if threads < 0 {
+		threads = 0
 	}
 	maxInflight := p.Runtime.MaxInflightPerWorker
 	if maxInflight <= 0 {
-		maxInflight = 64
+		maxInflight = DefaultMaxInflightPerWorker
 	}
 	workerAssign, err := assignment.BuildWorkerAssignments(
 		p.WorkerInstances(),
