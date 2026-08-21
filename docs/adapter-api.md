@@ -197,9 +197,10 @@ otherwise block) on the task-queue thread. Continuations that parse results
 and issue the next round-trip MUST NOT touch task-queue coroutine state;
 workflows resume only via `TSuspendWithFuture` (see `coro_traits.h`).
 
-PostgreSQL and OceanBase worker `ITpccTransaction` follow this rule. YDB
-still completes those methods with a blocking wait; remaining work is in
-[async-adapter-transactions.md](async-adapter-transactions.md).
+PostgreSQL, OceanBase, and YDB worker `ITpccTransaction` follow this rule.
+Loader / check / schema admin paths MAY still wait synchronously. Remaining
+product closure is in
+[async-adapter-transactions.md](async-adapter-transactions.md) (PR D).
 
 #### 4.3.1. Operation results and semantic encoding
 
@@ -381,6 +382,11 @@ Adapters MUST:
 - Typed `BulkUpsert` (or equivalent) for `PutBatch`.
 - Prefer set-oriented YQL and **`ExecuteFinalAndCommit`** so the last
   statement and commit are one round trip.
+- Worker `ITpccTransaction` MUST bridge YDB SDK async futures to
+  `NTpcc::TFuture` without `GetValueSync()` on the task-queue thread
+  (`BridgeYdbFuture` in `tpcc/dbms/ydb/ydb_future.h`). Session acquire is
+  deferred to async `Begin`. Loader / check / schema admin paths MAY still
+  wait synchronously.
 - Do not store exact values as `Double`.
 - Do not hide retries inside SDK helpers; classify and bubble errors.
 - System tables, compaction, and index implementation details stay inside the
