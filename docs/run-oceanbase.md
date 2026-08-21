@@ -147,7 +147,7 @@ $BIN run --connection="$CONN" --path=tpcc -w 10 \
   --duration=5 -t 4
 
 # check after run
-$BIN check --connection="$CONN" --path=tpcc -w 10 -t 10 --after-run
+$BIN check --connection="$CONN" --path=tpcc -w 10 -t 10 --after-test
 
 # drop TPC-C tables
 $BIN clean --connection="$CONN" --path=tpcc
@@ -187,7 +187,7 @@ scale:
 
 checks:
   after_import: true
-  after_run: true
+  after_test: true
 ```
 
 ```bash
@@ -207,11 +207,11 @@ cp mind/mind-tpcc ./mind-tpcc
 ```
 
 Or run stages individually: `deploy`, `schema`, `load`, `indexes`,
-`check --after-import`, `test`, `check --after-run`, `collect`,
+`check --after-import`, `test`, `check --after-test`, `collect`,
 `consolidate`.
 
-`mind-tpcc run` includes `check(after-import)` / `check(after-run)` only when
-`checks.after_import` / `checks.after_run` are true.
+`mind-tpcc run` includes `check(after-import)` / `check(after-test)` only when
+`checks.after_import` / `checks.after_test` are true.
 
 Artifacts land under `paths.result_root/<run_id>/` (including
 `aggregate.json`, `orchestrator/run-config.json`, and
@@ -264,7 +264,7 @@ tpcc-oceanbase schema --run-config run-config.json --instance schema-0
 tpcc-oceanbase loader --run-config run-config.json --instance <loader>
 tpcc-oceanbase indexes --run-config run-config.json --instance indexes-0
 tpcc-oceanbase worker --run-config run-config.json --instance <worker> --start-at=<UTC>
-tpcc-oceanbase check  --run-config run-config.json --instance check-0 --after-import|--after-run [--threads=N]
+tpcc-oceanbase check  --run-config run-config.json --instance check-0 --after-import|--after-test [--threads=N]
 tpcc-oceanbase clean  --run-config run-config.json --instance clean-0   # mind-tpcc cleanup
 ```
 
@@ -285,7 +285,7 @@ installed until `undeploy`.
    optional `database.user` / `TPCC_OB_USER`).
 4. Binary is under `paths.local_artifacts` as `tpcc-oceanbase`.
 5. Flow: `schema` → `import`/`load` → `indexes` → `check --after-import`
-   → `run`/`test` → `check --after-run`.
+   → `run`/`test` → `check --after-test`.
 
 For a quick engineering smoke test, standalone with `-w 10` and a short
 `--duration` is enough. For settings closer to TPC-C 5.11, see the defaults

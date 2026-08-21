@@ -98,7 +98,7 @@ $BIN indexes --endpoint=localhost:2136 --database=/local --path=tpcc
 $BIN check --endpoint=localhost:2136 --database=/local --path=tpcc -w 10 -t 10 --after-import
 $BIN run --endpoint=localhost:2136 --database=/local --path=tpcc -w 10 \
   --duration=5 -t 4
-$BIN check --endpoint=localhost:2136 --database=/local --path=tpcc -w 10 -t 10 --after-run
+$BIN check --endpoint=localhost:2136 --database=/local --path=tpcc -w 10 -t 10 --after-test
 $BIN clean --endpoint=localhost:2136 --database=/local --path=tpcc
 ```
 
@@ -181,7 +181,7 @@ phases:
 
 checks:
   after_import: true
-  after_run: true
+  after_test: true
 ```
 
 For a single-host smoke test, set every `host` to `127.0.0.1` and a small
@@ -212,11 +212,11 @@ cp mind/mind-tpcc ./mind-tpcc
 ```
 
 Or run stages individually: `deploy`, `schema`, `load`, `indexes`,
-`check --after-import`, `test`, `check --after-run`, `collect`,
+`check --after-import`, `test`, `check --after-test`, `collect`,
 `consolidate`.
 
-`mind-tpcc run` includes `check(after-import)` / `check(after-run)` only when
-`checks.after_import` / `checks.after_run` are true.
+`mind-tpcc run` includes `check(after-import)` / `check(after-test)` only when
+`checks.after_import` / `checks.after_test` are true.
 
 On a single host, set every loader/worker `host` to `127.0.0.1` (local
 sessions, no SSH). Multi-host runs need SSH access and tightly synchronized
@@ -229,7 +229,7 @@ tpcc-ydb schema --run-config run-config.json --instance schema-0
 tpcc-ydb loader --run-config run-config.json --instance <loader>
 tpcc-ydb indexes --run-config run-config.json --instance indexes-0
 tpcc-ydb worker --run-config run-config.json --instance <worker> --start-at=<UTC>
-tpcc-ydb check  --run-config run-config.json --instance check-0 --after-import|--after-run [--threads=N]
+tpcc-ydb check  --run-config run-config.json --instance check-0 --after-import|--after-test [--threads=N]
 tpcc-ydb clean  --run-config run-config.json --instance clean-0   # mind-tpcc cleanup
 ```
 
@@ -251,7 +251,7 @@ Artifacts land under `paths.result_root/<run_id>/` (including
    standalone `--token-env`).
 4. Binary is under `paths.local_artifacts` as `tpcc-ydb` for orchestration.
 5. Flow: `schema` → `import`/`load` → `indexes` → `check --after-import`
-   → `run`/`test` → `check --after-run`.
+   → `run`/`test` → `check --after-test`.
 
 For a quick engineering smoke test, standalone with `-w 10` and a short
 `--duration` is enough. For settings closer to TPC-C 5.11, see the defaults

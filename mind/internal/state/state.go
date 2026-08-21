@@ -188,40 +188,24 @@ func Reached(current, min string) bool {
 	return curOK && minOK && curOrder >= minOrder
 }
 
-// indexing is idempotent (EnsureIndexes). Operators may need to run it after a
-// verification stage was entered too early or failed — otherwise a mistaken
-// `check --after-import` leaves the run stuck in checking_import.
+// allowedRecovery permits re-entry into idempotent post stages after the run
+// has moved past them. Check itself does not Transition (see orchestrator
+// check); collect may still need to re-run after a late check while the run
+// sits in consolidating. Indexing recovery covers older runs stuck in the
+// former checking_* waypoints.
 func allowedRecovery(oldState, newState string) bool {
-	if newState != StateIndexing {
-		return false
+	switch newState {
+	case StateIndexing:
+		// EnsureIndexes is idempotent; recovery after a premature/failed check.
+		switch oldState {
+		case StateCheckingImport, StateCheckingResult, StateDraining, StateCollecting, StateConsolidating:
+			return true
+		}
+	case StateCollecting:
+		// Pull check reports written after a late check --after-test.
+		return oldState == StateConsolidating
 	}
-	switch oldState {
-	case StateCheckingImport, StateCheckingResult, StateDraining, StateCollecting, StateConsolidating:
-		return true
-	default:
-		return false
-	}
-}
-
-// RevertTo moves a non-terminal run back to previous after a stage was entered
-// but did not complete. Terminal states are left unchanged so a later Fail()
-// still wins.
-func (s *Store) RevertTo(runID, previous string) error {
-	rs, err := s.Load(runID)
-	if err != nil {
-		return err
-	}
-	if IsTerminal(rs.State) {
-		return nil
-	}
-	if previous == "" {
-		previous = StatePlanned
-	}
-	if rs.State == previous {
-		return nil
-	}
-	rs.State = previous
-	return s.Save(rs)
+	return false
 }
 
 // Fail records failure state and error message.

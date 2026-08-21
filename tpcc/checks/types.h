@@ -22,7 +22,7 @@ struct TCheckResult {
 struct TCheckReport {
     std::string RunId;
     std::string Instance;
-    std::string Phase; // "after-import" | "after-run"
+    std::string Phase; // "after-import" | "after-test"
     int WarehouseCount = 0;
     std::vector<TCheckResult> Results;
     int FailedCount = 0;

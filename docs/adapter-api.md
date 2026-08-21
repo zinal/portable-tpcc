@@ -422,7 +422,7 @@ Each `tpcc-<dbms>` binary **MUST** expose:
 | `loader` | `PutBatch` over assigned ranges only (no indexes/statistics) |
 | `indexes` | `EnsureIndexes` then `EnsureStatistics` (idempotent; after all loaders finish) |
 | `worker` | sessions for terminals; honor `--start-at` (specification §7); write diagnostics / `result.json` |
-| `check` | `ICheckAdapter` for `--after-import` / `--after-run` (process contract: specification §9.1–§9.2) |
+| `check` | `ICheckAdapter` for `--after-import` / `--after-test` (process contract: specification §9.1–§9.2) |
 
 Orchestrated remotes pass at least `--run-config`, `--instance`, and for
 workers `--start-at=<RFC3339-UTC>`.

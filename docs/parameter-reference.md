@@ -30,7 +30,7 @@ mind-tpcc <command> --profile <path> [options]
 | `schema` | Create TPC-C schema. |
 | `load` | Horizontal data load. |
 | `indexes` | Secondary indexes (and DBMS stats where the adapter supports them). |
-| `check` | Integrity checks. Requires `--after-import` or `--after-run`. |
+| `check` | Integrity checks. Requires `--after-import` or `--after-test`. |
 | `test` | Arm workers and run ramp-up / measurement / drain. `start` is a compatibility alias. |
 | `status` | Show run state. |
 | `stop` | Stop workers gracefully. |
@@ -42,7 +42,7 @@ mind-tpcc <command> --profile <path> [options]
 
 `run` = validate → require prior `deploy` → schema → load → indexes →
 check(after-import) **if** `checks.after_import` → test →
-check(after-run) **if** `checks.after_run` → collect → consolidate.
+check(after-test) **if** `checks.after_test` → collect → consolidate.
 
 `run` does not upload binaries. Re-run `deploy` after rebuilding `tpcc-*`.
 
@@ -63,9 +63,9 @@ Shared binaries stay until `undeploy`.
 | `--ramp-up <duration>` | profile `phases.ramp_up` | Warmup override (`30s`, `5m`, …). |
 | `--measurement <duration>` | profile `phases.measurement` | Measurement override. |
 | `--threads <n>` | profile `runtime.check_concurrency` | Check session concurrency for this invocation. `0` = auto (`min(scale.warehouses, 32)`). Does not rewrite an existing run-config. |
-| `--skip <step>` | none | Skip a `run` pipeline step. Repeatable. Names: `deploy`, `schema`, `load`, `indexes`, `check_after_import`, `test` (alias `start`), `check_after_run`, `collect`, `consolidate`. |
+| `--skip <step>` | none | Skip a `run` pipeline step. Repeatable. Names: `deploy`, `schema`, `load`, `indexes`, `check_after_import`, `test` (alias `start`), `check_after_test` (alias `check_after_run`), `collect`, `consolidate`. |
 | `--yes` | false | Required for `cleanup` and `undeploy`. |
-| `--after-import` / `--after-run` | — | Select the `check` phase. |
+| `--after-import` / `--after-test` | — | Select the `check` phase. `--after-run` is a deprecated alias for `--after-test`. |
 | `--leave-processes` | false | Debug: leave remote processes running when `mind-tpcc` exits. Default is to stop leftovers this invocation launched (and warn if a process is still alive after it reported finished). |
 
 Unknown flags and extra positional arguments fail the invocation (exit 2).
@@ -264,11 +264,11 @@ HDR-style `lowest` / `significant_figures` are rejected.
 | Field | Default | Meaning |
 | --- | --- | --- |
 | `after_import` | `false` | Run post-load checks in `mind-tpcc run`. |
-| `after_run` | `false` | Run post-measurement checks in `mind-tpcc run`. |
+| `after_test` | `false` | Run post-test checks in `mind-tpcc run`. `after_run` is a deprecated alias. |
 | `fail_fast` | `false` | If `false`, a failed check step is logged and `run` continues; if `true`, the run fails. |
 
 Standalone / individual `mind-tpcc check` still need `--after-import` or
-`--after-run` regardless of these flags.
+`--after-test` regardless of these flags.
 
 ### `collect`
 
@@ -310,7 +310,7 @@ schema  --run-config <path> --instance <name>
 loader  --run-config <path> --instance <name>
 indexes --run-config <path> --instance <name>
 worker  --run-config <path> --instance <name> --start-at=<RFC3339-UTC>
-check   --run-config <path> --instance <name> --after-import|--after-run [--threads=N]
+check   --run-config <path> --instance <name> --after-import|--after-test [--threads=N]
 clean   --run-config <path> --instance <name>
 ```
 
@@ -330,7 +330,7 @@ clean   --run-config <path> --instance <name>
 | `--high-res-histogram` | `false` | High-resolution histograms. |
 | `--simulate-select1` | `0` | If > 0, run N `SELECT 1` probes per transaction instead of TPC-C. |
 | `--log-level` | `info` | `trace` \| `debug` \| `info` \| `warn` \| `error`. |
-| `--after-import` / `--after-run` | false | `check` mode. |
+| `--after-import` / `--after-test` | false | `check` mode. |
 | `--help` / `-h` | — | Command help. |
 
 ### PostgreSQL (`tpcc-pgsql`)

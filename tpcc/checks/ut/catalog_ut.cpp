@@ -19,10 +19,10 @@ TEST(CheckCatalog, ContainsCoreConsistencyIds) {
 
 TEST(CheckCatalog, PhaseFiltering) {
     EXPECT_TRUE(CheckAppliesToPhase(ECheckPhase::Both, ECheckPhase::AfterImport));
-    EXPECT_TRUE(CheckAppliesToPhase(ECheckPhase::Both, ECheckPhase::AfterRun));
+    EXPECT_TRUE(CheckAppliesToPhase(ECheckPhase::Both, ECheckPhase::AfterTest));
     EXPECT_TRUE(CheckAppliesToPhase(ECheckPhase::AfterImport, ECheckPhase::AfterImport));
-    EXPECT_FALSE(CheckAppliesToPhase(ECheckPhase::AfterImport, ECheckPhase::AfterRun));
-    EXPECT_TRUE(CheckAppliesToPhase(ECheckPhase::AfterRun, ECheckPhase::AfterRun));
+    EXPECT_FALSE(CheckAppliesToPhase(ECheckPhase::AfterImport, ECheckPhase::AfterTest));
+    EXPECT_TRUE(CheckAppliesToPhase(ECheckPhase::AfterTest, ECheckPhase::AfterTest));
 }
 
 TEST(CheckStatus, ToString) {

@@ -76,7 +76,7 @@ workers:
 
 checks:
   after_import: true
-  after_run: true
+  after_test: true
 
 phases:
   start_lead: 45s

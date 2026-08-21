@@ -45,7 +45,8 @@ DEFINE_bool(high_res_histogram, false, "Use high resolution histograms");
 DEFINE_int32(simulate_select1, 0, "Simulation mode: run N SELECT 1 queries per transaction instead of real TPC-C (0 = disabled)");
 DEFINE_string(log_level, "info", "Log level: trace, debug, info, warn, error");
 DEFINE_bool(after_import, false, "Check mode: verify freshly loaded data (stricter invariants)");
-DEFINE_bool(after_run, false, "Check mode: verify data after a measurement run");
+DEFINE_bool(after_test, false, "Check mode: verify data after the measurement test");
+DEFINE_bool(after_run, false, "Deprecated alias for --after-test");
 
 namespace {
 
@@ -88,14 +89,15 @@ void PrintHelp() {
         "  --high-res-histogram  Use high resolution histograms (default: false)\n"
         "  --log-level           Log level: trace, debug, info, warn, error (default: \"info\")\n"
         "  --after-import        check: verify freshly loaded data\n"
-        "  --after-run           check: verify data after a measurement run\n"
+        "  --after-test          check: verify data after the measurement test\n"
+        "  --after-run           deprecated alias for --after-test\n"
         "\n"
         "Orchestrated mode (mind-tpcc):\n"
         "  schema  --run-config <path> --instance <name>\n"
         "  loader  --run-config <path> --instance <name>\n"
         "  indexes --run-config <path> --instance <name>\n"
         "  worker  --run-config <path> --instance <name> --start-at=<RFC3339-UTC>\n"
-        "  check   --run-config <path> --instance <name> --after-import|--after-run [--threads=N]\n"
+        "  check   --run-config <path> --instance <name> --after-import|--after-test [--threads=N]\n"
         "  clean   --run-config <path> --instance <name>\n"
         "\n"
         "Simulation (for testing without real TPC-C transactions):\n"
@@ -108,7 +110,7 @@ void PrintHelp() {
         "  tpcc import -w 10 -t 8\n"
         "  tpcc indexes\n"
         "  tpcc run -w 10 --duration=5 -t 4\n"
-        "  tpcc check -w 10 --after-run\n"
+        "  tpcc check -w 10 --after-test\n"
         "  tpcc check -w 10 --after-import\n"
         "  tpcc check -w 100 --after-import -t 8\n";
 }
@@ -183,7 +185,8 @@ bool ParseOrchestratedArgs(
             startAt = argv[++i];
         } else if (arg == "--after-import" || arg == "--after_import") {
             afterImport = true;
-        } else if (arg == "--after-run" || arg == "--after_run") {
+        } else if (arg == "--after-test" || arg == "--after_test" ||
+                   arg == "--after-run" || arg == "--after_run") {
             afterRun = true;
         } else if (arg.rfind("--threads=", 0) == 0) {
             threads = std::stoi(arg.substr(std::string("--threads=").size()));
@@ -386,10 +389,10 @@ void RunClean() {
 void RunCheck() {
     ValidateWarehouseFlag();
     ValidateThreadsFlag();
-    if (FLAGS_after_import && FLAGS_after_run) {
-        throw std::runtime_error("specify only one of --after-import or --after-run");
+    if (FLAGS_after_import && (FLAGS_after_test || FLAGS_after_run)) {
+        throw std::runtime_error("specify only one of --after-import or --after-test");
     }
-    // Default standalone check is after-run semantics (cardinality relaxed).
+    // Default standalone check is after-test semantics (cardinality relaxed).
     // threads <= 0 keeps historical single-session behavior.
     const bool afterImport = FLAGS_after_import;
     const int checkConcurrency = FLAGS_threads <= 0 ? 1 : FLAGS_threads;
@@ -427,7 +430,7 @@ int main(int argc, char* argv[]) {
                     return 1;
                 }
                 if (earlyCommand == "check" && afterImport == afterRun) {
-                    std::cerr << "Error: check requires exactly one of --after-import or --after-run\n";
+                    std::cerr << "Error: check requires exactly one of --after-import or --after-test\n";
                     return 1;
                 }
                 NTpcc::InitLogging(TLOG_INFO);

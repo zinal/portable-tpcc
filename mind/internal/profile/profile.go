@@ -155,8 +155,14 @@ type Histogram struct {
 
 type Checks struct {
 	AfterImport bool `yaml:"after_import"`
-	AfterRun    bool `yaml:"after_run"`
+	AfterTest   bool `yaml:"after_test"`
+	AfterRun    bool `yaml:"after_run"` // deprecated alias for after_test
 	FailFast    bool `yaml:"fail_fast"`
+}
+
+// WantAfterTest reports whether post-test integrity checks are enabled.
+func (c Checks) WantAfterTest() bool {
+	return c.AfterTest || c.AfterRun
 }
 
 type Collect struct {

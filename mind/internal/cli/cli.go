@@ -125,8 +125,8 @@ func run(args []string, interrupt context.Context) int {
 			cfg.LeaveProcesses = true
 		case arg == "--after-import":
 			cfg.CheckPhase = "after-import"
-		case arg == "--after-run":
-			cfg.CheckPhase = "after-run"
+		case arg == "--after-test", arg == "--after-run":
+			cfg.CheckPhase = "after-test"
 		default:
 			if strings.HasPrefix(arg, "-") {
 				fmt.Fprintf(os.Stderr, "error: unknown flag %s\n", arg)
@@ -312,7 +312,7 @@ func runStage(opts orchestrator.Options, stage string) int {
 
 func runCheck(opts orchestrator.Options, phase string) int {
 	if phase == "" {
-		fmt.Fprintln(os.Stderr, "check requires --after-import or --after-run")
+		fmt.Fprintln(os.Stderr, "check requires --after-import or --after-test")
 		return 2
 	}
 	o, err := orch(opts)
@@ -470,7 +470,7 @@ Commands:
   schema      Apply database schema
   load        Run horizontal data load
   indexes     Create secondary indexes and gather statistics
-  check       Run checks (--after-import or --after-run)
+  check       Run checks (--after-import or --after-test)
   test        Arm workers and run ramp-up / measurement / drain
   start       Alias for test
   status      Show run state
@@ -494,7 +494,8 @@ Options:
   --leave-processes        Debug: do not kill remote processes this
                            invocation launched when mind-tpcc exits
   --after-import           check: post-import integrity phase
-  --after-run              check: post-measurement integrity phase
+  --after-test             check: post-test integrity phase
+  --after-run              deprecated alias for --after-test
 `)
 	fmt.Println(usage)
 }

@@ -1301,7 +1301,7 @@ func TestWaitProcessesFallsBackToFailedStdoutLines(t *testing.T) {
 }
 
 func TestFormatCheckReport(t *testing.T) {
-	got := formatCheckReport([]byte(`{"ok":true,"passed":3,"failed":0,"skipped":0,"errors":0,"phase":"after-run"}`))
+	got := formatCheckReport([]byte(`{"ok":true,"passed":3,"failed":0,"skipped":0,"errors":0,"phase":"after-test"}`))
 	if got != "" {
 		t.Fatalf("ok report should be empty, got %q", got)
 	}
