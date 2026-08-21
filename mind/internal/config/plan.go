@@ -5,9 +5,17 @@ import (
 	"sort"
 )
 
+func appendThreadFlag(argv []string, threads *int) []string {
+	if threads != nil {
+		return append(argv, fmt.Sprintf("--threads=%d", *threads))
+	}
+	return argv
+}
+
 // WorkerArgv returns argv for launching a worker.
 // When startAt is non-empty it appends --start-at=<RFC3339-UTC>.
-func WorkerArgv(runConfigPath, instance, startAt string) []string {
+// threads, when non-nil, is a launch-time override (0 = auto at the binary).
+func WorkerArgv(runConfigPath, instance, startAt string, threads *int) []string {
 	args := []string{
 		"worker",
 		"--run-config", runConfigPath,
@@ -16,16 +24,17 @@ func WorkerArgv(runConfigPath, instance, startAt string) []string {
 	if startAt != "" {
 		args = append(args, "--start-at="+startAt)
 	}
-	return args
+	return appendThreadFlag(args, threads)
 }
 
 // LoaderArgv returns argv for launching a loader.
-func LoaderArgv(runConfigPath, instance string) []string {
-	return []string{
+// threads, when non-nil, is a launch-time override (0 = auto).
+func LoaderArgv(runConfigPath, instance string, threads *int) []string {
+	return appendThreadFlag([]string{
 		"loader",
 		"--run-config", runConfigPath,
 		"--instance", instance,
-	}
+	}, threads)
 }
 
 // SchemaArgv returns argv for the schema role.
@@ -118,15 +127,16 @@ type PlanSnapshot struct {
 
 // BuildPlanSnapshot creates a plan output from run config.
 // Worker argv omit --start-at; that value is computed at start time.
-// checkThreads, when non-nil, overrides runtime.check_concurrency in check argv.
-func BuildPlanSnapshot(rc *RunConfig, checkThreads *int) *PlanSnapshot {
+// threads, when non-nil, is a launch-time --threads override: worker/loader
+// argv get --threads=N, and check argv uses EffectiveCheckConcurrency.
+func BuildPlanSnapshot(rc *RunConfig, threads *int) *PlanSnapshot {
 	workerArgv := make(map[string][]string)
 	for _, w := range rc.WorkerAssignment {
-		workerArgv[w.Instance] = WorkerArgv("run-config.json", w.Instance, "")
+		workerArgv[w.Instance] = WorkerArgv("run-config.json", w.Instance, "", threads)
 	}
 	loaderArgv := make(map[string][]string)
 	for _, l := range rc.LoadAssignment {
-		loaderArgv[l.Instance] = LoaderArgv("run-config.json", l.Instance)
+		loaderArgv[l.Instance] = LoaderArgv("run-config.json", l.Instance, threads)
 	}
 	schemaInstance := "schema-0"
 	indexesInstance := "indexes-0"
@@ -134,7 +144,7 @@ func BuildPlanSnapshot(rc *RunConfig, checkThreads *int) *PlanSnapshot {
 		schemaInstance = rc.LoadAssignment[0].Instance + "-schema"
 		indexesInstance = rc.LoadAssignment[0].Instance + "-indexes"
 	}
-	threads := EffectiveCheckConcurrency(rc.Scale.Warehouses, rc.Runtime.CheckConcurrency, checkThreads)
+	checkThreads := EffectiveCheckConcurrency(rc.Scale.Warehouses, rc.Runtime.CheckConcurrency, threads)
 	return &PlanSnapshot{
 		RunID:            rc.RunID,
 		ProfileName:      rc.ProfileName,
@@ -145,8 +155,8 @@ func BuildPlanSnapshot(rc *RunConfig, checkThreads *int) *PlanSnapshot {
 		LoaderArgv:       loaderArgv,
 		SchemaArgv:       SchemaArgv("run-config.json", schemaInstance),
 		IndexesArgv:      IndexesArgv("run-config.json", indexesInstance),
-		CheckArgvImport:  CheckArgv("run-config.json", "check-0", "after-import", threads),
-		CheckArgvTest:    CheckArgv("run-config.json", "check-0", "after-test", threads),
+		CheckArgvImport:  CheckArgv("run-config.json", "check-0", "after-import", checkThreads),
+		CheckArgvTest:    CheckArgv("run-config.json", "check-0", "after-test", checkThreads),
 	}
 }
 

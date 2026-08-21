@@ -433,6 +433,20 @@ stage.
 stdio. On check failure, `mind-tpcc` SHOULD also print failed/error items from
 the check report (§9.2), not only `exited with status N`.
 
+`mind-tpcc --threads` is a launch-time override for this invocation. It MUST
+NOT rewrite an already materialized `run-config.json`. When the flag is set,
+`mind-tpcc` passes `--threads=N` on orchestrated `loader`, `worker`, and
+`check` argv. Every `tpcc-<dbms>` binary MUST accept the same forms
+(`--threads=N`, `--threads N`, `-t N`):
+
+- `worker`: coroutine threads. `0` means auto at the binary (same as
+  standalone `run` / `ComputeRunLayout`). When the flag is omitted, the worker
+  uses `worker_assignment[].threads` from run-config.
+- `loader`: import concurrency. `0` means auto. When omitted, the loader uses
+  `load_assignment[].threads`.
+- `check`: parallel DBMS sessions; see §9.2. `mind-tpcc` always passes a
+  resolved positive N.
+
 ### 9.2. Integrity-check reports
 
 Orchestrated `check` uses instance `check-0` on the first loader host.
@@ -440,11 +454,8 @@ Orchestrated `check` uses instance `check-0` on the first loader host.
 
 `mind-tpcc` passes `--threads=N` from CLI `--threads` when that flag is set,
 otherwise from `runtime.check_concurrency` (0 / omit =
-`min(scale.warehouses, 32)`). CLI `--threads` is a launch-time override; it
-MUST NOT rewrite an already materialized `run-config.json`. Every
-`tpcc-<dbms>` binary MUST accept the same orchestrated forms (`--threads=N`,
-`--threads N`, `-t N`). A missing or non-positive value on the binary means
-one session; `mind-tpcc` MUST pass a resolved positive N. Adapters MUST honor
+`min(scale.warehouses, 32)`). A missing or non-positive value on the binary
+means one session; `mind-tpcc` MUST pass a resolved positive N. Adapters MUST honor
 `TCheckRequest.CheckConcurrency` as parallel DBMS sessions. When that value is
 greater than one, each parallel worker MUST open its own DBMS session.
 Catalog ids run one after another in catalog order; parallel sessions apply

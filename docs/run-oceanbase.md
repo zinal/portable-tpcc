@@ -274,9 +274,9 @@ Orchestrated roles launched by mind (for reference):
 
 ```text
 tpcc-oceanbase schema --run-config run-config.json --instance schema-0
-tpcc-oceanbase loader --run-config run-config.json --instance <loader>
+tpcc-oceanbase loader --run-config run-config.json --instance <loader> [--threads=N]
 tpcc-oceanbase indexes --run-config run-config.json --instance indexes-0
-tpcc-oceanbase worker --run-config run-config.json --instance <worker> --start-at=<UTC>
+tpcc-oceanbase worker --run-config run-config.json --instance <worker> --start-at=<UTC> [--threads=N]
 tpcc-oceanbase check  --run-config run-config.json --instance check-0 --after-import|--after-test [--threads=N]
 tpcc-oceanbase clean  --run-config run-config.json --instance clean-0   # mind-tpcc cleanup
 ```

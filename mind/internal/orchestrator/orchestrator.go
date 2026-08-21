@@ -41,9 +41,10 @@ type Options struct {
 	// invocation launched. Debug-only: the default is to reap leftovers on
 	// stage exit so a finished-looking manifest cannot orphan a live process.
 	LeaveProcesses bool
-	// CheckThreads, when non-nil, overrides runtime.check_concurrency for
-	// this invocation's check argv. It does not rewrite run-config.json.
-	CheckThreads *int
+	// Threads, when non-nil, is a launch-time --threads override for this
+	// invocation's worker, loader, and check argv. It does not rewrite
+	// run-config.json.
+	Threads *int
 }
 
 // Orchestrator coordinates mind-tpcc stages.
@@ -308,7 +309,7 @@ func (o *Orchestrator) Plan() (*config.PlanSnapshot, error) {
 	if err != nil {
 		return nil, err
 	}
-	return config.BuildPlanSnapshot(ctx.RunConfig, o.Opts.CheckThreads), nil
+	return config.BuildPlanSnapshot(ctx.RunConfig, o.Opts.Threads), nil
 }
 
 // Deploy uploads the shared worker binary to runtime hosts.
@@ -549,11 +550,15 @@ func (o *Orchestrator) load(ctx *Context) error {
 
 	var procs []*launchedProc
 	for _, l := range ctx.RunConfig.LoadAssignment {
+		threads := l.Threads
+		if o.Opts.Threads != nil {
+			threads = *o.Opts.Threads
+		}
 		progress.Printf(
 			"load shard %s on %s: ranges=%v owns_global_data=%v threads=%d",
-			l.Instance, l.Host, l.WarehouseRanges, l.OwnsGlobalData, l.Threads,
+			l.Instance, l.Host, l.WarehouseRanges, l.OwnsGlobalData, threads,
 		)
-		argv := config.LoaderArgv("run-config.json", l.Instance)
+		argv := config.LoaderArgv("run-config.json", l.Instance, o.Opts.Threads)
 		proc, err := o.launchRole(ctx, sessions, "loader", l.Host, l.Instance, argv)
 		if err != nil {
 			_ = o.stopPeers(ctx, sessions)
@@ -629,7 +634,7 @@ func (o *Orchestrator) check(ctx *Context, phase string) error {
 	threads := config.EffectiveCheckConcurrency(
 		ctx.RunConfig.Scale.Warehouses,
 		ctx.RunConfig.Runtime.CheckConcurrency,
-		o.Opts.CheckThreads,
+		o.Opts.Threads,
 	)
 	argv := config.CheckArgv("run-config.json", instance, phase, threads)
 	proc, err := o.launchRole(ctx, sessions, "check", hostKey, instance, argv)
@@ -709,7 +714,7 @@ func (o *Orchestrator) test(ctx *Context) error {
 
 	var workers []*launchedProc
 	for _, w := range ctx.RunConfig.WorkerAssignment {
-		argv := config.WorkerArgv("run-config.json", w.Instance, token.StartAt)
+		argv := config.WorkerArgv("run-config.json", w.Instance, token.StartAt, o.Opts.Threads)
 		proc, err := o.launchRole(ctx, sessions, "worker", w.Host, w.Instance, argv)
 		if err != nil {
 			_ = o.stopPeers(ctx, sessions)
