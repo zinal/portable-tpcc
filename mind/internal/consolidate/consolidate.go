@@ -700,11 +700,12 @@ func WriteAggregate(resultRoot, runID string, agg *Aggregate) error {
 	if err := os.Rename(tmp, filepath.Join(dir, "aggregate.json")); err != nil {
 		return err
 	}
-	summary := formatSummary(agg)
+	summary := FormatSummary(agg)
 	return os.WriteFile(filepath.Join(dir, "summary.txt"), []byte(summary), 0644)
 }
 
-func formatSummary(agg *Aggregate) string {
+// FormatSummary returns a brief human-readable view of aggregate.json.
+func FormatSummary(agg *Aggregate) string {
 	var b strings.Builder
 	fmt.Fprintf(&b,
 		"run_id=%s result_class=%s workers_complete=%v assignment_valid=%v clock_skew_ok=%v integrity_ok=%v tpcc_settings_conformant=%v\n",

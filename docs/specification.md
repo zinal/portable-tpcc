@@ -27,7 +27,7 @@ terminals per warehouse, and similar) are defaults in `mind-tpcc` and MAY be
 overridden in the profile. The tool does not select TPC-C editions and does
 not emit an official TPC-C conformance verdict. It DOES report soft deviations
 of effective launch parameters from the fixed TPC-C 5.11 requirements used by
-the built-in defaults (validate output, start warning, aggregate status).
+the built-in defaults (validate output, test warning, aggregate status).
 
 Results MUST NOT be called official TPC-C results without independent TPC
 verification. By default the report uses `result_class: engineering`.
@@ -303,6 +303,11 @@ Consolidation:
    TPC-C settings conformant flag and deviation list, …);
 7. keep raw per-worker files beside the aggregate for detail.
 
+`mind-tpcc consolidate` MUST also print a brief human summary of the
+aggregate (status flags, New-Order throughput, and response-time min/max/avg
+and percentiles) to the progress log. The same text is written to
+`summary.txt`.
+
 Do not average p99s, scale partial runs, invent zero samples, or emit an
 official TPC-C conformance verdict. Soft launch-parameter deviation reporting
 is not such a verdict.
@@ -333,13 +338,16 @@ aggregate carries the settings themselves.
 ```text
 mind-tpcc validate | plan | deploy | undeploy --yes | schema | load | indexes
 mind-tpcc check [--after-import|--after-run]
-mind-tpcc start | status | stop | collect | consolidate
+mind-tpcc test | status | stop | collect | consolidate
 mind-tpcc run | cleanup --yes
 ```
 
+`test` arms workers and runs ramp-up / measurement / drain. `start` is a
+compatibility alias for `test`. `--skip start` skips the same `run` step.
+
 `run` = validate → require prior `deploy` (shared worker binaries present on
 every assigned host; no auto-upload) → schema → load → indexes →
-check(after-import) → start phases → check(after-run) → collect → consolidate.
+check(after-import) → test → check(after-run) → collect → consolidate.
 
 `cleanup --yes` tears down an existing run for the profile (explicit
 `--run-id`, else the newest matching run, including terminal states). Phases
@@ -488,7 +496,7 @@ Delivery / Stock-Level ≥ 4%; New-Order has no mix minimum); pacing enabled;
 exponential think time; keying times and mean think times at least the
 Clause 5.2.5.7 minima (larger values remain conformant); and measurement
 interval ≥ 120 minutes. Report deviations in `mind-tpcc validate`, warn at
-`start`, and persist `tpcc_settings_conformant` plus
+`test`, and persist `tpcc_settings_conformant` plus
 `tpcc_settings_deviations` in the aggregate. These deviations MUST NOT fail
 structural validation or change `result_class`. Phase durations MUST NOT be
 negative; `phases.measurement` MUST be greater than zero (a shorter-than-120m

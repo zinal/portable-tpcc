@@ -170,8 +170,8 @@ func run(args []string, interrupt context.Context) int {
 		return runStage(opts, "indexes")
 	case "check":
 		return runCheck(opts, cfg.CheckPhase)
-	case "start":
-		return runStage(opts, "start")
+	case "test", "start":
+		return runStage(opts, "test")
 	case "status":
 		return runStatus(opts)
 	case "stop":
@@ -294,8 +294,8 @@ func runStage(opts orchestrator.Options, stage string) int {
 			return o.RunLoad(ctx)
 		case "indexes":
 			return o.RunIndexes(ctx)
-		case "start":
-			return o.RunStart(ctx)
+		case "test":
+			return o.RunTest(ctx)
 		case "collect":
 			return o.RunCollect(ctx)
 		case "consolidate":
@@ -471,11 +471,12 @@ Commands:
   load        Run horizontal data load
   indexes     Create secondary indexes and gather statistics
   check       Run checks (--after-import or --after-run)
-  start       Arm workers and run measurement phases
+  test        Arm workers and run ramp-up / measurement / drain
+  start       Alias for test
   status      Show run state
   stop        Stop workers gracefully
   collect     Collect artifacts from runtime hosts
-  consolidate Merge worker results into aggregate.json
+  consolidate Merge worker results into aggregate.json and print brief stats
   run         Full pipeline (requires prior explicit deploy)
   cleanup     Full teardown for a run: stop, DB clean, remote+local run artifacts (--yes)
 

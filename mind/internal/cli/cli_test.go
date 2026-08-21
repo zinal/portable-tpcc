@@ -86,6 +86,12 @@ func TestRun_helpMentionsLeaveProcesses(t *testing.T) {
 	if !strings.Contains(string(out), "--threads") {
 		t.Fatalf("help missing --threads:\n%s", out)
 	}
+	if !strings.Contains(string(out), "test        Arm workers") {
+		t.Fatalf("help missing test command:\n%s", out)
+	}
+	if !strings.Contains(string(out), "start       Alias for test") {
+		t.Fatalf("help missing start alias:\n%s", out)
+	}
 }
 
 func TestRun_threadsFlagAcceptedOnValidate(t *testing.T) {

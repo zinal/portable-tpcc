@@ -207,7 +207,7 @@ cp mind/mind-tpcc ./mind-tpcc
 ```
 
 Or run stages individually: `deploy`, `schema`, `load`, `indexes`,
-`check --after-import`, `start`, `check --after-run`, `collect`,
+`check --after-import`, `test`, `check --after-run`, `collect`,
 `consolidate`.
 
 `mind-tpcc run` includes `check(after-import)` / `check(after-run)` only when
@@ -285,7 +285,7 @@ installed until `undeploy`.
    optional `database.user` / `TPCC_OB_USER`).
 4. Binary is under `paths.local_artifacts` as `tpcc-oceanbase`.
 5. Flow: `schema` → `import`/`load` → `indexes` → `check --after-import`
-   → `run`/`start` → `check --after-run`.
+   → `run`/`test` → `check --after-run`.
 
 For a quick engineering smoke test, standalone with `-w 10` and a short
 `--duration` is enough. For settings closer to TPC-C 5.11, see the defaults

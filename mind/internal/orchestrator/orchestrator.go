@@ -218,7 +218,7 @@ func (o *Orchestrator) ResolveRunID() (string, error) {
 
 // latestContinuableRunID returns the newest non-terminal run for this profile.
 // When CLI overrides disagree with that run's run-config (e.g. a second
-// `start --warehouses N` after a completed measurement left the run in
+// `test --warehouses N` after a completed measurement left the run in
 // draining), the run is not continued so Materialize allocates a new id.
 func (o *Orchestrator) latestContinuableRunID() (string, error) {
 	latest, err := o.StateStore.LatestRunID()
@@ -454,7 +454,7 @@ func (o *Orchestrator) Run() error {
 		{"load", true, func() error { return o.load(ctx) }},
 		{"indexes", true, func() error { return o.indexes(ctx) }},
 		{"check_after_import", o.Profile.Checks.AfterImport, func() error { return o.check(ctx, "after-import") }},
-		{"start", true, func() error { return o.start(ctx) }},
+		{"test", true, func() error { return o.test(ctx) }},
 		{"check_after_run", o.Profile.Checks.AfterRun, func() error { return o.check(ctx, "after-run") }},
 		{"collect", true, func() error { return o.collect(ctx) }},
 		{"consolidate", true, func() error { return o.consolidate(ctx) }},
@@ -486,6 +486,10 @@ func (o *Orchestrator) Run() error {
 func (o *Orchestrator) shouldSkip(name string) bool {
 	for _, s := range o.Opts.SkipSteps {
 		if s == name {
+			return true
+		}
+		// `start` is the former name of the measurement stage.
+		if name == "test" && s == "start" {
 			return true
 		}
 	}
@@ -672,8 +676,8 @@ func (o *Orchestrator) RunCheck(ctx *Context, phase string) error {
 	return o.check(ctx, phase)
 }
 
-func (o *Orchestrator) start(ctx *Context) error {
-	progress.Printf("stage start: start (%d worker(s), run_id=%s)", len(ctx.RunConfig.WorkerAssignment), ctx.RunID)
+func (o *Orchestrator) test(ctx *Context) error {
+	progress.Printf("stage test: start (%d worker(s), run_id=%s)", len(ctx.RunConfig.WorkerAssignment), ctx.RunID)
 	if err := o.StateStore.Transition(ctx.RunID, state.StatePreparing); err != nil {
 		return err
 	}
@@ -685,7 +689,7 @@ func (o *Orchestrator) start(ctx *Context) error {
 	defer o.finishRemote(ctx, sessions)
 
 	token := schedule.Compute(ctx.RunConfig, time.Now().UTC())
-	progress.Printf("stage start: start-at %s", token.StartAt)
+	progress.Printf("stage test: start-at %s", token.StartAt)
 	if err := state.WriteJSON(ctx.RunDir, "start-token.json", token); err != nil {
 		return err
 	}
@@ -711,13 +715,13 @@ func (o *Orchestrator) start(ctx *Context) error {
 	if err := o.superviseWorkers(ctx, workers, token, sessions); err != nil {
 		return err
 	}
-	progress.Printf("stage start: complete")
+	progress.Printf("stage test: complete")
 	return nil
 }
 
-// RunStart arms workers with a shared --start-at and supervises phases.
-func (o *Orchestrator) RunStart(ctx *Context) error {
-	return o.start(ctx)
+// RunTest arms workers with a shared --start-at and supervises phases.
+func (o *Orchestrator) RunTest(ctx *Context) error {
+	return o.test(ctx)
 }
 
 func (o *Orchestrator) collect(ctx *Context) error {
@@ -768,6 +772,7 @@ func (o *Orchestrator) consolidate(ctx *Context) error {
 		return err
 	}
 	progress.Printf("stage consolidate: complete (aggregate.json written)")
+	logAggregateSummary(agg)
 	return nil
 }
 
@@ -1147,6 +1152,16 @@ func (o *Orchestrator) removeLocalDeployManifest() error {
 // WritePlanJSON encodes plan snapshot to JSON.
 func WritePlanJSON(plan *config.PlanSnapshot) ([]byte, error) {
 	return json.MarshalIndent(plan, "", "  ")
+}
+
+func logAggregateSummary(agg *consolidate.Aggregate) {
+	text := strings.TrimRight(consolidate.FormatSummary(agg), "\n")
+	if text == "" {
+		return
+	}
+	for _, line := range strings.Split(text, "\n") {
+		progress.Printf("%s", line)
+	}
 }
 
 func warnTPCSettingsDeviations(ctx *Context) {
