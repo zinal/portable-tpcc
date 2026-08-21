@@ -204,9 +204,14 @@ and issue the next round-trip MUST NOT touch task-queue coroutine state;
 workflows resume only via `TSuspendWithFuture` (see `coro_traits.h`).
 
 PostgreSQL, OceanBase, and YDB worker `ITpccTransaction` follow this rule.
-Loader / check / schema admin paths MAY still wait synchronously. Remaining
-product closure is in
-[async-adapter-transactions.md](async-adapter-transactions.md) (PR D).
+Loader / check / schema admin paths MAY still wait synchronously.
+
+The worker progress loop MAY warn once when `Inflight` stays near
+`ThreadCount` for a sustained window while `max_inflight` is larger and
+the scheduler ready queue is backlogged (a symptom of completing DBMS IO
+on the task-queue thread). See `ObserveSchedulerInflightStuck` in
+`tpcc/harness/run_loop.cpp` and
+[async-adapter-transactions.md](async-adapter-transactions.md).
 
 #### 4.3.1. Operation results and semantic encoding
 
@@ -495,7 +500,8 @@ port is the reference adapter.
   results, orchestrator commands, remote process contract (§9.1–§9.2);
   session surface and worker inflight vs threads (§4.2, §7).
 - [async-adapter-transactions.md](async-adapter-transactions.md) — worker
-  `ITpccTransaction` async migration (remaining product closure).
+  `ITpccTransaction` async migration (complete for worker paths; check/admin
+  sync waits remain optional).
 - [alignment-plan.md](alignment-plan.md) — phased implementation plan and
   accepted API decisions.
 - [dependencies.md](dependencies.md) — third-party libraries and port status.

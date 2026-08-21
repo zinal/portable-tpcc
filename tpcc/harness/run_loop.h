@@ -88,14 +88,36 @@ EStartAtWaitResult WaitUntilStartAt(
 
 struct TRunStatsConfig {
     size_t WarehouseCount = 0;
+    size_t ThreadCount = 0;
+    size_t MaxInflight = 0;
     bool NoDelays = false;
     std::chrono::seconds RunDuration{600};
     THistogramConfig Histogram;
     bool HighResHistogram = false;
 };
 
+// Progress ticks every ~5s. Three glued samples ≈ 15s of Inflight staying
+// near ThreadCount while max_inflight is larger and the ready queue is
+// backlogged — the pre-async scheduler-blocking regression.
+inline constexpr size_t kInflightStuckMinConsecutiveSamples = 3;
+inline constexpr size_t kInflightStuckMinReadyBacklog = 16;
+
+struct TInflightStuckState {
+    size_t ConsecutiveGlued = 0;
+    bool Warned = false;
+};
+
+// Returns true once, when the warning should be logged.
+bool ObserveSchedulerInflightStuck(
+    TInflightStuckState& state,
+    size_t inflight,
+    size_t ready,
+    size_t threadCount,
+    size_t maxInflight);
+
 struct TProgressDisplayState {
     Clock::time_point LastUpdate{};
+    TInflightStuckState InflightStuck;
 };
 
 // Throttled progress line: phase name, elapsed/total for the phase, seconds

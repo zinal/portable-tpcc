@@ -28,9 +28,11 @@ void InterruptHandler(int) {
     GetGlobalInterruptSource().request_stop();
 }
 
-TRunStatsConfig MakeRunStatsConfig(const TRunConfig& config) {
+TRunStatsConfig MakeRunStatsConfig(const TRunConfig& config, const TRunLayout& layout) {
     TRunStatsConfig stats;
     stats.WarehouseCount = config.WarehouseCount;
+    stats.ThreadCount = layout.ThreadCount;
+    stats.MaxInflight = layout.MaxInflight;
     stats.NoDelays = config.NoDelays;
     stats.RunDuration = config.RunDuration;
     stats.Histogram = config.Histogram;
@@ -202,7 +204,7 @@ TRunOutcome RunSync(const TRunConfig& config, TTerminalStats* aggregatedStats) {
     auto warmupEnd = startTs + std::chrono::milliseconds(durations.RampUpMs);
     auto runEnd = warmupEnd + std::chrono::milliseconds(durations.MeasurementMs);
 
-    const TRunStatsConfig statsConfig = MakeRunStatsConfig(config);
+    const TRunStatsConfig statsConfig = MakeRunStatsConfig(config, layout);
     TProgressDisplayState progressState;
 
     RunMeasurementDrainLoop(

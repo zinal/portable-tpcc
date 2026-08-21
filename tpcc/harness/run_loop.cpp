@@ -86,7 +86,47 @@ std::string FormatSchedulerStats(ITaskQueue* taskQueue) {
     return out;
 }
 
+size_t SchedulerReadyCount(ITaskQueue* taskQueue) {
+    if (!taskQueue) {
+        return 0;
+    }
+    uint64_t ready = 0;
+    for (size_t i = 0; i < taskQueue->GetThreadCount(); ++i) {
+        ITaskQueue::TThreadStats snap;
+        taskQueue->CollectStats(i, snap);
+        ready += snap.InternalTasksReady.load(std::memory_order_relaxed);
+    }
+    return ready;
+}
+
 } // anonymous
+
+bool ObserveSchedulerInflightStuck(
+    TInflightStuckState& state,
+    size_t inflight,
+    size_t ready,
+    size_t threadCount,
+    size_t maxInflight)
+{
+    const bool hasHeadroom = threadCount > 0
+        && maxInflight > threadCount
+        && (maxInflight >= threadCount * 2 || maxInflight >= threadCount + 8);
+    const size_t readyThreshold = std::max(kInflightStuckMinReadyBacklog, threadCount * 4);
+    const bool glued = hasHeadroom
+        && inflight > 0
+        && inflight <= threadCount
+        && ready >= readyThreshold;
+    if (!glued) {
+        state.ConsecutiveGlued = 0;
+        return false;
+    }
+    ++state.ConsecutiveGlued;
+    if (state.Warned || state.ConsecutiveGlued < kInflightStuckMinConsecutiveSamples) {
+        return false;
+    }
+    state.Warned = true;
+    return true;
+}
 
 TRunLayout ComputeRunLayout(const TRunSizingInput& input) {
     TRunLayout layout;
@@ -360,18 +400,33 @@ void MaybeUpdateConsoleStats(
         }
     }
 
+    const size_t inflight = TransactionsInflight.load(std::memory_order_relaxed);
     if (config.NoDelays) {
         LOG_I(fmt::format("{} {:.0f}s/{:.0f}s ({:.0f}s left) | tpmC:{:.0f} | OK:{} Fail:{} Inflight:{} |{}{}",
               RunPhaseName(phase), elapsed, phaseTotal, remaining, tpmc,
               totalOK, totalFailed,
-              TransactionsInflight.load(std::memory_order_relaxed),
+              inflight,
               latencies, FormatSchedulerStats(taskQueue)));
     } else {
         LOG_I(fmt::format("{} {:.0f}s/{:.0f}s ({:.0f}s left) | tpmC:{:.0f} eff:{:.1f}% | OK:{} Fail:{} Inflight:{} |{}{}",
               RunPhaseName(phase), elapsed, phaseTotal, remaining, tpmc, efficiency,
               totalOK, totalFailed,
-              TransactionsInflight.load(std::memory_order_relaxed),
+              inflight,
               latencies, FormatSchedulerStats(taskQueue)));
+    }
+
+    if (phase == ERunPhase::Ramp || phase == ERunPhase::Measure) {
+        const size_t ready = SchedulerReadyCount(taskQueue);
+        if (ObserveSchedulerInflightStuck(
+                state.InflightStuck, inflight, ready, config.ThreadCount, config.MaxInflight))
+        {
+            LOG_W("Inflight=" << inflight
+                  << " stayed near ThreadCount=" << config.ThreadCount
+                  << " for ~" << (kInflightStuckMinConsecutiveSamples * 5) << "s while max_inflight="
+                  << config.MaxInflight << " (ready=" << ready
+                  << "). ITpccTransaction may be blocking the scheduler; see "
+                  << "docs/async-adapter-transactions.md");
+        }
     }
 
     state.LastUpdate = now;
