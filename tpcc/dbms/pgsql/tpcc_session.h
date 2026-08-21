@@ -48,6 +48,7 @@ public:
     explicit TPgSessionFactory(PgConnectionPool& pool);
 
     std::unique_ptr<ITpccSession> CreateSession() override;
+    std::unique_ptr<ITpccSession> TryCreateSession() override;
 
 private:
     PgConnectionPool& Pool_;

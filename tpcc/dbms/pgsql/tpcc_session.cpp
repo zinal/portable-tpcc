@@ -643,4 +643,12 @@ std::unique_ptr<ITpccSession> TPgSessionFactory::CreateSession() {
     return std::make_unique<TPgOwnedTpccSession>(Pool_.AcquireGuard());
 }
 
+std::unique_ptr<ITpccSession> TPgSessionFactory::TryCreateSession() {
+    auto guard = Pool_.TryAcquireGuard();
+    if (!guard) {
+        return nullptr;
+    }
+    return std::make_unique<TPgOwnedTpccSession>(std::move(*guard));
+}
+
 } // namespace NTpcc

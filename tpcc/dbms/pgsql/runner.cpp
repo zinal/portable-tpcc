@@ -225,7 +225,8 @@ TRunOutcome RunSync(const TRunConfig& config, TTerminalStats* aggregatedStats) {
                 schedule,
                 startTs,
                 warmupEnd,
-                runEnd);
+                runEnd,
+                taskQueue.get());
         });
 
     auto measureElapsed = std::chrono::duration<double>(
@@ -237,7 +238,7 @@ TRunOutcome RunSync(const TRunConfig& config, TTerminalStats* aggregatedStats) {
     taskQueue->WakeupAndNeverSleep();
     taskQueue->Join();
 
-    PrintFinalResults(statsConfig, perThreadStats, measureElapsed);
+    PrintFinalResults(statsConfig, perThreadStats, measureElapsed, taskQueue.get());
 
     if (aggregatedStats) {
         aggregatedStats->Clear();

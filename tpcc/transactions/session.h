@@ -89,6 +89,13 @@ public:
 
     // MAY be synchronous when construction does not block on the DBMS.
     virtual std::unique_ptr<ITpccSession> CreateSession() = 0;
+
+    // Non-blocking acquire. Returns nullptr when no session is available now.
+    // Adapters without a free-list pool (e.g. YDB) SHOULD implement this as
+    // CreateSession() so the terminal never spins.
+    virtual std::unique_ptr<ITpccSession> TryCreateSession() {
+        return CreateSession();
+    }
 };
 
 } // namespace NTpcc

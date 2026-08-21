@@ -554,4 +554,12 @@ std::unique_ptr<ITpccSession> TObSessionFactory::CreateSession() {
     return std::make_unique<TObOwnedTpccSession>(Pool_.AcquireGuard());
 }
 
+std::unique_ptr<ITpccSession> TObSessionFactory::TryCreateSession() {
+    auto guard = Pool_.TryAcquireGuard();
+    if (!guard) {
+        return nullptr;
+    }
+    return std::make_unique<TObOwnedTpccSession>(std::move(*guard));
+}
+
 } // namespace NTpcc

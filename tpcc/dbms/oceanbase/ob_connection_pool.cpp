@@ -64,6 +64,18 @@ TObSession TObConnectionPool::AcquireSession() {
     return TObSession(std::move(conn), Executor_.get(), ShutdownFlag_);
 }
 
+std::optional<TObSession> TObConnectionPool::TryAcquireSession() {
+    std::lock_guard lock(Mutex_);
+    if (Connections_.empty() || Shutdown_) {
+        return std::nullopt;
+    }
+
+    auto conn = std::move(Connections_.front());
+    Connections_.pop();
+    CheckedOut_.push_back(conn.get());
+    return TObSession(std::move(conn), Executor_.get(), ShutdownFlag_);
+}
+
 void TObConnectionPool::ReleaseSession(TObSession session) {
     bool reusable = false;
     auto conn = session.ReleaseConnection(&reusable);
@@ -130,6 +142,14 @@ void TObConnectionPool::CancelAll() {
 
 TObConnectionPool::TSessionGuard TObConnectionPool::AcquireGuard() {
     return TSessionGuard(*this, AcquireSession());
+}
+
+std::optional<TObConnectionPool::TSessionGuard> TObConnectionPool::TryAcquireGuard() {
+    auto session = TryAcquireSession();
+    if (!session) {
+        return std::nullopt;
+    }
+    return TSessionGuard(*this, std::move(*session));
 }
 
 } // namespace NTpcc

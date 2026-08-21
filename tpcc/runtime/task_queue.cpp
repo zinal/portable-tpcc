@@ -4,6 +4,8 @@
 #include <timer_queue.h>
 
 #include <chrono>
+#include <condition_variable>
+#include <mutex>
 #include <optional>
 #include <stdexcept>
 #include <thread>
@@ -40,6 +42,10 @@ struct alignas(64) TPerThreadContext {
     TSpinLock ReadyTasksLock;
     TSpscCircularQueue<THandleWithTs> ReadyTasksExternal;
 
+    std::mutex IdleMutex;
+    std::condition_variable IdleCv;
+    bool IdleWake = false;
+
     ITaskQueue::TThreadStats Stats;
 };
 
@@ -73,6 +79,10 @@ public:
         return RunningInternalCount.load(std::memory_order_relaxed);
     }
 
+    size_t GetThreadCount() const override {
+        return ThreadCount;
+    }
+
 private:
     void RunThread(size_t threadId);
     void ProcessSleepingTasks(
@@ -81,6 +91,9 @@ private:
         Clock::time_point now,
         std::vector<uint64_t>& sleepOvershootMs);
     void ProcessInflightQueue(size_t threadId, TPerThreadContext& context, std::optional<uint64_t>& internalInflightWaitTimeMs);
+    void MaybeIdleWait(TPerThreadContext& context);
+    void NotifyThread(size_t threadIndex);
+    void NotifyAllThreads();
 
     void HandleQueueFull(const char* queueType);
 
@@ -147,6 +160,7 @@ void TTaskQueue::Join() {
     }
 
     ThreadsStopSource.request_stop();
+    NotifyAllThreads();
     for (auto& thread: Threads) {
         if (thread.joinable()) {
             thread.join();
@@ -176,11 +190,27 @@ void TTaskQueue::Join() {
 
 void TTaskQueue::WakeupAndNeverSleep() {
     WakeupAll.test_and_set(std::memory_order_relaxed);
+    NotifyAllThreads();
 }
 
 void TTaskQueue::HandleQueueFull(const char* queueType) {
     LOG_E("Failed to push ready " << queueType << ", queue is full");
     throw std::runtime_error(std::string("Task queue is full: ") + queueType);
+}
+
+void TTaskQueue::NotifyThread(size_t threadIndex) {
+    auto& context = *PerThreadContext[threadIndex % PerThreadContext.size()];
+    {
+        std::lock_guard guard(context.IdleMutex);
+        context.IdleWake = true;
+    }
+    context.IdleCv.notify_one();
+}
+
+void TTaskQueue::NotifyAllThreads() {
+    for (size_t i = 0; i < PerThreadContext.size(); ++i) {
+        NotifyThread(i);
+    }
 }
 
 void TTaskQueue::TaskReady(std::coroutine_handle<> handle, size_t threadHint) {
@@ -190,12 +220,15 @@ void TTaskQueue::TaskReady(std::coroutine_handle<> handle, size_t threadHint) {
     if (!context.ReadyTasksInternal.TryPush({std::move(handle), Clock::now()})) {
         HandleQueueFull("internal");
     }
+    NotifyThread(contextIndex);
 }
 
 void TTaskQueue::AsyncSleep(std::coroutine_handle<> handle, size_t threadHint, std::chrono::microseconds delay) {
     auto contextIndex = threadHint % PerThreadContext.size();
     auto& context = *PerThreadContext[contextIndex];
     context.SleepingTasks.Add(delay, std::move(handle));
+    // Same-thread sleeps do not need a wake: the scheduler loop will observe
+    // the new deadline. Cross-thread AsyncSleep is not used by terminals.
 }
 
 bool TTaskQueue::IncInflight(std::coroutine_handle<> handle, size_t threadHint) {
@@ -222,16 +255,22 @@ bool TTaskQueue::IncInflight(std::coroutine_handle<> handle, size_t threadHint) 
 
 void TTaskQueue::DecInflight() {
     RunningInternalCount.fetch_sub(1, std::memory_order_relaxed);
+    // Another thread may be idle while holding InflightWaitingTasks; wake so
+    // it can promote waiters after a global slot frees.
+    NotifyAllThreads();
 }
 
 void TTaskQueue::TaskReadyThreadSafe(std::coroutine_handle<> handle, size_t threadHint) {
     auto index = threadHint % PerThreadContext.size();
     auto& context = *PerThreadContext[index];
 
-    std::lock_guard guard(context.ReadyTasksLock);
-    if (!context.ReadyTasksExternal.TryPush({std::move(handle), Clock::now()})) {
-        HandleQueueFull("external");
+    {
+        std::lock_guard guard(context.ReadyTasksLock);
+        if (!context.ReadyTasksExternal.TryPush({std::move(handle), Clock::now()})) {
+            HandleQueueFull("external");
+        }
     }
+    NotifyThread(index);
 }
 
 void TTaskQueue::ProcessSleepingTasks(
@@ -283,6 +322,48 @@ void TTaskQueue::ProcessInflightQueue(
                 context.ReadyTasksInternal.TryPush(std::move(internalTask));
             }
         }
+    }
+}
+
+void TTaskQueue::MaybeIdleWait(TPerThreadContext& context) {
+    if (ThreadsStopSource.stop_requested() || WakeupAll.test(std::memory_order_relaxed)) {
+        return;
+    }
+    if (!context.ReadyTasksInternal.Empty()) {
+        return;
+    }
+    if (!context.InflightWaitingTasksInternal.Empty()
+            && (MaxRunningInternal == 0
+                || RunningInternalCount.load(std::memory_order_relaxed) < MaxRunningInternal)) {
+        return;
+    }
+
+    {
+        std::lock_guard guard(context.ReadyTasksLock);
+        if (!context.ReadyTasksExternal.Empty()) {
+            return;
+        }
+    }
+
+    const auto now = Clock::now();
+    const auto nextDeadline = context.SleepingTasks.GetNextDeadline();
+    if (nextDeadline <= now) {
+        return;
+    }
+
+    std::unique_lock lock(context.IdleMutex);
+    context.IdleWake = false;
+
+    auto shouldWake = [&] {
+        return context.IdleWake
+            || ThreadsStopSource.stop_requested()
+            || WakeupAll.test(std::memory_order_relaxed);
+    };
+
+    if (nextDeadline == Clock::time_point::max()) {
+        context.IdleCv.wait(lock, shouldWake);
+    } else {
+        context.IdleCv.wait_until(lock, nextDeadline, shouldWake);
     }
 }
 
@@ -373,6 +454,8 @@ void TTaskQueue::RunThread(size_t threadId) {
                 stats.SleepOvershootMs.RecordValue(overdue);
             }
         }
+
+        MaybeIdleWait(context);
     }
 }
 

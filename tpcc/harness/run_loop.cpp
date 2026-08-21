@@ -3,6 +3,7 @@
 #include <constants.h>
 #include <domain_util.h>
 #include <log.h>
+#include <task_queue.h>
 #include <time_util.h>
 #include <context.h>
 
@@ -55,6 +56,34 @@ std::string FormatPercentile(uint64_t value, const char* unit) {
         return fmt::format("{:.1f}ms", static_cast<double>(value) / 1000.0);
     }
     return fmt::format("{}ms", value);
+}
+
+std::string FormatSchedulerStats(ITaskQueue* taskQueue) {
+    if (!taskQueue) {
+        return {};
+    }
+
+    ITaskQueue::TThreadStats aggregated;
+    uint64_t ready = 0;
+    for (size_t i = 0; i < taskQueue->GetThreadCount(); ++i) {
+        ITaskQueue::TThreadStats snap;
+        taskQueue->CollectStats(i, snap);
+        ready += snap.InternalTasksReady.load(std::memory_order_relaxed);
+        aggregated.Collect(snap);
+    }
+
+    std::string out;
+    out += fmt::format(" ready:{}", ready);
+    if (aggregated.SleepOvershootMs.TotalCount() > 0) {
+        out += fmt::format(" overshoot_p50={}ms overshoot_p99={}ms",
+            aggregated.SleepOvershootMs.GetValueAtPercentile(50),
+            aggregated.SleepOvershootMs.GetValueAtPercentile(99));
+    }
+    if (aggregated.InternalQueueTimeMs.TotalCount() > 0) {
+        out += fmt::format(" q_p99={}ms",
+            aggregated.InternalQueueTimeMs.GetValueAtPercentile(99));
+    }
+    return out;
 }
 
 } // anonymous
@@ -222,7 +251,8 @@ void MaybeUpdateConsoleStats(
     const TPhaseSchedule& schedule,
     Clock::time_point rampStartSteady,
     Clock::time_point measureStartSteady,
-    Clock::time_point measureEndSteady)
+    Clock::time_point measureEndSteady,
+    ITaskQueue* taskQueue)
 {
     using SysClock = std::chrono::system_clock;
 
@@ -331,17 +361,17 @@ void MaybeUpdateConsoleStats(
     }
 
     if (config.NoDelays) {
-        LOG_I(fmt::format("{} {:.0f}s/{:.0f}s ({:.0f}s left) | tpmC:{:.0f} | OK:{} Fail:{} Inflight:{} |{}",
+        LOG_I(fmt::format("{} {:.0f}s/{:.0f}s ({:.0f}s left) | tpmC:{:.0f} | OK:{} Fail:{} Inflight:{} |{}{}",
               RunPhaseName(phase), elapsed, phaseTotal, remaining, tpmc,
               totalOK, totalFailed,
               TransactionsInflight.load(std::memory_order_relaxed),
-              latencies));
+              latencies, FormatSchedulerStats(taskQueue)));
     } else {
-        LOG_I(fmt::format("{} {:.0f}s/{:.0f}s ({:.0f}s left) | tpmC:{:.0f} eff:{:.1f}% | OK:{} Fail:{} Inflight:{} |{}",
+        LOG_I(fmt::format("{} {:.0f}s/{:.0f}s ({:.0f}s left) | tpmC:{:.0f} eff:{:.1f}% | OK:{} Fail:{} Inflight:{} |{}{}",
               RunPhaseName(phase), elapsed, phaseTotal, remaining, tpmc, efficiency,
               totalOK, totalFailed,
               TransactionsInflight.load(std::memory_order_relaxed),
-              latencies));
+              latencies, FormatSchedulerStats(taskQueue)));
     }
 
     state.LastUpdate = now;
@@ -350,7 +380,8 @@ void MaybeUpdateConsoleStats(
 void PrintFinalResults(
     const TRunStatsConfig& config,
     const std::vector<std::shared_ptr<TTerminalStats>>& perThreadStats,
-    std::chrono::duration<double> measureElapsed)
+    std::chrono::duration<double> measureElapsed,
+    ITaskQueue* taskQueue)
 {
     uint64_t aggHdr = 0;
     uint64_t aggMax = 0;
@@ -382,6 +413,12 @@ void PrintFinalResults(
         LOG_I(fmt::format("  Efficiency: {:.1f}%", efficiency));
     }
     LOG_I("  Total Failed: " << totalFailed);
+    if (taskQueue) {
+        const auto sched = FormatSchedulerStats(taskQueue);
+        if (!sched.empty()) {
+            LOG_I(fmt::format("  Scheduler:{}", sched));
+        }
+    }
 
     const char* unit = HistogramUnitLabel(config);
     for (size_t i = 0; i < TRANSACTION_TYPE_COUNT; ++i) {
