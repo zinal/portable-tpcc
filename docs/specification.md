@@ -220,7 +220,9 @@ incomplete futures, many transactions MAY be in flight per scheduler thread
 `Inflight ≈ ThreadCount` and MUST NOT be used on the worker path
 ([adapter-api.md](adapter-api.md) §4.3). Auto `threads=0`
 (`ComputeRunLayout`, ≈ `ceil(warehouses / 1000)` plus CPU caps) assumes
-that model.
+that model. Workers MAY log a one-shot warning when progress `Inflight`
+stays near `ThreadCount` while `max_inflight` is larger and the scheduler
+ready queue is backlogged.
 
 Normalized errors: `retryable_abort`, `not_committed`, `ambiguous_commit`
 (no blind retry), `permanent`, `integrity` (fail the run), `cancelled`.
@@ -603,5 +605,5 @@ Build with existing `ya make` (C++). Use Go-native tools for Golang. No alternat
 5. Minimum supported YDB / PostgreSQL / OceanBase versions.
 
 Further alignment sequencing: [alignment-plan.md](alignment-plan.md).
-Worker `ITpccTransaction` async contract and remaining product closure:
+Worker `ITpccTransaction` async contract:
 [async-adapter-transactions.md](async-adapter-transactions.md).

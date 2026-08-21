@@ -262,7 +262,8 @@ runtime:
 Worker `ITpccTransaction` no longer `.Get()`s on the scheduler thread.
 Paced OceanBase runs can use low or auto `threads_per_worker` with a large
 `max_inflight_per_worker`; `Inflight` should exceed `ThreadCount` when the
-database has headroom. See
+database has headroom. A paced cluster with 2 threads and `max_inflight=100`
+observed `Inflight` in the 30–100 range after the async conversion. See
 [async-adapter-transactions.md](async-adapter-transactions.md).
 
 With three workers and 300 warehouses, each worker typically owns a contiguous

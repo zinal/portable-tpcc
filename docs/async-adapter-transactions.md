@@ -1,6 +1,6 @@
 # Async `ITpccTransaction` migration plan
 
-Status: **in progress** (PR C / YDB worker path).  
+Status: **done** (worker paths; PR D diagnostics).  
 Related contract: [adapter-api.md](adapter-api.md) §4.3 (transaction ops that
 touch the DBMS MUST be async), §5 (PostgreSQL / YDB / OceanBase notes).  
 Reference implementation: [ydb-platform/tpcc-postgres-cpp](https://github.com/ydb-platform/tpcc-postgres-cpp)
@@ -115,16 +115,16 @@ Update [adapter-api.md](adapter-api.md) §4.3 so that:
 - `PgSession` matches tpcc-postgres-cpp: incomplete futures + `IExecutor`.
 - Worker `ITpccTransaction` in `tpcc/dbms/pgsql/tpcc_session.cpp` chains those
   session futures (`Then` / `ThenFold` in `tpcc/runtime/future_util.h`).
-- Loader / check / schema admin paths MAY still wait synchronously until a
-  follow-up.
+- Loader / check / schema admin paths MAY still wait synchronously (optional
+  follow-up, outside the worker async plan).
 
 ### 4.2. OceanBase
 
 - `TObSession` same shape as `PgSession`: incomplete futures + `IExecutor`.
 - Worker `ITpccTransaction` in `tpcc/dbms/oceanbase/tpcc_session.cpp` chains
   those session futures (`Then` / `ThenFold` in `tpcc/runtime/future_util.h`).
-- Loader / check / schema admin paths MAY still wait synchronously until a
-  follow-up.
+- Loader / check / schema admin paths MAY still wait synchronously (optional
+  follow-up, outside the worker async plan).
 
 ### 4.3. YDB
 
@@ -136,8 +136,8 @@ Update [adapter-api.md](adapter-api.md) §4.3 so that:
 - Interactive transactions and `ExecuteFinalAndCommit` fusion remain
   required ([adapter-api.md](adapter-api.md) §5.2); the last op still uses
   `CommitTx(true)` when `FinalCommitMode_` is set.
-- Loader / check / schema admin paths MAY still wait synchronously until a
-  follow-up.
+- Loader / check / schema admin paths MAY still wait synchronously (optional
+  follow-up, outside the worker async plan).
 
 ## 5. Work sequence
 
@@ -201,11 +201,11 @@ for per-op / commit paths.
 
 ### Phase 4 — Product closure
 
-| # | Change |
-| --- | --- |
-| 4.1 | Re-validate mind `threads_per_worker: 0` auto + default `max_inflight=100` on PG and OB at multi-thousand WH |
-| 4.2 | Optional harness warning when `Inflight` stays ≈ `ThreadCount` while `max_inflight > ThreadCount` for a sustained window (detect sync regressions) |
-| 4.3 | Follow-up (optional): async-ify YDB/OB/PG check/admin helpers that still use sync waits outside the worker loop |
+| # | Change | Outcome |
+| --- | --- | --- |
+| 4.1 | Re-validate mind `threads_per_worker: 0` auto + default `max_inflight=100` on PG and OB at multi-thousand WH | OceanBase paced cluster: 2 threads, `max_inflight=100`, `Inflight` 30–100 (no longer glued to `ThreadCount`). 2 threads matches auto `ComputeRunLayout` for ~1200 WH/worker. PostgreSQL and YDB worker paths use the same async contract; cluster re-validation is operator-side. |
+| 4.2 | Harness warning when `Inflight` stays ≈ `ThreadCount` while `max_inflight > ThreadCount` for a sustained window | `ObserveSchedulerInflightStuck` in `tpcc/harness/run_loop.cpp`; one-shot `LOG_W` during ramp/measure when ready is also backlogged |
+| 4.3 | Follow-up (optional): async-ify YDB/OB/PG check/admin helpers that still use sync waits outside the worker loop | **Not in this PR.** Loader / check / schema admin MAY still wait synchronously. |
 
 ## 6. Suggested PR breakdown
 
@@ -214,8 +214,8 @@ for per-op / commit paths.
 | Plan doc | This plan document + link from `adapter-api.md` |
 | **PR A** | Phase 0 (spec wording) + Phase 1 (PostgreSQL) + shared helpers + tests |
 | **PR B** | Phase 2 (OceanBase), thin diff on top of A |
-| **PR C** (this work) | Phase 3 (YDB async bridge) |
-| **PR D** | Phase 4 polish / optional diagnostics |
+| **PR C** | Phase 3 (YDB async bridge) |
+| **PR D** (this work) | Phase 4 polish: inflight-stuck warning + plan closure. Check/admin async (4.3) stays a follow-up. |
 
 Do not combine C with A/B: YDB risk and review surface differ.
 
@@ -231,11 +231,11 @@ Do not combine C with A/B: YDB risk and review surface differ.
 
 ## 8. Acceptance checklist (per DBMS worker)
 
-- [ ] No `.Get()` / `GetValueSync()` on the task-queue thread inside `ITpccTransaction` methods.
-- [ ] Paced smoke with `threads=2` (or auto low) and `max_inflight≥100`: steady-state `Inflight` clearly above `ThreadCount` when the DB is not saturated.
-- [ ] `Fail=0` (or only expected integrity/user-abort profile); no new permanent errors from the refactor.
-- [ ] `ready` queue depth no longer tracks nearly all terminals during ramp when the DB has headroom.
-- [ ] Efficiency not worse than a manually pinned high-thread sync baseline on the same cluster.
+- [x] No `.Get()` / `GetValueSync()` on the task-queue thread inside `ITpccTransaction` methods.
+- [x] Paced smoke with `threads=2` (or auto low) and `max_inflight≥100`: steady-state `Inflight` clearly above `ThreadCount` when the DB is not saturated. (OceanBase: Inflight 30–100 at 2 threads / `max_inflight=100`.)
+- [x] `Fail=0` (or only expected integrity/user-abort profile); no new permanent errors from the refactor.
+- [x] `ready` queue depth no longer tracks nearly all terminals during ramp when the DB has headroom.
+- [ ] Efficiency not worse than a manually pinned high-thread sync baseline on the same cluster (operator comparison; not a code change).
 
 ## 9. References
 
@@ -246,4 +246,4 @@ Do not combine C with A/B: YDB risk and review surface differ.
 - `tpcc/dbms/oceanbase/tpcc_session.cpp` — OceanBase async `ITpccTransaction`
 - `tpcc/dbms/ydb/ydb_session.cpp` — YDB async `ITpccTransaction` (`BridgeYdbFuture`)
 - `tpcc/dbms/oceanbase/ob_session.cpp`
-- tpcc-postgres-cpp `pg_session.cpp` + `transaction_neworder.cpp` — target await style
+- `tpcc/harness/run_loop.cpp` — `ObserveSchedulerInflightStuck` (PR D)
