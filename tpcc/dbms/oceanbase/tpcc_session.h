@@ -24,6 +24,8 @@ public:
     TFuture<TOperationResult> ExecuteSelect1() override;
 
 private:
+    TFuture<TOperationResult> CatchOp(TFuture<TOperationResult> future);
+
     TObSession& Session_;
     TObErrorClassifier Classifier_;
     bool Terminal_ = false;
