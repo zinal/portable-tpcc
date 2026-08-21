@@ -121,8 +121,18 @@ public:
         if (auto& current = Buckets[CurrentBucket]; CurrentCursor < current.Items.size()) {
             return current.Items[CurrentCursor].Deadline;
         }
-        auto nextBucketIndex = (CurrentBucket + 1) % Buckets.size();
-        return Buckets[nextBucketIndex].Items[0].Deadline;
+
+        // Current bin is exhausted. Future bins are unsorted (AddBack), so
+        // Items[0] is insertion order — not the earliest deadline. Use the
+        // maintained MinDeadline of the next non-empty bin.
+        for (size_t offset = 1; offset < Buckets.size(); ++offset) {
+            const size_t idx = (CurrentBucket + offset) % Buckets.size();
+            const auto& bucket = Buckets[idx];
+            if (!bucket.Items.empty()) {
+                return bucket.MinDeadline;
+            }
+        }
+        return TTimePoint::max();
     }
 
     TItem PopFront() {
@@ -135,12 +145,16 @@ public:
             return current.Items[CurrentCursor++];
         }
 
-        Advance();
-        auto& current = Buckets[CurrentBucket];
-        if (current.Items.empty()) {
-            throw std::runtime_error("Internal error: Empty bucket after advance");
+        // Skip empty bins that can appear between the exhausted current bin
+        // and the next populated one after soft-limit splits.
+        for (size_t n = 0; n < Buckets.size(); ++n) {
+            Advance();
+            auto& current = Buckets[CurrentBucket];
+            if (!current.Items.empty()) {
+                return current.Items[CurrentCursor++];
+            }
         }
-        return current.Items[CurrentCursor++];
+        throw std::runtime_error("Internal error: Empty bucket after advance");
     }
 
     size_t Size() const {

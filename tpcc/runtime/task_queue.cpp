@@ -75,10 +75,19 @@ public:
 
 private:
     void RunThread(size_t threadId);
-    void ProcessSleepingTasks(size_t threadId, TPerThreadContext& context, Clock::time_point now);
+    void ProcessSleepingTasks(
+        size_t threadId,
+        TPerThreadContext& context,
+        Clock::time_point now,
+        std::vector<uint64_t>& sleepOvershootMs);
     void ProcessInflightQueue(size_t threadId, TPerThreadContext& context, std::optional<uint64_t>& internalInflightWaitTimeMs);
 
     void HandleQueueFull(const char* queueType);
+
+    // Cap how many awakened/internal tasks one scheduler turn resumes so a
+    // timer wave cannot monopolize the thread forever, while still draining
+    // far more than the previous one-resume-per-spin behaviour.
+    static constexpr size_t MaxInternalResumesPerIteration = 64;
 
 private:
     size_t ThreadCount;
@@ -225,11 +234,24 @@ void TTaskQueue::TaskReadyThreadSafe(std::coroutine_handle<> handle, size_t thre
     }
 }
 
-void TTaskQueue::ProcessSleepingTasks(size_t, TPerThreadContext& context, Clock::time_point now) {
+void TTaskQueue::ProcessSleepingTasks(
+    size_t,
+    TPerThreadContext& context,
+    Clock::time_point now,
+    std::vector<uint64_t>& sleepOvershootMs)
+{
+    const bool forceWake = WakeupAll.test(std::memory_order_relaxed);
     while (!context.SleepingTasks.Empty() &&
-            (context.SleepingTasks.GetNextDeadline() <= now || WakeupAll.test(std::memory_order_relaxed))) {
-        auto handle = context.SleepingTasks.PopFront().Value;
-        if (!context.ReadyTasksInternal.TryPush({std::move(handle), Clock::now()})) {
+            (context.SleepingTasks.GetNextDeadline() <= now || forceWake)) {
+        auto item = context.SleepingTasks.PopFront();
+        if (!forceWake && item.Deadline < now) {
+            const auto overdue = std::chrono::duration_cast<std::chrono::milliseconds>(
+                now - item.Deadline);
+            if (overdue.count() > 0) {
+                sleepOvershootMs.push_back(static_cast<uint64_t>(overdue.count()));
+            }
+        }
+        if (!context.ReadyTasksInternal.TryPush({std::move(item.Value), Clock::now()})) {
             HandleQueueFull("internal (awakened)");
         }
     }
@@ -275,9 +297,9 @@ void TTaskQueue::RunThread(size_t threadId) {
         double executingTime = 0;
 
         std::optional<uint64_t> internalInflightWaitTimeMs;
-        std::optional<uint64_t> internalQueueTimeMs;
-
+        std::vector<uint64_t> internalQueueTimeLatencies;
         std::vector<uint64_t> externalQueueTimeLatencies;
+        std::vector<uint64_t> sleepOvershootMs;
 
         auto now = Clock::now();
 
@@ -308,18 +330,24 @@ void TTaskQueue::RunThread(size_t threadId) {
         }
 
         ProcessInflightQueue(threadId, context, internalInflightWaitTimeMs);
-        ProcessSleepingTasks(threadId, context, now);
+        ProcessSleepingTasks(threadId, context, now, sleepOvershootMs);
 
+        size_t internalResumed = 0;
         THandleWithTs internalTask;
-        if (context.ReadyTasksInternal.TryPop(internalTask)) {
+        while (internalResumed < MaxInternalResumesPerIteration
+                && context.ReadyTasksInternal.TryPop(internalTask)) {
+            if (ThreadsStopSource.stop_requested()) {
+                break;
+            }
             if (internalTask.Handle && !internalTask.Handle.done()) {
                 LOG_D("Thread " << threadId << " resumed task (internal)");
                 stats.InternalTasksResumed.fetch_add(1, std::memory_order_relaxed);
-                internalQueueTimeMs = static_cast<uint64_t>(internalTask.ElapsedMs());
+                internalQueueTimeLatencies.emplace_back(static_cast<uint64_t>(internalTask.ElapsedMs()));
                 auto execStart = Clock::now();
                 internalTask.Handle.resume();
                 auto execEnd = Clock::now();
                 executingTime += std::chrono::duration<double>(execEnd - execStart).count();
+                ++internalResumed;
             }
         }
 
@@ -335,12 +363,14 @@ void TTaskQueue::RunThread(size_t threadId) {
             if (internalInflightWaitTimeMs) {
                 stats.InternalInflightWaitTimeMs.RecordValue(*internalInflightWaitTimeMs);
             }
-            if (internalQueueTimeMs) {
-                stats.InternalQueueTimeMs.RecordValue(*internalQueueTimeMs);
+            for (auto latency: internalQueueTimeLatencies) {
+                stats.InternalQueueTimeMs.RecordValue(latency);
             }
-
             for (auto latency: externalQueueTimeLatencies) {
                 stats.ExternalQueueTimeMs.RecordValue(latency);
+            }
+            for (auto overdue: sleepOvershootMs) {
+                stats.SleepOvershootMs.RecordValue(overdue);
             }
         }
     }
