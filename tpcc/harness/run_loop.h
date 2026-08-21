@@ -16,6 +16,8 @@
 
 namespace NTpcc {
 
+class ITaskQueue;
+
 struct TRunOutcome {
     std::chrono::system_clock::time_point RampStart;
     std::chrono::system_clock::time_point MeasurementStart;
@@ -98,6 +100,7 @@ struct TProgressDisplayState {
 
 // Throttled progress line: phase name, elapsed/total for the phase, seconds
 // left until phase end, and live tpmC from Progress* counters (including ramp).
+// When taskQueue is set, also append scheduler ready depth and sleep overshoot.
 void MaybeUpdateConsoleStats(
     TProgressDisplayState& state,
     const TRunStatsConfig& config,
@@ -106,12 +109,14 @@ void MaybeUpdateConsoleStats(
     const TPhaseSchedule& schedule,
     Clock::time_point rampStartSteady,
     Clock::time_point measureStartSteady,
-    Clock::time_point measureEndSteady);
+    Clock::time_point measureEndSteady,
+    ITaskQueue* taskQueue = nullptr);
 
 void PrintFinalResults(
     const TRunStatsConfig& config,
     const std::vector<std::shared_ptr<TTerminalStats>>& perThreadStats,
-    std::chrono::duration<double> measureElapsed);
+    std::chrono::duration<double> measureElapsed,
+    ITaskQueue* taskQueue = nullptr);
 
 void RunMeasurementDrainLoop(
     TPhaseController& phaseController,

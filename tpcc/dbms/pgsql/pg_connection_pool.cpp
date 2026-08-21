@@ -62,6 +62,18 @@ PgSession PgConnectionPool::AcquireSession() {
     return PgSession(std::move(conn), executor_.get(), sessionShutdownFlag_);
 }
 
+std::optional<PgSession> PgConnectionPool::TryAcquireSession() {
+    std::lock_guard lock(mutex_);
+    if (connections_.empty() || shutdown_) {
+        return std::nullopt;
+    }
+
+    auto conn = std::move(connections_.front());
+    connections_.pop();
+    checkedOut_.push_back(conn.get());
+    return PgSession(std::move(conn), executor_.get(), sessionShutdownFlag_);
+}
+
 void PgConnectionPool::ReleaseSession(PgSession session) {
     bool reusable = false;
     auto conn = session.ReleaseConnection(&reusable);
@@ -122,6 +134,14 @@ void PgConnectionPool::CancelAll() {
 
 PgConnectionPool::SessionGuard PgConnectionPool::AcquireGuard() {
     return SessionGuard(*this, AcquireSession());
+}
+
+std::optional<PgConnectionPool::SessionGuard> PgConnectionPool::TryAcquireGuard() {
+    auto session = TryAcquireSession();
+    if (!session) {
+        return std::nullopt;
+    }
+    return SessionGuard(*this, std::move(*session));
 }
 
 } // namespace NTpcc

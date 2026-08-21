@@ -8,6 +8,7 @@
 #include <condition_variable>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <queue>
 #include <string>
 #include <vector>
@@ -25,6 +26,9 @@ public:
 
     // Acquires a PgSession from the pool. Blocks if none available.
     PgSession AcquireSession();
+
+    // Non-blocking acquire. Empty optional when the pool has no free session.
+    std::optional<PgSession> TryAcquireSession();
 
     // Returns a connection back to the pool.
     void ReleaseSession(PgSession session);
@@ -57,6 +61,8 @@ public:
     };
 
     SessionGuard AcquireGuard();
+
+    std::optional<SessionGuard> TryAcquireGuard();
 
     // Cancel all in-flight queries on checked-out connections.
     // Call before Join/destruction to unblock threads waiting on locks.

@@ -5,6 +5,7 @@
 #include <constants.h>
 #include <rng.h>
 #include <think_time.h>
+#include <pacing_credit.h>
 
 #include <array>
 #include <algorithm>
@@ -204,6 +205,7 @@ TFuture<void> TTerminal::Run() {
     LOG_D("Terminal " << Context.TerminalID << " started");
 
     const auto transactions = BuildTransactions(Workload);
+    std::chrono::milliseconds pacingCredit{0};
 
     while (!StopToken.stop_requested()) {
         if (!PhaseController.MayAdmit()) {
@@ -224,8 +226,17 @@ TFuture<void> TTerminal::Run() {
 
         if (!NoDelays && !simulationMode) {
             auto& transaction = transactions[txIndex];
-            LOG_T("Terminal " << Context.TerminalID << " keying time for " << transaction.Name << ": " << transaction.KeyingTime.count() << "ms");
-            co_await TSuspend(TaskQueue, Context.TerminalID, transaction.KeyingTime);
+            const auto keyingRequested = transaction.KeyingTime;
+            const auto keyingSleep = ApplyPacingCredit(pacingCredit, keyingRequested);
+            LOG_T("Terminal " << Context.TerminalID << " keying time for " << transaction.Name
+                  << ": " << keyingRequested.count() << "ms (sleep "
+                  << keyingSleep.count() << "ms, credit " << pacingCredit.count() << "ms)");
+            const auto keyingStart = std::chrono::steady_clock::now();
+            if (keyingSleep.count() > 0) {
+                co_await TSuspend(TaskQueue, Context.TerminalID, keyingSleep);
+            }
+            AccruePacingOvershoot<std::chrono::steady_clock>(
+                pacingCredit, DefaultPacingCreditCap, keyingStart, keyingSleep);
             if (StopToken.stop_requested()) break;
             if (!PhaseController.MayAdmit()) {
                 continue;
@@ -284,7 +295,17 @@ TFuture<void> TTerminal::Run() {
         for (size_t attempt = 0; attempt < RetryMaxAttempts; ++attempt) {
             bool shouldRetry = false;
             try {
-                auto tpccSession = SessionFactory->CreateSession();
+                std::unique_ptr<ITpccSession> tpccSession;
+                while (!(tpccSession = SessionFactory->TryCreateSession())) {
+                    if (StopToken.stop_requested() || !PhaseController.MayAdmit()) {
+                        break;
+                    }
+                    // Pool empty: yield the scheduler thread instead of blocking it.
+                    co_await TSuspend(TaskQueue, Context.TerminalID, std::chrono::milliseconds(1));
+                }
+                if (!tpccSession) {
+                    break;
+                }
                 auto beginFuture = tpccSession->Begin(Isolation);
                 auto tx = co_await TSuspendWithFuture(
                     std::move(beginFuture), Context.TaskQueue, Context.TerminalID);
@@ -423,10 +444,19 @@ TFuture<void> TTerminal::Run() {
 
         if (!NoDelays && !simulationMode && PhaseController.MayAdmit()) {
             auto& transaction = transactions[txIndex];
-            const auto thinkTime = std::chrono::milliseconds(SampleThinkTimeMs(
+            const auto thinkRequested = std::chrono::milliseconds(SampleThinkTimeMs(
                 transaction.ThinkTime.count(), ThinkTimeDistribution));
-            LOG_T("Terminal " << Context.TerminalID << " think time: " << thinkTime.count() << "ms (mean " << transaction.ThinkTime.count() << "ms, " << ThinkTimeDistributionToString(ThinkTimeDistribution) << ")");
-            co_await TSuspend(TaskQueue, Context.TerminalID, thinkTime);
+            const auto thinkSleep = ApplyPacingCredit(pacingCredit, thinkRequested);
+            LOG_T("Terminal " << Context.TerminalID << " think time: " << thinkRequested.count()
+                  << "ms (sleep " << thinkSleep.count() << "ms, mean " << transaction.ThinkTime.count()
+                  << "ms, " << ThinkTimeDistributionToString(ThinkTimeDistribution)
+                  << ", credit " << pacingCredit.count() << "ms)");
+            const auto thinkStart = std::chrono::steady_clock::now();
+            if (thinkSleep.count() > 0) {
+                co_await TSuspend(TaskQueue, Context.TerminalID, thinkSleep);
+            }
+            AccruePacingOvershoot<std::chrono::steady_clock>(
+                pacingCredit, DefaultPacingCreditCap, thinkStart, thinkSleep);
         }
     }
 

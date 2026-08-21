@@ -100,6 +100,8 @@ public:
     virtual void CollectStats(size_t threadIndex, TThreadStats& dst) = 0;
 
     virtual size_t GetRunningCount() const = 0;
+
+    virtual size_t GetThreadCount() const = 0;
 };
 
 std::unique_ptr<ITaskQueue> CreateTaskQueue(

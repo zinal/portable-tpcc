@@ -9,6 +9,7 @@
 #include <condition_variable>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <queue>
 #include <string>
 #include <vector>
@@ -30,7 +31,12 @@ public:
     TObConnectionPool(const TObConnectionPool&) = delete;
     TObConnectionPool& operator=(const TObConnectionPool&) = delete;
 
+    // Acquires a session from the pool. Blocks if none available.
     TObSession AcquireSession();
+
+    // Non-blocking acquire. Empty optional when the pool has no free session.
+    std::optional<TObSession> TryAcquireSession();
+
     void ReleaseSession(TObSession session);
 
     class TSessionGuard {
@@ -71,6 +77,10 @@ public:
     };
 
     TSessionGuard AcquireGuard();
+
+    // Non-blocking variant of AcquireGuard.
+    std::optional<TSessionGuard> TryAcquireGuard();
+
     void CancelAll();
 
     IExecutor* GetExecutor() {
