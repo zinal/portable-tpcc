@@ -183,15 +183,22 @@ ITpccTransaction::Cancel()                 -> TFuture<TCommitResult>
 ```
 
 `CreateSession` MAY be synchronous if session construction does not block on
-the DBMS; all transaction operations that touch the database MUST be async.
+the DBMS.
 
-Adapters MAY run blocking SDK IO on a bounded `IExecutor` (PostgreSQL /
-libpqxx pattern) and resume coroutines on the shared scheduler.
+Session / connector layers MAY run blocking SDK IO on a bounded `IExecutor`
+(PostgreSQL / libpqxx, OceanBase / MariaDB C API). Completions of those
+calls MAY run on the executor or SDK callback thread.
 
-**Migration:** the worker `ITpccTransaction` implementations currently block
-the task-queue thread (`.Get()` / `GetValueSync`) before returning a ready
-future, which prevents `Inflight` from exceeding scheduler `ThreadCount`.
-The planned fix and sequencing are in
+`ITpccTransaction` methods that touch the DBMS (`Execute`, `ExecuteBatch`,
+`ExecuteFinalAndCommit`, `Commit`, `Rollback`, `Cancel`, `ExecuteSelect1`)
+MUST return a `TFuture` to the caller without waiting for DBMS IO on the
+task-queue thread. They MUST NOT call `.Get()` / `GetValueSync()` (or
+otherwise block) on the task-queue thread. Continuations that parse results
+and issue the next round-trip MUST NOT touch task-queue coroutine state;
+workflows resume only via `TSuspendWithFuture` (see `coro_traits.h`).
+
+PostgreSQL worker `ITpccTransaction` follows this rule. OceanBase and YDB
+still complete those methods with a blocking wait; remaining work is in
 [async-adapter-transactions.md](async-adapter-transactions.md).
 
 #### 4.3.1. Operation results and semantic encoding
@@ -248,7 +255,8 @@ IO layer for:
 The PostgreSQL runner wires the shared `TTerminal` (`tpcc/harness`) through
 `TPgSessionFactory` (`ISessionFactory`); `PgSession` and `PgConnectionPool`
 stay behind that boundary. Shared workflows MUST take the abstract async
-`ITpccTransaction` surface, not `PgSession&`.
+`ITpccTransaction` surface, not `PgSession&`. Worker `TPgTpccTransaction`
+MUST chain `PgSession` futures without `.Get()` on the task-queue thread.
 
 ### 4.4. `ICheckAdapter`
 

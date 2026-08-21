@@ -247,10 +247,16 @@ workers:
 
 runtime:
   threads_per_loader: 4   # 0 / omit = auto (CPU-capped per loader process)
-  threads_per_worker: 4   # 0 / omit = auto on each worker (ComputeRunLayout)
+  threads_per_worker: 4   # pin until async ITpccTransaction (phase 2); 0 / omit = auto (ComputeRunLayout)
   check_concurrency: 0    # 0 / omit = auto (min of warehouses and 32)
   max_inflight_per_worker: 256  # omit defaults to 100 (CLI / postgres-cpp aligned)
 ```
+
+Until the OceanBase worker `ITpccTransaction` is async (phase 2 in
+[async-adapter-transactions.md](async-adapter-transactions.md)), pin
+`threads_per_worker` near the desired concurrency. Auto `threads≈WH/1000` plus
+a large `max_inflight` will keep `Inflight ≈ ThreadCount` while the adapter
+still `.Get()`s on the scheduler thread.
 
 With three workers and 300 warehouses, each worker typically owns a contiguous
 block of 100 warehouses. For a single-host smoke test, set every `host` to
