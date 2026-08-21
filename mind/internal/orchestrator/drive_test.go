@@ -1362,7 +1362,7 @@ func TestLogAggregateSummaryPrintsBriefStats(t *testing.T) {
 	if !strings.Contains(got, "New-Order Throughput: 1234.50 tpmC") {
 		t.Fatalf("missing throughput:\n%s", got)
 	}
-	if !strings.Contains(got, "NewOrder:") || !strings.Contains(got, "min=1 max=9 avg=2.5") {
+	if !strings.Contains(got, "NewOrder:") || !strings.Contains(got, "min=1ms max=9ms avg=2.5ms") {
 		t.Fatalf("missing response-time stats:\n%s", got)
 	}
 }
