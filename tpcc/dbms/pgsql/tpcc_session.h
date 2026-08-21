@@ -25,6 +25,7 @@ public:
 
 private:
     bool TerminalState() const;
+    TFuture<TOperationResult> CatchOp(TFuture<TOperationResult> future);
 
     PgSession& Session_;
     TPgErrorClassifier Classifier_;

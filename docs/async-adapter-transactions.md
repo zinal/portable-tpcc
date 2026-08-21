@@ -1,6 +1,6 @@
 # Async `ITpccTransaction` migration plan
 
-Status: **proposed** (implementation not started).  
+Status: **in progress** (PR A / PostgreSQL worker path).  
 Related contract: [adapter-api.md](adapter-api.md) §4.3 (transaction ops that
 touch the DBMS MUST be async), §5 (PostgreSQL / YDB / OceanBase notes).  
 Reference implementation: [ydb-platform/tpcc-postgres-cpp](https://github.com/ydb-platform/tpcc-postgres-cpp)
@@ -23,20 +23,20 @@ co_await SuspendExecute(tx, context, op)
 
 (`tpcc/transactions/workflow_util.h`)
 
-But each DBMS adapter currently completes `Execute` / `Commit` / … by
+But OceanBase and YDB adapters currently complete `Execute` / `Commit` / … by
 **blocking the task-queue (scheduler) thread** before returning a ready
 `TFuture`:
 
 | Adapter | Mechanism on scheduler thread |
 | --- | --- |
-| PostgreSQL | `PgSession::ExecuteQuery(…).Get()` inside `TPgTpccTransaction::Execute` |
+| PostgreSQL | Worker `ITpccTransaction` chains `PgSession` futures (no `.Get()` on the task-queue thread) |
 | OceanBase | `TObSession::ExecuteQuery(…).Get()` inside `TObTpccTransaction::Execute` |
 | YDB | `Session_.ExecuteQuery(…).GetValueSync()` inside `TYdbTpccTransaction::Execute` (no IO offload) |
 
 Session layers for PG/OB already offload sync SDK calls to an `IExecutor` and
-return incomplete `TFuture`s. The adapter `.Get()` undoes that for the
-scheduler: `TSuspendWithFuture` sees a ready future and never parks the
-coroutine.
+return incomplete `TFuture`s. OceanBase (and previously PostgreSQL) adapter
+`.Get()` undoes that for the scheduler: `TSuspendWithFuture` sees a ready
+future and never parks the coroutine.
 
 Observable symptom (OceanBase, 1200 WH/worker, auto threads):
 
@@ -113,8 +113,10 @@ Update [adapter-api.md](adapter-api.md) §4.3 so that:
 ### 4.1. PostgreSQL
 
 - `PgSession` matches tpcc-postgres-cpp: incomplete futures + `IExecutor`.
-- Gap is entirely in `tpcc/dbms/pgsql/tpcc_session.cpp` (blocking `.Get()`).
-- Best first implementation target (reference + existing session).
+- Worker `ITpccTransaction` in `tpcc/dbms/pgsql/tpcc_session.cpp` chains those
+  session futures (`Then` / `ThenFold` in `tpcc/runtime/future_util.h`).
+- Loader / check / schema admin paths MAY still wait synchronously until a
+  follow-up.
 
 ### 4.2. OceanBase
 
@@ -141,7 +143,7 @@ Update [adapter-api.md](adapter-api.md) §4.3 so that:
 | --- | --- | --- |
 | 0.1 | Clarify async caller rules in `adapter-api.md` §4.3 | Normative text matches target |
 | 0.2 | Shared test helper or UT: incomplete `Execute` does not block the calling thread when session future is delayed | Guards against reintroducing `.Get()` |
-| 0.3 | Document interim ops guidance: until phases 1–2 land, OB/PG paced scale should not rely on auto `threads≈WH/1000`; pin `threads_per_worker` near desired concurrency | Avoid repeating the 2-thread regression |
+| 0.3 | Document interim ops guidance: until phase 2 lands, OceanBase paced scale should not rely on auto `threads≈WH/1000`; pin `threads_per_worker` near desired concurrency. YDB remains blocking until phase 3. PostgreSQL worker path is async. | Avoid repeating the 2-thread regression on OB/YDB |
 
 Phase 0 MAY ship as part of the first code PR or as docs-only ahead of it.
 
@@ -205,8 +207,8 @@ for per-op / commit paths.
 
 | PR | Contents |
 | --- | --- |
-| **This PR** | This plan document + link from `adapter-api.md` |
-| **PR A** | Phase 0 (spec wording) + Phase 1 (PostgreSQL) + shared helpers + tests |
+| Plan doc | This plan document + link from `adapter-api.md` |
+| **PR A** (this work) | Phase 0 (spec wording) + Phase 1 (PostgreSQL) + shared helpers + tests |
 | **PR B** | Phase 2 (OceanBase), thin diff on top of A |
 | **PR C** | Phase 3 (YDB async bridge) |
 | **PR D** | Phase 4 polish / optional diagnostics |
@@ -235,7 +237,8 @@ Do not combine C with A/B: YDB risk and review surface differ.
 
 - `tpcc/transactions/workflow_util.h` — `SuspendExecute`
 - `tpcc/runtime/coro_traits.h` — why bare `co_await TFuture` was removed
-- `tpcc/dbms/pgsql/tpcc_session.cpp` — current `.Get()` pattern + comment
+- `tpcc/runtime/future_util.h` — `Then` / `ThenFold` / `CatchToValue`
+- `tpcc/dbms/pgsql/tpcc_session.cpp` — PostgreSQL async `ITpccTransaction`
 - `tpcc/dbms/oceanbase/tpcc_session.cpp` / `ob_session.cpp`
 - `tpcc/dbms/ydb/ydb_session.cpp` — `GetValueSync`
 - tpcc-postgres-cpp `pg_session.cpp` + `transaction_neworder.cpp` — target await style

@@ -115,6 +115,12 @@ $BIN clean --connection="$CONN" --path=portable_tpcc
 Useful shared flags: `--no-delays` (disable keying/think time), `--help`.
 See [parameter-reference.md](parameter-reference.md#standalone-tpcc-dbms-cli).
 
+Worker `ITpccTransaction` does not block the scheduler on libpqxx IO. Paced
+runs can keep `--threads` / `threads_per_worker` low (including auto
+`threads=0`) and a large `--max_inflight` / `max_inflight_per_worker`; progress
+`Inflight` should exceed `ThreadCount` when the database has headroom. See
+[async-adapter-transactions.md](async-adapter-transactions.md).
+
 ## Orchestrated run (`mind-tpcc`)
 
 Minimum profile fields: `apiVersion` / `kind` / `metadata.name`, `ssh`,
