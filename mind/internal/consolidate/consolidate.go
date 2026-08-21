@@ -721,7 +721,27 @@ func WriteAggregate(resultRoot, runID string, agg *Aggregate) error {
 	return os.WriteFile(filepath.Join(dir, "summary.txt"), []byte(summary), 0644)
 }
 
+// maxTPMCPerWarehouse is the TPC-C §A.3 theoretical maximum New-Order
+// throughput per warehouse (tpmC), matching tpcc/domain/constants.h.
+const maxTPMCPerWarehouse = 12.86
+
+// summaryTxOrder matches ETransactionType in tpcc/domain/constants.h and the
+// final-results dump in tpcc-postgres-cpp / tpcc/harness/run_loop.cpp.
+var summaryTxOrder = []struct {
+	Key  string
+	Name string
+}{
+	{"new_order", "NewOrder"},
+	{"delivery", "Delivery"},
+	{"order_status", "OrderStatus"},
+	{"payment", "Payment"},
+	{"stock_level", "StockLevel"},
+}
+
 // FormatSummary returns a brief human-readable view of aggregate.json.
+// Status flags stay as a short preamble; measurement metrics use the
+// "=== TPC-C Results ===" layout from tpcc-postgres-cpp PrintFinalResults
+// (with UserAborted and min/max/avg retained for portable-tpcc consolidate).
 func FormatSummary(agg *Aggregate) string {
 	var b strings.Builder
 	fmt.Fprintf(&b,
@@ -739,46 +759,278 @@ func FormatSummary(agg *Aggregate) string {
 			fmt.Fprintf(&b, "tpcc_settings_deviation=%s\n", d)
 		}
 	}
-	if meas, ok := agg.Metrics["measurement"].(map[string]interface{}); ok {
-		if v, ok := meas["throughput_new_order_per_min"]; ok {
-			fmt.Fprintf(&b, "throughput_new_order_per_min=%v\n", v)
-		}
-		appendResponseTimeSummary(&b, meas)
-	}
+	appendTPCCResultsSummary(&b, agg)
 	return b.String()
 }
 
-func appendResponseTimeSummary(b *strings.Builder, meas map[string]interface{}) {
-	var rtKey string
-	var rt map[string]interface{}
+func appendTPCCResultsSummary(b *strings.Builder, agg *Aggregate) {
+	meas, ok := agg.Metrics["measurement"].(map[string]interface{})
+	if !ok {
+		return
+	}
+	fmt.Fprintf(b, "=== TPC-C Results ===\n")
+
+	configuredSec := measurementSecondsFromSettings(agg.Settings)
+	measuredSec := configuredSec
+	if v, ok := asFloat64(meas["measurement_seconds"]); ok && v > 0 {
+		measuredSec = v
+	} else if configuredSec <= 0 {
+		if tpmc, ok := asFloat64(meas["throughput_new_order_per_min"]); ok && tpmc > 0 {
+			if n, ok := asFloat64(meas["new_order_count"]); ok && n > 0 {
+				measuredSec = n / tpmc * 60.0
+			}
+		}
+	}
+	if configuredSec > 0 || measuredSec > 0 {
+		cfg := configuredSec
+		if cfg <= 0 {
+			cfg = measuredSec
+		}
+		fmt.Fprintf(b, "  Measured Duration: %.1fs (configured: %.0fs)\n", measuredSec, cfg)
+	}
+
+	if v, ok := asFloat64(meas["throughput_new_order_per_min"]); ok {
+		fmt.Fprintf(b, "  New-Order Throughput: %.2f tpmC\n", v)
+		warehouses := warehousesFromSettings(agg.Settings)
+		if pacingEnabledFromSettings(agg.Settings) && warehouses > 0 {
+			efficiency := v / (maxTPMCPerWarehouse * float64(warehouses)) * 100.0
+			fmt.Fprintf(b, "  Efficiency: %.1f%%\n", efficiency)
+		}
+	}
+
+	counters := counterMap(meas["counters"])
+	totalFailed := int64(0)
+	for _, tx := range summaryTxOrder {
+		totalFailed += counters[tx.Key+"_failed"]
+	}
+	// Also count any unexpected *_failed keys.
+	for k, v := range counters {
+		if !strings.HasSuffix(k, "_failed") {
+			continue
+		}
+		known := false
+		for _, tx := range summaryTxOrder {
+			if k == tx.Key+"_failed" {
+				known = true
+				break
+			}
+		}
+		if !known {
+			totalFailed += v
+		}
+	}
+	fmt.Fprintf(b, "  Total Failed: %d\n", totalFailed)
+
+	unit, rt := responseTimeMap(meas)
+	seen := map[string]bool{}
+	for _, tx := range summaryTxOrder {
+		okCount := counters[tx.Key+"_ok"]
+		userAborted := counters[tx.Key+"_user_aborted"]
+		failed := counters[tx.Key+"_failed"]
+		stats, hasStats := rt[tx.Key]
+		if okCount == 0 && userAborted == 0 && failed == 0 && !hasStats {
+			continue
+		}
+		seen[tx.Key] = true
+		appendTxResultLine(b, tx.Name, unit, okCount, userAborted, failed, stats)
+	}
+	// Preserve any extra histogram keys not in the canonical enum order.
+	extra := make([]string, 0)
+	for tx := range rt {
+		if !seen[tx] {
+			extra = append(extra, tx)
+		}
+	}
+	sort.Strings(extra)
+	for _, tx := range extra {
+		appendTxResultLine(b, txDisplayName(tx), unit,
+			counters[tx+"_ok"], counters[tx+"_user_aborted"], counters[tx+"_failed"], rt[tx])
+	}
+}
+
+func appendTxResultLine(
+	b *strings.Builder,
+	name, unit string,
+	okCount, userAborted, failed int64,
+	stats map[string]interface{},
+) {
+	fmt.Fprintf(b, "  %s: OK=%d UserAborted=%d Failed=%d", name, okCount, userAborted, failed)
+	if stats != nil {
+		if _, has := stats["min"]; has {
+			fmt.Fprintf(b, " min=%v max=%v avg=%v", stats["min"], stats["max"], stats["avg"])
+		}
+		fmt.Fprintf(b, " p50=%s p90=%s p99=%s",
+			formatPercentile(stats["p50"], unit),
+			formatPercentile(stats["p90"], unit),
+			formatPercentile(stats["p99"], unit))
+	}
+	b.WriteByte('\n')
+}
+
+func formatPercentile(v interface{}, unit string) string {
+	if v == nil {
+		return "0" + unit
+	}
+	if unit == "us" {
+		n, ok := asFloat64(v)
+		if !ok {
+			return fmt.Sprintf("%vus", v)
+		}
+		return fmt.Sprintf("%.0fus (%.1fms)", n, n/1000.0)
+	}
+	if unit == "" {
+		unit = "ms"
+	}
+	return fmt.Sprintf("%v%s", v, unit)
+}
+
+func responseTimeMap(meas map[string]interface{}) (unit string, rt map[string]map[string]interface{}) {
+	rt = map[string]map[string]interface{}{}
+	unit = "ms"
 	for k, v := range meas {
 		if !strings.HasPrefix(k, "response_time_") {
 			continue
+		}
+		unit = strings.TrimPrefix(k, "response_time_")
+		if unit == "" {
+			unit = "ms"
 		}
 		m, ok := v.(map[string]interface{})
 		if !ok {
 			continue
 		}
-		rtKey = k
-		rt = m
+		for tx, raw := range m {
+			if stats, ok := raw.(map[string]interface{}); ok {
+				rt[tx] = stats
+			}
+		}
 		break
 	}
-	if rt == nil {
-		return
+	return unit, rt
+}
+
+func counterMap(v interface{}) map[string]int64 {
+	out := map[string]int64{}
+	switch m := v.(type) {
+	case map[string]int64:
+		for k, n := range m {
+			out[k] = n
+		}
+	case map[string]interface{}:
+		for k, raw := range m {
+			if n, ok := asInt64(raw); ok {
+				out[k] = n
+			}
+		}
 	}
-	txs := make([]string, 0, len(rt))
-	for tx := range rt {
-		txs = append(txs, tx)
+	return out
+}
+
+func txDisplayName(tx string) string {
+	for _, known := range summaryTxOrder {
+		if known.Key == tx {
+			return known.Name
+		}
 	}
-	sort.Strings(txs)
-	for _, tx := range txs {
-		stats, ok := rt[tx].(map[string]interface{})
-		if !ok {
+	parts := strings.Split(tx, "_")
+	for i, p := range parts {
+		if p == "" {
 			continue
 		}
-		fmt.Fprintf(b, "%s.%s min=%v max=%v avg=%v p50=%v p90=%v p95=%v p99=%v\n",
-			rtKey, tx,
-			stats["min"], stats["max"], stats["avg"],
-			stats["p50"], stats["p90"], stats["p95"], stats["p99"])
+		parts[i] = strings.ToUpper(p[:1]) + p[1:]
+	}
+	return strings.Join(parts, "")
+}
+
+func measurementSecondsFromSettings(settings map[string]interface{}) float64 {
+	if settings == nil {
+		return 0
+	}
+	switch phases := settings["phases"].(type) {
+	case config.PhasesJSON:
+		if phases.MeasurementMs > 0 {
+			return float64(phases.MeasurementMs) / 1000.0
+		}
+	case map[string]interface{}:
+		if ms, ok := asFloat64(phases["measurement_ms"]); ok && ms > 0 {
+			return ms / 1000.0
+		}
+	}
+	return 0
+}
+
+func warehousesFromSettings(settings map[string]interface{}) int {
+	if settings == nil {
+		return 0
+	}
+	switch scale := settings["scale"].(type) {
+	case config.ScaleBlock:
+		return scale.Warehouses
+	case map[string]interface{}:
+		if n, ok := asInt64(scale["warehouses"]); ok {
+			return int(n)
+		}
+	}
+	return 0
+}
+
+func pacingEnabledFromSettings(settings map[string]interface{}) bool {
+	if settings == nil {
+		return true
+	}
+	switch runtime := settings["runtime"].(type) {
+	case config.RunRuntime:
+		if runtime.Pacing == "" {
+			return true
+		}
+		return runtime.Pacing == "enabled"
+	case map[string]interface{}:
+		pacing, _ := runtime["pacing"].(string)
+		if pacing == "" {
+			return true
+		}
+		return pacing == "enabled"
+	}
+	return true
+}
+
+func asFloat64(v interface{}) (float64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return n, true
+	case float32:
+		return float64(n), true
+	case int:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	case uint64:
+		return float64(n), true
+	case json.Number:
+		f, err := n.Float64()
+		return f, err == nil
+	default:
+		return 0, false
+	}
+}
+
+func asInt64(v interface{}) (int64, bool) {
+	switch n := v.(type) {
+	case int64:
+		return n, true
+	case int:
+		return int64(n), true
+	case float64:
+		return int64(n), true
+	case uint64:
+		if n > math.MaxInt64 {
+			return 0, false
+		}
+		return int64(n), true
+	case json.Number:
+		i, err := n.Int64()
+		return i, err == nil
+	default:
+		return 0, false
 	}
 }
