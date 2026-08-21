@@ -48,6 +48,7 @@ public:
             dst.InternalInflightWaitTimeMs.Add(InternalInflightWaitTimeMs);
             dst.InternalQueueTimeMs.Add(InternalQueueTimeMs);
             dst.ExternalQueueTimeMs.Add(ExternalQueueTimeMs);
+            dst.SleepOvershootMs.Add(SleepOvershootMs);
         }
 
         std::atomic<uint64_t> InternalTasksSleeping{0};
@@ -66,6 +67,8 @@ public:
         THistogram InternalInflightWaitTimeMs{BUCKET_COUNT, MAX_HIST_VALUE};
         THistogram InternalQueueTimeMs{BUCKET_COUNT, MAX_HIST_VALUE};
         THistogram ExternalQueueTimeMs{BUCKET_COUNT, MAX_HIST_VALUE};
+        // How late a sleep was moved to ready after its deadline (ms).
+        THistogram SleepOvershootMs{BUCKET_COUNT, MAX_HIST_VALUE};
     };
 
     ITaskQueue() = default;
