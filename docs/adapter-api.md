@@ -188,6 +188,12 @@ the DBMS; all transaction operations that touch the database MUST be async.
 Adapters MAY run blocking SDK IO on a bounded `IExecutor` (PostgreSQL /
 libpqxx pattern) and resume coroutines on the shared scheduler.
 
+**Migration:** the worker `ITpccTransaction` implementations currently block
+the task-queue thread (`.Get()` / `GetValueSync`) before returning a ready
+future, which prevents `Inflight` from exceeding scheduler `ThreadCount`.
+The planned fix and sequencing are in
+[async-adapter-transactions.md](async-adapter-transactions.md).
+
 #### 4.3.1. Operation results and semantic encoding
 
 `TOperationResult` carries success/failure, expected vs actual cardinality,
