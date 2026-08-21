@@ -80,7 +80,10 @@ TPC-C workflows are shared under `tpcc/transactions/`.
 ### 3.4. `tpcc/runtime`
 
 - Terminal state machines, keying/think times, admission / inflight limits.
-- Coroutine scheduler and futures (`TFuture`, task queue).
+- Coroutine scheduler and futures (`TFuture`, task queue,
+  `TSuspendWithFuture`). After an incomplete adapter future, workflows resume
+  only on the task queue; they MUST NOT be resumed on IO / SDK callback
+  threads (`tpcc/runtime/coro_traits.h`).
 - Phase controller (prepare → ramp-up → measurement → drain).
 - Retry loop driven by normalized error classes (§5).
 - Bounded drain for async Delivery-style work.
@@ -170,7 +173,7 @@ Normative surface (also sketched in specification §4.2). Methods are
 decision: coroutine/`TFuture` ABI).
 
 ```text
-ISessionFactory::CreateSession() -> TFuture<ITpccSession>   # or sync create + async ops
+ISessionFactory::CreateSession() -> ITpccSession   # MAY be sync if it does not block on the DBMS
 
 ITpccSession::Begin(isolation) -> TFuture<ITpccTransaction>
 
@@ -180,10 +183,13 @@ ITpccTransaction::ExecuteFinalAndCommit(op)-> TFuture<{TOperationResult, TCommit
 ITpccTransaction::Commit()                 -> TFuture<TCommitResult>
 ITpccTransaction::Rollback()               -> TFuture<TCommitResult>
 ITpccTransaction::Cancel()                 -> TFuture<TCommitResult>
+ITpccTransaction::ExecuteSelect1()         -> TFuture<TOperationResult>  # --simulate-select1 probe
 ```
 
 `CreateSession` MAY be synchronous if session construction does not block on
-the DBMS.
+the DBMS. If acquire contacts the DBMS (YDB `GetSession`, …), that wait MUST
+run off the task-queue thread (async `Begin`, a non-blocking factory, or a
+bounded `IExecutor`) — not as `.Get()` / `GetValueSync()` on the scheduler.
 
 Session / connector layers MAY run blocking SDK IO on a bounded `IExecutor`
 (PostgreSQL / libpqxx, OceanBase / MariaDB C API). Completions of those
@@ -369,7 +375,9 @@ Adapters MUST:
 - `DECIMAL` for money/tax; prepared `exec_params`; `COPY` for load.
 - Secondary indexes (`idx_customer_name`, `idx_order`) after bulk load, then
   `ANALYZE`.
-- Blocking libpqxx: IO MUST run on a bounded pool (current `IExecutor` pattern).
+- Blocking libpqxx: IO MUST run on a bounded pool (current `IExecutor`
+  pattern) **in `PgSession`**. `TPgTpccTransaction` MUST chain those
+  incomplete futures (§4.3); it MUST NOT `.Get()` on the scheduler thread.
 - Optional warehouse `HASH` partitioning on local tables
   (`database.options.partitioning=warehouse_hash`,
   `database.options.partition_count`); see
@@ -397,6 +405,9 @@ Adapters MUST:
 - Partition / tablegroup by warehouse for local tables; separate placement for
   DB-wide `item`.
 - Cached prepared statements with bound parameters.
+- Blocking MariaDB C API: IO MUST run on a bounded `IExecutor` **in
+  `TObSession`**. `TObTpccTransaction` MUST chain those incomplete
+  futures (§4.3); it MUST NOT `.Get()` on the scheduler thread.
 - Optional foreign keys as a recorded physical option.
 - Parallel `CREATE INDEX` via `PARALLEL n` (`database.options.index_parallel`,
   default 4; DOP for one index, not concurrent DDL).
@@ -481,7 +492,10 @@ port is the reference adapter.
 ## 9. Related documents
 
 - [specification.md](specification.md) — product architecture, config, phases,
-  results, orchestrator commands, remote process contract (§9.1–§9.2).
+  results, orchestrator commands, remote process contract (§9.1–§9.2);
+  session surface and worker inflight vs threads (§4.2, §7).
+- [async-adapter-transactions.md](async-adapter-transactions.md) — worker
+  `ITpccTransaction` async migration (remaining product closure).
 - [alignment-plan.md](alignment-plan.md) — phased implementation plan and
   accepted API decisions.
 - [dependencies.md](dependencies.md) — third-party libraries and port status.
