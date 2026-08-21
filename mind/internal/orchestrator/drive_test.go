@@ -3,6 +3,8 @@ package orchestrator
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -752,6 +754,62 @@ func TestCollectArtifactsRejectsLocalSymlinkPayloadEscape(t *testing.T) {
 	err = o.collectArtifacts(ctx, map[string]remote.Session{"host-a": sess})
 	if err == nil || !strings.Contains(err.Error(), "escapes base") {
 		t.Fatalf("expected symlink escape error, got %v", err)
+	}
+}
+
+func TestCollectArtifactsWritesRawInstanceDir(t *testing.T) {
+	root := t.TempDir()
+	remoteRoot := filepath.Join(root, "remote")
+	instanceDir := filepath.Join(remoteRoot, "run-1", "loader", "loader-a")
+	if err := os.MkdirAll(instanceDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	payload := []byte(`{"ok":true}`)
+	if err := os.WriteFile(filepath.Join(instanceDir, "result.json"), payload, 0644); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(payload)
+	manifest := collect.ArtifactManifest{
+		SchemaVersion: 1,
+		Instance:      "loader-a",
+		Finalized:     true,
+		Payloads: []collect.ArtifactPayloadEntry{
+			{Path: "result.json", Size: int64(len(payload)), SHA256: hex.EncodeToString(sum[:])},
+		},
+	}
+	data, _ := json.Marshal(manifest)
+	if err := os.WriteFile(filepath.Join(instanceDir, "artifact-manifest.json"), data, 0644); err != nil {
+		t.Fatal(err)
+	}
+	sess, err := remote.NewLocal("host-a", "127.0.0.1", remoteRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	o := &Orchestrator{
+		Expanded: config.ExpandedPaths{
+			RemoteRoot: remoteRoot,
+			ResultRoot: filepath.Join(root, "results"),
+		},
+	}
+	ctx := &Context{
+		RunID: "run-1",
+		RunConfig: &config.RunConfig{
+			LoadAssignment: []config.LoadAssignmentJSON{
+				{Instance: "loader-a", Host: "host-a"},
+			},
+		},
+	}
+
+	if err := o.collectArtifacts(ctx, map[string]remote.Session{"host-a": sess}); err != nil {
+		t.Fatal(err)
+	}
+	dest := filepath.Join(root, "results", "run-1", "raw", "loader", "loader-a", "result.json")
+	got, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(payload) {
+		t.Fatalf("collected payload=%q, want %q", got, payload)
 	}
 }
 
