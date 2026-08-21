@@ -1349,7 +1349,18 @@ func (o *Orchestrator) collectArtifacts(ctx *Context, sessions map[string]remote
 			return err
 		}
 	}
-	return collector.WriteCollectionManifest(ctx.RunID, manifests, nil)
+
+	// Record client parallelism beside collected artifacts for consolidate.
+	cp := collect.FromWorkerAssignments(ctx.RunConfig.WorkerAssignment)
+	controlEntry, err := collect.WriteClientParallelism(o.Expanded.ResultRoot, ctx.RunID, cp)
+	if err != nil {
+		return fmt.Errorf("write %s: %w", collect.ClientParallelismFileName, err)
+	}
+	progress.Printf(
+		"collect client parallelism: clients=%d threads_per_worker=%d max_inflight_per_worker=%d",
+		cp.Clients, cp.ThreadsPerWorker, cp.MaxInflightPerWorker,
+	)
+	return collector.WriteCollectionManifest(ctx.RunID, manifests, []collect.ArtifactPayloadEntry{controlEntry})
 }
 
 func hostForLoader(rc *config.RunConfig, instance string) string {

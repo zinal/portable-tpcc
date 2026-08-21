@@ -159,6 +159,78 @@ func minimalRunConfig(runID string) *config.RunConfig {
 	}
 }
 
+func TestConsolidate_recordsClientParallelism(t *testing.T) {
+	root := t.TempDir()
+	runID := "run-client-parallelism"
+	rc := &config.RunConfig{
+		RunID: runID,
+		Phases: config.PhasesJSON{
+			MeasurementMs:  60000,
+			MaxClockSkewMs: 100,
+		},
+		Scale: config.ScaleBlock{Warehouses: 20},
+		WorkerAssignment: []config.WorkerAssignmentJSON{
+			{Instance: "worker-a", Host: "host-a", WarehouseRanges: [][]int{{1, 11}}, Threads: 8, MaxInflight: 128},
+			{Instance: "worker-b", Host: "host-b", WarehouseRanges: [][]int{{11, 21}}, Threads: 8, MaxInflight: 128},
+		},
+	}
+	sha := writeRunConfig(t, root, runID, rc)
+	writeWorkerArtifacts(t, root, runID, "worker-a", sha, rc, map[string]interface{}{
+		"counters": map[string]interface{}{"new_order_ok": 5},
+		"histograms": map[string]interface{}{
+			"new_order": measurementHistogram(5),
+		},
+	})
+	writeWorkerArtifacts(t, root, runID, "worker-b", sha, rc, map[string]interface{}{
+		"counters": map[string]interface{}{"new_order_ok": 5},
+		"histograms": map[string]interface{}{
+			"new_order": measurementHistogram(5),
+		},
+	})
+	writePassingChecks(t, root, runID)
+
+	cons := &consolidate.Consolidator{ResultRoot: root}
+	agg, err := cons.Consolidate(runID, rc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cpRaw, ok := agg.Metrics["client_parallelism"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("missing metrics.client_parallelism: %#v", agg.Metrics)
+	}
+	if n, ok := cpRaw["clients"].(int); !ok || n != 2 {
+		t.Fatalf("clients=%v (%T), want 2", cpRaw["clients"], cpRaw["clients"])
+	}
+	if tpw, ok := cpRaw["threads_per_worker"].(int); !ok || tpw != 8 {
+		t.Fatalf("threads_per_worker=%v", cpRaw["threads_per_worker"])
+	}
+	if mi, ok := cpRaw["max_inflight_per_worker"].(int); !ok || mi != 128 {
+		t.Fatalf("max_inflight_per_worker=%v", cpRaw["max_inflight_per_worker"])
+	}
+	if _, ok := agg.Settings["client_parallelism"]; !ok {
+		t.Fatalf("missing settings.client_parallelism")
+	}
+
+	if err := consolidate.WriteAggregate(root, runID, agg); err != nil {
+		t.Fatal(err)
+	}
+	summary, err := os.ReadFile(filepath.Join(root, runID, "summary.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(summary)
+	for _, want := range []string{
+		"  Clients: 2",
+		"  threads_per_worker: 8",
+		"  max_inflight_per_worker: 128",
+		"  Worker threads: worker-a=8, worker-b=8",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("summary missing %q:\n%s", want, text)
+		}
+	}
+}
+
 func TestConsolidate_mergesHistograms(t *testing.T) {
 	root := t.TempDir()
 	runID := "run-hist"
@@ -240,6 +312,9 @@ func TestConsolidate_mergesHistograms(t *testing.T) {
 	if !strings.Contains(text, "Scale:") || !strings.Contains(text, "warehouses") {
 		t.Fatalf("summary missing scale:\n%s", text)
 	}
+	if !strings.Contains(text, "Clients:") || !strings.Contains(text, "threads_per_worker:") {
+		t.Fatalf("summary missing client parallelism:\n%s", text)
+	}
 	if !strings.Contains(text, "p50=") || !strings.Contains(text, "p99=") {
 		t.Fatalf("summary missing percentiles:\n%s", text)
 	}
@@ -254,7 +329,7 @@ func TestFormatSummary_matchesTPCCResultsLayout(t *testing.T) {
 			// consolidated measurement.warehouses / worker_assignment coverage.
 			Scale: config.ScaleBlock{Warehouses: 999},
 			WorkerAssignment: []config.WorkerAssignmentJSON{
-				{Instance: "worker-a", WarehouseRanges: [][]int{{1, 11}}},
+				{Instance: "worker-a", WarehouseRanges: [][]int{{1, 11}}, Threads: 4, MaxInflight: 64},
 			},
 			Phases:  config.PhasesJSON{MeasurementMs: 60000},
 			Runtime: config.RunRuntime{Pacing: "enabled"},
@@ -302,6 +377,10 @@ func TestFormatSummary_matchesTPCCResultsLayout(t *testing.T) {
 		"  Total Failed: 3",
 		"  NewOrder: OK=99 UserAborted=1 Failed=2 min=1ms max=9ms avg=2.5ms p50=2ms p90=4ms p99=8ms",
 		"  Payment: OK=100 UserAborted=0 Failed=1 min=1ms max=5ms avg=2ms p50=2ms p90=3ms p99=5ms",
+		"  Clients: 1",
+		"  threads_per_worker: 4",
+		"  max_inflight_per_worker: 64",
+		"  Worker threads: worker-a=4",
 	}
 	for _, want := range wantLines {
 		if !strings.Contains(text, want) {
