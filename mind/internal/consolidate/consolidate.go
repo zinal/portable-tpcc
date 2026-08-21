@@ -869,19 +869,16 @@ func appendTxResultLine(
 
 func formatPercentile(v interface{}, unit string) string {
 	if v == nil {
-		return "0" + unit
+		return "0ms"
 	}
 	if unit == "us" {
 		n, ok := asFloat64(v)
 		if !ok {
-			return fmt.Sprintf("%vus", v)
+			return fmt.Sprintf("%vms", v)
 		}
-		return fmt.Sprintf("%.0fus (%.1fms)", n, n/1000.0)
+		return fmt.Sprintf("%.1fms", n/1000.0)
 	}
-	if unit == "" {
-		unit = "ms"
-	}
-	return fmt.Sprintf("%v%s", v, unit)
+	return fmt.Sprintf("%vms", v)
 }
 
 func responseTimeMap(meas map[string]interface{}) (unit string, rt map[string]map[string]interface{}) {
