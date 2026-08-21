@@ -1356,10 +1356,13 @@ func TestLogAggregateSummaryPrintsBriefStats(t *testing.T) {
 	if !strings.Contains(got, "run_id=run-1") {
 		t.Fatalf("missing run_id:\n%s", got)
 	}
-	if !strings.Contains(got, "throughput_new_order_per_min=1234.5") {
+	if !strings.Contains(got, "=== TPC-C Results ===") {
+		t.Fatalf("missing TPC-C Results header:\n%s", got)
+	}
+	if !strings.Contains(got, "New-Order Throughput: 1234.50 tpmC") {
 		t.Fatalf("missing throughput:\n%s", got)
 	}
-	if !strings.Contains(got, "response_time_ms.new_order min=1 max=9 avg=2.5") {
+	if !strings.Contains(got, "NewOrder:") || !strings.Contains(got, "min=1 max=9 avg=2.5") {
 		t.Fatalf("missing response-time stats:\n%s", got)
 	}
 }

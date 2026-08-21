@@ -216,11 +216,75 @@ func TestConsolidate_mergesHistograms(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(summary)
-	if !strings.Contains(text, "response_time_ms.new_order min=0 max=3 avg=1.5") {
+	if !strings.Contains(text, "=== TPC-C Results ===") {
+		t.Fatalf("summary missing TPC-C Results header:\n%s", text)
+	}
+	if !strings.Contains(text, "New-Order Throughput:") || !strings.Contains(text, "tpmC") {
+		t.Fatalf("summary missing tpmC line:\n%s", text)
+	}
+	if !strings.Contains(text, "NewOrder:") || !strings.Contains(text, "min=0 max=3 avg=1.5") {
 		t.Fatalf("summary missing min/max/avg:\n%s", text)
 	}
 	if !strings.Contains(text, "p50=") || !strings.Contains(text, "p99=") {
 		t.Fatalf("summary missing percentiles:\n%s", text)
+	}
+}
+
+func TestFormatSummary_matchesTPCCResultsLayout(t *testing.T) {
+	agg := &consolidate.Aggregate{
+		RunID:       "run-demo",
+		ResultClass: "engineering",
+		Settings: config.SettingsForAggregate(&config.RunConfig{
+			Scale:   config.ScaleBlock{Warehouses: 10},
+			Phases:  config.PhasesJSON{MeasurementMs: 60000},
+			Runtime: config.RunRuntime{Pacing: "enabled"},
+		}),
+		Status: consolidate.Status{
+			WorkersComplete:        true,
+			AssignmentValid:        true,
+			ClockSkewOK:            true,
+			IntegrityOK:            true,
+			TPCCSettingsConformant: true,
+		},
+		Metrics: map[string]interface{}{
+			"measurement": map[string]interface{}{
+				"new_order_count":              int64(100),
+				"throughput_new_order_per_min": 100.0,
+				"counters": map[string]int64{
+					"new_order_ok":           99,
+					"new_order_user_aborted": 1,
+					"new_order_failed":       2,
+					"payment_ok":             100,
+					"payment_failed":         1,
+				},
+				"response_time_ms": map[string]interface{}{
+					"new_order": map[string]interface{}{
+						"min": uint64(1), "max": uint64(9), "avg": 2.5,
+						"p50": uint64(2), "p90": uint64(4), "p95": uint64(5), "p99": uint64(8),
+					},
+					"payment": map[string]interface{}{
+						"min": uint64(1), "max": uint64(5), "avg": 2.0,
+						"p50": uint64(2), "p90": uint64(3), "p95": uint64(4), "p99": uint64(5),
+					},
+				},
+			},
+		},
+	}
+	text := consolidate.FormatSummary(agg)
+	wantLines := []string{
+		"run_id=run-demo result_class=engineering",
+		"=== TPC-C Results ===",
+		"  Measured Duration: 60.0s (configured: 60s)",
+		"  New-Order Throughput: 100.00 tpmC",
+		"  Efficiency: 77.8%",
+		"  Total Failed: 3",
+		"  NewOrder: OK=99 UserAborted=1 Failed=2 min=1 max=9 avg=2.5 p50=2ms p90=4ms p99=8ms",
+		"  Payment: OK=100 UserAborted=0 Failed=1 min=1 max=5 avg=2 p50=2ms p90=3ms p99=5ms",
+	}
+	for _, want := range wantLines {
+		if !strings.Contains(text, want) {
+			t.Fatalf("summary missing %q:\n%s", want, text)
+		}
 	}
 }
 
