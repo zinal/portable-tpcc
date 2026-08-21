@@ -130,6 +130,37 @@ func TestTransitionAllowsIndexesAfterPrematureCheck(t *testing.T) {
 	}
 }
 
+func TestTransitionAllowsCheckAfterConsolidate(t *testing.T) {
+	store := &state.Store{StateDir: t.TempDir()}
+	rs := &state.RunState{
+		SchemaVersion: 1,
+		RunID:         "run-1",
+		State:         state.StateConsolidating,
+	}
+	if err := store.Save(rs); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Transition("run-1", state.StateCheckingResult); err != nil {
+		t.Fatalf("recovery transition consolidating -> checking_result failed: %v", err)
+	}
+	got, err := store.Load("run-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != state.StateCheckingResult {
+		t.Fatalf("state=%q, want %q", got.State, state.StateCheckingResult)
+	}
+	if err := store.Transition("run-1", state.StateCollecting); err != nil {
+		t.Fatalf("forward checking_result -> collecting failed: %v", err)
+	}
+	if err := store.Transition("run-1", state.StateConsolidating); err != nil {
+		t.Fatalf("forward collecting -> consolidating failed: %v", err)
+	}
+	if err := store.Transition("run-1", state.StateCollecting); err != nil {
+		t.Fatalf("recovery consolidating -> collecting failed: %v", err)
+	}
+}
+
 func TestTransitionRecoveryMatrix(t *testing.T) {
 	cases := []struct {
 		from, to string
@@ -140,6 +171,11 @@ func TestTransitionRecoveryMatrix(t *testing.T) {
 		{state.StateDraining, state.StateIndexing, true},
 		{state.StateCollecting, state.StateIndexing, true},
 		{state.StateConsolidating, state.StateIndexing, true},
+		{state.StateConsolidating, state.StateCheckingResult, true},
+		{state.StateCollecting, state.StateCheckingResult, true},
+		{state.StateConsolidating, state.StateCheckingImport, true},
+		{state.StateCollecting, state.StateCheckingImport, true},
+		{state.StateConsolidating, state.StateCollecting, true},
 		{state.StateCheckingImport, state.StateLoading, false},
 		{state.StateCheckingImport, state.StateSchema, false},
 		{state.StateCheckingImport, state.StatePreparing, true},
@@ -147,8 +183,12 @@ func TestTransitionRecoveryMatrix(t *testing.T) {
 		{state.StatePreparing, state.StateIndexing, false},
 		{state.StateArming, state.StateIndexing, false},
 		{state.StateRamping, state.StateIndexing, false},
+		{state.StateMeasuring, state.StateCheckingResult, true},
+		{state.StatePreparing, state.StateCheckingResult, true},
 		{state.StateFailed, state.StateIndexing, false},
 		{state.StateCompleted, state.StateIndexing, false},
+		{state.StateFailed, state.StateCheckingResult, false},
+		{state.StateCompleted, state.StateCheckingResult, false},
 		{state.StateLoading, state.StateIndexing, true},
 		{state.StateIndexing, state.StateCheckingImport, true},
 		{state.StateLoading, state.StateCheckingImport, true},

@@ -188,19 +188,29 @@ func Reached(current, min string) bool {
 	return curOK && minOK && curOrder >= minOrder
 }
 
-// indexing is idempotent (EnsureIndexes). Operators may need to run it after a
-// verification stage was entered too early or failed — otherwise a mistaken
-// `check --after-import` leaves the run stuck in checking_import.
+// allowedRecovery permits re-entry into idempotent or late verification stages
+// after the run has moved past them. Stage commands often end in consolidating
+// (only the full `run` pipeline reaches completed), so operators must be able
+// to run a skipped check and re-collect afterward.
 func allowedRecovery(oldState, newState string) bool {
-	if newState != StateIndexing {
-		return false
+	switch newState {
+	case StateIndexing:
+		// EnsureIndexes is idempotent; recovery after a premature/failed check.
+		switch oldState {
+		case StateCheckingImport, StateCheckingResult, StateDraining, StateCollecting, StateConsolidating:
+			return true
+		}
+	case StateCheckingImport, StateCheckingResult:
+		// Integrity checks may be deferred until after collect/consolidate.
+		switch oldState {
+		case StateCollecting, StateConsolidating:
+			return true
+		}
+	case StateCollecting:
+		// Pull check reports written after a late check --after-run.
+		return oldState == StateConsolidating
 	}
-	switch oldState {
-	case StateCheckingImport, StateCheckingResult, StateDraining, StateCollecting, StateConsolidating:
-		return true
-	default:
-		return false
-	}
+	return false
 }
 
 // RevertTo moves a non-terminal run back to previous after a stage was entered
