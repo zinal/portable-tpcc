@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"portable-tpcc/mind/internal/canonical"
+	"portable-tpcc/mind/internal/collect"
 	"portable-tpcc/mind/internal/config"
 	"portable-tpcc/mind/internal/histogram"
 )
@@ -91,6 +92,7 @@ func (c *Consolidator) ConsolidateWithOptions(runID string, rc *config.RunConfig
 	workerCalibrations := map[string]workerClockCalibration{}
 	var incompleteWorkers []string
 	totalWarehouses := 0
+	workerAssignments := map[string]map[string]interface{}{}
 
 	for _, e := range entries {
 		if !e.IsDir() {
@@ -148,6 +150,9 @@ func (c *Consolidator) ConsolidateWithOptions(runID string, rc *config.RunConfig
 			mergedHist[tx] = cur
 		}
 		totalWarehouses += workerWarehouseCount(partial, expectedAssign[name])
+		if assign, ok := partial["assignment"].(map[string]interface{}); ok {
+			workerAssignments[name] = assign
+		}
 		if readyPath := filepath.Join(rawWorkers, name, "ready.json"); true {
 			if cal, ok := readWorkerClockCalibration(readyPath); ok {
 				workerCalibrations[name] = cal
@@ -188,12 +193,15 @@ func (c *Consolidator) ConsolidateWithOptions(runID string, rc *config.RunConfig
 
 	integrity := evaluateIntegrity(c.ResultRoot, runID, opts)
 	tpccDevs := config.TPCSettingsDeviations(rc)
+	clientParallelism := resolveClientParallelism(c.ResultRoot, runID, workerAssignments, rc)
+	settings := config.SettingsForAggregate(rc)
+	settings["client_parallelism"] = clientParallelism.ToMap()
 
 	agg := &Aggregate{
 		SchemaVersion: 1,
 		RunID:         runID,
 		ResultClass:   "engineering",
-		Settings:      config.SettingsForAggregate(rc),
+		Settings:      settings,
 		Status: Status{
 			WorkersComplete:        workersComplete,
 			AssignmentValid:        assignmentErr == nil,
@@ -213,6 +221,7 @@ func (c *Consolidator) ConsolidateWithOptions(runID string, rc *config.RunConfig
 				"counters":                     counters,
 				"response_time_" + unit:        responseTimes,
 			},
+			"client_parallelism": clientParallelism.ToMap(),
 		},
 		Workers:      expected,
 		SkippedSteps: opts.SkippedSteps,
@@ -852,6 +861,117 @@ func appendTPCCResultsSummary(b *strings.Builder, agg *Aggregate) {
 	for _, tx := range extra {
 		appendTxResultLine(b, txDisplayName(tx), unit,
 			counters[tx+"_ok"], counters[tx+"_user_aborted"], counters[tx+"_failed"], rt[tx])
+	}
+
+	appendClientParallelismSummary(b, agg)
+}
+
+func resolveClientParallelism(
+	resultRoot, runID string,
+	workerAssignments map[string]map[string]interface{},
+	rc *config.RunConfig,
+) collect.ClientParallelism {
+	if len(workerAssignments) > 0 {
+		return collect.FromWorkerResultAssignments(workerAssignments)
+	}
+	if cp, err := collect.ReadClientParallelism(resultRoot, runID); err == nil && cp.Clients > 0 {
+		return cp
+	}
+	if rc != nil {
+		return collect.FromWorkerAssignments(rc.WorkerAssignment)
+	}
+	return collect.ClientParallelism{SchemaVersion: 1}
+}
+
+func appendClientParallelismSummary(b *strings.Builder, agg *Aggregate) {
+	cp := clientParallelismFromAggregate(agg)
+	if cp.Clients <= 0 && len(cp.Workers) == 0 {
+		return
+	}
+	fmt.Fprintf(b, "  Clients: %d\n", cp.Clients)
+	fmt.Fprintf(b, "  threads_per_worker: %d\n", cp.ThreadsPerWorker)
+	fmt.Fprintf(b, "  max_inflight_per_worker: %d\n", cp.MaxInflightPerWorker)
+	if len(cp.Workers) == 0 {
+		return
+	}
+	parts := make([]string, 0, len(cp.Workers))
+	for _, w := range cp.Workers {
+		parts = append(parts, fmt.Sprintf("%s=%d", w.Instance, w.Threads))
+	}
+	fmt.Fprintf(b, "  Worker threads: %s\n", strings.Join(parts, ", "))
+}
+
+func clientParallelismFromAggregate(agg *Aggregate) collect.ClientParallelism {
+	if agg == nil {
+		return collect.ClientParallelism{}
+	}
+	if raw, ok := agg.Metrics["client_parallelism"]; ok {
+		if cp, ok := parseClientParallelismValue(raw); ok {
+			return cp
+		}
+	}
+	if agg.Settings != nil {
+		if raw, ok := agg.Settings["client_parallelism"]; ok {
+			if cp, ok := parseClientParallelismValue(raw); ok {
+				return cp
+			}
+		}
+		return collect.FromWorkerAssignments(workerAssignmentsFromSettings(agg.Settings))
+	}
+	return collect.ClientParallelism{}
+}
+
+func parseClientParallelismValue(raw interface{}) (collect.ClientParallelism, bool) {
+	switch v := raw.(type) {
+	case collect.ClientParallelism:
+		return v, true
+	case map[string]interface{}:
+		data, err := json.Marshal(v)
+		if err != nil {
+			return collect.ClientParallelism{}, false
+		}
+		var cp collect.ClientParallelism
+		if err := json.Unmarshal(data, &cp); err != nil {
+			return collect.ClientParallelism{}, false
+		}
+		return cp, true
+	default:
+		return collect.ClientParallelism{}, false
+	}
+}
+
+func workerAssignmentsFromSettings(settings map[string]interface{}) []config.WorkerAssignmentJSON {
+	raw, ok := settings["worker_assignment"]
+	if !ok || raw == nil {
+		return nil
+	}
+	switch assigns := raw.(type) {
+	case []config.WorkerAssignmentJSON:
+		return assigns
+	case []interface{}:
+		out := make([]config.WorkerAssignmentJSON, 0, len(assigns))
+		for _, item := range assigns {
+			m, ok := item.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			w := config.WorkerAssignmentJSON{}
+			w.Instance, _ = m["instance"].(string)
+			w.Host, _ = m["host"].(string)
+			if n, ok := asInt64(m["threads"]); ok {
+				w.Threads = int(n)
+			}
+			if n, ok := asInt64(m["max_inflight"]); ok {
+				w.MaxInflight = int(n)
+			}
+			if ranges, err := parseWarehouseRanges(m["warehouse_ranges"]); err == nil {
+				w.WarehouseRanges = ranges
+			}
+			out = append(out, w)
+		}
+		return out
+	default:
+		return nil
 	}
 }
 
