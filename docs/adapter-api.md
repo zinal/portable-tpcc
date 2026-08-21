@@ -197,8 +197,8 @@ otherwise block) on the task-queue thread. Continuations that parse results
 and issue the next round-trip MUST NOT touch task-queue coroutine state;
 workflows resume only via `TSuspendWithFuture` (see `coro_traits.h`).
 
-PostgreSQL worker `ITpccTransaction` follows this rule. OceanBase and YDB
-still complete those methods with a blocking wait; remaining work is in
+PostgreSQL and OceanBase worker `ITpccTransaction` follow this rule. YDB
+still completes those methods with a blocking wait; remaining work is in
 [async-adapter-transactions.md](async-adapter-transactions.md).
 
 #### 4.3.1. Operation results and semantic encoding
