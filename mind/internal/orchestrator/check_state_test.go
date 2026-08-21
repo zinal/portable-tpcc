@@ -19,9 +19,10 @@ func TestRequireIndexesForImportCheck(t *testing.T) {
 		{name: "planned", state: state.StatePlanned, wantErr: true},
 		{name: "indexing", state: state.StateIndexing},
 		{name: "checking_import", state: state.StateCheckingImport},
+		{name: "consolidating", state: state.StateConsolidating},
+		{name: "completed", state: state.StateCompleted},
 		{name: "skipped_indexes", state: state.StateLoading, skipped: []string{"indexes"}},
-		{name: "failed_defers_to_transition", state: state.StateFailed},
-		{name: "stopping_defers_to_transition", state: state.StateStopping},
+		{name: "failed_not_reached", state: state.StateFailed, wantErr: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -35,6 +36,43 @@ func TestRequireIndexesForImportCheck(t *testing.T) {
 			}
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func TestRequireCheckPhase(t *testing.T) {
+	cases := []struct {
+		name    string
+		phase   string
+		state   string
+		skipped []string
+		wantErr string
+	}{
+		{name: "after_import_ok_indexing", phase: "after-import", state: state.StateIndexing},
+		{name: "after_import_ok_consolidating", phase: "after-import", state: state.StateConsolidating},
+		{name: "after_import_needs_indexes", phase: "after-import", state: state.StateLoading, wantErr: "requires the indexes stage"},
+		{name: "after_run_ok_draining", phase: "after-run", state: state.StateDraining},
+		{name: "after_run_ok_consolidating", phase: "after-run", state: state.StateConsolidating},
+		{name: "after_run_ok_completed", phase: "after-run", state: state.StateCompleted},
+		{name: "after_run_before_test", phase: "after-run", state: state.StateIndexing, wantErr: "requires the test stage to finish"},
+		{name: "after_run_measuring", phase: "after-run", state: state.StateMeasuring, wantErr: "requires the test stage to finish"},
+		{name: "refuses_failed", phase: "after-run", state: state.StateFailed, wantErr: "refused while run is failed"},
+		{name: "refuses_stopping", phase: "after-import", state: state.StateStopping, wantErr: "refused while run is stopping"},
+		{name: "unknown_phase", phase: "mid-run", state: state.StateDraining, wantErr: "unknown check phase"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rs := &state.RunState{State: tc.state, SkippedSteps: tc.skipped}
+			err := requireCheckPhase(rs, tc.phase)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("expected error containing %q, got %v", tc.wantErr, err)
 			}
 		})
 	}

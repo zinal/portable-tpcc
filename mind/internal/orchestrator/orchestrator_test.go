@@ -456,10 +456,43 @@ func TestCheckAfterImportRequiresIndexes(t *testing.T) {
 	}
 }
 
-func TestCheckAfterImportRevertsOnLaunchFailure(t *testing.T) {
+func TestCheckPreservesStateOnLaunchFailure(t *testing.T) {
 	dir := t.TempDir()
 	profilePath := writeTestProfile(t, dir, "")
-	o, err := orchestrator.New(orchestrator.Options{ProfilePath: profilePath, RunID: "run-check-revert"})
+	o, err := orchestrator.New(orchestrator.Options{ProfilePath: profilePath, RunID: "run-check-preserve"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, err := o.Materialize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := o.StateStore.Transition(ctx.RunID, state.StateConsolidating); err != nil {
+		t.Fatal(err)
+	}
+	err = o.RunCheck(ctx, "after-run")
+	if err == nil {
+		t.Fatal("expected check to fail without a deployed worker binary")
+	}
+	if strings.Contains(err.Error(), "requires the test stage") {
+		t.Fatalf("consolidating should satisfy after-run prerequisites; got %v", err)
+	}
+	if strings.Contains(err.Error(), "invalid state transition") {
+		t.Fatalf("check must not Transition run-state; got %v", err)
+	}
+	got, err := o.StateStore.Load(ctx.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != state.StateConsolidating {
+		t.Fatalf("state=%q, want consolidating (check must not change run-state)", got.State)
+	}
+}
+
+func TestCheckAfterImportPreservesIndexingOnLaunchFailure(t *testing.T) {
+	dir := t.TempDir()
+	profilePath := writeTestProfile(t, dir, "")
+	o, err := orchestrator.New(orchestrator.Options{ProfilePath: profilePath, RunID: "run-check-indexing"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -482,7 +515,7 @@ func TestCheckAfterImportRevertsOnLaunchFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got.State != state.StateIndexing {
-		t.Fatalf("state=%q, want indexing after failed check revert", got.State)
+		t.Fatalf("state=%q, want indexing after failed check", got.State)
 	}
 }
 

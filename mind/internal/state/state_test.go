@@ -130,7 +130,7 @@ func TestTransitionAllowsIndexesAfterPrematureCheck(t *testing.T) {
 	}
 }
 
-func TestTransitionAllowsCheckAfterConsolidate(t *testing.T) {
+func TestTransitionAllowsCollectAfterConsolidate(t *testing.T) {
 	store := &state.Store{StateDir: t.TempDir()}
 	rs := &state.RunState{
 		SchemaVersion: 1,
@@ -140,24 +140,15 @@ func TestTransitionAllowsCheckAfterConsolidate(t *testing.T) {
 	if err := store.Save(rs); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Transition("run-1", state.StateCheckingResult); err != nil {
-		t.Fatalf("recovery transition consolidating -> checking_result failed: %v", err)
+	if err := store.Transition("run-1", state.StateCollecting); err != nil {
+		t.Fatalf("recovery consolidating -> collecting failed: %v", err)
 	}
 	got, err := store.Load("run-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.State != state.StateCheckingResult {
-		t.Fatalf("state=%q, want %q", got.State, state.StateCheckingResult)
-	}
-	if err := store.Transition("run-1", state.StateCollecting); err != nil {
-		t.Fatalf("forward checking_result -> collecting failed: %v", err)
-	}
-	if err := store.Transition("run-1", state.StateConsolidating); err != nil {
-		t.Fatalf("forward collecting -> consolidating failed: %v", err)
-	}
-	if err := store.Transition("run-1", state.StateCollecting); err != nil {
-		t.Fatalf("recovery consolidating -> collecting failed: %v", err)
+	if got.State != state.StateCollecting {
+		t.Fatalf("state=%q, want %q", got.State, state.StateCollecting)
 	}
 }
 
@@ -171,11 +162,9 @@ func TestTransitionRecoveryMatrix(t *testing.T) {
 		{state.StateDraining, state.StateIndexing, true},
 		{state.StateCollecting, state.StateIndexing, true},
 		{state.StateConsolidating, state.StateIndexing, true},
-		{state.StateConsolidating, state.StateCheckingResult, true},
-		{state.StateCollecting, state.StateCheckingResult, true},
-		{state.StateConsolidating, state.StateCheckingImport, true},
-		{state.StateCollecting, state.StateCheckingImport, true},
 		{state.StateConsolidating, state.StateCollecting, true},
+		{state.StateConsolidating, state.StateCheckingResult, false},
+		{state.StateCollecting, state.StateCheckingResult, false},
 		{state.StateCheckingImport, state.StateLoading, false},
 		{state.StateCheckingImport, state.StateSchema, false},
 		{state.StateCheckingImport, state.StatePreparing, true},
@@ -183,12 +172,8 @@ func TestTransitionRecoveryMatrix(t *testing.T) {
 		{state.StatePreparing, state.StateIndexing, false},
 		{state.StateArming, state.StateIndexing, false},
 		{state.StateRamping, state.StateIndexing, false},
-		{state.StateMeasuring, state.StateCheckingResult, true},
-		{state.StatePreparing, state.StateCheckingResult, true},
 		{state.StateFailed, state.StateIndexing, false},
 		{state.StateCompleted, state.StateIndexing, false},
-		{state.StateFailed, state.StateCheckingResult, false},
-		{state.StateCompleted, state.StateCheckingResult, false},
 		{state.StateLoading, state.StateIndexing, true},
 		{state.StateIndexing, state.StateCheckingImport, true},
 		{state.StateLoading, state.StateCheckingImport, true},
@@ -216,51 +201,6 @@ func TestTransitionRecoveryMatrix(t *testing.T) {
 		if got.State != tc.from {
 			t.Fatalf("%s -> %s: state became %q", tc.from, tc.to, got.State)
 		}
-	}
-}
-
-func TestRevertToRestoresPreviousNonTerminalState(t *testing.T) {
-	store := &state.Store{StateDir: t.TempDir()}
-	rs := &state.RunState{
-		SchemaVersion: 1,
-		RunID:         "run-1",
-		State:         state.StateCheckingImport,
-	}
-	if err := store.Save(rs); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.RevertTo("run-1", state.StateLoading); err != nil {
-		t.Fatal(err)
-	}
-	got, err := store.Load("run-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.State != state.StateLoading {
-		t.Fatalf("state=%q, want %q", got.State, state.StateLoading)
-	}
-}
-
-func TestRevertToDoesNotOverrideTerminal(t *testing.T) {
-	store := &state.Store{StateDir: t.TempDir()}
-	rs := &state.RunState{
-		SchemaVersion: 1,
-		RunID:         "run-1",
-		State:         state.StateFailed,
-		Error:         "boom",
-	}
-	if err := store.Save(rs); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.RevertTo("run-1", state.StateLoading); err != nil {
-		t.Fatal(err)
-	}
-	got, err := store.Load("run-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.State != state.StateFailed {
-		t.Fatalf("state=%q, want failed", got.State)
 	}
 }
 

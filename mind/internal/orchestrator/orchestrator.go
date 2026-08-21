@@ -607,53 +607,57 @@ func (o *Orchestrator) check(ctx *Context, phase string) error {
 	if err != nil {
 		return err
 	}
-	if phase == "after-import" {
-		if err := requireIndexesForImportCheck(rs); err != nil {
-			return err
-		}
-	}
-	prev := rs.State
-	target := state.StateCheckingResult
-	if phase == "after-import" {
-		target = state.StateCheckingImport
-	}
-	if err := o.StateStore.Transition(ctx.RunID, target); err != nil {
+	if err := requireCheckPhase(rs, phase); err != nil {
 		return err
 	}
+	// Check does not Transition run-state: it is a verification probe with
+	// prerequisites only. Leaving consolidating/draining/etc. unchanged lets
+	// operators run a deferred check without inventing recovery edges.
 
-	err = func() error {
-		sessions, err := o.openSessions()
-		if err != nil {
-			return err
-		}
-		defer o.finishRemote(ctx, sessions)
-
-		hostKey := ctx.RunConfig.LoadAssignment[0].Host
-		instance := "check-0"
-		threads := config.EffectiveCheckConcurrency(
-			ctx.RunConfig.Scale.Warehouses,
-			ctx.RunConfig.Runtime.CheckConcurrency,
-			o.Opts.CheckThreads,
-		)
-		argv := config.CheckArgv("run-config.json", instance, phase, threads)
-		proc, err := o.launchRole(ctx, sessions, "check", hostKey, instance, argv)
-		if err != nil {
-			return err
-		}
-		if err := o.waitProcesses(ctx, []*launchedProc{proc}, 2*time.Hour, true); err != nil {
-			_ = o.stopPeers(ctx, sessions)
-			return err
-		}
-		return nil
-	}()
+	sessions, err := o.openSessions()
 	if err != nil {
-		if rerr := o.StateStore.RevertTo(ctx.RunID, prev); rerr != nil {
-			return fmt.Errorf("%w (also failed to revert state to %s: %v)", err, prev, rerr)
-		}
+		return err
+	}
+	defer o.finishRemote(ctx, sessions)
+
+	hostKey := ctx.RunConfig.LoadAssignment[0].Host
+	instance := "check-0"
+	threads := config.EffectiveCheckConcurrency(
+		ctx.RunConfig.Scale.Warehouses,
+		ctx.RunConfig.Runtime.CheckConcurrency,
+		o.Opts.CheckThreads,
+	)
+	argv := config.CheckArgv("run-config.json", instance, phase, threads)
+	proc, err := o.launchRole(ctx, sessions, "check", hostKey, instance, argv)
+	if err != nil {
+		return err
+	}
+	if err := o.waitProcesses(ctx, []*launchedProc{proc}, 2*time.Hour, true); err != nil {
+		_ = o.stopPeers(ctx, sessions)
 		return err
 	}
 	progress.Printf("stage check (%s): complete", phase)
 	return nil
+}
+
+func requireCheckPhase(rs *state.RunState, phase string) error {
+	if rs.State == state.StateStopping {
+		return fmt.Errorf("check refused while run is stopping")
+	}
+	if rs.State == state.StateFailed {
+		return fmt.Errorf("check refused while run is failed")
+	}
+	switch phase {
+	case "after-import":
+		return requireIndexesForImportCheck(rs)
+	case "after-run":
+		if rs.State == state.StateCompleted || state.Reached(rs.State, state.StateDraining) {
+			return nil
+		}
+		return fmt.Errorf("check --after-run requires the test stage to finish (current state is %s)", rs.State)
+	default:
+		return fmt.Errorf("unknown check phase %q", phase)
+	}
 }
 
 func requireIndexesForImportCheck(rs *state.RunState) error {
@@ -662,16 +666,13 @@ func requireIndexesForImportCheck(rs *state.RunState) error {
 			return nil
 		}
 	}
-	if state.IsTerminal(rs.State) || rs.State == state.StateStopping {
-		return nil
-	}
 	if state.Reached(rs.State, state.StateIndexing) {
 		return nil
 	}
 	return fmt.Errorf("check --after-import requires the indexes stage (current state is %s); run 'mind-tpcc indexes' first", rs.State)
 }
 
-// RunCheck records check phase and executes the check role.
+// RunCheck executes the check role without changing run-state.
 func (o *Orchestrator) RunCheck(ctx *Context, phase string) error {
 	return o.check(ctx, phase)
 }
