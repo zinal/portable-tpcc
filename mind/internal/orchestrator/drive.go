@@ -1179,7 +1179,7 @@ func validateRemotePathUnder(sess remote.Session, base, elem string) error {
 
 // loaderArtifactsOptional reports whether collect may proceed without this
 // loader's artifact-manifest. That is normal when load was skipped, or when
-// the run only executed later stages (e.g. start --warehouses N against an
+// the run only executed later stages (e.g. test --warehouses N against an
 // already-loaded database) and never launched this loader instance.
 func (o *Orchestrator) loaderArtifactsOptional(ctx *Context, instance string) bool {
 	if o == nil || o.StateStore == nil || ctx == nil {

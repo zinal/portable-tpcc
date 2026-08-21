@@ -31,17 +31,17 @@ mind-tpcc <command> --profile <path> [options]
 | `load` | Horizontal data load. |
 | `indexes` | Secondary indexes (and DBMS stats where the adapter supports them). |
 | `check` | Integrity checks. Requires `--after-import` or `--after-run`. |
-| `start` | Arm workers and run ramp-up / measurement / drain. |
+| `test` | Arm workers and run ramp-up / measurement / drain. `start` is a compatibility alias. |
 | `status` | Show run state. |
 | `stop` | Stop workers gracefully. |
 | `collect` | Copy artifacts from runtime hosts. |
-| `consolidate` | Merge worker results into `aggregate.json`. |
+| `consolidate` | Merge worker results into `aggregate.json` and print a brief stats summary. |
 | `run` | Full pipeline. Requires a prior explicit `deploy`. |
 | `cleanup` | Teardown: stop, optional DB `clean`, remote + local run artifacts. Requires `--yes`. |
 | `help` / `-h` / `--help` | Usage. |
 
 `run` = validate → require prior `deploy` → schema → load → indexes →
-check(after-import) **if** `checks.after_import` → start →
+check(after-import) **if** `checks.after_import` → test →
 check(after-run) **if** `checks.after_run` → collect → consolidate.
 
 `run` does not upload binaries. Re-run `deploy` after rebuilding `tpcc-*`.
@@ -63,7 +63,7 @@ Shared binaries stay until `undeploy`.
 | `--ramp-up <duration>` | profile `phases.ramp_up` | Warmup override (`30s`, `5m`, …). |
 | `--measurement <duration>` | profile `phases.measurement` | Measurement override. |
 | `--threads <n>` | profile `runtime.check_concurrency` | Check session concurrency for this invocation. `0` = auto (`min(scale.warehouses, 32)`). Does not rewrite an existing run-config. |
-| `--skip <step>` | none | Skip a `run` pipeline step. Repeatable. Names: `deploy`, `schema`, `load`, `indexes`, `check_after_import`, `start`, `check_after_run`, `collect`, `consolidate`. |
+| `--skip <step>` | none | Skip a `run` pipeline step. Repeatable. Names: `deploy`, `schema`, `load`, `indexes`, `check_after_import`, `test` (alias `start`), `check_after_run`, `collect`, `consolidate`. |
 | `--yes` | false | Required for `cleanup` and `undeploy`. |
 | `--after-import` / `--after-run` | — | Select the `check` phase. |
 | `--leave-processes` | false | Debug: leave remote processes running when `mind-tpcc` exits. Default is to stop leftovers this invocation launched (and warn if a process is still alive after it reported finished). |
@@ -206,7 +206,7 @@ All fields optional; zeros/omissions keep the built-in default.
 | `think_time_ms.*` | 12000 / 12000 / 10000 / 5000 / 5000 | minimum means (ms); larger values remain TPC-C conformant |
 
 Mix weights must all be positive. Percentages are weight/sum. Deviations from
-TPC-C 5.11 are reported by `validate` / `start` / `aggregate` and do **not**
+TPC-C 5.11 are reported by `validate` / `test` / `aggregate` and do **not**
 fail structural validation.
 
 ### `loaders` / `workers`
@@ -370,7 +370,7 @@ clean   --run-config <path> --instance <name>
 
 ## TPC-C 5.11 launch-parameter checks
 
-`mind-tpcc validate` / `start` / `aggregate.json` compare **effective**
+`mind-tpcc validate` / `test` / `aggregate.json` compare **effective**
 (default-merged) settings with:
 
 - `terminals_per_warehouse = 10`

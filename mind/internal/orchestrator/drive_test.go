@@ -16,6 +16,7 @@ import (
 
 	"portable-tpcc/mind/internal/collect"
 	"portable-tpcc/mind/internal/config"
+	"portable-tpcc/mind/internal/consolidate"
 	"portable-tpcc/mind/internal/profile"
 	"portable-tpcc/mind/internal/progress"
 	"portable-tpcc/mind/internal/remote"
@@ -835,7 +836,7 @@ func TestCollectArtifactsSkipsMissingLoaderWhenLoadDidNotRun(t *testing.T) {
 		SchemaVersion: 1,
 		RunID:         ctx.RunID,
 		State:         state.StateCollecting,
-		// start-only run: workers may exist, but no loader was launched.
+		// test-only run: workers may exist, but no loader was launched.
 		Processes: map[string]state.Process{
 			"worker/worker-a": {
 				Role: "worker", Host: "host-a", Instance: "worker-a", State: "exited",
@@ -1307,5 +1308,58 @@ func TestFormatCheckReport(t *testing.T) {
 	got = formatCheckReport([]byte(`not json`))
 	if got != "" {
 		t.Fatalf("invalid JSON should be empty, got %q", got)
+	}
+}
+
+func TestShouldSkipTestAcceptsStartAlias(t *testing.T) {
+	o := &Orchestrator{Opts: Options{SkipSteps: []string{"start"}}}
+	if !o.shouldSkip("test") {
+		t.Fatal("expected --skip start to skip the test stage")
+	}
+	if o.shouldSkip("collect") {
+		t.Fatal("--skip start must not skip other stages")
+	}
+	o.Opts.SkipSteps = []string{"test"}
+	if !o.shouldSkip("test") {
+		t.Fatal("expected --skip test to skip the test stage")
+	}
+}
+
+func TestLogAggregateSummaryPrintsBriefStats(t *testing.T) {
+	var buf bytes.Buffer
+	progress.SetWriter(&buf)
+	defer progress.SetWriter(nil)
+
+	logAggregateSummary(&consolidate.Aggregate{
+		RunID:       "run-1",
+		ResultClass: "engineering",
+		Status: consolidate.Status{
+			WorkersComplete:        true,
+			AssignmentValid:        true,
+			ClockSkewOK:            true,
+			IntegrityOK:            true,
+			TPCCSettingsConformant: true,
+		},
+		Metrics: map[string]interface{}{
+			"measurement": map[string]interface{}{
+				"throughput_new_order_per_min": 1234.5,
+				"response_time_ms": map[string]interface{}{
+					"new_order": map[string]interface{}{
+						"min": 1, "max": 9, "avg": 2.5,
+						"p50": 2, "p90": 4, "p95": 5, "p99": 8,
+					},
+				},
+			},
+		},
+	})
+	got := buf.String()
+	if !strings.Contains(got, "run_id=run-1") {
+		t.Fatalf("missing run_id:\n%s", got)
+	}
+	if !strings.Contains(got, "throughput_new_order_per_min=1234.5") {
+		t.Fatalf("missing throughput:\n%s", got)
+	}
+	if !strings.Contains(got, "response_time_ms.new_order min=1 max=9 avg=2.5") {
+		t.Fatalf("missing response-time stats:\n%s", got)
 	}
 }

@@ -418,7 +418,7 @@ func TestRequireWorkerBinaryNeedsExplicitDeploy(t *testing.T) {
 	// unavailable here; Deploy presence is enough that a second check succeeds
 	// via openSessions in requireWorkerBinary through a minimal re-check:
 	o2, err := orchestrator.New(orchestrator.Options{ProfilePath: profilePath, SkipSteps: []string{
-		"schema", "load", "indexes", "check_after_import", "start",
+		"schema", "load", "indexes", "check_after_import", "test",
 		"check_after_run", "collect", "consolidate",
 	}})
 	if err != nil {

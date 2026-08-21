@@ -179,13 +179,13 @@ cp mind/mind-tpcc ./mind-tpcc
 
 # Full pipeline (requires prior deploy):
 # validate → require deploy → schema → load → indexes
-# → check(after-import) if checks.after_import → start
+# → check(after-import) if checks.after_import → test
 # → check(after-run) if checks.after_run → collect → consolidate
 ./mind-tpcc run --profile ./profile-pgsql.yaml
 ```
 
 Or run stages individually: `deploy`, `schema`, `load`, `indexes`,
-`check --after-import`, `start`, `check --after-run`, `collect`,
+`check --after-import`, `test`, `check --after-run`, `collect`,
 `consolidate`.
 
 On a single host, set every loader/worker `host` to `127.0.0.1` (local
@@ -210,7 +210,7 @@ installed until `undeploy`.
 2. `tpcc-pgsql` is built (and `mind-tpcc` for orchestration).
 3. Credentials are supplied (`--connection=...` or `TPCC_PASSWORD`).
 4. Flow: `schema` → `import`/`load` → `indexes` → `check --after-import`
-   → `run`/`start` → `check --after-run`.
+   → `run`/`test` → `check --after-run`.
 
 For a quick engineering smoke test, standalone with `-w 10` and a short
 `--duration` is enough. For settings closer to TPC-C 5.11, see the defaults
