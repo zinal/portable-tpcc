@@ -48,12 +48,11 @@ const char* HistogramUnitLabel(const TRunStatsConfig& config) {
     return (config.Histogram.Configured && config.Histogram.Unit == "us") ? "us" : "ms";
 }
 
-// Console-friendly percentile: keep histogram native units, but when unit is us
-// also show approximate milliseconds so bucket bounds like 65536 are readable.
+// Console progress/final lines always show milliseconds. Histograms may still
+// use us buckets internally; convert those bucket edges for display.
 std::string FormatPercentile(uint64_t value, const char* unit) {
     if (std::strcmp(unit, "us") == 0) {
-        const double ms = static_cast<double>(value) / 1000.0;
-        return fmt::format("{}us ({:.1f}ms)", value, ms);
+        return fmt::format("{:.1f}ms", static_cast<double>(value) / 1000.0);
     }
     return fmt::format("{}ms", value);
 }
