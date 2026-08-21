@@ -26,6 +26,22 @@ func writeRunConfig(t *testing.T, root, runID string, rc *config.RunConfig) stri
 	return sha
 }
 
+func readTextReports(t *testing.T, root, runID string) string {
+	t.Helper()
+	summary, err := os.ReadFile(filepath.Join(root, runID, "summary.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	results, err := os.ReadFile(filepath.Join(root, runID, "results.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(results) != string(summary) {
+		t.Fatalf("results.txt does not match summary.txt\nresults.txt:\n%s\nsummary.txt:\n%s", results, summary)
+	}
+	return string(results)
+}
+
 func writeWorkerArtifacts(t *testing.T, root, runID, workerName, sha string, rc *config.RunConfig, resultExtras map[string]interface{}) {
 	t.Helper()
 	var assign config.WorkerAssignmentJSON
@@ -214,11 +230,7 @@ func TestConsolidate_recordsClientParallelism(t *testing.T) {
 	if err := consolidate.WriteAggregate(root, runID, agg); err != nil {
 		t.Fatal(err)
 	}
-	summary, err := os.ReadFile(filepath.Join(root, runID, "summary.txt"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	text := string(summary)
+	text := readTextReports(t, root, runID)
 	for _, want := range []string{
 		"  Clients: 2",
 		"  threads_per_worker: 8",
@@ -295,11 +307,7 @@ func TestConsolidate_mergesHistograms(t *testing.T) {
 	if err := consolidate.WriteAggregate(root, runID, agg); err != nil {
 		t.Fatal(err)
 	}
-	summary, err := os.ReadFile(filepath.Join(root, runID, "summary.txt"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	text := string(summary)
+	text := readTextReports(t, root, runID)
 	if !strings.Contains(text, "=== TPC-C Results ===") {
 		t.Fatalf("summary missing TPC-C Results header:\n%s", text)
 	}
@@ -429,6 +437,32 @@ func TestFormatSummary_latencyUnitsNormalizedToMs(t *testing.T) {
 	}
 	if !strings.Contains(text, "  Scale: 4 warehouses") {
 		t.Fatalf("summary missing scale from consolidated warehouses:\n%s", text)
+	}
+}
+
+func TestWriteAggregate_writesResultsTxtMatchingScreenReport(t *testing.T) {
+	agg := &consolidate.Aggregate{
+		RunID:       "run-file",
+		ResultClass: "engineering",
+		Status: consolidate.Status{
+			WorkersComplete: true, AssignmentValid: true, ClockSkewOK: true,
+			IntegrityOK: true, TPCCSettingsConformant: true,
+		},
+		Metrics: map[string]interface{}{
+			"measurement": map[string]interface{}{
+				"throughput_new_order_per_min": 42.0,
+				"counters":                     map[string]int64{"new_order_ok": 7},
+			},
+		},
+	}
+	root := t.TempDir()
+	if err := consolidate.WriteAggregate(root, agg.RunID, agg); err != nil {
+		t.Fatal(err)
+	}
+	got := readTextReports(t, root, agg.RunID)
+	want := consolidate.FormatSummary(agg)
+	if got != want {
+		t.Fatalf("results.txt does not match FormatSummary (screen report)\ngot:\n%s\nwant:\n%s", got, want)
 	}
 }
 
@@ -653,11 +687,7 @@ func TestConsolidate_tpccSettingsDeviationsInAggregate(t *testing.T) {
 	if err := consolidate.WriteAggregate(root, runID, agg); err != nil {
 		t.Fatal(err)
 	}
-	summary, err := os.ReadFile(filepath.Join(root, runID, "summary.txt"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	text := string(summary)
+	text := readTextReports(t, root, runID)
 	if !strings.Contains(text, "tpcc_settings_conformant=false") {
 		t.Fatalf("summary missing conformant flag:\n%s", text)
 	}
@@ -717,12 +747,9 @@ func TestConsolidate_integrityFailedCheck(t *testing.T) {
 	if err := consolidate.WriteAggregate(root, runID, agg); err != nil {
 		t.Fatal(err)
 	}
-	summary, err := os.ReadFile(filepath.Join(root, runID, "summary.txt"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(summary), "integrity_error=check report after-test.json: ok=false") {
-		t.Fatalf("summary missing integrity error details:\n%s", summary)
+	text := readTextReports(t, root, runID)
+	if !strings.Contains(text, "integrity_error=check report after-test.json: ok=false") {
+		t.Fatalf("summary missing integrity error details:\n%s", text)
 	}
 }
 

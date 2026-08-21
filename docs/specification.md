@@ -326,7 +326,7 @@ Consolidation:
 `mind-tpcc consolidate` MUST also print a brief human summary of the
 aggregate (status flags, New-Order throughput, and response-time min/max/avg
 and percentiles) to the progress log. The same text is written to
-`summary.txt`.
+`results.txt` and `summary.txt`.
 
 Do not average p99s, scale partial runs, invent zero samples, or emit an
 official TPC-C conformance verdict. Soft launch-parameter deviation reporting
@@ -337,7 +337,8 @@ Layout:
 ```text
 results/<run_id>/
 ├── aggregate.json          # settings + merged metrics + status
-├── summary.txt             # human view of aggregate.json
+├── results.txt             # human view of aggregate.json (same as progress log)
+├── summary.txt             # same text as results.txt
 ├── checks/
 ├── raw/loader/<instance>/
 ├── raw/worker/<instance>/

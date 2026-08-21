@@ -35,7 +35,7 @@ mind-tpcc <command> --profile <path> [options]
 | `status` | Show run state. |
 | `stop` | Stop workers gracefully. |
 | `collect` | Copy artifacts from runtime hosts. |
-| `consolidate` | Merge worker results into `aggregate.json` and print a brief stats summary. |
+| `consolidate` | Merge worker results into `aggregate.json`, write `results.txt` / `summary.txt`, and print a brief stats summary. |
 | `run` | Full pipeline. Requires a prior explicit `deploy`. |
 | `cleanup` | Teardown: stop, optional DB `clean`, remote + local run artifacts. Requires `--yes`. |
 | `help` / `-h` / `--help` | Usage. |
@@ -394,6 +394,7 @@ Details: [tpcc-5.11-conformance-analysis.md](tpcc-5.11-conformance-analysis.md),
 ```text
 results/<run_id>/
 ├── aggregate.json
+├── results.txt
 ├── summary.txt
 ├── checks/
 ├── raw/loader/<instance>/

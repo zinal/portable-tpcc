@@ -781,7 +781,7 @@ func (o *Orchestrator) consolidate(ctx *Context) error {
 	if err := consolidate.WriteAggregate(o.Expanded.ResultRoot, ctx.RunID, agg); err != nil {
 		return err
 	}
-	progress.Printf("stage consolidate: complete (aggregate.json written)")
+	progress.Printf("stage consolidate: complete (aggregate.json, results.txt written)")
 	logAggregateSummary(agg)
 	return nil
 }

@@ -95,7 +95,7 @@ business-input counters для проверки фактической выбо�
 Частично улучшено: worker histogram теперь хранит exact `min_recorded`,
 `max_recorded` и `sum_values`; consolidate публикует `min` / `max` / `avg`
 вместе с p50/p90/p95/p99 в `aggregate.json` (`response_time_*`) и
-`summary.txt` ([histogram.h](../tpcc/metrics/histogram.h),
+`results.txt` / `summary.txt` ([histogram.h](../tpcc/metrics/histogram.h),
 [artifacts.cpp](../tpcc/dbms/pgsql/artifacts.cpp),
 [merge.go](../mind/internal/histogram/merge.go),
 [consolidate.go](../mind/internal/consolidate/consolidate.go)).

@@ -712,7 +712,8 @@ func loadChecks(resultRoot, runID string) map[string]interface{} {
 	return out
 }
 
-// WriteAggregate writes aggregate.json and summary.txt.
+// WriteAggregate writes aggregate.json plus the human-readable reports
+// summary.txt and results.txt (same text as the consolidate progress log).
 func WriteAggregate(resultRoot, runID string, agg *Aggregate) error {
 	dir := filepath.Join(resultRoot, runID)
 	data, err := json.MarshalIndent(agg, "", "  ")
@@ -730,7 +731,12 @@ func WriteAggregate(resultRoot, runID string, agg *Aggregate) error {
 		return err
 	}
 	summary := FormatSummary(agg)
-	return os.WriteFile(filepath.Join(dir, "summary.txt"), []byte(summary), 0644)
+	for _, name := range []string{"summary.txt", "results.txt"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(summary), 0644); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // maxTPMCPerWarehouse is the TPC-C §A.3 theoretical maximum New-Order
