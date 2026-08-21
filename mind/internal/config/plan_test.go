@@ -87,7 +87,7 @@ func TestCheckArgvIncludesThreads(t *testing.T) {
 		"check",
 		"--run-config", "run-config.json",
 		"--instance", "check-0",
-		"--after-test",
+		"--after-run", // on-wire spelling for worker compatibility
 	}
 	if !reflect.DeepEqual(serial, wantSerial) {
 		t.Fatalf("serial CheckArgv=%v, want %v", serial, wantSerial)

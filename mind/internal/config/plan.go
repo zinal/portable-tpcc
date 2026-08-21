@@ -84,8 +84,11 @@ func EffectiveCheckConcurrency(warehouses, configured int, cliThreads *int) int 
 }
 
 // CheckArgv returns argv for the check role.
+// The after-test phase is spelled --after-run on the worker command line so
+// already-deployed binaries (pre-rename) keep working; new workers accept both
+// --after-test and --after-run.
 func CheckArgv(runConfigPath, instance, phase string, threads int) []string {
-	flag := "--after-test"
+	flag := "--after-run"
 	if phase == "after-import" {
 		flag = "--after-import"
 	}
