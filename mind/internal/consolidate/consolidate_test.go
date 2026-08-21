@@ -193,6 +193,18 @@ func TestConsolidate_mergesHistograms(t *testing.T) {
 		t.Fatalf("status %+v", agg.Status)
 	}
 	meas := agg.Metrics["measurement"].(map[string]interface{})
+	switch wh := meas["warehouses"].(type) {
+	case int:
+		if wh != 10 {
+			t.Fatalf("expected consolidated warehouses=10, got %d", wh)
+		}
+	case int64:
+		if wh != 10 {
+			t.Fatalf("expected consolidated warehouses=10, got %d", wh)
+		}
+	default:
+		t.Fatalf("expected consolidated warehouses=10 from worker assignment, got %#v", meas["warehouses"])
+	}
 	rt := meas["response_time_ms"].(map[string]interface{})
 	stats, ok := rt["new_order"].(map[string]interface{})
 	if !ok {
@@ -222,8 +234,11 @@ func TestConsolidate_mergesHistograms(t *testing.T) {
 	if !strings.Contains(text, "New-Order Throughput:") || !strings.Contains(text, "tpmC") {
 		t.Fatalf("summary missing tpmC line:\n%s", text)
 	}
-	if !strings.Contains(text, "NewOrder:") || !strings.Contains(text, "min=0 max=3 avg=1.5") {
+	if !strings.Contains(text, "NewOrder:") || !strings.Contains(text, "min=0ms max=3ms avg=1.5ms") {
 		t.Fatalf("summary missing min/max/avg:\n%s", text)
+	}
+	if !strings.Contains(text, "Scale:") || !strings.Contains(text, "warehouses") {
+		t.Fatalf("summary missing scale:\n%s", text)
 	}
 	if !strings.Contains(text, "p50=") || !strings.Contains(text, "p99=") {
 		t.Fatalf("summary missing percentiles:\n%s", text)
@@ -235,7 +250,12 @@ func TestFormatSummary_matchesTPCCResultsLayout(t *testing.T) {
 		RunID:       "run-demo",
 		ResultClass: "engineering",
 		Settings: config.SettingsForAggregate(&config.RunConfig{
-			Scale:   config.ScaleBlock{Warehouses: 10},
+			// Intentionally mismatched settings.scale so the summary must use
+			// consolidated measurement.warehouses / worker_assignment coverage.
+			Scale: config.ScaleBlock{Warehouses: 999},
+			WorkerAssignment: []config.WorkerAssignmentJSON{
+				{Instance: "worker-a", WarehouseRanges: [][]int{{1, 11}}},
+			},
 			Phases:  config.PhasesJSON{MeasurementMs: 60000},
 			Runtime: config.RunRuntime{Pacing: "enabled"},
 		}),
@@ -250,6 +270,7 @@ func TestFormatSummary_matchesTPCCResultsLayout(t *testing.T) {
 			"measurement": map[string]interface{}{
 				"new_order_count":              int64(100),
 				"throughput_new_order_per_min": 100.0,
+				"warehouses":                   10,
 				"counters": map[string]int64{
 					"new_order_ok":           99,
 					"new_order_user_aborted": 1,
@@ -274,17 +295,61 @@ func TestFormatSummary_matchesTPCCResultsLayout(t *testing.T) {
 	wantLines := []string{
 		"run_id=run-demo result_class=engineering",
 		"=== TPC-C Results ===",
+		"  Scale: 10 warehouses",
 		"  Measured Duration: 60.0s (configured: 60s)",
 		"  New-Order Throughput: 100.00 tpmC",
 		"  Efficiency: 77.8%",
 		"  Total Failed: 3",
-		"  NewOrder: OK=99 UserAborted=1 Failed=2 min=1 max=9 avg=2.5 p50=2ms p90=4ms p99=8ms",
-		"  Payment: OK=100 UserAborted=0 Failed=1 min=1 max=5 avg=2 p50=2ms p90=3ms p99=5ms",
+		"  NewOrder: OK=99 UserAborted=1 Failed=2 min=1ms max=9ms avg=2.5ms p50=2ms p90=4ms p99=8ms",
+		"  Payment: OK=100 UserAborted=0 Failed=1 min=1ms max=5ms avg=2ms p50=2ms p90=3ms p99=5ms",
 	}
 	for _, want := range wantLines {
 		if !strings.Contains(text, want) {
 			t.Fatalf("summary missing %q:\n%s", want, text)
 		}
+	}
+	if strings.Contains(text, "Scale: 999") {
+		t.Fatalf("summary must not use settings.scale.warehouses:\n%s", text)
+	}
+}
+
+func TestFormatSummary_latencyUnitsNormalizedToMs(t *testing.T) {
+	agg := &consolidate.Aggregate{
+		RunID:       "run-us",
+		ResultClass: "engineering",
+		Settings: config.SettingsForAggregate(&config.RunConfig{
+			WorkerAssignment: []config.WorkerAssignmentJSON{
+				{Instance: "worker-a", WarehouseRanges: [][]int{{1, 5}}},
+			},
+			Phases: config.PhasesJSON{MeasurementMs: 60000},
+		}),
+		Status: consolidate.Status{
+			WorkersComplete: true, AssignmentValid: true, ClockSkewOK: true,
+			IntegrityOK: true, TPCCSettingsConformant: true,
+		},
+		Metrics: map[string]interface{}{
+			"measurement": map[string]interface{}{
+				"throughput_new_order_per_min": 10.0,
+				"warehouses":                   4,
+				"counters": map[string]int64{
+					"new_order_ok": 10,
+				},
+				"response_time_us": map[string]interface{}{
+					"new_order": map[string]interface{}{
+						"min": uint64(1500), "max": uint64(9000), "avg": 2500.0,
+						"p50": uint64(2000), "p90": uint64(4000), "p99": uint64(8000),
+					},
+				},
+			},
+		},
+	}
+	text := consolidate.FormatSummary(agg)
+	want := "  NewOrder: OK=10 UserAborted=0 Failed=0 min=1.5ms max=9ms avg=2.5ms p50=2ms p90=4ms p99=8ms"
+	if !strings.Contains(text, want) {
+		t.Fatalf("summary missing unified ms latencies %q:\n%s", want, text)
+	}
+	if !strings.Contains(text, "  Scale: 4 warehouses") {
+		t.Fatalf("summary missing scale from consolidated warehouses:\n%s", text)
 	}
 }
 

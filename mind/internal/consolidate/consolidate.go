@@ -90,6 +90,7 @@ func (c *Consolidator) ConsolidateWithOptions(runID string, rc *config.RunConfig
 	}
 	workerCalibrations := map[string]workerClockCalibration{}
 	var incompleteWorkers []string
+	totalWarehouses := 0
 
 	for _, e := range entries {
 		if !e.IsDir() {
@@ -146,6 +147,7 @@ func (c *Consolidator) ConsolidateWithOptions(runID string, rc *config.RunConfig
 			}
 			mergedHist[tx] = cur
 		}
+		totalWarehouses += workerWarehouseCount(partial, expectedAssign[name])
 		if readyPath := filepath.Join(rawWorkers, name, "ready.json"); true {
 			if cal, ok := readWorkerClockCalibration(readyPath); ok {
 				workerCalibrations[name] = cal
@@ -207,6 +209,7 @@ func (c *Consolidator) ConsolidateWithOptions(runID string, rc *config.RunConfig
 				"new_order_ok":                 newOrderOk,
 				"new_order_user_aborted":       newOrderUserAborted,
 				"throughput_new_order_per_min": throughput,
+				"warehouses":                   totalWarehouses,
 				"counters":                     counters,
 				"response_time_" + unit:        responseTimes,
 			},
@@ -770,6 +773,11 @@ func appendTPCCResultsSummary(b *strings.Builder, agg *Aggregate) {
 	}
 	fmt.Fprintf(b, "=== TPC-C Results ===\n")
 
+	warehouses := scaleWarehousesFromAggregate(agg)
+	if warehouses > 0 {
+		fmt.Fprintf(b, "  Scale: %d warehouses\n", warehouses)
+	}
+
 	configuredSec := measurementSecondsFromSettings(agg.Settings)
 	measuredSec := configuredSec
 	if v, ok := asFloat64(meas["measurement_seconds"]); ok && v > 0 {
@@ -791,7 +799,6 @@ func appendTPCCResultsSummary(b *strings.Builder, agg *Aggregate) {
 
 	if v, ok := asFloat64(meas["throughput_new_order_per_min"]); ok {
 		fmt.Fprintf(b, "  New-Order Throughput: %.2f tpmC\n", v)
-		warehouses := warehousesFromSettings(agg.Settings)
 		if pacingEnabledFromSettings(agg.Settings) && warehouses > 0 {
 			efficiency := v / (maxTPMCPerWarehouse * float64(warehouses)) * 100.0
 			fmt.Fprintf(b, "  Efficiency: %.1f%%\n", efficiency)
@@ -857,28 +864,36 @@ func appendTxResultLine(
 	fmt.Fprintf(b, "  %s: OK=%d UserAborted=%d Failed=%d", name, okCount, userAborted, failed)
 	if stats != nil {
 		if _, has := stats["min"]; has {
-			fmt.Fprintf(b, " min=%v max=%v avg=%v", stats["min"], stats["max"], stats["avg"])
+			fmt.Fprintf(b, " min=%s max=%s avg=%s",
+				formatLatencyMs(stats["min"], unit),
+				formatLatencyMs(stats["max"], unit),
+				formatLatencyMs(stats["avg"], unit))
 		}
 		fmt.Fprintf(b, " p50=%s p90=%s p99=%s",
-			formatPercentile(stats["p50"], unit),
-			formatPercentile(stats["p90"], unit),
-			formatPercentile(stats["p99"], unit))
+			formatLatencyMs(stats["p50"], unit),
+			formatLatencyMs(stats["p90"], unit),
+			formatLatencyMs(stats["p99"], unit))
 	}
 	b.WriteByte('\n')
 }
 
-func formatPercentile(v interface{}, unit string) string {
+// formatLatencyMs renders a histogram sample in milliseconds. Values recorded
+// in microseconds are converted so min/max/avg and percentiles share one unit.
+func formatLatencyMs(v interface{}, unit string) string {
 	if v == nil {
 		return "0ms"
 	}
-	if unit == "us" {
-		n, ok := asFloat64(v)
-		if !ok {
-			return fmt.Sprintf("%vms", v)
-		}
-		return fmt.Sprintf("%.1fms", n/1000.0)
+	n, ok := asFloat64(v)
+	if !ok {
+		return fmt.Sprintf("%vms", v)
 	}
-	return fmt.Sprintf("%vms", v)
+	if unit == "us" {
+		n /= 1000.0
+	}
+	if n == math.Trunc(n) {
+		return fmt.Sprintf("%.0fms", n)
+	}
+	return fmt.Sprintf("%.1fms", n)
 }
 
 func responseTimeMap(meas map[string]interface{}) (unit string, rt map[string]map[string]interface{}) {
@@ -956,19 +971,76 @@ func measurementSecondsFromSettings(settings map[string]interface{}) float64 {
 	return 0
 }
 
-func warehousesFromSettings(settings map[string]interface{}) int {
-	if settings == nil {
+// scaleWarehousesFromAggregate returns the run's warehouse scale from
+// consolidated measurement data (sum of worker coverage). It does not read
+// settings.scale.warehouses, which may not match an overridden assignment.
+func scaleWarehousesFromAggregate(agg *Aggregate) int {
+	if agg == nil {
 		return 0
 	}
-	switch scale := settings["scale"].(type) {
-	case config.ScaleBlock:
-		return scale.Warehouses
-	case map[string]interface{}:
-		if n, ok := asInt64(scale["warehouses"]); ok {
+	if meas, ok := agg.Metrics["measurement"].(map[string]interface{}); ok {
+		if n, ok := asInt64(meas["warehouses"]); ok && n > 0 {
 			return int(n)
 		}
 	}
-	return 0
+	return warehousesFromWorkerAssignment(agg.Settings)
+}
+
+func warehousesFromWorkerAssignment(settings map[string]interface{}) int {
+	if settings == nil {
+		return 0
+	}
+	raw, ok := settings["worker_assignment"]
+	if !ok || raw == nil {
+		return 0
+	}
+	total := 0
+	switch assigns := raw.(type) {
+	case []config.WorkerAssignmentJSON:
+		for _, a := range assigns {
+			total += countWarehousesInRanges(a.WarehouseRanges)
+		}
+	case []interface{}:
+		for _, item := range assigns {
+			m, ok := item.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			ranges, err := parseWarehouseRanges(m["warehouse_ranges"])
+			if err != nil {
+				continue
+			}
+			total += countWarehousesInRanges(ranges)
+		}
+	}
+	return total
+}
+
+func workerWarehouseCount(partial map[string]interface{}, expected config.WorkerAssignmentJSON) int {
+	if metrics, ok := partial["metrics"].(map[string]interface{}); ok {
+		if n, ok := asInt64(metrics["warehouses"]); ok && n > 0 {
+			return int(n)
+		}
+	}
+	if assign, ok := partial["assignment"].(map[string]interface{}); ok {
+		if ranges, err := parseWarehouseRanges(assign["warehouse_ranges"]); err == nil {
+			if n := countWarehousesInRanges(ranges); n > 0 {
+				return n
+			}
+		}
+	}
+	return countWarehousesInRanges(expected.WarehouseRanges)
+}
+
+func countWarehousesInRanges(ranges [][]int) int {
+	total := 0
+	for _, r := range ranges {
+		if len(r) != 2 || r[1] <= r[0] {
+			continue
+		}
+		total += r[1] - r[0]
+	}
+	return total
 }
 
 func pacingEnabledFromSettings(settings map[string]interface{}) bool {
