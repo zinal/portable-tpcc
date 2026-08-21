@@ -7,8 +7,10 @@
 #include "terminal.h"
 
 #include <chrono>
+#include <cstddef>
 #include <functional>
 #include <optional>
+#include <stdexcept>
 #include <string>
 
 namespace NTpcc {
@@ -41,14 +43,16 @@ int RunOrchestratedLoader(
     const TRunConfigDocument& doc,
     const std::string& instance,
     const TAdapterIdentity& id,
-    const TLoaderRoleHooks& hooks);
+    const TLoaderRoleHooks& hooks,
+    const std::optional<int>& threadOverride = {});
 
 int RunOrchestratedWorker(
     const TRunConfigDocument& doc,
     const std::string& instance,
     const std::optional<std::string>& startAtRfc3339,
     const TAdapterIdentity& id,
-    const TWorkerRoleHooks& hooks);
+    const TWorkerRoleHooks& hooks,
+    const std::optional<int>& threadOverride = {});
 
 int RunOrchestratedSchema(
     const TRunConfigDocument& doc,
@@ -66,5 +70,20 @@ int RunOrchestratedClean(
     const TRunConfigDocument& doc,
     const std::string& instance,
     std::function<void(const TRunConfigDocument&)> clean);
+
+inline void RequireNonNegativeThreads(const std::optional<int>& threads) {
+    if (threads.has_value() && *threads < 0) {
+        throw std::runtime_error("--threads must not be negative");
+    }
+}
+
+// Launch-time --threads override. Missing keeps assignment.Threads from
+// run-config; 0 means auto at the binary (loader ImportSync / worker ComputeRunLayout).
+inline void ApplyOrchestratedThreadOverride(size_t& threads, const std::optional<int>& override) {
+    RequireNonNegativeThreads(override);
+    if (override.has_value()) {
+        threads = static_cast<size_t>(*override);
+    }
+}
 
 } // namespace NTpcc

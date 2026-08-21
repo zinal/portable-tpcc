@@ -69,6 +69,46 @@ func TestBuildPlanSnapshotResolvesCheckThreads(t *testing.T) {
 	}
 }
 
+func TestBuildPlanSnapshotPassesThreadsToWorkerAndLoader(t *testing.T) {
+	t.Parallel()
+	rc := &RunConfig{
+		Scale: ScaleBlock{Warehouses: 10},
+		LoadAssignment: []LoadAssignmentJSON{{
+			Instance: "loader-a",
+			Host:     "h1",
+			Threads:  2,
+		}},
+		WorkerAssignment: []WorkerAssignmentJSON{{
+			Instance: "worker-a",
+			Host:     "h1",
+			Threads:  2,
+		}},
+	}
+	plan := BuildPlanSnapshot(rc, nil)
+	if got := plan.WorkerArgv["worker-a"]; len(got) != 5 {
+		t.Fatalf("unset worker argv %v, want 5 args without --threads", got)
+	}
+	if got := plan.LoaderArgv["loader-a"]; len(got) != 5 {
+		t.Fatalf("unset loader argv %v, want 5 args without --threads", got)
+	}
+	cli := 64
+	overridden := BuildPlanSnapshot(rc, &cli)
+	if got := overridden.WorkerArgv["worker-a"]; len(got) == 0 || got[len(got)-1] != "--threads=64" {
+		t.Fatalf("worker argv %v, want --threads=64", got)
+	}
+	if got := overridden.LoaderArgv["loader-a"]; len(got) == 0 || got[len(got)-1] != "--threads=64" {
+		t.Fatalf("loader argv %v, want --threads=64", got)
+	}
+	if overridden.WorkerAssignment[0].Threads != 2 {
+		t.Fatalf("assignment threads=%d, want 2 (run-config unchanged)", overridden.WorkerAssignment[0].Threads)
+	}
+	zero := 0
+	auto := BuildPlanSnapshot(rc, &zero)
+	if got := auto.WorkerArgv["worker-a"]; len(got) == 0 || got[len(got)-1] != "--threads=0" {
+		t.Fatalf("auto worker argv %v, want --threads=0", got)
+	}
+}
+
 func TestCheckArgvIncludesThreads(t *testing.T) {
 	t.Parallel()
 	got := CheckArgv("run-config.json", "check-0", "after-import", 10)

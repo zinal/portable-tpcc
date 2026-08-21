@@ -83,8 +83,8 @@ func TestRun_helpMentionsLeaveProcesses(t *testing.T) {
 	if !strings.Contains(string(out), "--leave-processes") {
 		t.Fatalf("help missing --leave-processes:\n%s", out)
 	}
-	if !strings.Contains(string(out), "--threads") {
-		t.Fatalf("help missing --threads:\n%s", out)
+	if !strings.Contains(string(out), "Override worker/loader threads") {
+		t.Fatalf("help missing worker/loader --threads meaning:\n%s", out)
 	}
 	if !strings.Contains(string(out), "test        Arm workers") {
 		t.Fatalf("help missing test command:\n%s", out)

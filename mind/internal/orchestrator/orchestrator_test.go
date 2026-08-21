@@ -51,7 +51,7 @@ func TestPlan_snapshot(t *testing.T) {
 	}
 }
 
-func TestPlanHonorsCheckThreadsOverride(t *testing.T) {
+func TestPlanHonorsThreadsOverride(t *testing.T) {
 	dir := t.TempDir()
 	profilePath := writeTestProfile(t, dir, "")
 	if err := os.MkdirAll(filepath.Join(dir, "dist"), 0755); err != nil {
@@ -59,8 +59,8 @@ func TestPlanHonorsCheckThreadsOverride(t *testing.T) {
 	}
 	threads := 16
 	o, err := orchestrator.New(orchestrator.Options{
-		ProfilePath:  profilePath,
-		CheckThreads: &threads,
+		ProfilePath: profilePath,
+		Threads:     &threads,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -71,6 +71,17 @@ func TestPlanHonorsCheckThreadsOverride(t *testing.T) {
 	}
 	if got := plan.CheckArgvImport; len(got) == 0 || got[len(got)-1] != "--threads=16" {
 		t.Fatalf("check argv %v, want --threads=16", plan.CheckArgvImport)
+	}
+	argv := plan.WorkerArgv["worker-a"]
+	if len(argv) == 0 || argv[len(argv)-1] != "--threads=16" {
+		t.Fatalf("worker argv %v, want --threads=16", argv)
+	}
+	loaderArgv := plan.LoaderArgv["loader-a"]
+	if len(loaderArgv) == 0 || loaderArgv[len(loaderArgv)-1] != "--threads=16" {
+		t.Fatalf("loader argv %v, want --threads=16", loaderArgv)
+	}
+	if plan.WorkerAssignment[0].Threads != 2 {
+		t.Fatalf("run-config worker threads %d, want profile value 2 (override is argv-only)", plan.WorkerAssignment[0].Threads)
 	}
 }
 

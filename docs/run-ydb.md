@@ -232,9 +232,9 @@ Orchestrated roles launched by mind (for reference):
 
 ```text
 tpcc-ydb schema --run-config run-config.json --instance schema-0
-tpcc-ydb loader --run-config run-config.json --instance <loader>
+tpcc-ydb loader --run-config run-config.json --instance <loader> [--threads=N]
 tpcc-ydb indexes --run-config run-config.json --instance indexes-0
-tpcc-ydb worker --run-config run-config.json --instance <worker> --start-at=<UTC>
+tpcc-ydb worker --run-config run-config.json --instance <worker> --start-at=<UTC> [--threads=N]
 tpcc-ydb check  --run-config run-config.json --instance check-0 --after-import|--after-test [--threads=N]
 tpcc-ydb clean  --run-config run-config.json --instance clean-0   # mind-tpcc cleanup
 ```

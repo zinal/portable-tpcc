@@ -94,9 +94,9 @@ void PrintHelp() {
         "\n"
         "Orchestrated mode (mind-tpcc):\n"
         "  schema  --run-config <path> --instance <name>\n"
-        "  loader  --run-config <path> --instance <name>\n"
+        "  loader  --run-config <path> --instance <name> [--threads=N]\n"
         "  indexes --run-config <path> --instance <name>\n"
-        "  worker  --run-config <path> --instance <name> --start-at=<RFC3339-UTC>\n"
+        "  worker  --run-config <path> --instance <name> --start-at=<RFC3339-UTC> [--threads=N]\n"
         "  check   --run-config <path> --instance <name> --after-import|--after-test [--threads=N]\n"
         "  clean   --run-config <path> --instance <name>\n"
         "\n"
@@ -168,11 +168,11 @@ bool ParseOrchestratedArgs(
     std::optional<std::string>& startAt,
     bool& afterImport,
     bool& afterRun,
-    int& threads)
+    std::optional<int>& threads)
 {
     afterImport = false;
     afterRun = false;
-    threads = 0;
+    threads.reset();
     for (int i = 2; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "--run-config" && i + 1 < argc) {
@@ -208,15 +208,18 @@ int RunOrchestrated(
     const std::optional<std::string>& startAt,
     bool afterImport,
     bool afterRun,
-    int threads)
+    const std::optional<int>& threads)
 {
+    if (threads.has_value() && *threads < 0) {
+        throw std::runtime_error("--threads must not be negative");
+    }
     if (command == "worker") {
         LOG_I("Starting orchestrated worker " << instance << "...");
-        return NTpcc::RunWorkerFromRunConfig(runConfig, instance, startAt);
+        return NTpcc::RunWorkerFromRunConfig(runConfig, instance, startAt, threads);
     }
     if (command == "loader") {
         LOG_I("Starting orchestrated loader " << instance << "...");
-        return NTpcc::RunLoaderFromRunConfig(runConfig, instance);
+        return NTpcc::RunLoaderFromRunConfig(runConfig, instance, threads);
     }
     if (command == "schema") {
         LOG_I("Starting orchestrated schema " << instance << "...");
@@ -227,7 +230,7 @@ int RunOrchestrated(
         return NTpcc::RunIndexesFromRunConfig(runConfig, instance);
     }
     if (command == "check") {
-        const int checkConcurrency = threads <= 0 ? 1 : threads;
+        const int checkConcurrency = (!threads.has_value() || *threads <= 0) ? 1 : *threads;
         LOG_I("Starting orchestrated check " << instance
               << " (concurrency=" << checkConcurrency << ")...");
         return NTpcc::RunCheckFromRunConfig(
@@ -419,7 +422,7 @@ int main(int argc, char* argv[]) {
             std::optional<std::string> startAt;
             bool afterImport = false;
             bool afterRun = false;
-            int threads = 0;
+            std::optional<int> threads;
             const bool hasOrchestrated = ParseOrchestratedArgs(
                 argc, argv, runConfig, instance, startAt, afterImport, afterRun, threads);
             // schema/check/loader/worker with --run-config take the orchestrated path.
@@ -500,7 +503,7 @@ int main(int argc, char* argv[]) {
             std::optional<std::string> startAt;
             bool afterImport = false;
             bool afterRun = false;
-            int threads = 0;
+            std::optional<int> threads;
             if (!ParseOrchestratedArgs(
                     argc, argv, runConfig, instance, startAt, afterImport, afterRun, threads)) {
                 std::cerr << "Error: worker/loader require --run-config and --instance\n";

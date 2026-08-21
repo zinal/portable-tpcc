@@ -25,7 +25,7 @@ type Config struct {
 	Yes            bool
 	CheckPhase     string
 	LeaveProcesses bool
-	CheckThreads   *int
+	Threads        *int
 }
 
 // Run dispatches mind-tpcc subcommands (specification §9).
@@ -117,7 +117,7 @@ func run(args []string, interrupt context.Context) int {
 				fmt.Fprintln(os.Stderr, err)
 				return 2
 			}
-			cfg.CheckThreads = &n
+			cfg.Threads = &n
 			i = next
 		case arg == "--yes":
 			cfg.Yes = true
@@ -150,7 +150,7 @@ func run(args []string, interrupt context.Context) int {
 		Overrides:      cfg.Overrides,
 		Interrupt:      interrupt,
 		LeaveProcesses: cfg.LeaveProcesses,
-		CheckThreads:   cfg.CheckThreads,
+		Threads:        cfg.Threads,
 	}
 
 	switch cmd {
@@ -240,7 +240,7 @@ func runPlan(opts orchestrator.Options) int {
 	}
 	var plan *config.PlanSnapshot
 	if err := withMaterializedProfileLock(o, func(ctx *orchestrator.Context) error {
-		plan = config.BuildPlanSnapshot(ctx.RunConfig, o.Opts.CheckThreads)
+		plan = config.BuildPlanSnapshot(ctx.RunConfig, o.Opts.Threads)
 		return nil
 	}); err != nil {
 		return exitErr(err)
@@ -488,7 +488,7 @@ Options:
   --warehouses <n>         Override scale.warehouses (must be <= profile value)
   --ramp-up <duration>     Override phases.ramp_up (warmup), e.g. 30s, 5m
   --measurement <duration> Override phases.measurement, e.g. 2m, 120m
-  --threads <n>            Override check session concurrency (0 = auto)
+  --threads <n>            Override worker/loader threads and check sessions (0 = auto)
   --skip <step>            Skip pipeline step
   --yes                    Non-interactive confirmation
   --leave-processes        Debug: do not kill remote processes this

@@ -125,8 +125,8 @@ the spec as the requirement (see the introduction).
 
 | Topic | Where |
 | --- | --- |
-| Remote `process.json` / nonce / `artifact-manifest.json` | [specification.md](docs/specification.md) §9.1 |
-| Integrity checks (JSON reports, query timeout, `--threads`, session concurrency, warehouse-range size, catalog scheduling, stdout vs JSON) | [specification.md](docs/specification.md) §9.2 |
+| Remote `process.json` / nonce / `artifact-manifest.json`, launch-time `--threads` | [specification.md](docs/specification.md) §9.1 |
+| Integrity checks (JSON reports, query timeout, check `--threads`, session concurrency, warehouse-range size, catalog scheduling, stdout vs JSON) | [specification.md](docs/specification.md) §9.2 |
 | Adapter check/session API | [adapter-api.md](docs/adapter-api.md) §3.6, §4.4, §7 |
 | OceanBase `query_timeout` / physical options | [specification.md](docs/specification.md) §11, [run-oceanbase.md](docs/run-oceanbase.md) |
 | Profile and CLI parameters | [parameter-reference.md](docs/parameter-reference.md) |

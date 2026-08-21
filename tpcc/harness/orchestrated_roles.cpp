@@ -31,9 +31,11 @@ int RunOrchestratedLoader(
     const TRunConfigDocument& doc,
     const std::string& instance,
     const TAdapterIdentity& id,
-    const TLoaderRoleHooks& hooks)
+    const TLoaderRoleHooks& hooks,
+    const std::optional<int>& threadOverride)
 {
-    const auto assign = FindLoaderAssignment(doc, instance);
+    auto assign = FindLoaderAssignment(doc, instance);
+    ApplyOrchestratedThreadOverride(assign.Threads, threadOverride);
     const std::string instanceDir = InstanceWorkDir(doc, "loader", instance);
     EnsureInstanceDir(instanceDir);
     const auto paths = MakeArtifactPaths(instanceDir);
@@ -63,9 +65,11 @@ int RunOrchestratedWorker(
     const std::string& instance,
     const std::optional<std::string>& startAtRfc3339,
     const TAdapterIdentity& id,
-    const TWorkerRoleHooks& hooks)
+    const TWorkerRoleHooks& hooks,
+    const std::optional<int>& threadOverride)
 {
-    const auto assign = FindWorkerAssignment(doc, instance);
+    auto assign = FindWorkerAssignment(doc, instance);
+    ApplyOrchestratedThreadOverride(assign.Threads, threadOverride);
     const std::string instanceDir = InstanceWorkDir(doc, "worker", instance);
     EnsureInstanceDir(instanceDir);
     const auto paths = MakeArtifactPaths(instanceDir);
