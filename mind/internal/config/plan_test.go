@@ -82,12 +82,12 @@ func TestCheckArgvIncludesThreads(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("CheckArgv=%v, want %v", got, want)
 	}
-	serial := CheckArgv("run-config.json", "check-0", "after-run", 0)
+	serial := CheckArgv("run-config.json", "check-0", "after-test", 0)
 	wantSerial := []string{
 		"check",
 		"--run-config", "run-config.json",
 		"--instance", "check-0",
-		"--after-run",
+		"--after-test",
 	}
 	if !reflect.DeepEqual(serial, wantSerial) {
 		t.Fatalf("serial CheckArgv=%v, want %v", serial, wantSerial)

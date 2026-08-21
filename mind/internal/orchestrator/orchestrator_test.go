@@ -419,7 +419,7 @@ func TestRequireWorkerBinaryNeedsExplicitDeploy(t *testing.T) {
 	// via openSessions in requireWorkerBinary through a minimal re-check:
 	o2, err := orchestrator.New(orchestrator.Options{ProfilePath: profilePath, SkipSteps: []string{
 		"schema", "load", "indexes", "check_after_import", "test",
-		"check_after_run", "collect", "consolidate",
+		"check_after_test", "collect", "consolidate",
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -470,12 +470,12 @@ func TestCheckPreservesStateOnLaunchFailure(t *testing.T) {
 	if err := o.StateStore.Transition(ctx.RunID, state.StateConsolidating); err != nil {
 		t.Fatal(err)
 	}
-	err = o.RunCheck(ctx, "after-run")
+	err = o.RunCheck(ctx, "after-test")
 	if err == nil {
 		t.Fatal("expected check to fail without a deployed worker binary")
 	}
 	if strings.Contains(err.Error(), "requires the test stage") {
-		t.Fatalf("consolidating should satisfy after-run prerequisites; got %v", err)
+		t.Fatalf("consolidating should satisfy after-test prerequisites; got %v", err)
 	}
 	if strings.Contains(err.Error(), "invalid state transition") {
 		t.Fatalf("check must not Transition run-state; got %v", err)

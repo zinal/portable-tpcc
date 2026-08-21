@@ -85,7 +85,7 @@ func EffectiveCheckConcurrency(warehouses, configured int, cliThreads *int) int 
 
 // CheckArgv returns argv for the check role.
 func CheckArgv(runConfigPath, instance, phase string, threads int) []string {
-	flag := "--after-run"
+	flag := "--after-test"
 	if phase == "after-import" {
 		flag = "--after-import"
 	}
@@ -113,7 +113,7 @@ type PlanSnapshot struct {
 	SchemaArgv       []string               `json:"schema_argv,omitempty"`
 	IndexesArgv      []string               `json:"indexes_argv,omitempty"`
 	CheckArgvImport  []string               `json:"check_argv_after_import,omitempty"`
-	CheckArgvRun     []string               `json:"check_argv_after_run,omitempty"`
+	CheckArgvTest    []string               `json:"check_argv_after_test,omitempty"`
 }
 
 // BuildPlanSnapshot creates a plan output from run config.
@@ -146,7 +146,7 @@ func BuildPlanSnapshot(rc *RunConfig, checkThreads *int) *PlanSnapshot {
 		SchemaArgv:       SchemaArgv("run-config.json", schemaInstance),
 		IndexesArgv:      IndexesArgv("run-config.json", indexesInstance),
 		CheckArgvImport:  CheckArgv("run-config.json", "check-0", "after-import", threads),
-		CheckArgvRun:     CheckArgv("run-config.json", "check-0", "after-run", threads),
+		CheckArgvTest:    CheckArgv("run-config.json", "check-0", "after-test", threads),
 	}
 }
 

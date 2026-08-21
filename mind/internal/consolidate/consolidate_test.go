@@ -134,7 +134,7 @@ func writePassingChecks(t *testing.T, root, runID string) {
 		t.Fatal(err)
 	}
 	_ = os.WriteFile(filepath.Join(checksDir, "after-import.json"), []byte(`{"ok":true}`), 0644)
-	_ = os.WriteFile(filepath.Join(checksDir, "after-run.json"), []byte(`{"ok":true}`), 0644)
+	_ = os.WriteFile(filepath.Join(checksDir, "after-test.json"), []byte(`{"ok":true}`), 0644)
 }
 
 func writeMinimalWorkerArtifacts(t *testing.T, root, runID, workerName string) string {
@@ -475,7 +475,7 @@ func TestConsolidate_integrityMissingChecks(t *testing.T) {
 		t.Fatalf("expected integrity_errors with missing report details, got %+v", agg.Status)
 	}
 	joined := strings.Join(agg.Status.IntegrityErrors, "\n")
-	if !strings.Contains(joined, "after-import.json") || !strings.Contains(joined, "after-run.json") {
+	if !strings.Contains(joined, "after-import.json") || !strings.Contains(joined, "after-test.json") {
 		t.Fatalf("expected missing report names in integrity_errors, got %#v", agg.Status.IntegrityErrors)
 	}
 }
@@ -489,7 +489,7 @@ func TestConsolidate_integrityFailedCheck(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = os.WriteFile(filepath.Join(checksDir, "after-import.json"), []byte(`{"ok":true}`), 0644)
-	_ = os.WriteFile(filepath.Join(checksDir, "after-run.json"), []byte(`{"ok":false}`), 0644)
+	_ = os.WriteFile(filepath.Join(checksDir, "after-test.json"), []byte(`{"ok":false}`), 0644)
 
 	cons := &consolidate.Consolidator{ResultRoot: root}
 	agg, err := cons.Consolidate(runID, minimalRunConfig(runID))
@@ -502,7 +502,7 @@ func TestConsolidate_integrityFailedCheck(t *testing.T) {
 	if len(agg.Status.IntegrityErrors) != 1 {
 		t.Fatalf("expected one integrity error, got %#v", agg.Status.IntegrityErrors)
 	}
-	if !strings.Contains(agg.Status.IntegrityErrors[0], "after-run.json") || !strings.Contains(agg.Status.IntegrityErrors[0], "ok=false") {
+	if !strings.Contains(agg.Status.IntegrityErrors[0], "after-test.json") || !strings.Contains(agg.Status.IntegrityErrors[0], "ok=false") {
 		t.Fatalf("expected failed check reason, got %#v", agg.Status.IntegrityErrors[0])
 	}
 
@@ -513,14 +513,14 @@ func TestConsolidate_integrityFailedCheck(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(summary), "integrity_error=check report after-run.json: ok=false") {
+	if !strings.Contains(string(summary), "integrity_error=check report after-test.json: ok=false") {
 		t.Fatalf("summary missing integrity error details:\n%s", summary)
 	}
 }
 
-func TestConsolidate_integritySkippedAfterRun(t *testing.T) {
+func TestConsolidate_integritySkippedAfterTest(t *testing.T) {
 	root := t.TempDir()
-	runID := "run-skip-after-run"
+	runID := "run-skip-after-test"
 	writeMinimalWorkerArtifacts(t, root, runID, "worker-a")
 	checksDir := filepath.Join(root, runID, "checks")
 	if err := os.MkdirAll(checksDir, 0755); err != nil {
@@ -530,14 +530,14 @@ func TestConsolidate_integritySkippedAfterRun(t *testing.T) {
 
 	cons := &consolidate.Consolidator{ResultRoot: root}
 	agg, err := cons.ConsolidateWithOptions(runID, minimalRunConfig(runID), consolidate.Options{
-		SkippedSteps:   []string{"check_after_run"},
+		SkippedSteps:   []string{"check_after_test"},
 		MaxClockSkewMs: 100,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !agg.Status.IntegrityOK {
-		t.Fatalf("expected integrity_ok=true when after-run check was skipped, got %+v", agg.Status)
+		t.Fatalf("expected integrity_ok=true when after-test check was skipped, got %+v", agg.Status)
 	}
 	if len(agg.Status.IntegrityErrors) != 0 {
 		t.Fatalf("expected no integrity_errors, got %#v", agg.Status.IntegrityErrors)

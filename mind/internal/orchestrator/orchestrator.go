@@ -455,7 +455,7 @@ func (o *Orchestrator) Run() error {
 		{"indexes", true, func() error { return o.indexes(ctx) }},
 		{"check_after_import", o.Profile.Checks.AfterImport, func() error { return o.check(ctx, "after-import") }},
 		{"test", true, func() error { return o.test(ctx) }},
-		{"check_after_run", o.Profile.Checks.AfterRun, func() error { return o.check(ctx, "after-run") }},
+		{"check_after_test", o.Profile.Checks.WantAfterTest(), func() error { return o.check(ctx, "after-test") }},
 		{"collect", true, func() error { return o.collect(ctx) }},
 		{"consolidate", true, func() error { return o.consolidate(ctx) }},
 	}
@@ -492,12 +492,16 @@ func (o *Orchestrator) shouldSkip(name string) bool {
 		if name == "test" && s == "start" {
 			return true
 		}
+		// `check_after_run` is the former name of the post-test check step.
+		if name == "check_after_test" && s == "check_after_run" {
+			return true
+		}
 	}
 	return false
 }
 
 func isCheckStep(name string) bool {
-	return name == "check_after_import" || name == "check_after_run"
+	return name == "check_after_import" || name == "check_after_test"
 }
 
 func (o *Orchestrator) schema(ctx *Context) error {
@@ -650,11 +654,11 @@ func requireCheckPhase(rs *state.RunState, phase string) error {
 	switch phase {
 	case "after-import":
 		return requireIndexesForImportCheck(rs)
-	case "after-run":
+	case "after-test":
 		if rs.State == state.StateCompleted || state.Reached(rs.State, state.StateDraining) {
 			return nil
 		}
-		return fmt.Errorf("check --after-run requires the test stage to finish (current state is %s)", rs.State)
+		return fmt.Errorf("check --after-test requires the test stage to finish (current state is %s)", rs.State)
 	default:
 		return fmt.Errorf("unknown check phase %q", phase)
 	}

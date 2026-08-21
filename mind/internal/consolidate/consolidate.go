@@ -560,11 +560,11 @@ func evaluateClockSkew(workerCalibrations map[string]workerClockCalibration, max
 }
 
 var checkPhaseFiles = []struct {
-	skipStep string
-	fileName string
+	skipSteps []string
+	fileNames []string // preferred first; later names are legacy aliases
 }{
-	{"check_after_import", "after-import.json"},
-	{"check_after_run", "after-run.json"},
+	{[]string{"check_after_import"}, []string{"after-import.json"}},
+	{[]string{"check_after_test", "check_after_run"}, []string{"after-test.json", "after-run.json"}},
 }
 
 func skippedStepSet(steps []string) map[string]bool {
@@ -575,13 +575,23 @@ func skippedStepSet(steps []string) map[string]bool {
 	return out
 }
 
-func requiredCheckFiles(skipped []string) []string {
-	skip := skippedStepSet(skipped)
-	var required []string
-	for _, p := range checkPhaseFiles {
-		if !skip[p.skipStep] {
-			required = append(required, p.fileName)
+func phaseSkipped(skip map[string]bool, names []string) bool {
+	for _, name := range names {
+		if skip[name] {
+			return true
 		}
+	}
+	return false
+}
+
+func requiredCheckFiles(skipped []string) [][]string {
+	skip := skippedStepSet(skipped)
+	var required [][]string
+	for _, p := range checkPhaseFiles {
+		if phaseSkipped(skip, p.skipSteps) {
+			continue
+		}
+		required = append(required, p.fileNames)
 	}
 	return required
 }
@@ -622,8 +632,8 @@ func evaluateIntegrity(resultRoot, runID string, opts Options) integrityEvaluati
 	entries, err := os.ReadDir(checksDir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			for _, name := range required {
-				errors = append(errors, fmt.Sprintf("required check report missing: %s", name))
+			for _, names := range required {
+				errors = append(errors, fmt.Sprintf("required check report missing: %s", names[0]))
 			}
 			return integrityEvaluation{ok: false, errors: errors}
 		}
@@ -648,9 +658,16 @@ func evaluateIntegrity(resultRoot, runID string, opts Options) integrityEvaluati
 			errors = append(errors, fmt.Sprintf("check report %s: %s", e.Name(), reason))
 		}
 	}
-	for _, name := range required {
-		if !present[name] {
-			errors = append(errors, fmt.Sprintf("required check report missing: %s", name))
+	for _, names := range required {
+		found := false
+		for _, name := range names {
+			if present[name] {
+				found = true
+				break
+			}
+		}
+		if !found {
+			errors = append(errors, fmt.Sprintf("required check report missing: %s", names[0]))
 		}
 	}
 	return integrityEvaluation{ok: len(errors) == 0, errors: errors}

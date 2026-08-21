@@ -305,12 +305,12 @@ unit tests для runtime time utilities.
 
 **Код:** `mind/internal/orchestrator/orchestrator.go:171-193,264-296`.
 
-`checks.after_import: false` и `checks.after_run: false` не исключают
+`checks.after_import: false` и `checks.after_test: false` не исключают
 соответствующие шаги. Условие для `AfterImport` содержит только комментарий.
 При ошибке check обе ветви `checks.fail_fast` возвращают одну и ту же ошибку.
 
 **Исправление:** pipeline учитывает profile flags `checks.after_import` и
-`checks.after_run` при построении stage list. При `checks.fail_fast: false`
+`checks.after_test` при построении stage list. При `checks.fail_fast: false`
 ошибка check фиксируется, но не прерывает последующие шаги.
 
 ### IR-014. `data.batch_rows` парсится, но не применяется

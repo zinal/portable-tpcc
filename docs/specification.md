@@ -337,7 +337,7 @@ aggregate carries the settings themselves.
 
 ```text
 mind-tpcc validate | plan | deploy | undeploy --yes | schema | load | indexes
-mind-tpcc check [--after-import|--after-run]
+mind-tpcc check [--after-import|--after-test]
 mind-tpcc test | status | stop | collect | consolidate
 mind-tpcc run | cleanup --yes
 ```
@@ -347,7 +347,7 @@ compatibility alias for `test`. `--skip start` skips the same `run` step.
 
 `run` = validate → require prior `deploy` (shared worker binaries present on
 every assigned host; no auto-upload) → schema → load → indexes →
-check(after-import) → test → check(after-run) → collect → consolidate.
+check(after-import) → test → check(after-test) → collect → consolidate.
 
 `cleanup --yes` tears down an existing run for the profile (explicit
 `--run-id`, else the newest matching run, including terminal states). Phases
@@ -416,7 +416,7 @@ the check report (§9.2), not only `exited with status N`.
 ### 9.2. Integrity-check reports
 
 Orchestrated `check` uses instance `check-0` on the first loader host.
-`--after-import` and `--after-run` are separate invocations.
+`--after-import` and `--after-test` are separate invocations.
 
 `mind-tpcc` passes `--threads=N` from CLI `--threads` when that flag is set,
 otherwise from `runtime.check_concurrency` (0 / omit =
@@ -453,7 +453,7 @@ lines are not required. The JSON report is the structured contract for
 orchestrator diagnostics and consolidate.
 
 The check role MUST write `{run_dir}/checks/{phase}.json` on the runtime host
-before the artifact manifest (`phase` is `after-import` or `after-run`).
+before the artifact manifest (`phase` is `after-import` or `after-test`).
 `collect` copies those files to `results/<run_id>/checks/`.
 
 The report MUST be JSON with at least:
@@ -461,7 +461,7 @@ The report MUST be JSON with at least:
 | Field | Meaning |
 | --- | --- |
 | `ok` | `true` iff `failed == 0` and `errors == 0` |
-| `phase` | `after-import` or `after-run` |
+| `phase` | `after-import` or `after-test` |
 | `passed`, `failed`, `skipped`, `errors` | counts |
 | `checks[]` | entries with `id`, `title`, `status`, `detail` |
 | `checks[].status` | `passed`, `failed`, `skipped`, or `error` |

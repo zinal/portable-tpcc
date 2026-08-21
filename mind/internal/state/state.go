@@ -202,7 +202,7 @@ func allowedRecovery(oldState, newState string) bool {
 			return true
 		}
 	case StateCollecting:
-		// Pull check reports written after a late check --after-run.
+		// Pull check reports written after a late check --after-test.
 		return oldState == StateConsolidating
 	}
 	return false

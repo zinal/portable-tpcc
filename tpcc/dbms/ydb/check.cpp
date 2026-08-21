@@ -30,7 +30,7 @@ namespace NTpcc {
 namespace {
 
 std::string PhaseName(ECheckPhase phase) {
-    return phase == ECheckPhase::AfterImport ? "after-import" : "after-run";
+    return phase == ECheckPhase::AfterImport ? "after-import" : "after-test";
 }
 
 void AddResult(TCheckReport& report, TCheckResult result) {
@@ -671,7 +671,7 @@ void CheckSync(
 {
     TCheckRequest request;
     request.WarehouseCount = warehouseCount;
-    request.Phase = afterImport ? ECheckPhase::AfterImport : ECheckPhase::AfterRun;
+    request.Phase = afterImport ? ECheckPhase::AfterImport : ECheckPhase::AfterTest;
     request.CheckConcurrency = checkConcurrency <= 1 ? 1 : checkConcurrency;
     auto report = RunYdbChecks(connectionConfig, request);
     for (const auto& r : report.Results) {
@@ -702,7 +702,7 @@ int RunCheckFromRunConfig(
     int checkConcurrency)
 {
     if (afterImport == afterRun) {
-        throw std::runtime_error("check requires exactly one of --after-import or --after-run");
+        throw std::runtime_error("check requires exactly one of --after-import or --after-test");
     }
 
     const auto doc = LoadRunConfigDocument(runConfigPath);
@@ -721,7 +721,7 @@ int RunCheckFromRunConfig(
         request.RunId = doc.RunId;
         request.Instance = instance;
         request.WarehouseCount = doc.ScaleWarehouses;
-        request.Phase = afterImport ? ECheckPhase::AfterImport : ECheckPhase::AfterRun;
+        request.Phase = afterImport ? ECheckPhase::AfterImport : ECheckPhase::AfterTest;
         request.CheckConcurrency = checkConcurrency <= 1 ? 1 : checkConcurrency;
 
         TYdbCheckAdapter adapter(connection);

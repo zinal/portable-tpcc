@@ -777,7 +777,7 @@ TCheckReport RunPgChecks(const std::string& connectionString, const TCheckReques
     TCheckReport report;
     report.RunId = request.RunId;
     report.Instance = request.Instance;
-    report.Phase = request.Phase == ECheckPhase::AfterImport ? "after-import" : "after-run";
+    report.Phase = request.Phase == ECheckPhase::AfterImport ? "after-import" : "after-test";
     report.WarehouseCount = request.WarehouseCount;
 
     const bool print = true;
@@ -838,7 +838,7 @@ void CheckSync(const std::string& connectionString, int warehouseCount, bool aft
                const std::string& path, int checkConcurrency) {
     TCheckRequest req;
     req.WarehouseCount = warehouseCount;
-    req.Phase = afterImport ? ECheckPhase::AfterImport : ECheckPhase::AfterRun;
+    req.Phase = afterImport ? ECheckPhase::AfterImport : ECheckPhase::AfterTest;
     req.Path = path;
     req.CheckConcurrency = checkConcurrency <= 1 ? 1 : checkConcurrency;
     auto report = RunPgChecks(connectionString, req);
@@ -859,7 +859,7 @@ TCheckReport TPgCheckAdapter::Run(const TCheckRequest& request) {
 int RunCheckFromRunConfig(const std::string& runConfigPath, const std::string& instance,
                           bool afterImport, bool afterRun, int checkConcurrency) {
     if (afterImport == afterRun) {
-        throw std::runtime_error("check requires exactly one of --after-import or --after-run");
+        throw std::runtime_error("check requires exactly one of --after-import or --after-test");
     }
 
     const auto doc = LoadRunConfigDocument(runConfigPath);
@@ -876,7 +876,7 @@ int RunCheckFromRunConfig(const std::string& runConfigPath, const std::string& i
 
         TCheckRequest req;
         req.WarehouseCount = doc.ScaleWarehouses;
-        req.Phase = afterImport ? ECheckPhase::AfterImport : ECheckPhase::AfterRun;
+        req.Phase = afterImport ? ECheckPhase::AfterImport : ECheckPhase::AfterTest;
         req.Path = doc.Path;
         req.RunId = doc.RunId;
         req.Instance = instance;

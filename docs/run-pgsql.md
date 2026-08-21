@@ -106,7 +106,7 @@ $BIN run --connection="$CONN" --path=portable_tpcc -w 10 \
   --duration=5 -t 4
 
 # check after run
-$BIN check --connection="$CONN" --path=portable_tpcc -w 10 -t 10 --after-run
+$BIN check --connection="$CONN" --path=portable_tpcc -w 10 -t 10 --after-test
 
 # drop TPC-C tables
 $BIN clean --connection="$CONN" --path=portable_tpcc
@@ -160,7 +160,7 @@ phases:
 # Integrity checks in `mind-tpcc run` only run when enabled:
 checks:
   after_import: true
-  after_run: true
+  after_test: true
 ```
 
 ```bash
@@ -180,12 +180,12 @@ cp mind/mind-tpcc ./mind-tpcc
 # Full pipeline (requires prior deploy):
 # validate → require deploy → schema → load → indexes
 # → check(after-import) if checks.after_import → test
-# → check(after-run) if checks.after_run → collect → consolidate
+# → check(after-test) if checks.after_test → collect → consolidate
 ./mind-tpcc run --profile ./profile-pgsql.yaml
 ```
 
 Or run stages individually: `deploy`, `schema`, `load`, `indexes`,
-`check --after-import`, `test`, `check --after-run`, `collect`,
+`check --after-import`, `test`, `check --after-test`, `collect`,
 `consolidate`.
 
 On a single host, set every loader/worker `host` to `127.0.0.1` (local
@@ -210,7 +210,7 @@ installed until `undeploy`.
 2. `tpcc-pgsql` is built (and `mind-tpcc` for orchestration).
 3. Credentials are supplied (`--connection=...` or `TPCC_PASSWORD`).
 4. Flow: `schema` → `import`/`load` → `indexes` → `check --after-import`
-   → `run`/`test` → `check --after-run`.
+   → `run`/`test` → `check --after-test`.
 
 For a quick engineering smoke test, standalone with `-w 10` and a short
 `--duration` is enough. For settings closer to TPC-C 5.11, see the defaults

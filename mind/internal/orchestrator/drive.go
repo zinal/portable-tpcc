@@ -617,8 +617,8 @@ func checkPhaseFromArgv(argv []string) string {
 		switch a {
 		case "--after-import":
 			return "after-import"
-		case "--after-run":
-			return "after-run"
+		case "--after-test", "--after-run":
+			return "after-test"
 		}
 	}
 	return ""
@@ -1301,9 +1301,19 @@ func (o *Orchestrator) collectArtifacts(ctx *Context, sessions map[string]remote
 		if err != nil {
 			return err
 		}
-		for _, phase := range []string{"after-import", "after-run"} {
+		for _, phase := range []string{"after-import", "after-test"} {
 			remotePath := filepath.Join(runDir, "checks", phase+".json")
 			exists, _ := sess.Exists(remotePath)
+			if !exists {
+				// Accept legacy after-run.json from older workers.
+				if phase == "after-test" {
+					legacy := filepath.Join(runDir, "checks", "after-run.json")
+					if ok, _ := sess.Exists(legacy); ok {
+						remotePath = legacy
+						exists = true
+					}
+				}
+			}
 			if !exists {
 				continue
 			}
@@ -1311,7 +1321,11 @@ func (o *Orchestrator) collectArtifacts(ctx *Context, sessions map[string]remote
 			if err := os.MkdirAll(localDir, 0755); err != nil {
 				return err
 			}
-			if err := sess.Download(remotePath, filepath.Join(localDir, phase+".json")); err != nil {
+			localName := phase + ".json"
+			if filepath.Base(remotePath) == "after-run.json" {
+				localName = "after-test.json"
+			}
+			if err := sess.Download(remotePath, filepath.Join(localDir, localName)); err != nil {
 				return err
 			}
 		}

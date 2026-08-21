@@ -8,7 +8,7 @@ namespace NTpcc {
 
 enum class ECheckPhase {
     AfterImport,
-    AfterRun,
+    AfterTest,
     Both,
 };
 
