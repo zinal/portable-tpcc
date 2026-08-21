@@ -59,8 +59,10 @@ type Collector struct {
 
 // CollectInstance copies instance artifacts from source to results/raw.
 func (c *Collector) CollectInstance(runID, role, instance, sourceDir string) error {
-	destTmp := filepath.Join(c.ResultRoot, runID, "raw", role, instance, ".tmp")
 	destFinal := filepath.Join(c.ResultRoot, runID, "raw", role, instance)
+	// destTmp must be a sibling of destFinal. Nesting it at destFinal/.tmp
+	// makes RemoveAll(destFinal) delete the staged files before rename.
+	destTmp := destFinal + ".tmp"
 	if err := os.RemoveAll(destTmp); err != nil {
 		return err
 	}
