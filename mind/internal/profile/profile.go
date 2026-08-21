@@ -127,8 +127,12 @@ type Runtime struct {
 	Pacing                string `yaml:"pacing"`
 	ThinkTimeDistribution string `yaml:"think_time_distribution"`
 	ThreadsPerLoader      int    `yaml:"threads_per_loader"`
-	ThreadsPerWorker      int    `yaml:"threads_per_worker"`
-	MaxInflightPerWorker  int    `yaml:"max_inflight_per_worker"`
+	// ThreadsPerWorker is coroutine scheduler threads per worker process.
+	// 0 / omit keeps threads: 0 in the assignment (worker ComputeRunLayout auto).
+	ThreadsPerWorker int `yaml:"threads_per_worker"`
+	// MaxInflightPerWorker caps concurrent transactions per worker.
+	// 0 / omit materializes as config.DefaultMaxInflightPerWorker (100).
+	MaxInflightPerWorker int `yaml:"max_inflight_per_worker"`
 	// CheckConcurrency is parallel DBMS sessions for integrity checks.
 	// 0 / omit = auto (min(scale.warehouses, 32)).
 	CheckConcurrency int         `yaml:"check_concurrency"`
