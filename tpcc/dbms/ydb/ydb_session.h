@@ -5,10 +5,12 @@
 
 #include <session.h>
 
+#include <ydb/public/sdk/cpp/include/ydb-cpp-sdk/client/params/params.h>
 #include <ydb/public/sdk/cpp/include/ydb-cpp-sdk/client/query/client.h>
 
 #include <memory>
 #include <optional>
+#include <string>
 
 namespace NTpcc {
 
@@ -26,6 +28,12 @@ public:
     TFuture<TOperationResult> ExecuteSelect1() override;
 
 private:
+    TFuture<TOperationResult> CatchOp(TFuture<TOperationResult> future);
+    TFuture<NYdb::NQuery::TExecuteQueryResult> ExecQuery(
+        std::string query,
+        std::optional<NYdb::TParams> params = std::nullopt,
+        bool commit = false);
+
     NYdb::NQuery::TSession Session_;
     std::optional<NYdb::NQuery::TTransaction> Tx_;
     std::string Path_;
@@ -36,12 +44,12 @@ private:
 
 class TYdbTpccSession : public ITpccSession {
 public:
-    TYdbTpccSession(NYdb::NQuery::TSession session, std::string path);
+    TYdbTpccSession(TYdbConnection& connection, std::string path);
 
     TFuture<std::unique_ptr<ITpccTransaction>> Begin(EIsolationLevel isolation) override;
 
 private:
-    NYdb::NQuery::TSession Session_;
+    TYdbConnection& Connection_;
     std::string Path_;
 };
 

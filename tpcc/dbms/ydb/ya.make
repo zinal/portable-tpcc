@@ -50,6 +50,11 @@ PEERDIR(
     contrib/libs/fmt
     contrib/restricted/nlohmann_json
     library/cpp/logger
+    library/cpp/threading/future
 )
 
 END()
+
+RECURSE_FOR_TESTS(
+    ut
+)

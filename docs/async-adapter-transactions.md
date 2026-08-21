@@ -1,14 +1,14 @@
 # Async `ITpccTransaction` migration plan
 
-Status: **in progress** (PR B / OceanBase worker path).  
+Status: **in progress** (PR C / YDB worker path).  
 Related contract: [adapter-api.md](adapter-api.md) §4.3 (transaction ops that
 touch the DBMS MUST be async), §5 (PostgreSQL / YDB / OceanBase notes).  
 Reference implementation: [ydb-platform/tpcc-postgres-cpp](https://github.com/ydb-platform/tpcc-postgres-cpp)
 (session returns incomplete futures; workflows `co_await TSuspendWithFuture`).
 
 This document describes the required changes and the planned sequence to make
-PostgreSQL and OceanBase worker paths genuinely asynchronous at the
-`ITpccTransaction` boundary, and to bring YDB to the same model. It does
+PostgreSQL, OceanBase, and YDB worker paths genuinely asynchronous at the
+`ITpccTransaction` boundary. It does
 **not** propose adaptive `max_inflight` or changes to TPC-C workflows’
 semantic steps.
 
@@ -23,22 +23,22 @@ co_await SuspendExecute(tx, context, op)
 
 (`tpcc/transactions/workflow_util.h`)
 
-But the YDB adapter currently completes `Execute` / `Commit` / … by
+Worker adapters originally completed `Execute` / `Commit` / … by
 **blocking the task-queue (scheduler) thread** before returning a ready
-`TFuture`:
+`TFuture`. After PRs A–C the worker paths no longer do that:
 
 | Adapter | Mechanism on scheduler thread |
 | --- | --- |
 | PostgreSQL | Worker `ITpccTransaction` chains `PgSession` futures (no `.Get()` on the task-queue thread) |
 | OceanBase | Worker `ITpccTransaction` chains `TObSession` futures (no `.Get()` on the task-queue thread) |
-| YDB | `Session_.ExecuteQuery(…).GetValueSync()` inside `TYdbTpccTransaction::Execute` (no IO offload) |
+| YDB | Worker `ITpccTransaction` bridges SDK async futures via `BridgeYdbFuture` (no `GetValueSync` on the task-queue thread) |
 
-Session layers for PG/OB already offload sync SDK calls to an `IExecutor` and
-return incomplete `TFuture`s. The remaining YDB adapter `GetValueSync()`
-(and previously PG/OB `.Get()`) undoes that for the scheduler:
-`TSuspendWithFuture` sees a ready future and never parks the coroutine.
+Session layers for PG/OB offload sync SDK calls to an `IExecutor` and
+return incomplete `TFuture`s. A blocking wait on the worker path undoes that
+for the scheduler: `TSuspendWithFuture` sees a ready future and never parks
+the coroutine.
 
-Observable symptom (OceanBase, 1200 WH/worker, auto threads):
+Historical symptom (OceanBase, 1200 WH/worker, auto threads, before PR B):
 
 ```text
 2 threads, 100 max inflight  →  Inflight:2, ready:~11k, eff:~5%
@@ -56,7 +56,7 @@ tpcc-postgres-cpp.
 3. Preserve the shared semantic-op surface (`ops.h` / workflows); do not fork PG-style SQL into workflows.
 4. Keep sync connectors (libpqxx, MariaDB C API) on a bounded `IExecutor` where needed.
 5. Restore usefulness of mind/worker auto `threads=0` + large `max_inflight` for paced runs.
-6. Same acceptance criterion for YDB (today it is worse than PG/OB).
+6. Same acceptance criterion for YDB as for PostgreSQL and OceanBase.
 
 Non-goals:
 
@@ -126,15 +126,18 @@ Update [adapter-api.md](adapter-api.md) §4.3 so that:
 - Loader / check / schema admin paths MAY still wait synchronously until a
   follow-up.
 
-### 4.3. YDB — not OK today
+### 4.3. YDB
 
-- No session-level IO offload on the worker hot path.
-- `GetValueSync()` in `Execute`, `Commit`, `Rollback`, and session acquire
-  (`GetSession().GetValueSync()`).
+- Worker `ITpccTransaction` in `tpcc/dbms/ydb/ydb_session.cpp` bridges SDK
+  async execute/commit/session futures via `BridgeYdbFuture`
+  (`tpcc/dbms/ydb/ydb_future.h`) and `Then` / `ThenFold` in
+  `tpcc/runtime/future_util.h`. `CreateSession` does not wait on the DBMS;
+  `GetSession` is deferred to async `Begin`.
 - Interactive transactions and `ExecuteFinalAndCommit` fusion remain
-  required ([adapter-api.md](adapter-api.md) §5.2); they must become async
-  bridges, not sync wrappers.
-- Treat as a separate, larger PR after PG+OB.
+  required ([adapter-api.md](adapter-api.md) §5.2); the last op still uses
+  `CommitTx(true)` when `FinalCommitMode_` is set.
+- Loader / check / schema admin paths MAY still wait synchronously until a
+  follow-up.
 
 ## 5. Work sequence
 
@@ -210,8 +213,8 @@ for per-op / commit paths.
 | --- | --- |
 | Plan doc | This plan document + link from `adapter-api.md` |
 | **PR A** | Phase 0 (spec wording) + Phase 1 (PostgreSQL) + shared helpers + tests |
-| **PR B** (this work) | Phase 2 (OceanBase), thin diff on top of A |
-| **PR C** | Phase 3 (YDB async bridge) |
+| **PR B** | Phase 2 (OceanBase), thin diff on top of A |
+| **PR C** (this work) | Phase 3 (YDB async bridge) |
 | **PR D** | Phase 4 polish / optional diagnostics |
 
 Do not combine C with A/B: YDB risk and review surface differ.
@@ -241,6 +244,6 @@ Do not combine C with A/B: YDB risk and review surface differ.
 - `tpcc/runtime/future_util.h` — `Then` / `ThenFold` / `CatchToValue`
 - `tpcc/dbms/pgsql/tpcc_session.cpp` — PostgreSQL async `ITpccTransaction`
 - `tpcc/dbms/oceanbase/tpcc_session.cpp` — OceanBase async `ITpccTransaction`
+- `tpcc/dbms/ydb/ydb_session.cpp` — YDB async `ITpccTransaction` (`BridgeYdbFuture`)
 - `tpcc/dbms/oceanbase/ob_session.cpp`
-- `tpcc/dbms/ydb/ydb_session.cpp` — `GetValueSync`
 - tpcc-postgres-cpp `pg_session.cpp` + `transaction_neworder.cpp` — target await style

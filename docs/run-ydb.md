@@ -130,6 +130,12 @@ $BIN schema --endpoint=grpcs://ydb.example.net:2135 --database=/Root/tpcc \
 Useful shared flags: `--no-delays`, `--help`.
 See [parameter-reference.md](parameter-reference.md#standalone-tpcc-dbms-cli).
 
+Worker `ITpccTransaction` does not block the scheduler on YDB SDK IO. Paced
+runs can keep `--threads` / `threads_per_worker` low (including auto
+`threads=0`) and a large `--max_inflight` / `max_inflight_per_worker`; progress
+`Inflight` should exceed `ThreadCount` when the database has headroom. See
+[async-adapter-transactions.md](async-adapter-transactions.md).
+
 `indexes` creates secondary indexes after load (YDB has no PostgreSQL-style
 `ANALYZE` step).
 
