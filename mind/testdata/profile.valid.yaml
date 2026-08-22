@@ -41,12 +41,10 @@ workload:
     stock_level: 4
 
 loaders:
-  - name: loader-a
-    host: 127.0.0.1
+  - 127.0.0.1
 
 workers:
-  - name: worker-a
-    host: 127.0.0.1
+  - 127.0.0.1
 
 phases:
   start_lead: 45s

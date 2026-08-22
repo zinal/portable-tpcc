@@ -85,6 +85,7 @@ func Profile(p *profile.Profile) *Result {
 	if p.Scale.Warehouses <= 0 {
 		res.Add("scale.warehouses must be positive")
 	}
+	profile.AssignInstanceNames(p.Loaders, p.Workers)
 	if len(p.Loaders) == 0 {
 		res.Add("loaders list must not be empty")
 	}
@@ -254,17 +255,17 @@ func validateInstances(
 	seenNames map[string]bool,
 	remoteKeys map[string]bool,
 ) {
-	for _, item := range items {
-		if err := profile.ValidateInstanceName(item.Name); err != nil {
-			res.Add(fmt.Sprintf("%s %s: %v", role, item.Name, err))
+	for i, item := range items {
+		if item.Host == "" {
+			res.Add(fmt.Sprintf("%s[%d]: host is required (connection address)", role, i))
 		}
-		if seenNames[item.Name] {
+		if err := profile.ValidateInstanceName(item.Name); err != nil {
+			res.Add(fmt.Sprintf("%s[%d]: %v", role, i, err))
+		}
+		if item.Name != "" && seenNames[item.Name] {
 			res.Add(fmt.Sprintf("duplicate instance name %q", item.Name))
 		}
 		seenNames[item.Name] = true
-		if item.Host == "" {
-			res.Add(fmt.Sprintf("%s %s: host is required (connection address)", role, item.Name))
-		}
 		// Identical host addresses mean co-location (one SSH/local session).
 		key := fmt.Sprintf("%s:%s:%s", item.Host, p.Paths.RemoteRoot, item.Name)
 		if remoteKeys[key] {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -105,12 +106,26 @@ type TxTiming struct {
 	StockLevel  int `yaml:"stock_level"`
 }
 
-// NamedHost is a loader or worker instance.
+// NamedHost is a loader or worker instance after profile parse.
 // Host is the connection address (hostname, IP, or host:port for SSH).
 // Identical Host values across loaders/workers mean co-location on one machine.
+// Name is generated from Host (see AssignInstanceNames); it is not a profile field.
 type NamedHost struct {
-	Name string `yaml:"name"`
-	Host string `yaml:"host"`
+	Name string `yaml:"-"`
+	Host string `yaml:"-"`
+}
+
+// UnmarshalYAML accepts a host address string. Mapping entries (name/host) are rejected.
+func (h *NamedHost) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind != yaml.ScalarNode {
+		return fmt.Errorf("loader/worker entry must be a host address string")
+	}
+	var host string
+	if err := value.Decode(&host); err != nil {
+		return err
+	}
+	h.Host = strings.TrimSpace(host)
+	return nil
 }
 
 type Phases struct {
@@ -197,7 +212,56 @@ func Parse(data []byte) (*Profile, error) {
 		return nil, fmt.Errorf("profile decode: %w", err)
 	}
 	p.Raw = raw
+	AssignInstanceNames(p.Loaders, p.Workers)
 	return &p, nil
+}
+
+// AssignInstanceNames fills empty instance names from host values.
+// Each host gets a 1-based suffix in the order loaders then workers, so
+// repeated addresses stay unique across both lists.
+func AssignInstanceNames(loaders, workers []NamedHost) {
+	counts := map[string]int{}
+	assign := func(items []NamedHost) {
+		for i := range items {
+			if items[i].Name != "" {
+				continue
+			}
+			counts[items[i].Host]++
+			items[i].Name = instanceNameFromHost(items[i].Host, counts[items[i].Host])
+		}
+	}
+	assign(loaders)
+	assign(workers)
+}
+
+func instanceNameFromHost(host string, index int) string {
+	return fmt.Sprintf("%s-%d", sanitizeHostForName(host), index)
+}
+
+func sanitizeHostForName(host string) string {
+	host = strings.ToLower(strings.TrimSpace(host))
+	var b strings.Builder
+	lastDash := false
+	for _, r := range host {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+			lastDash = false
+		default:
+			if !lastDash && b.Len() > 0 {
+				b.WriteByte('-')
+				lastDash = true
+			}
+		}
+	}
+	s := strings.Trim(b.String(), "-")
+	if s == "" {
+		s = "host"
+	}
+	if s[0] >= '0' && s[0] <= '9' {
+		s = "h-" + s
+	}
+	return s
 }
 
 // ValidateInstanceName checks instance name pattern.

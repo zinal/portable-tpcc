@@ -225,33 +225,29 @@ Artifacts land under `paths.result_root/<run_id>/` (including
 `aggregate.json`, `orchestrator/run-config.json`, and
 `profile.redacted.yaml`).
 
-On a single host, set every loader/worker `host` to `127.0.0.1` (local
+On a single host, list `127.0.0.1` for every loader/worker (local
 sessions, no SSH). Multi-host runs need SSH access and tightly synchronized
 clocks.
 
 ### Multiple workers / co-location
 
-`host` is the connection address. Mind splits `scale.warehouses` into balanced
-contiguous ranges across instances. Reuse the same `host` string to co-locate
-several loaders/workers on one machine (one SSH/local session).
+Each `loaders` / `workers` entry is a connection address. Mind splits
+`scale.warehouses` into balanced contiguous ranges across instances. Repeat
+the same host string to co-locate several loaders/workers on one machine
+(one SSH/local session).
 
 ```yaml
 scale:
   warehouses: 300
 
 loaders:
-  - name: loader-a
-    host: 10.10.0.21
-  - name: loader-b
-    host: 10.10.0.22
+  - 10.10.0.21
+  - 10.10.0.22
 
 workers:
-  - name: worker-a
-    host: 10.10.0.31
-  - name: worker-b
-    host: 10.10.0.31   # co-located with worker-a
-  - name: worker-c
-    host: 10.10.0.32
+  - 10.10.0.31
+  - 10.10.0.31   # co-located with the previous worker
+  - 10.10.0.32
 
 runtime:
   threads_per_loader: 4   # 0 / omit = auto (CPU-capped per loader process)
@@ -268,9 +264,9 @@ observed `Inflight` in the 30–100 range after the async conversion. See
 [async-adapter-transactions.md](async-adapter-transactions.md).
 
 With three workers and 300 warehouses, each worker typically owns a contiguous
-block of 100 warehouses. For a single-host smoke test, set every `host` to
-`127.0.0.1` and still declare multiple `workers` / `loaders` entries — mind
-launches one process per instance.
+block of 100 warehouses. For a single-host smoke test, list `127.0.0.1` for
+every loader/worker and still declare multiple `workers` / `loaders` entries —
+mind launches one process per instance.
 
 Orchestrated roles launched by mind (for reference):
 

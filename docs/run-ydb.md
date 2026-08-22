@@ -166,16 +166,12 @@ scale:
   warehouses: 200
 
 loaders:
-  - name: loader-a
-    host: 10.10.0.21
-  - name: loader-b
-    host: 10.10.0.22
+  - 10.10.0.21
+  - 10.10.0.22
 
 workers:
-  - name: worker-a
-    host: 10.10.0.31
-  - name: worker-b
-    host: 10.10.0.32
+  - 10.10.0.31
+  - 10.10.0.32
 
 phases:
   start_lead: 45s
@@ -190,8 +186,8 @@ checks:
   after_test: true
 ```
 
-For a single-host smoke test, set every `host` to `127.0.0.1` and a small
-`scale.warehouses`. Anonymous local auth:
+For a single-host smoke test, list `127.0.0.1` for every loader/worker and a
+small `scale.warehouses`. Anonymous local auth:
 
 ```yaml
 database:
@@ -225,9 +221,9 @@ it runs `collect` first when `collection-manifest.json` is absent.
 `mind-tpcc run` includes `check(after-import)` / `check(after-test)` only when
 `checks.after_import` / `checks.after_test` are true.
 
-On a single host, set every loader/worker `host` to `127.0.0.1` (local
+On a single host, list `127.0.0.1` for every loader/worker (local
 sessions, no SSH). Multi-host runs need SSH access and tightly synchronized
-clocks. Identical `host` values mean co-location on one machine.
+clocks. Repeated host strings mean co-location on one machine.
 
 Orchestrated roles launched by mind (for reference):
 
