@@ -76,4 +76,4 @@ jobs:
             lsb-release
 
       - name: Build and run unit tests
-        run: ./build.sh -t -j"$(nproc)" --tpcc-only
+        run: ./build.sh -r -t -j"$(nproc)" --tpcc-only
