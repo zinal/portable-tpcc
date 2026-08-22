@@ -463,6 +463,10 @@ NOT rewrite an already materialized `run-config.json`. When the flag is set,
 
 Orchestrated `check` uses instance `check-0` on the first loader host.
 `--after-import` and `--after-test` are separate invocations.
+Standalone `mind-tpcc check` (either phase) is allowed once load is complete:
+the run has reached `indexing`, or `indexes` was skipped. It MUST NOT require
+the test stage to have finished. `check` MUST be refused while the run is
+`stopping` or `failed`.
 
 `mind-tpcc` passes `--threads=N` from CLI `--threads` when that flag is set,
 otherwise from `runtime.check_concurrency` (0 / omit =

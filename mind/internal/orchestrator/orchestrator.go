@@ -621,8 +621,9 @@ func (o *Orchestrator) check(ctx *Context, phase string) error {
 		return err
 	}
 	// Check does not Transition run-state: it is a verification probe with
-	// prerequisites only. Leaving consolidating/draining/etc. unchanged lets
-	// operators run a deferred check without inventing recovery edges.
+	// a completed-load prerequisite only (specification §9.2). Leaving
+	// consolidating/indexing/etc. unchanged lets operators run a deferred
+	// check without inventing recovery edges.
 
 	sessions, err := o.openSessions()
 	if err != nil {
@@ -658,19 +659,14 @@ func requireCheckPhase(rs *state.RunState, phase string) error {
 		return fmt.Errorf("check refused while run is failed")
 	}
 	switch phase {
-	case "after-import":
-		return requireIndexesForImportCheck(rs)
-	case "after-test":
-		if rs.State == state.StateCompleted || state.Reached(rs.State, state.StateDraining) {
-			return nil
-		}
-		return fmt.Errorf("check --after-test requires the test stage to finish (current state is %s)", rs.State)
+	case "after-import", "after-test":
+		return requireCompletedLoad(rs, phase)
 	default:
 		return fmt.Errorf("unknown check phase %q", phase)
 	}
 }
 
-func requireIndexesForImportCheck(rs *state.RunState) error {
+func requireCompletedLoad(rs *state.RunState, phase string) error {
 	for _, step := range rs.SkippedSteps {
 		if step == "indexes" {
 			return nil
@@ -679,7 +675,7 @@ func requireIndexesForImportCheck(rs *state.RunState) error {
 	if state.Reached(rs.State, state.StateIndexing) {
 		return nil
 	}
-	return fmt.Errorf("check --after-import requires the indexes stage (current state is %s); run 'mind-tpcc indexes' first", rs.State)
+	return fmt.Errorf("check --%s requires a completed load (current state is %s); run 'mind-tpcc indexes' first", phase, rs.State)
 }
 
 // RunCheck executes the check role without changing run-state.

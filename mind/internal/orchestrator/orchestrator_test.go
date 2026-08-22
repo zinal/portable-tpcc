@@ -460,8 +460,8 @@ func TestCheckAfterImportRequiresIndexes(t *testing.T) {
 		t.Fatal(err)
 	}
 	err = o.RunCheck(ctx, "after-import")
-	if err == nil || !strings.Contains(err.Error(), "requires the indexes stage") {
-		t.Fatalf("expected indexes-required error, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "requires a completed load") {
+		t.Fatalf("expected completed-load error, got %v", err)
 	}
 	got, err := o.StateStore.Load(ctx.RunID)
 	if err != nil {
@@ -505,6 +505,36 @@ func TestCheckPreservesStateOnLaunchFailure(t *testing.T) {
 	}
 }
 
+func TestCheckAfterTestAllowedWhileIndexing(t *testing.T) {
+	dir := t.TempDir()
+	profilePath := writeTestProfile(t, dir, "")
+	o, err := orchestrator.New(orchestrator.Options{ProfilePath: profilePath, RunID: "run-check-after-test-indexing"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, err := o.Materialize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := o.StateStore.Transition(ctx.RunID, state.StateIndexing); err != nil {
+		t.Fatal(err)
+	}
+	err = o.RunCheck(ctx, "after-test")
+	if err == nil {
+		t.Fatal("expected check to fail without a deployed worker binary")
+	}
+	if strings.Contains(err.Error(), "requires the test stage") || strings.Contains(err.Error(), "requires a completed load") {
+		t.Fatalf("after-test should be allowed after a completed load; got %v", err)
+	}
+	got, err := o.StateStore.Load(ctx.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != state.StateIndexing {
+		t.Fatalf("state=%q, want indexing (check must not change run-state)", got.State)
+	}
+}
+
 func TestCheckAfterImportPreservesIndexingOnLaunchFailure(t *testing.T) {
 	dir := t.TempDir()
 	profilePath := writeTestProfile(t, dir, "")
@@ -523,7 +553,7 @@ func TestCheckAfterImportPreservesIndexingOnLaunchFailure(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected check to fail without a deployed worker binary")
 	}
-	if strings.Contains(err.Error(), "requires the indexes stage") {
+	if strings.Contains(err.Error(), "requires a completed load") {
 		t.Fatalf("indexes already completed; got %v", err)
 	}
 	got, err := o.StateStore.Load(ctx.RunID)
