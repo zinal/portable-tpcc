@@ -1,0 +1,10 @@
+RECURSE(
+    actors
+    common
+    events
+    expr_nodes
+    gateway
+    provider
+    scheme
+    solomon_accessor
+)

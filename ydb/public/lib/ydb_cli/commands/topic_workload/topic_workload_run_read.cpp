@@ -1,0 +1,84 @@
+#include "topic_workload_run_read.h"
+#include "topic_workload_defines.h"
+
+#include <ydb/library/backup/util.h>
+#include <util/stream/format.h>
+
+
+using namespace NYdb::NConsoleClient;
+
+TCommandWorkloadTopicRunRead::TCommandWorkloadTopicRunRead()
+    : TWorkloadCommand("read", {}, "Read workload")
+{
+}
+
+void TCommandWorkloadTopicRunRead::Config(TConfig& config)
+{
+    TYdbCommand::Config(config);
+
+    config.SetFreeArgsNum(0);
+
+    // Common params
+    config.Opts->AddLongOption('s', "seconds", "Seconds to run workload.")
+        .DefaultValue(60)
+        .StoreResult(&Scenario.TotalSec);
+    config.Opts->AddLongOption('w', "window", "Output window duration in seconds.")
+        .DefaultValue(1)
+        .StoreResult(&Scenario.WindowSec);
+    config.Opts->AddLongOption('q', "quiet", "Quiet mode. Doesn't print statistics each second.")
+        .StoreTrue(&Scenario.Quiet);
+    config.Opts->AddLongOption("print-timestamp", "Print timestamp each second with statistics.")
+        .StoreTrue(&Scenario.PrintTimestamp);
+    config.Opts->AddLongOption("percentile", "Percentile for output statistics.")
+        .DefaultValue(50)
+        .StoreResult(&Scenario.Percentile);
+    config.Opts->AddLongOption("warmup", "Warm-up time in seconds.")
+        .DefaultValue(5)
+        .StoreResult(&Scenario.WarmupSec);
+    config.Opts->AddLongOption("topic", "Topic name.")
+        .DefaultValue(TOPIC)
+        .StoreResult(&Scenario.TopicName);
+    config.Opts->AddLongOption("no-consumer", "Read without consumer")
+        .Hidden()
+        .StoreTrue(&Scenario.ReadWithoutConsumer);
+    config.Opts->AddLongOption("no-commit", "Read without committing topic offsets")
+        .Hidden()
+        .StoreTrue(&Scenario.ReadWithoutCommit);
+    config.Opts->AddLongOption("restart-interval", "Recreate reader session period (ex. '100s', '3m')")
+        .Hidden()
+        .StoreMappedResult(&Scenario.RestartInterval, TDuration::Parse);
+
+    // Specific params
+    config.Opts->AddLongOption("consumer-prefix", "Use consumers with names '<consumer-prefix>-0' ... '<consumer-prefix>-<n-1>' where n is set in the '--consumers' option.")
+        .DefaultValue(CONSUMER_PREFIX)
+        .StoreResult(&Scenario.ConsumerPrefix);
+    config.Opts->AddLongOption('c', "consumers", "Number of consumers in a topic.")
+        .DefaultValue(1)
+        .StoreResult(&Scenario.ConsumerCount);
+    config.Opts->AddLongOption('t', "threads", "Number of consumer threads.")
+        .DefaultValue(1)
+        .StoreResult(&Scenario.ConsumerThreadCount);
+    config.Opts->AddLongOption("max-memory-usage-per-consumer", "Max memory usage per consumer in bytes. Should be more than '1MiB'.")
+        .DefaultValue(HumanReadableSize(15_MB, SF_BYTES))
+        .StoreMappedResult(&Scenario.ConsumerMaxMemoryUsageBytes, NYdb::SizeFromString);
+    config.Opts->AddLongOption("partition-max-inflight-bytes", "Max inflight bytes per partition.")
+        .DefaultValue(0)
+        .StoreResult(&Scenario.PartitionMaxInflightBytes);
+    config.Opts->AddLongOption("direct-read", "Direct read mode.")
+        .Hidden()
+        .StoreTrue(&Scenario.DirectRead);
+    config.IsNetworkIntensive = true;
+}
+
+void TCommandWorkloadTopicRunRead::Parse(TConfig& config)
+{
+    TClientCommand::Parse(config);
+
+    Scenario.EnsurePercentileIsValid();
+    Scenario.EnsureWarmupSecIsValid();
+}
+
+int TCommandWorkloadTopicRunRead::Run(TConfig& config)
+{
+    return Scenario.Run(config);
+}

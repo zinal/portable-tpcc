@@ -2,13 +2,6 @@ LIBRARY()
 
 PROVIDES(test_framework)
 
-SUBSCRIBER(
-    bulatman
-    prettyboy
-    thegeorg
-    g:cpp-contrib
-)
-
 SRCS(
     gtest.cpp
     main.cpp

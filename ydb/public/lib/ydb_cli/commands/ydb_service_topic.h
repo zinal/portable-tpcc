@@ -1,0 +1,312 @@
+#pragma once
+
+#include "ydb_command.h"
+#include "ydb_common.h"
+
+#include <ydb/public/lib/ydb_cli/common/interruptable.h>
+#include <ydb/public/lib/ydb_cli/topic/topic_read.h>
+#include <ydb/public/sdk/cpp/include/ydb-cpp-sdk/client/topic/client.h>
+
+#include <ydb/public/sdk/cpp/src/client/persqueue_public/persqueue.h>
+
+namespace NYdb::NConsoleClient {
+    TString PrepareAllowedCodecsDescription(const TString& descriptionPrefix, const TVector<NTopic::ECodec>& codecs);
+    TVector<NTopic::ECodec> InitAllowedCodecs();
+    const TVector<NTopic::ECodec> AllowedCodecs = InitAllowedCodecs();
+    std::function<void(const TString& opt)> TimestampOptionHandler(TMaybe<TInstant>* destination); // parses timestamp in the following formats: unix time, ISO-8601
+    ui32 ParsePartitionPerTabletValue(TStringBuf s);
+
+    class TCommandWithSupportedCodecs {
+    protected:
+        void AddAllowedCodecs(TClientCommand::TConfig& config, const TVector<NTopic::ECodec>& supportedCodecs);
+        void ParseCodecs();
+        const TVector<NTopic::ECodec> GetCodecs();
+
+    private:
+        TString SupportedCodecsStr_;
+        TVector<NTopic::ECodec> AllowedCodecs_;
+        TVector<NTopic::ECodec> SupportedCodecs_;
+    };
+
+    class TCommandWithMeteringMode {
+    protected:
+        void AddAllowedMeteringModes(TClientCommand::TConfig& config);
+        void ParseMeteringMode();
+        NTopic::EMeteringMode GetMeteringMode() const;
+
+    private:
+        TString MeteringModeStr_;
+        NTopic::EMeteringMode MeteringMode_ = NTopic::EMeteringMode::Unspecified;
+    };
+
+    class TCommandWithMetricsLevel {
+    protected:
+        void AddMetricsLevels(TClientCommand::TConfig& config);
+        TMaybe<NTopic::EMetricsLevel> GetMetricsLevel() const;
+
+    private:
+        TMaybe<NTopic::EMetricsLevel> MetricsLevel_;
+    };
+
+    class TCommandWithAutoPartitioning {
+    protected:
+        void AddAutoPartitioning(TClientCommand::TConfig& config, bool withDefault);
+        void ParseAutoPartitioningStrategy();
+        TMaybe<NTopic::EAutoPartitioningStrategy> GetAutoPartitioningStrategy() const;
+        TMaybe<ui32> GetAutoPartitioningStabilizationWindowSeconds() const;
+        TMaybe<ui32> GetAutoPartitioningUpUtilizationPercent() const;
+        TMaybe<ui32> GetAutoPartitioninDownUtilizationPercent() const;
+
+    private:
+        TMaybe<ui32> ScaleThresholdTime_;
+        TMaybe<ui32> ScaleUpThresholdPercent_;
+        TMaybe<ui32> ScaleDownThresholdPercent_;
+
+        TString AutoPartitioningStrategyStr_;
+        TMaybe<NTopic::EAutoPartitioningStrategy> AutoPartitioningStrategy_;
+    };
+
+    class TCommandTopic: public TClientCommandTree {
+    public:
+        TCommandTopic();
+    };
+
+    class TCommandTopicCreate: public TYdbCommand,
+                               public TCommandWithTopicName,
+                               public TCommandWithSupportedCodecs,
+                               public TCommandWithMeteringMode,
+                               public TCommandWithAutoPartitioning,
+                               public TCommandWithMetricsLevel {
+    public:
+        TCommandTopicCreate();
+        void Config(TConfig& config) override;
+        void Parse(TConfig& config) override;
+        int Run(TConfig& config) override;
+
+    private:
+        TDuration RetentionPeriod_ = TDuration::Hours(24);
+        ui64 RetentionStorageMb_;
+        bool ContentBasedDeduplication_ = false;
+        ui32 MinActivePartitions_;
+        TMaybe<ui32> MaxActivePartitions_;
+        ui32 PartitionWriteSpeedKbps_;
+        TMaybe<ui64> PartitionWriteSpeedMessagesPerSecond_;
+        TMaybe<ui64> PartitionWriteBurstMessages_;
+        TMaybe<ui32> PartitionsPerTablet_;
+        TMaybe<NTopic::EMetricsLevel> MetricsLevel_;
+    };
+
+    class TCommandTopicAlter: public TYdbCommand,
+                              public TCommandWithTopicName,
+                              public TCommandWithSupportedCodecs,
+                              public TCommandWithMeteringMode,
+                              public TCommandWithAutoPartitioning,
+                              public TCommandWithMetricsLevel {
+    public:
+        TCommandTopicAlter();
+        void Config(TConfig& config) override;
+        void Parse(TConfig& config) override;
+        int Run(TConfig& config) override;
+
+    private:
+        TMaybe<TDuration> RetentionPeriod_;
+        TMaybe<ui64> RetentionStorageMb_;
+        TMaybe<ui32> MinActivePartitions_;
+        TMaybe<ui32> MaxActivePartitions_;
+        TMaybe<ui32> PartitionWriteSpeedKbps_;
+        TMaybe<ui64> PartitionWriteSpeedMessagesPerSecond_;
+        TMaybe<ui64> PartitionWriteBurstMessages_;
+        TMaybe<bool> KeepMessagesOrder_;
+        TMaybe<TDuration> DefaultProcessingTimeout_;
+        TMaybe<ui32> DlqMaxProcessingAttempts_;
+        TMaybe<bool> DlqEnabled_;
+        TMaybe<TString> DlqQueueName_;
+        TMaybe<bool> ContentBasedDeduplication_;
+
+        NYdb::NTopic::TAlterTopicSettings PrepareAlterSettings(NYdb::NTopic::TDescribeTopicResult& describeResult);
+    };
+
+    class TCommandTopicDrop: public TYdbCommand, public TCommandWithTopicName {
+    public:
+        TCommandTopicDrop();
+        void Config(TConfig& config) override;
+        void Parse(TConfig& config) override;
+        int Run(TConfig& config) override;
+    };
+
+    class TCommandTopicConsumer: public TClientCommandTree {
+    public:
+        TCommandTopicConsumer();
+    };
+
+    class TCommandTopicConsumerOffset: public TClientCommandTree {
+    public:
+        TCommandTopicConsumerOffset();
+    };
+
+    class TCommandTopicConsumerAdd: public TYdbCommand, public TCommandWithTopicName, public TCommandWithSupportedCodecs {
+    public:
+        TCommandTopicConsumerAdd();
+        void Config(TConfig& config) override;
+        void Parse(TConfig& config) override;
+        int Run(TConfig& config) override;
+
+    private:
+        void ValidateConsumerOptions(const TMaybe<NTopic::EConsumerType>& consumerType);
+
+        TString ConsumerName_;
+        bool IsImportant_;
+        TMaybe<TDuration> AvailabilityPeriod_;
+        TMaybe<TInstant> StartingMessageTimestamp_;
+        TString ConsumerType_;
+        TMaybe<bool> KeepMessagesOrder_;
+        TMaybe<TDuration> DefaultProcessingTimeout_;
+        TMaybe<ui32> MaxProcessingAttempts_;
+        TMaybe<TString> DlqQueueName_;
+        TMaybe<TDuration> ReceiveMessageWaitTime_;
+        TMaybe<TDuration> ReceiveMessageDelay_;
+    };
+
+    class TCommandTopicConsumerDrop: public TYdbCommand, public TCommandWithTopicName {
+    public:
+        TCommandTopicConsumerDrop();
+        void Config(TConfig& config) override;
+        void Parse(TConfig& config) override;
+        int Run(TConfig& config) override;
+
+    private:
+        TString ConsumerName_;
+    };
+
+    class TCommandTopicConsumerDescribe: public TYdbCommand, public TCommandWithOutput, public TCommandWithTopicName {
+    public:
+        TCommandTopicConsumerDescribe();
+        void Config(TConfig& config) override;
+        void Parse(TConfig& config) override;
+        int Run(TConfig& config) override;
+
+    private:
+        int PrintPrettyResult(const NYdb::NTopic::TConsumerDescription& description) const;
+
+    private:
+        TString ConsumerName_;
+        bool ShowPartitionStats_ = false;
+    };
+
+    class TCommandTopicConsumerCommitOffset: public TYdbCommand, public TCommandWithTopicName {
+    public:
+        TCommandTopicConsumerCommitOffset();
+        void Config(TConfig& config) override;
+        void Parse(TConfig& config) override;
+        int Run(TConfig& config) override;
+
+    private:
+        TString ConsumerName_;
+        ui64 PartitionId_;
+        ui64 Offset_;
+    };
+
+
+    class TCommandWithTransformBody {
+    protected:
+        void AddTransform(TClientCommand::TConfig& config);
+        void ParseTransform();
+        ETransformBody GetTransform() const;
+
+    private:
+        TString TransformStr_;
+        ETransformBody Transform_ = ETransformBody::None;
+    };
+
+    class TCommandTopicRead: public TYdbCommand,
+                             public TCommandWithMessagingFormat,
+                             public TInterruptableCommand,
+                             public TCommandWithTopicName,
+                             public TCommandWithTransformBody {
+    public:
+        TCommandTopicRead();
+        void Config(TConfig& config) override;
+        void Parse(TConfig& config) override;
+        int Run(TConfig& config) override;
+
+    private:
+        TString Consumer_ = "";
+        bool ReadWithoutConsumer_ = false;
+        TVector<ui64> PartitionIds_;
+        TMaybe<uint64_t> Offset_;
+        TMaybe<uint32_t> Partition_;
+        TMaybe<TInstant> Timestamp_;
+        TMaybe<TString> File_;
+        TMaybe<TString> TransformStr_;
+
+        TMaybe<TDuration> FlushDuration_;
+        TMaybe<int> FlushSize_;
+        TMaybe<int> FlushMessagesCount_;
+        TDuration IdleTimeout_;
+
+        TString WithMetadataFields_ = "all"; // TODO(shmel1k@): improve.
+        TVector<ETopicMetadataField> MetadataFields_;
+
+        TMaybe<ui64> MessageSizeLimit_;
+        TMaybe<i64> Limit_ = Nothing();
+        ETransformBody Transform_ = ETransformBody::None;
+
+        bool Commit_ = false;
+//        bool DiscardAboveLimits_ = false;
+        bool Wait_ = false;
+
+    private:
+        void ValidateConfig();
+        void AddAllowedMetadataFields(TConfig& config);
+        void ParseMetadataFields();
+        void AddAllowedTransformFormats(TConfig& config);
+        void ParseTransformFormat();
+        NTopic::TReadSessionSettings PrepareReadSessionSettings();
+        TTopicReaderSettings PrepareReaderSettings() const;
+    };
+
+    class TCommandWithCodec {
+    protected:
+        void AddAllowedCodecs(TClientCommand::TConfig& config, const TVector<NTopic::ECodec>& allowedCodecs);
+        void ParseCodec();
+        TMaybe<NTopic::ECodec> GetCodec() const;
+
+    private:
+        TVector<NTopic::ECodec> AllowedCodecs_;
+        TString CodecStr_;
+        TMaybe<NTopic::ECodec> Codec_;
+    };
+
+    class TCommandTopicWrite: public TYdbCommand,
+                              public TCommandWithMessagingFormat,
+                              public TInterruptableCommand,
+                              public TCommandWithTopicName,
+                              public TCommandWithCodec,
+                              public TCommandWithTransformBody {
+    public:
+        TCommandTopicWrite();
+        void Config(TConfig& config) override;
+        void Parse(TConfig& config) override;
+        int Run(TConfig& config) override;
+
+    private:
+        TMaybe<TString> File_;
+        TMaybe<TString> Delimiter_;
+        TMaybe<TString> MessageSizeLimitStr_; // TODO(shmel1k@): think how to parse
+
+        // TODO(shmel1k@): move to 'TWithBatchingCommand' or something like that.
+        TMaybe<TDuration> BatchDuration_;
+        TMaybe<ui64> BatchSize_;
+        TMaybe<ui64> BatchMessagesCount_;
+        TMaybe<TString> MessageGroupId_;
+        TMaybe<ui32> PartitionId_;
+        TMaybe<TDuration> MessagesWaitTimeout_;
+
+        ui64 MessageSizeLimit_ = 0;
+        void ParseMessageSizeLimit();
+        void CheckOptions(NTopic::TTopicClient& topicClient);
+
+    private:
+        NTopic::TWriteSessionSettings PrepareWriteSessionSettings();
+    };
+} // namespace NYdb::NConsoleClient

@@ -1,0 +1,223 @@
+#include "dq_input_channel.h"
+#include "dq_input_impl.h"
+
+namespace NYql::NDq {
+
+class TDqInputChannelImpl : public TDqInputImpl<TDqInputChannelImpl, IDqInputChannel> {
+    using TBaseImpl = TDqInputImpl<TDqInputChannelImpl, IDqInputChannel>;
+
+public:
+    using TBaseImpl::StoredBytes;
+
+    TDqInputChannelStats PushStats;
+    TDqInputStats PopStats;
+
+    TDqInputChannelImpl(ui64 channelId, ui32 srcStageId, NKikimr::NMiniKQL::TType* inputType, ui64 maxBufferBytes, TCollectStatsLevel level, IMemoryQuotaManager::TPtr quotaManager)
+        : TBaseImpl(inputType, maxBufferBytes, quotaManager)
+    {
+        PopStats.Level = level;
+        PushStats.Level = level;
+        PushStats.ChannelId = channelId;
+        PushStats.SrcStageId = srcStageId;
+    }
+
+    ui64 GetChannelId() const override {
+        return PushStats.ChannelId;
+    }
+
+    const TDqInputChannelStats& GetPushStats() const override {
+        return PushStats;
+    }
+
+    const TDqInputStats& GetPopStats() const override {
+        return PopStats;
+    }
+
+    void Bind(NActors::TActorId outputActorId, NActors::TActorId inputActorId) override { // noop
+        Y_UNUSED(outputActorId);
+        Y_UNUSED(inputActorId);
+    }
+
+    bool IsLocal() const override {
+        return false;
+    }
+
+private:
+    void Push(TDqSerializedBatch&&) override {
+        Y_ABORT("Not implemented");
+    }
+
+    void Push(TInstant) override {
+        Y_ABORT("Not implemented");
+    }
+};
+
+class TDqInputChannel : public IDqInputChannel {
+
+private:
+    std::deque<std::variant<TDqSerializedBatch, TInstant>> DataForDeserialize;
+    ui64 StoredSerializedBytes = 0;
+
+    void PushImpl(TDqSerializedBatch&& data) {
+        const i64 space = data.Size();
+        const size_t chunkCount = data.ChunkCount();
+        auto inputType = Impl.GetInputType();
+        NKikimr::NMiniKQL::TUnboxedValueBatch batch(inputType);
+        if (Y_UNLIKELY(Impl.PushStats.CollectProfile())) {
+            auto startTime = TInstant::Now();
+            DataSerializer.Deserialize(std::move(data), inputType, batch);
+            Impl.PushStats.DeserializationTime += (TInstant::Now() - startTime);
+        } else {
+            DataSerializer.Deserialize(std::move(data), inputType, batch);
+        }
+
+        // single batch row is chunk and may be Arrow block
+        YQL_ENSURE(batch.RowCount() == chunkCount);
+        Impl.AddBatch(std::move(batch), space);
+    }
+
+    void DeserializeAllData() {
+        while (!DataForDeserialize.empty()) {
+            auto& data = DataForDeserialize.front();
+            std::visit(TOverloaded {
+                [this](TDqSerializedBatch& data) {
+                    auto size = data.Size();
+                    PushImpl(std::move(data));
+                    if (QuotaManager) {
+                        QuotaManager->FreeQuota(size);
+                    }
+                    StoredSerializedBytes -= size;
+                },
+                [this](TInstant watermark) {
+                    Impl.PushWatermark(watermark);
+                },
+            }, data);
+            DataForDeserialize.pop_front();
+        }
+        YQL_ENSURE(StoredSerializedBytes == 0);
+    }
+
+public:
+    TDqInputChannel(const TDqChannelSettings& settings, const NKikimr::NMiniKQL::TTypeEnvironment& typeEnv)
+        : Impl(settings.ChannelId, settings.SrcStageId, settings.RowType, settings.MaxStoredBytes, settings.Level, settings.ChannelQuotaManager)
+        , DataSerializer(typeEnv, *settings.HolderFactory, settings.TransportVersion, settings.PackerVersion, settings.DatumValidationMode)
+        , QuotaManager(settings.ChannelQuotaManager)
+    {
+    }
+
+    ~TDqInputChannel() override {
+        if (StoredSerializedBytes && QuotaManager) {
+            QuotaManager->FreeQuota(StoredSerializedBytes);
+        }
+    }
+
+    ui64 GetChannelId() const override {
+        return Impl.PushStats.ChannelId;
+    }
+
+    const TDqInputChannelStats& GetPushStats() const override {
+        return Impl.PushStats;
+    }
+
+    const TDqInputStats& GetPopStats() const override {
+        return Impl.PopStats;
+    }
+
+    i64 GetFreeSpace() const override {
+        return Impl.GetFreeSpace() - i64(StoredSerializedBytes);
+    }
+
+    ui64 GetStoredBytes() const override {
+        return Impl.GetStoredBytes() + StoredSerializedBytes;
+    }
+
+    bool IsFinished() const override {
+        return DataForDeserialize.empty() && Impl.IsFinished();
+    }
+
+    bool Empty() const override {
+        return (DataForDeserialize.empty() || Impl.IsPaused()) && Impl.Empty();
+    }
+
+    void PauseByCheckpoint() override {
+        DeserializeAllData();
+        Impl.PauseByCheckpoint();
+    }
+
+    bool Pop(NKikimr::NMiniKQL::TUnboxedValueBatch& batch, TMaybe<TInstant>& watermark) override {
+        if (Impl.Empty() && !Impl.IsPaused()) {
+            DeserializeAllData();
+        }
+        return Impl.Pop(batch, watermark);
+    }
+
+    void Push(TDqSerializedBatch&& data) override {
+        YQL_ENSURE(!Impl.IsFinished(), "input channel " << Impl.PushStats.ChannelId << " already finished");
+        if (Y_UNLIKELY(data.Proto.GetChunks() == 0)) {
+            return;
+        }
+        if (QuotaManager && !QuotaManager->AllocateQuota(data.Size())) {
+            throw NKikimr::TMemoryLimitExceededException();
+        }
+        StoredSerializedBytes += data.Size();
+
+        if (Impl.PushStats.CollectBasic()) {
+            Impl.PushStats.Bytes += data.Size();
+            Impl.PushStats.Rows += data.RowCount();
+            Impl.PushStats.Chunks++;
+            Impl.PushStats.Resume();
+            if (Impl.PushStats.CollectFull()) {
+                Impl.PushStats.MaxMemoryUsage = std::max(Impl.PushStats.MaxMemoryUsage, StoredSerializedBytes + Impl.StoredBytes);
+            }
+        }
+
+        if (GetFreeSpace() < 0) {
+            Impl.PopStats.TryPause();
+        }
+
+        DataForDeserialize.emplace_back(std::move(data));
+    }
+
+    void Push(TInstant watermark) override {
+        YQL_ENSURE(!Impl.IsFinished(), "input channel " << Impl.PushStats.ChannelId << " already finished");
+
+        DataForDeserialize.emplace_back(watermark);
+    }
+
+    NKikimr::NMiniKQL::TType* GetInputType() const override {
+        return Impl.GetInputType();
+    }
+
+    void ResumeByCheckpoint() override {
+        Impl.ResumeByCheckpoint();
+    }
+
+    bool IsPausedByCheckpoint() const override {
+        return Impl.IsPausedByCheckpoint();
+    }
+
+    void Finish() override {
+        Impl.Finish();
+    }
+
+    void Bind(NActors::TActorId outputActorId, NActors::TActorId inputActorId) override {
+        IsLocalChannel = outputActorId.NodeId() == inputActorId.NodeId();
+    }
+
+    bool IsLocal() const override {
+        return IsLocalChannel;
+    }
+
+private:
+    TDqInputChannelImpl Impl;
+    TDqDataSerializer DataSerializer;
+    bool IsLocalChannel = false;
+    IMemoryQuotaManager::TPtr QuotaManager;
+};
+
+IDqInputChannel::TPtr CreateDqInputChannel(const TDqChannelSettings& settings, const NKikimr::NMiniKQL::TTypeEnvironment& typeEnv)
+{
+    return new TDqInputChannel(settings, typeEnv);
+}
+
+} // namespace NYql::NDq

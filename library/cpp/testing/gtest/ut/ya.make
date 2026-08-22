@@ -1,11 +1,4 @@
 GTEST()
-SUBSCRIBER(
-    bulatman
-    prettyboy
-    thegeorg
-    g:cpp-contrib
-)
-
 SRCS(
     matchers_ut.cpp
     ut.cpp

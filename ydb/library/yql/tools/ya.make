@@ -1,0 +1,3 @@
+RECURSE(
+    solomon_emulator
+)

@@ -1,0 +1,110 @@
+#pragma once
+
+#include "topic_workload_defines.h"
+#include "topic_workload_stats_collector.h"
+#include "topic_workload_reader_transaction_support.h"
+
+#include <ydb/public/sdk/cpp/include/ydb-cpp-sdk/client/topic/client.h>
+
+#include <library/cpp/logger/log.h>
+#include <util/generic/string.h>
+
+namespace NYdb {
+    namespace NConsoleClient {
+
+        struct TTopicWorkloadWriterParams {
+            size_t TotalSec;
+            size_t WarmupSec;
+            const NYdb::TDriver& Driver;
+            std::shared_ptr<TLog> Log;
+            std::shared_ptr<TTopicWorkloadStatsCollector> StatsCollector;
+            std::shared_ptr<std::atomic<bool>> ErrorFlag;
+            std::shared_ptr<std::atomic_uint> StartedCount;
+            const std::vector<TString>& GeneratedMessages;
+            TString Database;
+            TString TopicName;
+            double BytesPerSec;
+            size_t MessageSize;
+            ui32 ProducerThreadCount;
+            ui32 WriterIdx;
+            ui32 PartitionCount;
+            ui32 PartitionSeed;
+            bool Direct;
+            ui32 Codec = 0;
+            TMaybe<ui32> BatchInnerCodec;
+            bool UseTransactions = false;
+            bool TrackProducerIdInTx = true;
+            bool UseAutoPartitioning = false;
+            bool UseTableSelect = false;
+            bool UseTableUpsert = false;
+            size_t CommitIntervalMs = 15'000;
+            size_t CommitMessages = 1'000'000;
+            bool UseCpuTimestamp = false;
+            TMaybe<TString> KeyPrefix;
+            ui32 KeyCount = 0;
+            ui32 KeySeed = 0;
+            std::optional<size_t> MaxMemoryUsageBytes = 15_MB;
+            TDuration BatchFlushInterval = TDuration::Seconds(1);
+            std::optional<ui64> BatchFlushSizeBytes;
+            ui32 BatchFlushMessageCount = 1;
+            bool SdkProducerAsyncExecutionMode = false;
+        };
+
+        struct TTopicWorkloadConfiguratorParams;
+        struct TTopicWorkloadDescriberParams;
+
+        class TTopicWorkloadWriterProducer;
+        class TTopicWorkloadWriterWorker {
+        public:
+            static const size_t GENERATED_MESSAGES_COUNT = 32;
+
+            static void RetryableWriterLoop(const TTopicWorkloadWriterParams& params);
+            static void WriterLoop(const TTopicWorkloadWriterParams& params, TInstant endTime);
+
+            static std::vector<TString> GenerateMessages(size_t messageSize);
+
+            static void RetryableConfiguratorLoop(const TTopicWorkloadConfiguratorParams& params);
+            static void ConfiguratorLoop(const TTopicWorkloadConfiguratorParams& params, TInstant endTime);
+
+            static void RetryableDescriberLoop(const TTopicWorkloadDescriberParams& params);
+            static void DescriberLoop(const TTopicWorkloadDescriberParams& params, TInstant endTime);
+
+        private:
+            TTopicWorkloadWriterWorker(const TTopicWorkloadWriterParams& params);
+            ~TTopicWorkloadWriterWorker();
+
+            void Close();
+            void CloseProducers();
+
+            std::shared_ptr<TTopicWorkloadWriterProducer> CreateProducer(ui64 partitionId,
+                                                                         NTopic::TTopicClient& topicClient);
+
+            void WaitTillNextMessageExpectedCreateTimeAndContinuationToken(std::shared_ptr<TTopicWorkloadWriterProducer> producer);
+
+            void Process(TInstant endTime);
+
+            TInstant GetExpectedCurrMessageCreationTimestamp() const;
+
+            TInstant GetCreateTimestampForNextMessage();
+
+            void TryCommitTx(TInstant& commitTime);
+            void TryCommitTableChanges();
+
+            size_t InflightMessagesSize();
+            bool InflightMessagesEmpty();
+
+            TTopicWorkloadWriterParams Params;
+            ui64 BytesWritten = 0;
+            std::optional<TTransactionSupport> TxSupport;
+            TInstant StartTimestamp;
+
+            std::vector<std::shared_ptr<TTopicWorkloadWriterProducer>> Producers;
+            ui64 PartitionToWriteId = 0;
+
+            std::shared_ptr<std::atomic<bool>> Closed;
+            std::shared_ptr<TTopicWorkloadStatsCollector> StatsCollector;
+
+            bool WaitForCommitTx = false;
+        };
+    }
+}

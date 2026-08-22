@@ -1,0 +1,9 @@
+RECURSE(
+    core
+    dq
+    providers
+    public
+    tools
+    udfs
+    utils
+)

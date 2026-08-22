@@ -1,0 +1,126 @@
+#include "ydb_service_monitoring.h"
+
+#include <ydb/public/api/grpc/ydb_monitoring_v1.grpc.pb.h>
+#include <ydb/public/lib/ydb_cli/common/colors.h>
+#include <ydb/public/sdk/cpp/include/ydb-cpp-sdk/client/proto/accessor.h>
+
+namespace NYdb {
+namespace NConsoleClient {
+
+TCommandMonitoring::TCommandMonitoring()
+    : TClientCommandTree("monitoring", {"mon"}, "Monitoring service operations")
+{
+    AddCommand(std::make_unique<TCommandSelfCheck>());
+}
+
+TCommandSelfCheck::TCommandSelfCheck()
+    : TYdbSimpleCommand("healthcheck", {"selfcheck"}, "Self check. Returns status of the database")
+{}
+
+void TCommandSelfCheck::Config(TConfig& config) {
+    config.AllowEmptyDatabase = true;
+
+    TYdbSimpleCommand::Config(config);
+    config.SetFreeArgsNum(0);
+
+    AddOutputFormats(config, { EDataFormat::Pretty, EDataFormat::Json });
+
+    config.Opts->AddLongOption('v', "verbose", "Return detailed info about components checked with their statuses.")
+        .StoreTrue(&Verbose);
+
+    config.Opts->AddLongOption("no-merge", "Do not merge entries of health check result")
+        .StoreTrue(&NoMerge).Optional();
+
+    config.Opts->AddLongOption("no-cache", "Do not use cached result")
+        .StoreTrue(&NoCache).Optional();
+}
+
+void TCommandSelfCheck::Parse(TConfig& config) {
+    TYdbSimpleCommand::Parse(config);
+    ParseOutputFormats();
+}
+
+int TCommandSelfCheck::Run(TConfig& config) {
+    auto driver = CreateDriver(config);
+    NMonitoring::TMonitoringClient client(driver);
+    NMonitoring::TSelfCheckSettings settings;
+
+    if (Verbose) {
+        settings.ReturnVerboseStatus(true);
+    }
+
+    if (NoMerge) {
+        settings.NoMerge(true);
+    }
+
+    if (NoCache) {
+        settings.NoCache(true);
+    }
+
+    NMonitoring::TSelfCheckResult result = client.SelfCheck(
+        FillSettings(settings)
+    ).GetValueSync();
+    NStatusHelpers::ThrowOnErrorOrPrintIssues(result);
+    return PrintResponse(result);
+}
+
+int TCommandSelfCheck::PrintResponse(NMonitoring::TSelfCheckResult& result) {
+    const auto& proto = NYdb::TProtoAccessor::GetProto(result);
+    switch (OutputFormat) {
+        case EDataFormat::Default:
+        case EDataFormat::Pretty:
+        {
+            NColorizer::TColors colors = NConsoleClient::AutoColors(Cout);
+            TStringBuf statusColor;
+            auto hcResultString = SelfCheck_Result_Name(proto.Getself_check_result());
+            switch (proto.Getself_check_result()) {
+                case Ydb::Monitoring::SelfCheck::GOOD:
+                    statusColor = colors.GreenColor();
+                    break;
+                case Ydb::Monitoring::SelfCheck::DEGRADED:
+                    statusColor = colors.YellowColor();
+                    break;
+                case Ydb::Monitoring::SelfCheck::MAINTENANCE_REQUIRED:
+                    // Orange-ish
+                    statusColor = colors.IsTTY() ? "\033[88;91m" : "";
+                    break;
+                case Ydb::Monitoring::SelfCheck::EMERGENCY:
+                    statusColor = colors.RedColor();
+                    break;
+                case Ydb::Monitoring::SelfCheck::UNSPECIFIED:
+                    statusColor = colors.OldColor();
+                    break;
+                default:
+                    Cout << "Unknown healthcheck status: " << hcResultString << Endl;
+                    return EXIT_FAILURE;
+            }
+
+            Cout << "Healthcheck status: " << statusColor << hcResultString << colors.OldColor() << Endl;
+            if (proto.Getself_check_result() != Ydb::Monitoring::SelfCheck::GOOD) {
+                Cerr << "For more info use \"--format json\" option" << Endl;
+            }
+            break;
+        }
+        case EDataFormat::Json:
+        {
+            TString json;
+            google::protobuf::util::JsonPrintOptions jsonOpts;
+            jsonOpts.preserve_proto_field_names = true;
+            jsonOpts.add_whitespace = true;
+            auto convertStatus = google::protobuf::util::MessageToJsonString(proto, &json, jsonOpts);
+            if (convertStatus.ok()) {
+                Cout << json;
+            } else {
+                Cerr << "Error occurred while converting result proto to json" << Endl;
+                return EXIT_FAILURE;
+            }
+            break;
+        }
+        default:
+            throw TMisuseException() << "This command doesn't support " << OutputFormat << " output format";
+    }
+    return EXIT_SUCCESS;
+}
+
+}
+}
