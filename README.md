@@ -3,25 +3,6 @@
 A horizontally scalable TPC-C implementation with shared workload logic,
 YDB/PostgreSQL/OceanBase adapters, and a dedicated orchestrator.
 
-Architecture draft:
-
-- [specification](docs/specification.md);
-- [shared libraries and adapter API](docs/adapter-api.md);
-- [async `ITpccTransaction` migration](docs/async-adapter-transactions.md);
-- [profile example (YDB)](docs/examples/profile.ydb.v1.yaml);
-- [profile example (OceanBase)](docs/examples/profile.oceanbase.v1.yaml);
-- [run-config example](docs/examples/run-config.v1.json);
-- [start-token example](docs/examples/start-token.v1.json);
-- [aggregate example](docs/examples/aggregate.v1.json).
-
-Implementation status and third-party dependencies:
-[docs/dependencies.md](docs/dependencies.md). Shared libraries and adapter API:
-[docs/adapter-api.md](docs/adapter-api.md). Alignment plan (accepted API
-decisions and phase checklist):
-[docs/alignment-plan.md](docs/alignment-plan.md). Engineering vs TPC-C 5.11
-conformance notes:
-[docs/tpcc-5.11-conformance-analysis.md](docs/tpcc-5.11-conformance-analysis.md).
-
 Results MUST NOT be called official TPC-C results without the required TPC
 verification.
 
@@ -56,3 +37,22 @@ on each worker and points `run-config.json` at `password_file`.
 For settings closer to TPC-C 5.11, see the defaults embedded in `mind-tpcc` and
 [docs/tpcc-5.11-conformance-analysis.md](docs/tpcc-5.11-conformance-analysis.md)
 (for example measurement interval ≥ 120 minutes).
+
+## Architecture
+
+- [specification](docs/specification.md);
+- [shared libraries and adapter API](docs/adapter-api.md);
+- [async `ITpccTransaction` migration](docs/async-adapter-transactions.md);
+- [profile example (YDB)](docs/examples/profile.ydb.v1.yaml);
+- [profile example (OceanBase)](docs/examples/profile.oceanbase.v1.yaml);
+- [run-config example](docs/examples/run-config.v1.json);
+- [start-token example](docs/examples/start-token.v1.json);
+- [aggregate example](docs/examples/aggregate.v1.json).
+
+Implementation status and third-party dependencies:
+[docs/dependencies.md](docs/dependencies.md). Shared libraries and adapter API:
+[docs/adapter-api.md](docs/adapter-api.md). Alignment plan (accepted API
+decisions and phase checklist):
+[docs/alignment-plan.md](docs/alignment-plan.md). Engineering vs TPC-C 5.11
+conformance notes:
+[docs/tpcc-5.11-conformance-analysis.md](docs/tpcc-5.11-conformance-analysis.md).
