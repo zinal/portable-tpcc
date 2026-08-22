@@ -195,6 +195,45 @@ func TestMaterializeRejectsRunIDReuseWithDifferentProfile(t *testing.T) {
 	}
 }
 
+func TestMaterializeAllowsMismatchedProfileForCheck(t *testing.T) {
+	dir := t.TempDir()
+	profilePath := writeTestProfile(t, dir, "")
+	o, err := orchestrator.New(orchestrator.Options{ProfilePath: profilePath, RunID: "run-check-mismatch"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := o.Materialize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(profilePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed := strings.Replace(string(data), "endpoint: localhost:5432", "endpoint: localhost:15432", 1)
+	if err := os.WriteFile(profilePath, []byte(changed), 0644); err != nil {
+		t.Fatal(err)
+	}
+	o, err = orchestrator.New(orchestrator.Options{
+		ProfilePath:            profilePath,
+		RunID:                  "run-check-mismatch",
+		AllowMismatchedProfile: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, err := o.Materialize()
+	if err != nil {
+		t.Fatalf("check should attach to an existing run with a different profile: %v", err)
+	}
+	if ctx.RunID != first.RunID {
+		t.Fatalf("run_id=%q, want %q", ctx.RunID, first.RunID)
+	}
+	if ctx.RunConfig.Database.Endpoint != first.RunConfig.Database.Endpoint {
+		t.Fatalf("run-config endpoint rewritten to %q, want stored %q", ctx.RunConfig.Database.Endpoint, first.RunConfig.Database.Endpoint)
+	}
+}
+
 func TestMaterializeAppliesOverrides(t *testing.T) {
 	dir := t.TempDir()
 	profilePath := writeTestProfile(t, dir, "")
@@ -460,8 +499,8 @@ func TestCheckAfterImportRequiresIndexes(t *testing.T) {
 		t.Fatal(err)
 	}
 	err = o.RunCheck(ctx, "after-import")
-	if err == nil || !strings.Contains(err.Error(), "requires the indexes stage") {
-		t.Fatalf("expected indexes-required error, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "requires a successful data load") {
+		t.Fatalf("expected load-required error, got %v", err)
 	}
 	got, err := o.StateStore.Load(ctx.RunID)
 	if err != nil {
@@ -490,8 +529,8 @@ func TestCheckPreservesStateOnLaunchFailure(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected check to fail without a deployed worker binary")
 	}
-	if strings.Contains(err.Error(), "requires the test stage") {
-		t.Fatalf("consolidating should satisfy after-test prerequisites; got %v", err)
+	if strings.Contains(err.Error(), "requires a successful data load") {
+		t.Fatalf("consolidating should satisfy check prerequisites; got %v", err)
 	}
 	if strings.Contains(err.Error(), "invalid state transition") {
 		t.Fatalf("check must not Transition run-state; got %v", err)
@@ -502,6 +541,36 @@ func TestCheckPreservesStateOnLaunchFailure(t *testing.T) {
 	}
 	if got.State != state.StateConsolidating {
 		t.Fatalf("state=%q, want consolidating (check must not change run-state)", got.State)
+	}
+}
+
+func TestCheckAfterTestAllowedAfterIndexing(t *testing.T) {
+	dir := t.TempDir()
+	profilePath := writeTestProfile(t, dir, "")
+	o, err := orchestrator.New(orchestrator.Options{ProfilePath: profilePath, RunID: "run-check-after-test-early"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, err := o.Materialize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := o.StateStore.Transition(ctx.RunID, state.StateIndexing); err != nil {
+		t.Fatal(err)
+	}
+	err = o.RunCheck(ctx, "after-test")
+	if err == nil {
+		t.Fatal("expected check to fail without a deployed worker binary")
+	}
+	if strings.Contains(err.Error(), "requires a successful data load") {
+		t.Fatalf("after-test should be allowed after load; got %v", err)
+	}
+	got, err := o.StateStore.Load(ctx.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != state.StateIndexing {
+		t.Fatalf("state=%q, want indexing (check must not change run-state)", got.State)
 	}
 }
 
@@ -523,7 +592,7 @@ func TestCheckAfterImportPreservesIndexingOnLaunchFailure(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected check to fail without a deployed worker binary")
 	}
-	if strings.Contains(err.Error(), "requires the indexes stage") {
+	if strings.Contains(err.Error(), "requires a successful data load") {
 		t.Fatalf("indexes already completed; got %v", err)
 	}
 	got, err := o.StateStore.Load(ctx.RunID)

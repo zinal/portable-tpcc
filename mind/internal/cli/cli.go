@@ -315,6 +315,9 @@ func runCheck(opts orchestrator.Options, phase string) int {
 		fmt.Fprintln(os.Stderr, "check requires --after-import or --after-test")
 		return 2
 	}
+	// Standalone check is a probe against an already-loaded run. Reuse the
+	// stored run-config even when the current profile bytes differ.
+	opts.AllowMismatchedProfile = true
 	o, err := orch(opts)
 	if err != nil {
 		return exitErr(err)

@@ -30,7 +30,7 @@ mind-tpcc <command> --profile <path> [options]
 | `schema` | Create TPC-C schema. |
 | `load` | Horizontal data load. |
 | `indexes` | Secondary indexes (and DBMS stats where the adapter supports them). |
-| `check` | Integrity checks. Requires `--after-import` or `--after-test`. |
+| `check` | Integrity checks. Requires `--after-import` or `--after-test`. Both phases are allowed after a successful data load (indexes started, or `indexes` skipped), including when the current profile differs from the one that created the run. Reuses the stored run-config. |
 | `test` | Arm workers and run ramp-up / measurement / drain. `start` is a compatibility alias. |
 | `status` | Show run state. |
 | `stop` | Stop workers gracefully. |
@@ -271,7 +271,9 @@ HDR-style `lowest` / `significant_figures` are rejected.
 | `fail_fast` | `false` | If `false`, a failed check step is logged and `run` continues; if `true`, the run fails. |
 
 Standalone / individual `mind-tpcc check` still need `--after-import` or
-`--after-test` regardless of these flags.
+`--after-test` regardless of these flags. After a successful data load
+either phase is allowed; a different profile does not block standalone
+`check` against an existing `--run-id`.
 
 ### `collect`
 

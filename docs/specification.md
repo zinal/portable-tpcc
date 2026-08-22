@@ -381,6 +381,16 @@ trigger this implicit collect.
 every assigned host; no auto-upload) → schema → load → indexes →
 check(after-import) → test → check(after-test) → collect → consolidate.
 
+Standalone `mind-tpcc check --after-import` and `check --after-test` are
+verification probes. They MUST NOT rewrite `run-config.json` or transition
+run-state. After a successful data load (run-state has reached `indexing`,
+or the `indexes` step was skipped), both phases MAY be launched against an
+existing `--run-id`. A profile whose bytes differ from the `profile.sha256`
+stored at run creation MUST NOT block standalone `check`; the stored
+run-config is reused. Other stage commands (`schema`, `load`, `indexes`,
+`test`, `collect`, `consolidate`, `cleanup`) MUST still reject that
+mismatch. Check is refused while the run is `stopping` or `failed`.
+
 `cleanup --yes` tears down an existing run for the profile (explicit
 `--run-id`, else the newest matching run, including terminal states). Phases
 depend on run-state: stop any recorded running processes; when state is past

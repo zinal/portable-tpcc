@@ -46,6 +46,13 @@ type Options struct {
 	// invocation's worker, loader, and check argv. It does not rewrite
 	// run-config.json.
 	Threads *int
+	// AllowMismatchedProfile, when true, lets Materialize attach to an
+	// existing run whose stored profile.sha256 differs from the current
+	// profile. Used by standalone check after a successful load so an
+	// operator can re-run --after-import or --after-test without the
+	// original profile bytes. The stored run-config.json is still reused
+	// unchanged.
+	AllowMismatchedProfile bool
 }
 
 // Orchestrator coordinates mind-tpcc stages.
@@ -127,12 +134,18 @@ func (o *Orchestrator) Materialize() (*Context, error) {
 		storedSHA, err := os.ReadFile(profileSHAPath)
 		if err != nil {
 			if os.IsNotExist(err) {
-				return nil, fmt.Errorf("existing run %s is missing profile.sha256", runID)
+				if !o.Opts.AllowMismatchedProfile {
+					return nil, fmt.Errorf("existing run %s is missing profile.sha256", runID)
+				}
+				progress.Printf("run %s is missing profile.sha256; reusing stored run-config", runID)
+			} else {
+				return nil, err
 			}
-			return nil, err
-		}
-		if strings.TrimSpace(string(storedSHA)) != profileSHA {
-			return nil, fmt.Errorf("existing run %s was created from a different profile", runID)
+		} else if strings.TrimSpace(string(storedSHA)) != profileSHA {
+			if !o.Opts.AllowMismatchedProfile {
+				return nil, fmt.Errorf("existing run %s was created from a different profile", runID)
+			}
+			progress.Printf("run %s was created from a different profile; reusing stored run-config", runID)
 		}
 		if err := config.OverridesMatchRunConfig(o.Opts.Overrides, rc); err != nil {
 			return nil, fmt.Errorf("existing run %s: %w", runID, err)
@@ -658,19 +671,14 @@ func requireCheckPhase(rs *state.RunState, phase string) error {
 		return fmt.Errorf("check refused while run is failed")
 	}
 	switch phase {
-	case "after-import":
-		return requireIndexesForImportCheck(rs)
-	case "after-test":
-		if rs.State == state.StateCompleted || state.Reached(rs.State, state.StateDraining) {
-			return nil
-		}
-		return fmt.Errorf("check --after-test requires the test stage to finish (current state is %s)", rs.State)
+	case "after-import", "after-test":
+		return requireSuccessfulLoadForCheck(rs, phase)
 	default:
 		return fmt.Errorf("unknown check phase %q", phase)
 	}
 }
 
-func requireIndexesForImportCheck(rs *state.RunState) error {
+func requireSuccessfulLoadForCheck(rs *state.RunState, phase string) error {
 	for _, step := range rs.SkippedSteps {
 		if step == "indexes" {
 			return nil
@@ -679,7 +687,7 @@ func requireIndexesForImportCheck(rs *state.RunState) error {
 	if state.Reached(rs.State, state.StateIndexing) {
 		return nil
 	}
-	return fmt.Errorf("check --after-import requires the indexes stage (current state is %s); run 'mind-tpcc indexes' first", rs.State)
+	return fmt.Errorf("check --%s requires a successful data load (current state is %s); run 'mind-tpcc indexes' first", phase, rs.State)
 }
 
 // RunCheck executes the check role without changing run-state.
