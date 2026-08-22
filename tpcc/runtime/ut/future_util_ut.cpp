@@ -127,19 +127,21 @@ void UpdatePeak(std::atomic<int>& current, std::atomic<int>& peak) {
     }
 }
 
-TFuture<void> ParkOnScheduler(
+TFuture<int> ParkOnScheduler(
     ITaskQueue& taskQueue,
     size_t threadHint,
     TFuture<int> src,
     std::atomic<int>& current,
     std::atomic<int>& peak)
 {
+    // Started on the test thread; TTaskReady must publish the handle without
+    // racing the scheduler that may resume this frame immediately.
     co_await TTaskReady(taskQueue, threadHint);
     UpdatePeak(current, peak);
     auto chained = Then(std::move(src), [](int v) { return v + 1; });
     const int value = co_await TSuspendWithFuture(std::move(chained), taskQueue, threadHint);
-    EXPECT_EQ(value, 2);
     current.fetch_sub(1, std::memory_order_relaxed);
+    co_return value;
 }
 
 } // namespace
@@ -152,7 +154,7 @@ TEST(FutureUtil, IncompleteThenLetsInflightExceedSchedulerThreads) {
     taskQueue->Run();
 
     std::vector<TPromise<int>> promises(kWorkers);
-    std::vector<TFuture<void>> done;
+    std::vector<TFuture<int>> done;
     done.reserve(kWorkers);
     std::atomic<int> current{0};
     std::atomic<int> peak{0};
@@ -180,7 +182,7 @@ TEST(FutureUtil, IncompleteThenLetsInflightExceedSchedulerThreads) {
         promise.SetValue(1);
     }
     for (auto& future : done) {
-        future.Get();
+        EXPECT_EQ(future.Get(), 2);
     }
 
     taskQueue->WakeupAndNeverSleep();
