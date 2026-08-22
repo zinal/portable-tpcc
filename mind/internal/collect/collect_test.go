@@ -205,3 +205,30 @@ func TestCollectInstanceRejectsAbsolutePayloadPath(t *testing.T) {
 		t.Fatalf("expected absolute path error, got %v", err)
 	}
 }
+
+func TestHasCollectionManifest(t *testing.T) {
+	root := t.TempDir()
+	runID := "run-1"
+	if collect.HasCollectionManifest(root, runID) {
+		t.Fatal("missing manifest must be reported absent")
+	}
+	path := collect.CollectionManifestPath(root, runID)
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(path, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if collect.HasCollectionManifest(root, runID) {
+		t.Fatal("directory at manifest path must not count as collected")
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("{}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if !collect.HasCollectionManifest(root, runID) {
+		t.Fatal("regular file at manifest path must count as collected")
+	}
+}

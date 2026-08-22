@@ -367,6 +367,14 @@ mind-tpcc run | cleanup --yes
 `test` arms workers and runs ramp-up / measurement / drain. `start` is a
 compatibility alias for `test`. `--skip start` skips the same `run` step.
 
+Standalone `mind-tpcc consolidate` MUST run `collect` first when
+`results/<run_id>/collection-manifest.json` is absent, so a post-test
+`consolidate` is sufficient to produce `aggregate.json`. `collect` remains
+available to re-pull artifacts (for example after a late `check --after-test`).
+`run` still executes collect and consolidate as separate pipeline steps;
+`--skip collect` still skips only the collect step of `run` and does not
+trigger this implicit collect.
+
 `run` = validate → require prior `deploy` (shared worker binaries present on
 every assigned host; no auto-upload) → schema → load → indexes →
 check(after-import) → test → check(after-test) → collect → consolidate.

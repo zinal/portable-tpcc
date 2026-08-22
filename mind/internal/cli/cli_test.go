@@ -92,6 +92,9 @@ func TestRun_helpMentionsLeaveProcesses(t *testing.T) {
 	if !strings.Contains(string(out), "start       Alias for test") {
 		t.Fatalf("help missing start alias:\n%s", out)
 	}
+	if !strings.Contains(string(out), "collects first if needed") {
+		t.Fatalf("help missing consolidate auto-collect:\n%s", out)
+	}
 }
 
 func TestRun_threadsFlagAcceptedOnValidate(t *testing.T) {

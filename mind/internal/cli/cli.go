@@ -476,7 +476,7 @@ Commands:
   status      Show run state
   stop        Stop workers gracefully
   collect     Collect artifacts from runtime hosts
-  consolidate Merge worker results into aggregate.json and print brief stats
+  consolidate Merge worker results into aggregate.json (collects first if needed)
   run         Full pipeline (requires prior explicit deploy)
   cleanup     Full teardown for a run: stop, DB clean, remote+local run artifacts (--yes)
 
