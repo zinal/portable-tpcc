@@ -215,7 +215,8 @@ cp mind/mind-tpcc ./mind-tpcc
 
 Or run stages individually: `deploy`, `schema`, `load`, `indexes`,
 `check --after-import`, `test`, `check --after-test`, `collect`,
-`consolidate`.
+`consolidate`. After `test`, `consolidate` is enough to produce the result:
+it runs `collect` first when `collection-manifest.json` is absent.
 
 `mind-tpcc run` includes `check(after-import)` / `check(after-test)` only when
 `checks.after_import` / `checks.after_test` are true.

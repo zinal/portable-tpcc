@@ -43,6 +43,11 @@ func ValidateArtifactPayloadPath(path string) error {
 	return nil
 }
 
+// CollectionManifestFileName is written under results/<run_id>/ after a
+// successful collect. Standalone consolidate uses its presence to decide
+// whether collect still needs to run.
+const CollectionManifestFileName = "collection-manifest.json"
+
 // CollectionManifest covers all collected artifacts on the control host.
 type CollectionManifest struct {
 	SchemaVersion int                    `json:"schema_version"`
@@ -50,6 +55,17 @@ type CollectionManifest struct {
 	SHA256        string                 `json:"sha256"`
 	Processes     []ArtifactManifest     `json:"processes"`
 	ControlFiles  []ArtifactPayloadEntry `json:"control_files"`
+}
+
+// CollectionManifestPath is results/<run_id>/collection-manifest.json.
+func CollectionManifestPath(resultRoot, runID string) string {
+	return filepath.Join(resultRoot, runID, CollectionManifestFileName)
+}
+
+// HasCollectionManifest reports whether collect completed for this run.
+func HasCollectionManifest(resultRoot, runID string) bool {
+	st, err := os.Stat(CollectionManifestPath(resultRoot, runID))
+	return err == nil && !st.IsDir()
 }
 
 // Collector copies and verifies remote/local instance artifacts.
@@ -132,14 +148,14 @@ func (c *Collector) WriteCollectionManifest(runID string, processes []ArtifactMa
 	if err != nil {
 		return err
 	}
-	tmp := filepath.Join(dir, "collection-manifest.json.tmp")
+	tmp := filepath.Join(dir, CollectionManifestFileName+".tmp")
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
 	if err := os.WriteFile(tmp, data, 0644); err != nil {
 		return err
 	}
-	return os.Rename(tmp, filepath.Join(dir, "collection-manifest.json"))
+	return os.Rename(tmp, CollectionManifestPath(c.ResultRoot, runID))
 }
 
 func copyFile(src, dst string) error {

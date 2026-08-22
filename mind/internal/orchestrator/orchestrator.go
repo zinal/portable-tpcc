@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"portable-tpcc/mind/internal/canonical"
+	"portable-tpcc/mind/internal/collect"
 	"portable-tpcc/mind/internal/config"
 	"portable-tpcc/mind/internal/consolidate"
 	"portable-tpcc/mind/internal/deploy"
@@ -787,7 +788,17 @@ func (o *Orchestrator) consolidate(ctx *Context) error {
 }
 
 // RunConsolidate merges artifacts into aggregate.json.
+// If collection-manifest.json is absent, collect is run first so a post-test
+// `mind-tpcc consolidate` is enough to produce the result. The `run` pipeline
+// still calls collect and consolidate as separate steps; `--skip collect`
+// continues to skip only the collect step of `run`.
 func (o *Orchestrator) RunConsolidate(ctx *Context) error {
+	if !collect.HasCollectionManifest(o.Expanded.ResultRoot, ctx.RunID) {
+		progress.Printf("stage consolidate: collection-manifest missing; running collect first")
+		if err := o.collect(ctx); err != nil {
+			return err
+		}
+	}
 	return o.consolidate(ctx)
 }
 

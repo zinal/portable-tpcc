@@ -1,12 +1,17 @@
 package orchestrator_test
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"portable-tpcc/mind/internal/canonical"
+	"portable-tpcc/mind/internal/collect"
 	"portable-tpcc/mind/internal/config"
 	"portable-tpcc/mind/internal/orchestrator"
 	"portable-tpcc/mind/internal/state"
@@ -578,6 +583,170 @@ func TestRunAcquiresProfileLockBeforeMaterialize(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(o.StateStore.RunDir("run-locked"), "run-config.json")); !os.IsNotExist(err) {
 		t.Fatalf("run-config materialized before lock failure: %v", err)
+	}
+}
+
+func TestRunConsolidateCollectsWhenManifestMissing(t *testing.T) {
+	dir := t.TempDir()
+	profilePath := writeTestProfile(t, dir, "")
+	o, err := orchestrator.New(orchestrator.Options{ProfilePath: profilePath, RunID: "run-auto-collect"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, err := o.Materialize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := o.StateStore.Transition(ctx.RunID, state.StateDraining); err != nil {
+		t.Fatal(err)
+	}
+	if collect.HasCollectionManifest(o.Expanded.ResultRoot, ctx.RunID) {
+		t.Fatal("collection-manifest must be absent before consolidate")
+	}
+
+	sha, err := canonical.SHA256File(filepath.Join(ctx.RunDir, "run-config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	remoteRoot, err := filepath.Abs(o.Expanded.RemoteRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := ctx.RunConfig.WorkerAssignment[0]
+	writeWorkerPayloads(t, filepath.Join(remoteRoot, ctx.RunID, "worker", w.Instance), w, ctx.RunID, sha, "nonce-"+w.Instance)
+
+	if err := o.RunConsolidate(ctx); err != nil {
+		t.Fatalf("RunConsolidate: %v", err)
+	}
+	if !collect.HasCollectionManifest(o.Expanded.ResultRoot, ctx.RunID) {
+		t.Fatal("expected collect to write collection-manifest.json")
+	}
+	if _, err := os.Stat(filepath.Join(o.Expanded.ResultRoot, ctx.RunID, "aggregate.json")); err != nil {
+		t.Fatalf("expected aggregate.json after auto-collect: %v", err)
+	}
+	got, err := o.StateStore.Load(ctx.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != state.StateConsolidating {
+		t.Fatalf("state=%q, want consolidating", got.State)
+	}
+}
+
+func TestRunConsolidateSkipsCollectWhenManifestPresent(t *testing.T) {
+	dir := t.TempDir()
+	profilePath := writeTestProfile(t, dir, "")
+	o, err := orchestrator.New(orchestrator.Options{ProfilePath: profilePath, RunID: "run-already-collected"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, err := o.Materialize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := o.StateStore.Transition(ctx.RunID, state.StateCollecting); err != nil {
+		t.Fatal(err)
+	}
+
+	sha, err := canonical.SHA256File(filepath.Join(ctx.RunDir, "run-config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := ctx.RunConfig.WorkerAssignment[0]
+	writeWorkerPayloads(t, filepath.Join(o.Expanded.ResultRoot, ctx.RunID, "raw", "worker", w.Instance), w, ctx.RunID, sha, "nonce-"+w.Instance)
+	if err := os.WriteFile(collect.CollectionManifestPath(o.Expanded.ResultRoot, ctx.RunID), []byte("{}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := o.RunConsolidate(ctx); err != nil {
+		t.Fatalf("RunConsolidate with existing collection must not call collect: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(o.Expanded.ResultRoot, ctx.RunID, "aggregate.json")); err != nil {
+		t.Fatalf("expected aggregate.json: %v", err)
+	}
+}
+
+func writeWorkerPayloads(t *testing.T, dir string, w config.WorkerAssignmentJSON, runID, sha, nonce string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]interface{}{
+		"result.json": map[string]interface{}{
+			"run_id":            runID,
+			"instance":          w.Instance,
+			"instance_nonce":    nonce,
+			"run_config_sha256": sha,
+			"assignment": map[string]interface{}{
+				"instance":         w.Instance,
+				"host":             w.Host,
+				"warehouse_ranges": w.WarehouseRanges,
+				"threads":          w.Threads,
+				"max_inflight":     w.MaxInflight,
+			},
+			"exit_status": 0,
+			"counters":    map[string]interface{}{"new_order_ok": 10},
+			"histograms": map[string]interface{}{
+				"new_order": map[string]interface{}{
+					"layout":       "linear_exp",
+					"unit":         "ms",
+					"hdr_till":     4,
+					"max_value":    64,
+					"total_count":  10,
+					"min_recorded": 0,
+					"max_recorded": 0,
+					"sum_values":   0,
+					"buckets":      []uint64{10, 0, 0, 0, 0, 0, 0, 0, 0},
+				},
+			},
+		},
+		"ready.json": map[string]interface{}{
+			"instance_nonce": nonce,
+			"clock_calibration": map[string]interface{}{
+				"measured_at":    "2026-07-28T12:00:00Z",
+				"offset_ms":      5.0,
+				"uncertainty_ms": 2.0,
+				"rtt_ms":         4.0,
+			},
+		},
+		"process.json": map[string]interface{}{
+			"instance_nonce": nonce,
+			"run_id":         runID,
+			"instance":       w.Instance,
+			"role":           "worker",
+			"pid":            1234,
+		},
+	}
+	var payloads []collect.ArtifactPayloadEntry
+	for name, v := range files {
+		data, err := json.MarshalIndent(v, "", "  ")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), data, 0644); err != nil {
+			t.Fatal(err)
+		}
+		sum := sha256.Sum256(data)
+		payloads = append(payloads, collect.ArtifactPayloadEntry{
+			Path:   name,
+			Size:   int64(len(data)),
+			SHA256: hex.EncodeToString(sum[:]),
+		})
+	}
+	manifest := collect.ArtifactManifest{
+		SchemaVersion: 1,
+		Instance:      w.Instance,
+		InstanceNonce: nonce,
+		Finalized:     true,
+		ExitStatus:    0,
+		Payloads:      payloads,
+	}
+	data, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "artifact-manifest.json"), data, 0644); err != nil {
+		t.Fatal(err)
 	}
 }
 

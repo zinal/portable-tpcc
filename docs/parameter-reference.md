@@ -35,7 +35,7 @@ mind-tpcc <command> --profile <path> [options]
 | `status` | Show run state. |
 | `stop` | Stop workers gracefully. |
 | `collect` | Copy artifacts from runtime hosts. |
-| `consolidate` | Merge worker results into `aggregate.json` and print a brief stats summary. |
+| `consolidate` | Merge worker results into `aggregate.json` and print a brief stats summary. Runs `collect` first when `collection-manifest.json` is absent. |
 | `run` | Full pipeline. Requires a prior explicit `deploy`. |
 | `cleanup` | Teardown: stop, optional DB `clean`, remote + local run artifacts. Requires `--yes`. |
 | `help` / `-h` / `--help` | Usage. |
