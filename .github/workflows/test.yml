@@ -1,0 +1,79 @@
+# Built-in unit tests (no live DBMS).
+#
+# C++ tests go through ./ya make via ./build.sh. The YDB target requires
+# CUDA to be disabled; ./build.sh always passes
+#   -DHAVE_CUDA=no -DCUDA_VERSION=11.4
+# Go tests use the standard toolchain for the mind/ module, not ya make.
+
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  mind:
+    name: mind-tpcc (Go)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: mind/go.mod
+          cache-dependency-path: mind/go.sum
+
+      - name: Test
+        run: go -C mind test ./...
+
+      - name: Test with race detector
+        run: go -C mind test -race ./...
+
+      - name: Build
+        run: go -C mind build ./cmd/mind-tpcc
+
+  tpcc:
+    name: tpcc (C++)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf \
+            /usr/share/dotnet \
+            /usr/local/lib/android \
+            /opt/ghc \
+            /usr/local/share/powershell \
+            /usr/share/swift \
+            /opt/hostedtoolcache/CodeQL
+          df -h
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            python3 \
+            python3-dev \
+            build-essential \
+            libc6-dev \
+            libidn-dev \
+            libaio1t64 \
+            libaio-dev \
+            binutils \
+            lsb-release
+
+      - name: Build and run unit tests
+        run: ./build.sh -r -t -j"$(nproc)" --tpcc-only
