@@ -146,8 +146,14 @@ struct TSuspendWithFuture {
     bool await_ready() { return Future.IsReady(); }
 
     void await_suspend(std::coroutine_handle<> handle) {
-        Future.Subscribe([this, handle]() {
-            TaskQueue.TaskReadyThreadSafe(handle, ThreadHint);
+        // Copy what the callback needs before Subscribe. If the future is
+        // already ready, Subscribe runs the callback synchronously and
+        // another thread may resume (and destroy) this awaiter before
+        // Subscribe returns — so the lambda must not capture `this`.
+        ITaskQueue& taskQueue = TaskQueue;
+        const size_t threadHint = ThreadHint;
+        Future.Subscribe([&taskQueue, handle, threadHint]() {
+            taskQueue.TaskReadyThreadSafe(handle, threadHint);
         });
     }
 
@@ -164,14 +170,18 @@ struct TTaskReady {
         , ThreadHint(threadHint)
     {}
 
-    bool await_ready() { return false; }
+    // Same-thread continuation belongs in await_ready. Enqueueing the handle
+    // and then returning bool from await_suspend races with the resumed
+    // coroutine: another thread may already be executing (or have destroyed)
+    // the frame before that bool is written.
+    bool await_ready() {
+        return TaskQueue.CheckCurrentThread();
+    }
 
-    bool await_suspend(std::coroutine_handle<> h) {
-        if (TaskQueue.CheckCurrentThread()) {
-            return false;
-        }
-        TaskQueue.TaskReadyThreadSafe(h, ThreadHint);
-        return true;
+    void await_suspend(std::coroutine_handle<> h) {
+        ITaskQueue& taskQueue = TaskQueue;
+        const size_t threadHint = ThreadHint;
+        taskQueue.TaskReadyThreadSafe(h, threadHint);
     }
 
     void await_resume() {}
