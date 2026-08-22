@@ -62,15 +62,16 @@ inline size_t GetLenOfFormatDate8601Part() {
 // Initialize the global logger. Call once at startup.
 void InitLogging(ELogPriority level = TLOG_INFO);
 
-// Shared logger used by LOG_* macros.
-std::shared_ptr<TLog>& GetLog();
+// Shared logger used by LOG_* macros. Returns a refcounted copy so a
+// concurrent InitLogging() cannot destroy the TLog under the caller.
+std::shared_ptr<TLog> GetLog();
 
 } // namespace NTpcc
 
 #define LOG_IMPL(log, level, message) \
-    if (log && log->FiltrationLevel() >= level) { \
+    if (auto _tpccLog = (log); _tpccLog && _tpccLog->FiltrationLevel() >= level) { \
         char buf[DATE_8601_LEN]; \
-        log->Write(level, TStringBuilder() \
+        _tpccLog->Write(level, TStringBuilder() \
             << TStringBuf(buf, FormatDate8601(buf, sizeof(buf), TInstant::Now().Seconds())) \
             << " " << NTpcc::GetLogColor(level) << NTpcc::PriorityToString(level) \
             << NColorizer::StdErr().Default() \

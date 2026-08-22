@@ -4,6 +4,7 @@
 
 #include <util/stream/output.h>
 #include <util/system/guard.h>
+#include <util/system/mutex.h>
 
 #include <utility>
 
@@ -17,6 +18,15 @@ namespace {
 
 std::shared_ptr<TLog> GlobalLog;
 TLogBackendWithCapture* GlobalLogBackend = nullptr;
+TMutex LogMutex;
+
+void EnsureDefaultLoggingLocked() {
+    if (GlobalLog) {
+        return;
+    }
+    GlobalLogBackend = new TLogBackendWithCapture("cerr", TLOG_INFO, DefaultCaptureLines);
+    GlobalLog = std::make_shared<TLog>(THolder<TLogBackend>(GlobalLogBackend));
+}
 
 } // namespace
 
@@ -132,20 +142,24 @@ void TLogBackendWithCapture::WriteData(const TLogRecord& record) {
 }
 
 void InitLogging(ELogPriority level) {
-    // TLog takes ownership of the backend via THolder.
-    GlobalLogBackend = new TLogBackendWithCapture("cerr", level, DefaultCaptureLines);
-    GlobalLog = std::make_shared<TLog>(THolder<TLogBackend>(GlobalLogBackend));
+    // Create the threaded backend outside the lock: its constructor starts
+    // a worker thread. Publish the pointers atomically w.r.t. GetLog().
+    auto* backend = new TLogBackendWithCapture("cerr", level, DefaultCaptureLines);
+    auto log = std::make_shared<TLog>(THolder<TLogBackend>(backend));
+    TGuard guard(LogMutex);
+    GlobalLogBackend = backend;
+    GlobalLog = std::move(log);
 }
 
-std::shared_ptr<TLog>& GetLog() {
-    if (!GlobalLog) {
-        InitLogging();
-    }
+std::shared_ptr<TLog> GetLog() {
+    TGuard guard(LogMutex);
+    EnsureDefaultLoggingLocked();
     return GlobalLog;
 }
 
 TLogBackendWithCapture* GetLogBackend() {
-    GetLog();
+    TGuard guard(LogMutex);
+    EnsureDefaultLoggingLocked();
     return GlobalLogBackend;
 }
 
@@ -156,12 +170,14 @@ void StartLogCapture() {
 }
 
 void StopLogCapture() {
+    TGuard guard(LogMutex);
     if (GlobalLogBackend) {
         GlobalLogBackend->StopCapture();
     }
 }
 
 void StopLogCaptureAndFlush(IOutputStream& os) {
+    TGuard guard(LogMutex);
     if (GlobalLogBackend) {
         GlobalLogBackend->StopCaptureAndFlush(os);
     }
