@@ -48,19 +48,15 @@ workload:
     delivery: 4
     stock_level: 4
 
-# host is the connection address. Identical host values mean co-location
-# (one SSH/local session shared by those instances).
+# Connection addresses. Repeats mean co-location (one SSH/local session).
+# Instance names are generated from each host plus a 1-based index.
 loaders:
-  - name: loader-a
-    host: 10.10.0.21
-  - name: loader-b
-    host: 10.10.0.22
+  - 10.10.0.21
+  - 10.10.0.22
 
 workers:
-  - name: worker-a
-    host: 10.10.0.31
-  - name: worker-b
-    host: 10.10.0.32
+  - 10.10.0.31
+  - 10.10.0.32
 
 phases:
   # Launch + prepare budget before absolute --start-at (orchestrator chooses

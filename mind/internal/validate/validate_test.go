@@ -154,7 +154,6 @@ func TestValidate_rejectsManualAssignment(t *testing.T) {
 	p.Raw = map[string]interface{}{
 		"workers": []interface{}{
 			map[string]interface{}{
-				"name":             "worker-a",
 				"host":             "load-a",
 				"warehouse_ranges": []interface{}{[]interface{}{1, 5}},
 			},
@@ -188,16 +187,22 @@ func TestValidate_acceptsCoLocatedHosts(t *testing.T) {
 	}
 	p.Scale.Warehouses = 20
 	p.Loaders = []profile.NamedHost{
-		{Name: "loader-a", Host: "10.10.0.21"},
-		{Name: "loader-b", Host: "10.10.0.21"},
+		{Host: "10.10.0.21"},
+		{Host: "10.10.0.21"},
 	}
 	p.Workers = []profile.NamedHost{
-		{Name: "worker-a", Host: "10.10.0.21"},
-		{Name: "worker-b", Host: "10.10.0.22"},
+		{Host: "10.10.0.21"},
+		{Host: "10.10.0.22"},
 	}
 	res := validate.Profile(p)
 	if !res.Valid {
 		t.Fatalf("expected co-located host addresses to be valid, errors: %v", res.Errors)
+	}
+	if p.Loaders[0].Name != "h-10-10-0-21-1" || p.Loaders[1].Name != "h-10-10-0-21-2" {
+		t.Fatalf("loader names=%q,%q", p.Loaders[0].Name, p.Loaders[1].Name)
+	}
+	if p.Workers[0].Name != "h-10-10-0-21-3" || p.Workers[1].Name != "h-10-10-0-22-1" {
+		t.Fatalf("worker names=%q,%q", p.Workers[0].Name, p.Workers[1].Name)
 	}
 }
 

@@ -171,11 +171,13 @@ documents:
 - phase durations and runtime/retry/histogram settings;
 - binary name used for the run (for example `tpcc-ydb`).
 
-Assignment algorithm (`balanced-contiguous`): sort instance names
+Assignment algorithm (`balanced-contiguous`): sort generated instance names
 bytewise ascending; split warehouses into contiguous ranges; give remainder
 warehouses to the first instances; DB-wide data belongs to the first loader.
 No manual ranges in the profile. A warehouse's home terminals MUST NOT be
-split across workers.
+split across workers. Profile `loaders` / `workers` are host-address lists;
+instance names are generated from those hosts (see
+[parameter-reference.md](parameter-reference.md#loaders--workers)).
 
 Mix weights MUST be positive and form a complete distribution. Values that
 differ from any TPC-C edition are still accepted.
@@ -523,7 +525,7 @@ is required unless explicitly disabled in the profile (recorded in run-state).
 
 ## 10. Validation
 
-Reject unknown fields/DBMS, bad instance names, empty instance lists, more
+Reject unknown fields/DBMS, empty hosts, empty instance lists, more
 instances than warehouses, manual assignment fields in the profile, invalid
 mix, non-positive sizes/timeouts, secret literals, and retry-after-ambiguous
 commit. `runtime.histogram.unit`, if present, MUST be `ms` or `us`.

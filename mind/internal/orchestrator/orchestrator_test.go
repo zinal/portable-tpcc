@@ -41,7 +41,7 @@ func TestPlan_snapshot(t *testing.T) {
 	if len(plan.WorkerArgv) != 1 {
 		t.Fatalf("worker argv count %d", len(plan.WorkerArgv))
 	}
-	argv := plan.WorkerArgv["worker-a"]
+	argv := plan.WorkerArgv["h-127-0-0-1-2"]
 	if len(argv) != 5 || argv[0] != "worker" {
 		t.Fatalf("unexpected argv: %v", argv)
 	}
@@ -77,11 +77,11 @@ func TestPlanHonorsThreadsOverride(t *testing.T) {
 	if got := plan.CheckArgvImport; len(got) == 0 || got[len(got)-1] != "--threads=16" {
 		t.Fatalf("check argv %v, want --threads=16", plan.CheckArgvImport)
 	}
-	argv := plan.WorkerArgv["worker-a"]
+	argv := plan.WorkerArgv["h-127-0-0-1-2"]
 	if len(argv) == 0 || argv[len(argv)-1] != "--threads=16" {
 		t.Fatalf("worker argv %v, want --threads=16", argv)
 	}
-	loaderArgv := plan.LoaderArgv["loader-a"]
+	loaderArgv := plan.LoaderArgv["h-127-0-0-1-1"]
 	if len(loaderArgv) == 0 || loaderArgv[len(loaderArgv)-1] != "--threads=16" {
 		t.Fatalf("loader argv %v, want --threads=16", loaderArgv)
 	}

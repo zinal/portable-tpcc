@@ -61,6 +61,61 @@ func TestParse_acceptsValidProfile(t *testing.T) {
 	if p.Metadata.Name != "test-profile" {
 		t.Fatalf("name=%q", p.Metadata.Name)
 	}
+	if len(p.Loaders) != 1 || p.Loaders[0].Host != "127.0.0.1" {
+		t.Fatalf("loaders=%+v", p.Loaders)
+	}
+	if p.Loaders[0].Name != "h-127-0-0-1-1" {
+		t.Fatalf("loader name=%q", p.Loaders[0].Name)
+	}
+	if len(p.Workers) != 1 || p.Workers[0].Host != "127.0.0.1" || p.Workers[0].Name != "h-127-0-0-1-2" {
+		t.Fatalf("workers=%+v", p.Workers)
+	}
+}
+
+func TestParse_hostListGeneratesUniqueNames(t *testing.T) {
+	path := filepath.Join("..", "..", "testdata", "profile.valid.yaml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	patched := strings.Replace(
+		string(data),
+		"loaders:\n  - 127.0.0.1\n\nworkers:\n  - 127.0.0.1\n",
+		"loaders:\n  - 10.10.0.21\n  - 10.10.0.21\n\nworkers:\n  - 10.10.0.21\n  - host.example.com:22\n",
+		1,
+	)
+	if patched == string(data) {
+		t.Fatal("failed to inject host lists into test fixture")
+	}
+	p, err := profile.Parse([]byte(patched))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := []string{p.Loaders[0].Name, p.Loaders[1].Name, p.Workers[0].Name, p.Workers[1].Name}; got[0] != "h-10-10-0-21-1" ||
+		got[1] != "h-10-10-0-21-2" || got[2] != "h-10-10-0-21-3" || got[3] != "host-example-com-22-1" {
+		t.Fatalf("generated names=%v", got)
+	}
+}
+
+func TestParse_rejectsNamedHostObjects(t *testing.T) {
+	path := filepath.Join("..", "..", "testdata", "profile.valid.yaml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	patched := strings.Replace(
+		string(data),
+		"loaders:\n  - 127.0.0.1\n",
+		"loaders:\n  - name: loader-a\n    host: 127.0.0.1\n",
+		1,
+	)
+	if patched == string(data) {
+		t.Fatal("failed to inject name/host object into test fixture")
+	}
+	_, err = profile.Parse([]byte(patched))
+	if err == nil || !strings.Contains(err.Error(), "host address string") {
+		t.Fatalf("expected host-string error, got %v", err)
+	}
 }
 
 func TestParse_acceptsKnownThinkTimeDistribution(t *testing.T) {
@@ -172,6 +227,18 @@ func TestParse_rejectsRetryAmbiguousCommit(t *testing.T) {
 	_, err = profile.Parse([]byte(patched))
 	if err == nil || !strings.Contains(err.Error(), "retry_ambiguous_commit") {
 		t.Fatalf("expected unknown-field error for retry_ambiguous_commit, got %v", err)
+	}
+}
+
+func TestAssignInstanceNames_skipsPresetNames(t *testing.T) {
+	loaders := []profile.NamedHost{{Name: "loader-a", Host: "h1"}}
+	workers := []profile.NamedHost{{Host: "h1"}}
+	profile.AssignInstanceNames(loaders, workers)
+	if loaders[0].Name != "loader-a" {
+		t.Fatalf("preset name overwritten: %q", loaders[0].Name)
+	}
+	if workers[0].Name != "h1-1" {
+		t.Fatalf("generated worker name=%q", workers[0].Name)
 	}
 }
 

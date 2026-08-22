@@ -178,10 +178,10 @@ Schema creates the tables database if missing.
 | --- | --- | --- |
 | `warehouses` | yes | Positive warehouse count. Must be ≥ loader count and ≥ worker count. |
 
-Assignment algorithm `balanced-contiguous`: sort instance names bytewise;
-split warehouses into contiguous ranges; remainder to the first instances;
-DB-wide data belongs to the first loader. A warehouse's home terminals are
-never split across workers.
+Assignment algorithm `balanced-contiguous`: sort generated instance names
+bytewise; split warehouses into contiguous ranges; remainder to the first
+instances; DB-wide data belongs to the first loader. A warehouse's home
+terminals are never split across workers.
 
 ### `data`
 
@@ -211,12 +211,15 @@ fail structural validation.
 
 ### `loaders` / `workers`
 
-Non-empty lists. Each entry:
+Non-empty lists of host addresses (hostname, IP, or `host:port` for SSH).
+Repeats are allowed and mean co-location (one SSH/local session per distinct
+host string). Each entry is a scalar, not a `{name, host}` object.
 
-| Field | Required | Meaning |
-| --- | --- | --- |
-| `name` | yes | Unique across loaders+workers. Pattern `[a-z][a-z0-9-]*`. |
-| `host` | yes | Connection address (hostname, IP, or `host:port` for SSH). Identical values = co-location (one SSH/local session). |
+Instance identities used in run-config, `--instance`, and remote directories
+are generated as `{sanitized-host}-{n}` with a 1-based index over all loader
+and worker entries that share that host (loaders first). Sanitization
+lowercases the address, replaces non `[a-z0-9]` runs with `-`, and prefixes
+`h-` when the result starts with a digit (`10.10.0.21` → `h-10-10-0-21-1`).
 
 `127.0.0.1` uses local sessions (no SSH). Multi-host needs SSH and tightly
 synchronized clocks.

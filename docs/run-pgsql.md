@@ -148,12 +148,10 @@ scale:
   warehouses: 10
 
 loaders:
-  - name: loader-a
-    host: 127.0.0.1
+  - 127.0.0.1
 
 workers:
-  - name: worker-a
-    host: 127.0.0.1
+  - 127.0.0.1
 
 phases:
   start_lead: 45s
@@ -195,9 +193,9 @@ Or run stages individually: `deploy`, `schema`, `load`, `indexes`,
 `consolidate`. After `test`, `consolidate` is enough to produce the result:
 it runs `collect` first when `collection-manifest.json` is absent.
 
-On a single host, set every loader/worker `host` to `127.0.0.1` (local
+On a single host, list `127.0.0.1` for every loader/worker (local
 sessions, no SSH). Multi-host runs need SSH access and tightly synchronized
-clocks. Identical `host` values mean co-location on one machine.
+clocks. Repeated host strings mean co-location on one machine.
 
 Artifacts land under `paths.result_root/<run_id>/` (including
 `aggregate.json`).

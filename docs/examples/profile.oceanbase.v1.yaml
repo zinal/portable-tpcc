@@ -60,19 +60,15 @@ workload:
     delivery: 4
     stock_level: 4
 
-# host is the connection address. Same host => co-located instances.
+# Connection addresses. Repeats mean co-located instances (one SSH/local session).
 # Mind assigns balanced contiguous warehouse ranges across loaders/workers.
 loaders:
-  - name: loader-a
-    host: 127.0.0.1
-  - name: loader-b
-    host: 127.0.0.1
+  - 127.0.0.1
+  - 127.0.0.1
 
 workers:
-  - name: worker-a
-    host: 127.0.0.1
-  - name: worker-b
-    host: 127.0.0.1
+  - 127.0.0.1
+  - 127.0.0.1
 
 checks:
   after_import: true
