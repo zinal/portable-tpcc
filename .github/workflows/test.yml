@@ -70,7 +70,7 @@ jobs:
             build-essential \
             libc6-dev \
             libidn-dev \
-            libaio1 \
+            libaio1t64 \
             libaio-dev \
             binutils \
             lsb-release
