@@ -139,6 +139,21 @@ runs can keep `--threads` / `threads_per_worker` low (including auto
 `indexes` creates secondary indexes after load (YDB has no PostgreSQL-style
 `ANALYZE` step).
 
+Load uses idempotent Arrow `BulkUpsert`. `data.batch_rows` (default **10000**
+when omitted or ≤ 0) sizes each request. The YDB server upload actor has a
+hard **300s** deadline (`TUploadRowsBase`). A timeout looks like:
+
+```text
+bulk upsert stock: Bulk upsert to table '/…/stock' longTx ydb://long-tx/read-only timed out, duration: 300 sec
+```
+
+`ydb://long-tx/read-only` is **not** a read-only transaction. It is the
+string form of an uninitialized `TLongTxId` (`NodeId == 0`). Row-table
+`BulkUpsert` writes through DataShard and never begins a LongTx; the timeout
+handler always prints that field. The loader retries TIMEOUT / overload
+(specification §6: `PutBatch` is idempotent). If timeouts persist, lower
+`data.batch_rows` (for example 2000) or reduce loader `--threads`.
+
 ## Orchestrated run (`mind-tpcc`)
 
 Minimum profile fields: `apiVersion` / `kind` / `metadata.name`, `ssh`,
