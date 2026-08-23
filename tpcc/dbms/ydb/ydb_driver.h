@@ -33,6 +33,7 @@ struct TYdbConnectionConfig {
 };
 
 bool ParseYdbAuthScheme(const std::string& value, EYdbAuthScheme& out);
+const char* YdbAuthSchemeToString(EYdbAuthScheme scheme);
 
 std::string ReadYdbToken(const TYdbConnectionConfig& config);
 NYdb::TDriverConfig BuildYdbDriverConfig(const TYdbConnectionConfig& config);
