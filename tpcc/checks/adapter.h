@@ -20,7 +20,8 @@ struct TCheckRequest {
 // Inclusive warehouse-id chunk size for ranged TPC-C checks. Size 1 enables
 // HASH partition pruning (OceanBase) and the same per-warehouse parallelism
 // on PostgreSQL and YDB. SQL predicates are unchanged; only scheduling
-// and the warehouse filter bounds change.
+// and the warehouse filter bounds change. Bounds (and other per-execution
+// values) are bound parameters; the query text stays the same across chunks.
 constexpr int kWarehouseCheckRange = 1;
 
 // Evaluates shared catalog entries against a live database.

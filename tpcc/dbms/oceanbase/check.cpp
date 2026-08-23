@@ -14,6 +14,8 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cstddef>
+#include <cstdint>
 #include <exception>
 #include <functional>
 #include <iostream>
@@ -30,19 +32,36 @@ namespace NTpcc {
 
 namespace {
 
-QueryResult QueryOne(TObConnection& conn, const std::string& sql) {
-    auto result = conn.QuerySimple(sql);
+QueryResult QueryOne(TObConnection& conn, const std::string& sql, const TObParams& params = {}) {
+    auto result = conn.Query(sql, params);
     if (!result.TryNextRow()) {
         throw std::runtime_error("Expected one row, got none: " + sql);
     }
     return result;
 }
 
-void CheckNoRows(TObConnection& conn, const std::string& sql, const std::string& description = {}) {
-    auto result = conn.QuerySimple(sql);
+void CheckNoRows(
+    TObConnection& conn,
+    const std::string& sql,
+    const TObParams& params,
+    const std::string& description)
+{
+    auto result = conn.Query(sql, params);
     if (result.TryNextRow()) {
         throw std::runtime_error(description.empty() ? "Unexpected rows returned" : description);
     }
+}
+
+void CheckNoRows(TObConnection& conn, const std::string& sql, const std::string& description = {}) {
+    CheckNoRows(conn, sql, TObParams{}, description);
+}
+
+TObParams WarehouseRangeParams(int startWh, int endWh, size_t pairs = 1) {
+    TObParams params;
+    for (size_t i = 0; i < pairs; ++i) {
+        params(static_cast<int32_t>(startWh))(static_cast<int32_t>(endWh));
+    }
+    return params;
 }
 
 void BaseCheckWarehouseTable(TObConnection& conn, int expectedWhNumber) {
@@ -75,8 +94,8 @@ void BaseCheckCustomerTable(TObConnection& conn, int startWh, int endWh) {
     auto r = QueryOne(conn, fmt::format(
         "SELECT COUNT(*) AS cnt, MAX(c_w_id) AS max_w, MIN(c_w_id) AS min_w, "
         "MAX(c_d_id) AS max_d, MIN(c_d_id) AS min_d, MAX(c_id) AS max_c, MIN(c_id) AS min_c "
-        "FROM {} WHERE c_w_id >= {} AND c_w_id <= {}",
-        TABLE_CUSTOMER, startWh, endWh));
+        "FROM {} WHERE c_w_id >= ? AND c_w_id <= ?",
+        TABLE_CUSTOMER), WarehouseRangeParams(startWh, endWh));
     const int rangeWh = endWh - startWh + 1;
     const int expectedCount = rangeWh * CUSTOMERS_PER_DISTRICT * DISTRICT_COUNT;
     if (r.GetInt64("cnt") != expectedCount ||
@@ -104,8 +123,8 @@ void BaseCheckStockTable(TObConnection& conn, int startWh, int endWh) {
     auto r = QueryOne(conn, fmt::format(
         "SELECT COUNT(*) AS cnt, COUNT(DISTINCT s_w_id) AS wh_cnt, "
         "MAX(s_w_id) AS max_w, MIN(s_w_id) AS min_w, MAX(s_i_id) AS max_i, MIN(s_i_id) AS min_i "
-        "FROM {} WHERE s_w_id >= {} AND s_w_id <= {}",
-        TABLE_STOCK, startWh, endWh));
+        "FROM {} WHERE s_w_id >= ? AND s_w_id <= ?",
+        TABLE_STOCK), WarehouseRangeParams(startWh, endWh));
     const int rangeWh = endWh - startWh + 1;
     const int expectedCount = rangeWh * ITEM_COUNT;
     if (r.GetInt64("cnt") != expectedCount ||
@@ -122,8 +141,8 @@ void BaseCheckOorderTable(TObConnection& conn, int startWh, int endWh) {
     auto r = QueryOne(conn, fmt::format(
         "SELECT COUNT(*) AS cnt, MAX(o_w_id) AS max_w, MIN(o_w_id) AS min_w, "
         "MAX(o_d_id) AS max_d, MIN(o_d_id) AS min_d, MAX(o_id) AS max_o, MIN(o_id) AS min_o "
-        "FROM {} WHERE o_w_id >= {} AND o_w_id <= {}",
-        TABLE_OORDER, startWh, endWh));
+        "FROM {} WHERE o_w_id >= ? AND o_w_id <= ?",
+        TABLE_OORDER), WarehouseRangeParams(startWh, endWh));
     const int rangeWh = endWh - startWh + 1;
     const int expectedCount = rangeWh * CUSTOMERS_PER_DISTRICT * DISTRICT_COUNT;
     if (r.GetInt64("cnt") != expectedCount ||
@@ -140,8 +159,8 @@ void BaseCheckNewOrderTable(TObConnection& conn, int startWh, int endWh) {
     auto r = QueryOne(conn, fmt::format(
         "SELECT COUNT(*) AS cnt, MAX(no_w_id) AS max_w, MIN(no_w_id) AS min_w, "
         "MAX(no_d_id) AS max_d, MIN(no_d_id) AS min_d, MAX(no_o_id) AS max_o, MIN(no_o_id) AS min_o "
-        "FROM {} WHERE no_w_id >= {} AND no_w_id <= {}",
-        TABLE_NEW_ORDER, startWh, endWh));
+        "FROM {} WHERE no_w_id >= ? AND no_w_id <= ?",
+        TABLE_NEW_ORDER), WarehouseRangeParams(startWh, endWh));
     const int rangeWh = endWh - startWh + 1;
     const int expectedCount = rangeWh *
         (CUSTOMERS_PER_DISTRICT - FIRST_UNPROCESSED_O_ID + 1) * DISTRICT_COUNT;
@@ -160,8 +179,8 @@ void BaseCheckOrderLineTable(TObConnection& conn, int startWh, int endWh) {
     auto r = QueryOne(conn, fmt::format(
         "SELECT MIN(order_count) AS min_orders, MAX(order_count) AS max_orders, COUNT(*) AS district_count "
         "FROM (SELECT ol_w_id, ol_d_id, COUNT(DISTINCT ol_o_id) AS order_count "
-        "FROM {} WHERE ol_w_id >= {} AND ol_w_id <= {} GROUP BY ol_w_id, ol_d_id) sub",
-        TABLE_ORDER_LINE, startWh, endWh));
+        "FROM {} WHERE ol_w_id >= ? AND ol_w_id <= ? GROUP BY ol_w_id, ol_d_id) sub",
+        TABLE_ORDER_LINE), WarehouseRangeParams(startWh, endWh));
     const int rangeWh = endWh - startWh + 1;
     const int expectedDistrictCount = rangeWh * DISTRICT_COUNT;
     if (r.GetInt64("district_count") != expectedDistrictCount ||
@@ -176,8 +195,8 @@ void BaseCheckOrderLineTable(TObConnection& conn, int startWh, int endWh) {
 void BaseCheckHistoryTable(TObConnection& conn, int startWh, int endWh) {
     auto r = QueryOne(conn, fmt::format(
         "SELECT COUNT(*) AS cnt, MAX(h_c_w_id) AS max_w, MIN(h_c_w_id) AS min_w FROM {} "
-        "WHERE h_c_w_id >= {} AND h_c_w_id <= {}",
-        TABLE_HISTORY, startWh, endWh));
+        "WHERE h_c_w_id >= ? AND h_c_w_id <= ?",
+        TABLE_HISTORY), WarehouseRangeParams(startWh, endWh));
     const int rangeWh = endWh - startWh + 1;
     const int expectedCount = rangeWh * CUSTOMERS_PER_DISTRICT * DISTRICT_COUNT;
     if (r.GetInt64("cnt") != expectedCount ||
@@ -202,25 +221,26 @@ void ConsistencyCheck3322(TObConnection& conn, int startWh, int endWh) {
     CheckNoRows(conn, fmt::format(
         "SELECT d.d_w_id FROM {} AS d "
         "LEFT JOIN (SELECT o_w_id, o_d_id, MAX(o_id) AS max_o_id FROM {} "
-        "           WHERE o_w_id >= {} AND o_w_id <= {} GROUP BY o_w_id, o_d_id) AS o "
+        "           WHERE o_w_id >= ? AND o_w_id <= ? GROUP BY o_w_id, o_d_id) AS o "
         "ON d.d_w_id = o.o_w_id AND d.d_id = o.o_d_id "
         "LEFT JOIN (SELECT no_w_id, no_d_id, MAX(no_o_id) AS max_no_o_id FROM {} "
-        "           WHERE no_w_id >= {} AND no_w_id <= {} GROUP BY no_w_id, no_d_id) AS n "
+        "           WHERE no_w_id >= ? AND no_w_id <= ? GROUP BY no_w_id, no_d_id) AS n "
         "ON d.d_w_id = n.no_w_id AND d.d_id = n.no_d_id "
-        "WHERE d.d_w_id >= {} AND d.d_w_id <= {} "
+        "WHERE d.d_w_id >= ? AND d.d_w_id <= ? "
         "AND (o.max_o_id IS NULL OR (d.d_next_o_id - 1) != o.max_o_id "
         "OR (n.max_no_o_id IS NOT NULL AND n.max_no_o_id != o.max_o_id)) LIMIT 1",
-        TABLE_DISTRICT, TABLE_OORDER, startWh, endWh, TABLE_NEW_ORDER, startWh, endWh,
-        startWh, endWh),
+        TABLE_DISTRICT, TABLE_OORDER, TABLE_NEW_ORDER),
+        WarehouseRangeParams(startWh, endWh, 3),
         fmt::format("3.3.2.2 w_id [{},{}]", startWh, endWh));
 }
 
 void ConsistencyCheck3323(TObConnection& conn, int startWh, int endWh) {
     CheckNoRows(conn, fmt::format(
-        "SELECT no_w_id FROM {} WHERE no_w_id >= {} AND no_w_id <= {} "
+        "SELECT no_w_id FROM {} WHERE no_w_id >= ? AND no_w_id <= ? "
         "GROUP BY no_w_id, no_d_id "
         "HAVING COUNT(*) - (MAX(no_o_id) - MIN(no_o_id) + 1) != 0 LIMIT 1",
-        TABLE_NEW_ORDER, startWh, endWh),
+        TABLE_NEW_ORDER),
+        WarehouseRangeParams(startWh, endWh),
         fmt::format("3.3.2.3 w_id [{},{}]", startWh, endWh));
 }
 
@@ -228,18 +248,19 @@ void ConsistencyCheck3324(TObConnection& conn, int startWh, int endWh) {
     CheckNoRows(conn, fmt::format(
         "SELECT * FROM ("
         "SELECT o.o_w_id, o.o_d_id FROM (SELECT o_w_id, o_d_id, SUM(o_ol_cnt) AS sum_ol_cnt "
-        "FROM {0} WHERE o_w_id >= {1} AND o_w_id <= {2} GROUP BY o_w_id, o_d_id) AS o "
-        "LEFT JOIN (SELECT ol_w_id, ol_d_id, COUNT(*) AS ol_count FROM {3} "
-        "WHERE ol_w_id >= {1} AND ol_w_id <= {2} GROUP BY ol_w_id, ol_d_id) AS ol "
+        "FROM {0} WHERE o_w_id >= ? AND o_w_id <= ? GROUP BY o_w_id, o_d_id) AS o "
+        "LEFT JOIN (SELECT ol_w_id, ol_d_id, COUNT(*) AS ol_count FROM {1} "
+        "WHERE ol_w_id >= ? AND ol_w_id <= ? GROUP BY ol_w_id, ol_d_id) AS ol "
         "ON o.o_w_id = ol.ol_w_id AND o.o_d_id = ol.ol_d_id "
         "WHERE COALESCE(o.sum_ol_cnt, -1) != COALESCE(ol.ol_count, -1) "
         "UNION ALL "
         "SELECT ol2.ol_w_id, ol2.ol_d_id FROM (SELECT ol_w_id, ol_d_id, COUNT(*) AS ol_count "
-        "FROM {3} WHERE ol_w_id >= {1} AND ol_w_id <= {2} GROUP BY ol_w_id, ol_d_id) AS ol2 "
+        "FROM {1} WHERE ol_w_id >= ? AND ol_w_id <= ? GROUP BY ol_w_id, ol_d_id) AS ol2 "
         "LEFT JOIN (SELECT o_w_id, o_d_id, SUM(o_ol_cnt) AS sum_ol_cnt FROM {0} "
-        "WHERE o_w_id >= {1} AND o_w_id <= {2} GROUP BY o_w_id, o_d_id) AS o2 "
+        "WHERE o_w_id >= ? AND o_w_id <= ? GROUP BY o_w_id, o_d_id) AS o2 "
         "ON o2.o_w_id = ol2.ol_w_id AND o2.o_d_id = ol2.ol_d_id WHERE o2.o_w_id IS NULL"
-        ") sub LIMIT 1", TABLE_OORDER, startWh, endWh, TABLE_ORDER_LINE),
+        ") sub LIMIT 1", TABLE_OORDER, TABLE_ORDER_LINE),
+        WarehouseRangeParams(startWh, endWh, 4),
         fmt::format("3.3.2.4 w_id [{},{}]", startWh, endWh));
 }
 
@@ -248,12 +269,13 @@ void ConsistencyCheck3325(TObConnection& conn, int startWh, int endWh) {
         "SELECT * FROM ("
         "SELECT no.no_w_id, no.no_d_id, no.no_o_id FROM {0} AS no LEFT JOIN {1} AS o "
         "ON no.no_w_id = o.o_w_id AND no.no_d_id = o.o_d_id AND no.no_o_id = o.o_id "
-        "WHERE no.no_w_id >= {2} AND no.no_w_id <= {3} AND (o.o_w_id IS NULL OR o.o_carrier_id IS NOT NULL) "
+        "WHERE no.no_w_id >= ? AND no.no_w_id <= ? AND (o.o_w_id IS NULL OR o.o_carrier_id IS NOT NULL) "
         "UNION ALL "
         "SELECT o2.o_w_id, o2.o_d_id, o2.o_id FROM {1} AS o2 LEFT JOIN {0} AS no2 "
         "ON o2.o_w_id = no2.no_w_id AND o2.o_d_id = no2.no_d_id AND o2.o_id = no2.no_o_id "
-        "WHERE o2.o_w_id >= {2} AND o2.o_w_id <= {3} AND o2.o_carrier_id IS NULL AND no2.no_w_id IS NULL"
-        ") sub LIMIT 1", TABLE_NEW_ORDER, TABLE_OORDER, startWh, endWh),
+        "WHERE o2.o_w_id >= ? AND o2.o_w_id <= ? AND o2.o_carrier_id IS NULL AND no2.no_w_id IS NULL"
+        ") sub LIMIT 1", TABLE_NEW_ORDER, TABLE_OORDER),
+        WarehouseRangeParams(startWh, endWh, 2),
         fmt::format("3.3.2.5 w_id [{},{}]", startWh, endWh));
 }
 
@@ -262,15 +284,16 @@ void ConsistencyCheck3326(TObConnection& conn, int startWh, int endWh) {
         "SELECT * FROM ("
         "SELECT o.o_w_id, o.o_d_id, o.o_id FROM {0} AS o "
         "LEFT JOIN (SELECT ol_w_id, ol_d_id, ol_o_id, COUNT(*) AS cnt FROM {1} "
-        "WHERE ol_w_id >= {2} AND ol_w_id <= {3} GROUP BY ol_w_id, ol_d_id, ol_o_id) AS l "
+        "WHERE ol_w_id >= ? AND ol_w_id <= ? GROUP BY ol_w_id, ol_d_id, ol_o_id) AS l "
         "ON o.o_w_id = l.ol_w_id AND o.o_d_id = l.ol_d_id AND o.o_id = l.ol_o_id "
-        "WHERE o.o_w_id >= {2} AND o.o_w_id <= {3} AND o.o_ol_cnt != COALESCE(l.cnt, 0) "
+        "WHERE o.o_w_id >= ? AND o.o_w_id <= ? AND o.o_ol_cnt != COALESCE(l.cnt, 0) "
         "UNION ALL "
         "SELECT l2.ol_w_id, l2.ol_d_id, l2.ol_o_id FROM "
-        "(SELECT DISTINCT ol_w_id, ol_d_id, ol_o_id FROM {1} WHERE ol_w_id >= {2} AND ol_w_id <= {3}) AS l2 "
+        "(SELECT DISTINCT ol_w_id, ol_d_id, ol_o_id FROM {1} WHERE ol_w_id >= ? AND ol_w_id <= ?) AS l2 "
         "LEFT JOIN {0} AS o2 ON l2.ol_w_id = o2.o_w_id AND l2.ol_d_id = o2.o_d_id AND l2.ol_o_id = o2.o_id "
         "WHERE o2.o_w_id IS NULL"
-        ") sub LIMIT 1", TABLE_OORDER, TABLE_ORDER_LINE, startWh, endWh),
+        ") sub LIMIT 1", TABLE_OORDER, TABLE_ORDER_LINE),
+        WarehouseRangeParams(startWh, endWh, 3),
         fmt::format("3.3.2.6 w_id [{},{}]", startWh, endWh));
 }
 
@@ -280,12 +303,13 @@ void ConsistencyCheck3327(TObConnection& conn, int startWh, int endWh) {
         "MIN(CASE WHEN ol_delivery_d IS NOT NULL THEN 1 ELSE 0 END) AS all_delivered, "
         "MAX(CASE WHEN ol_delivery_d IS NULL THEN 1 ELSE 0 END) AS some_null, "
         "MAX(CASE WHEN ol_delivery_d IS NOT NULL THEN 1 ELSE 0 END) AS some_delivered "
-        "FROM {} WHERE ol_w_id >= {} AND ol_w_id <= {} GROUP BY ol_w_id, ol_d_id, ol_o_id) AS l "
+        "FROM {} WHERE ol_w_id >= ? AND ol_w_id <= ? GROUP BY ol_w_id, ol_d_id, ol_o_id) AS l "
         "JOIN {} AS o ON l.ol_w_id = o.o_w_id AND l.ol_d_id = o.o_d_id AND l.ol_o_id = o.o_id "
         "WHERE (l.some_null = 1 AND l.some_delivered = 1) "
         "OR (o.o_carrier_id IS NULL AND l.some_delivered = 1) "
         "OR (o.o_carrier_id IS NOT NULL AND l.some_null = 1) LIMIT 1",
-        TABLE_ORDER_LINE, startWh, endWh, TABLE_OORDER),
+        TABLE_ORDER_LINE, TABLE_OORDER),
+        WarehouseRangeParams(startWh, endWh),
         fmt::format("3.3.2.7 w_id [{},{}]", startWh, endWh));
 }
 
@@ -293,11 +317,12 @@ void ConsistencyCheck3328(TObConnection& conn, int startWh, int endWh) {
     CheckNoRows(conn, fmt::format(
         "SELECT w.w_id FROM {} AS w LEFT JOIN "
         "(SELECT h_w_id, SUM(h_amount) AS sum_h FROM {} "
-        " WHERE h_w_id >= {} AND h_w_id <= {} GROUP BY h_w_id) AS h "
+        " WHERE h_w_id >= ? AND h_w_id <= ? GROUP BY h_w_id) AS h "
         "ON w.w_id = h.h_w_id "
-        "WHERE w.w_id >= {} AND w.w_id <= {} "
+        "WHERE w.w_id >= ? AND w.w_id <= ? "
         "AND NOT (w.w_ytd <=> COALESCE(h.sum_h, 0)) LIMIT 1",
-        TABLE_WAREHOUSE, TABLE_HISTORY, startWh, endWh, startWh, endWh),
+        TABLE_WAREHOUSE, TABLE_HISTORY),
+        WarehouseRangeParams(startWh, endWh, 2),
         fmt::format("3.3.2.8 w_id [{},{}]", startWh, endWh));
 }
 
@@ -305,11 +330,12 @@ void ConsistencyCheck3329(TObConnection& conn, int startWh, int endWh) {
     CheckNoRows(conn, fmt::format(
         "SELECT d.d_w_id FROM {} AS d LEFT JOIN "
         "(SELECT h_w_id, h_d_id, SUM(h_amount) AS sum_h FROM {} "
-        " WHERE h_w_id >= {} AND h_w_id <= {} GROUP BY h_w_id, h_d_id) AS h "
+        " WHERE h_w_id >= ? AND h_w_id <= ? GROUP BY h_w_id, h_d_id) AS h "
         "ON d.d_w_id = h.h_w_id AND d.d_id = h.h_d_id "
-        "WHERE d.d_w_id >= {} AND d.d_w_id <= {} "
+        "WHERE d.d_w_id >= ? AND d.d_w_id <= ? "
         "AND NOT (d.d_ytd <=> COALESCE(h.sum_h, 0)) LIMIT 1",
-        TABLE_DISTRICT, TABLE_HISTORY, startWh, endWh, startWh, endWh),
+        TABLE_DISTRICT, TABLE_HISTORY),
+        WarehouseRangeParams(startWh, endWh, 2),
         fmt::format("3.3.2.9 w_id [{},{}]", startWh, endWh));
 }
 
@@ -318,14 +344,15 @@ void ConsistencyCheck33210(TObConnection& conn, int startWh, int endWh) {
         "SELECT c.c_w_id FROM {0} AS c "
         "LEFT JOIN (SELECT o.o_w_id AS w_id, o.o_d_id AS d_id, o.o_c_id AS c_id, SUM(ol.ol_amount) AS ol_sum "
         "FROM {1} AS o JOIN {2} AS ol ON ol.ol_w_id = o.o_w_id AND ol.ol_d_id = o.o_d_id AND ol.ol_o_id = o.o_id "
-        "WHERE ol.ol_delivery_d IS NOT NULL AND o.o_w_id >= {3} AND o.o_w_id <= {4} GROUP BY o.o_w_id, o.o_d_id, o.o_c_id) AS ols "
+        "WHERE ol.ol_delivery_d IS NOT NULL AND o.o_w_id >= ? AND o.o_w_id <= ? GROUP BY o.o_w_id, o.o_d_id, o.o_c_id) AS ols "
         "ON c.c_w_id = ols.w_id AND c.c_d_id = ols.d_id AND c.c_id = ols.c_id "
-        "LEFT JOIN (SELECT h_c_w_id, h_c_d_id, h_c_id, SUM(h_amount) AS h_sum FROM {5} "
-        "WHERE h_c_w_id >= {3} AND h_c_w_id <= {4} GROUP BY h_c_w_id, h_c_d_id, h_c_id) AS hs "
+        "LEFT JOIN (SELECT h_c_w_id, h_c_d_id, h_c_id, SUM(h_amount) AS h_sum FROM {3} "
+        "WHERE h_c_w_id >= ? AND h_c_w_id <= ? GROUP BY h_c_w_id, h_c_d_id, h_c_id) AS hs "
         "ON c.c_w_id = hs.h_c_w_id AND c.c_d_id = hs.h_c_d_id AND c.c_id = hs.h_c_id "
-        "WHERE c.c_w_id >= {3} AND c.c_w_id <= {4} "
+        "WHERE c.c_w_id >= ? AND c.c_w_id <= ? "
         "AND NOT (c.c_balance <=> (COALESCE(ols.ol_sum, 0) - COALESCE(hs.h_sum, 0))) LIMIT 1",
-        TABLE_CUSTOMER, TABLE_OORDER, TABLE_ORDER_LINE, startWh, endWh, TABLE_HISTORY),
+        TABLE_CUSTOMER, TABLE_OORDER, TABLE_ORDER_LINE, TABLE_HISTORY),
+        WarehouseRangeParams(startWh, endWh, 3),
         fmt::format("3.3.2.10 w_id [{},{}]", startWh, endWh));
 }
 
@@ -334,21 +361,22 @@ void ConsistencyCheck33211(TObConnection& conn, int startWh, int endWh) {
     CheckNoRows(conn, fmt::format(
         "SELECT * FROM ("
         "SELECT o.o_w_id, o.o_d_id FROM (SELECT o_w_id, o_d_id, COUNT(*) AS order_cnt FROM {0} "
-        "WHERE o_w_id >= {1} AND o_w_id <= {2} GROUP BY o_w_id, o_d_id) AS o "
-        "LEFT JOIN (SELECT no_w_id, no_d_id, COUNT(*) AS new_order_cnt FROM {3} "
-        "WHERE no_w_id >= {1} AND no_w_id <= {2} GROUP BY no_w_id, no_d_id) AS n "
+        "WHERE o_w_id >= ? AND o_w_id <= ? GROUP BY o_w_id, o_d_id) AS o "
+        "LEFT JOIN (SELECT no_w_id, no_d_id, COUNT(*) AS new_order_cnt FROM {1} "
+        "WHERE no_w_id >= ? AND no_w_id <= ? GROUP BY no_w_id, no_d_id) AS n "
         "ON o.o_w_id = n.no_w_id AND o.o_d_id = n.no_d_id "
-        "WHERE (COALESCE(o.order_cnt, 0) - COALESCE(n.new_order_cnt, 0)) != {4} "
+        "WHERE (COALESCE(o.order_cnt, 0) - COALESCE(n.new_order_cnt, 0)) != {2} "
         "UNION ALL "
-        "SELECT n2.no_w_id, n2.no_d_id FROM (SELECT no_w_id, no_d_id, COUNT(*) AS new_order_cnt FROM {3} "
-        "WHERE no_w_id >= {1} AND no_w_id <= {2} GROUP BY no_w_id, no_d_id) AS n2 "
+        "SELECT n2.no_w_id, n2.no_d_id FROM (SELECT no_w_id, no_d_id, COUNT(*) AS new_order_cnt FROM {1} "
+        "WHERE no_w_id >= ? AND no_w_id <= ? GROUP BY no_w_id, no_d_id) AS n2 "
         "LEFT JOIN (SELECT o_w_id, o_d_id, COUNT(*) AS order_cnt FROM {0} "
-        "WHERE o_w_id >= {1} AND o_w_id <= {2} GROUP BY o_w_id, o_d_id) AS o2 "
+        "WHERE o_w_id >= ? AND o_w_id <= ? GROUP BY o_w_id, o_d_id) AS o2 "
         "ON o2.o_w_id = n2.no_w_id AND o2.o_d_id = n2.no_d_id "
         "WHERE o2.o_w_id IS NULL"
         ") sub LIMIT 1",
-        TABLE_OORDER, startWh, endWh, TABLE_NEW_ORDER,
+        TABLE_OORDER, TABLE_NEW_ORDER,
         FIRST_UNPROCESSED_O_ID - 1),
+        WarehouseRangeParams(startWh, endWh, 4),
         fmt::format("3.3.2.11 w_id [{},{}]", startWh, endWh));
 }
 
@@ -357,11 +385,12 @@ void ConsistencyCheck33212(TObConnection& conn, int startWh, int endWh) {
         "SELECT c.c_w_id FROM {0} AS c LEFT JOIN ("
         "SELECT o.o_w_id AS w_id, o.o_d_id AS d_id, o.o_c_id AS c_id, SUM(ol.ol_amount) AS ol_sum "
         "FROM {1} AS o JOIN {2} AS ol ON ol.ol_w_id = o.o_w_id AND ol.ol_d_id = o.o_d_id AND ol.ol_o_id = o.o_id "
-        "WHERE ol.ol_delivery_d IS NOT NULL AND o.o_w_id >= {3} AND o.o_w_id <= {4} GROUP BY o.o_w_id, o.o_d_id, o.o_c_id) AS l "
+        "WHERE ol.ol_delivery_d IS NOT NULL AND o.o_w_id >= ? AND o.o_w_id <= ? GROUP BY o.o_w_id, o.o_d_id, o.o_c_id) AS l "
         "ON c.c_w_id = l.w_id AND c.c_d_id = l.d_id AND c.c_id = l.c_id "
-        "WHERE c.c_w_id >= {3} AND c.c_w_id <= {4} "
+        "WHERE c.c_w_id >= ? AND c.c_w_id <= ? "
         "AND NOT ((c.c_balance + c.c_ytd_payment) <=> COALESCE(l.ol_sum, 0)) LIMIT 1",
-        TABLE_CUSTOMER, TABLE_OORDER, TABLE_ORDER_LINE, startWh, endWh),
+        TABLE_CUSTOMER, TABLE_OORDER, TABLE_ORDER_LINE),
+        WarehouseRangeParams(startWh, endWh, 2),
         fmt::format("3.3.2.12 w_id [{},{}]", startWh, endWh));
 }
 
@@ -385,27 +414,30 @@ void PostImportCheckDistrictYtd(TObConnection& conn) {
 
 void PostImportCheckNoCarriers(TObConnection& conn, int startWh, int endWh) {
     CheckNoRows(conn, fmt::format(
-        "SELECT o_w_id FROM {} WHERE o_w_id >= {} AND o_w_id <= {} "
+        "SELECT o_w_id FROM {} WHERE o_w_id >= ? AND o_w_id <= ? "
         "AND o_id >= {} AND o_carrier_id IS NOT NULL LIMIT 1",
-        TABLE_OORDER, startWh, endWh, FIRST_UNPROCESSED_O_ID),
+        TABLE_OORDER, FIRST_UNPROCESSED_O_ID),
+        WarehouseRangeParams(startWh, endWh),
         fmt::format("Unprocessed orders must have NULL O_CARRIER_ID after import (w_id [{},{}])",
                     startWh, endWh));
 }
 
 void PostImportCheckCarrierRange(TObConnection& conn, int startWh, int endWh) {
     CheckNoRows(conn, fmt::format(
-        "SELECT o_w_id FROM {} WHERE o_w_id >= {} AND o_w_id <= {} AND o_id < {} "
+        "SELECT o_w_id FROM {} WHERE o_w_id >= ? AND o_w_id <= ? AND o_id < {} "
         "AND (o_carrier_id IS NULL OR o_carrier_id < 1 OR o_carrier_id > 10) LIMIT 1",
-        TABLE_OORDER, startWh, endWh, FIRST_UNPROCESSED_O_ID),
+        TABLE_OORDER, FIRST_UNPROCESSED_O_ID),
+        WarehouseRangeParams(startWh, endWh),
         fmt::format("Delivered orders must have O_CARRIER_ID in [1..10] after import (w_id [{},{}])",
                     startWh, endWh));
 }
 
 void PostImportCheckNoDeliveryDates(TObConnection& conn, int startWh, int endWh) {
     CheckNoRows(conn, fmt::format(
-        "SELECT ol_w_id FROM {} WHERE ol_w_id >= {} AND ol_w_id <= {} "
+        "SELECT ol_w_id FROM {} WHERE ol_w_id >= ? AND ol_w_id <= ? "
         "AND ol_o_id >= {} AND ol_delivery_d IS NOT NULL LIMIT 1",
-        TABLE_ORDER_LINE, startWh, endWh, FIRST_UNPROCESSED_O_ID),
+        TABLE_ORDER_LINE, FIRST_UNPROCESSED_O_ID),
+        WarehouseRangeParams(startWh, endWh),
         fmt::format("Unprocessed order lines must have NULL OL_DELIVERY_D after import (w_id [{},{}])",
                     startWh, endWh));
 }
@@ -414,9 +446,10 @@ void PostImportCheckDeliveryEqualsEntry(TObConnection& conn, int startWh, int en
     CheckNoRows(conn, fmt::format(
         "SELECT ol.ol_w_id FROM {} AS ol JOIN {} AS o "
         "ON o.o_w_id = ol.ol_w_id AND o.o_d_id = ol.ol_d_id AND o.o_id = ol.ol_o_id "
-        "WHERE ol.ol_w_id >= {} AND ol.ol_w_id <= {} AND ol.ol_o_id < {} "
+        "WHERE ol.ol_w_id >= ? AND ol.ol_w_id <= ? AND ol.ol_o_id < {} "
         "AND (ol.ol_delivery_d IS NULL OR ol.ol_delivery_d <> o.o_entry_d) LIMIT 1",
-        TABLE_ORDER_LINE, TABLE_OORDER, startWh, endWh, FIRST_UNPROCESSED_O_ID),
+        TABLE_ORDER_LINE, TABLE_OORDER, FIRST_UNPROCESSED_O_ID),
+        WarehouseRangeParams(startWh, endWh),
         fmt::format(
             "Delivered order lines must have OL_DELIVERY_D = O_ENTRY_D after import (w_id [{},{}])",
             startWh, endWh));
@@ -424,9 +457,10 @@ void PostImportCheckDeliveryEqualsEntry(TObConnection& conn, int startWh, int en
 
 void PostImportCheckDeliveredAmountZero(TObConnection& conn, int startWh, int endWh) {
     CheckNoRows(conn, fmt::format(
-        "SELECT ol_w_id FROM {} WHERE ol_w_id >= {} AND ol_w_id <= {} "
+        "SELECT ol_w_id FROM {} WHERE ol_w_id >= ? AND ol_w_id <= ? "
         "AND ol_o_id < {} AND NOT (ol_amount <=> 0.00) LIMIT 1",
-        TABLE_ORDER_LINE, startWh, endWh, FIRST_UNPROCESSED_O_ID),
+        TABLE_ORDER_LINE, FIRST_UNPROCESSED_O_ID),
+        WarehouseRangeParams(startWh, endWh),
         fmt::format("Delivered order lines must have OL_AMOUNT = 0.00 after import (w_id [{},{}])",
                     startWh, endWh));
 }

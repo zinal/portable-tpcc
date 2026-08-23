@@ -507,10 +507,14 @@ are warehouse-ranged MUST be the same on every adapter. Adapters MUST NOT use
 a private chunk size.
 
 SQL predicates stay those of TPC-C §3.3.2; only scheduling and warehouse
-filter bounds change. A change to check scheduling (concurrency wiring, chunk
-size, which catalog ids are warehouse-ranged, or when the stdout progress
-line is printed) MUST be applied to every adapter. Do not leave one DBMS
-serial, silent until the suite ends, or on a private range size. Do not
+filter bounds change. Warehouse-range filter bounds (and any other values that
+differ across executions of the same catalog id) MUST be bound query
+parameters, not literals in the generated SQL. TPC-C scale constants and other
+values that are fixed for the whole run MAY remain literals. A change to check
+scheduling (concurrency wiring, chunk size, which catalog ids are
+warehouse-ranged, or when the stdout progress line is printed) MUST be applied
+to every adapter. Do not leave one DBMS serial, silent until the suite ends,
+or on a private range size. Do not
 rewrite §3.3.2 predicates for speed (PX / `PARALLEL` hints, skipped catalog
 entries, DBMS-only SQL “optimizations”) unless explicitly requested. Dialect
 translation that keeps the same condition (for example OceanBase `LEFT JOIN` +
