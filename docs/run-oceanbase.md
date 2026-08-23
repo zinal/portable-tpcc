@@ -150,7 +150,7 @@ $BIN run --connection="$CONN" --path=tpcc -w 10 \
 $BIN check --connection="$CONN" --path=tpcc -w 10 -t 10 --after-test
 
 # drop TPC-C tables
-$BIN clean --connection="$CONN" --path=tpcc
+$BIN drop --connection="$CONN" --path=tpcc
 ```
 
 Connection string also accepts `query_timeout=<seconds>` (default 600).
@@ -277,17 +277,18 @@ tpcc-oceanbase loader --run-config run-config.json --instance <loader> [--thread
 tpcc-oceanbase indexes --run-config run-config.json --instance indexes-0
 tpcc-oceanbase worker --run-config run-config.json --instance <worker> --start-at=<UTC> [--threads=N]
 tpcc-oceanbase check  --run-config run-config.json --instance check-0 --after-import|--after-test [--threads=N]
-tpcc-oceanbase clean  --run-config run-config.json --instance clean-0   # mind-tpcc cleanup
+tpcc-oceanbase drop   --run-config run-config.json --instance drop-0    # mind-tpcc drop
 ```
 
 ```bash
+./mind-tpcc drop --profile ./profile-oceanbase.yaml --yes
 ./mind-tpcc cleanup --profile ./profile-oceanbase.yaml --yes
 ./mind-tpcc undeploy --profile ./profile-oceanbase.yaml --yes
 ```
 
-`cleanup` drops TPC-C objects (when the run is past deploy), remote
-`remote_root/<run_id>`, and local results + state. Shared worker binaries stay
-installed until `undeploy`.
+`drop` removes TPC-C objects. `cleanup` removes remote `remote_root/<run_id>`
+and local results + state (including the control host). Shared worker binaries
+stay installed until `undeploy`.
 
 ## Checklist
 

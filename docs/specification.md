@@ -145,10 +145,10 @@ Non-DBMS logic comes from shared libraries; only the adapter/driver is
 DBMS-specific.
 
 Binaries **MAY** keep standalone aliases for local use (`init` ≡ `schema`,
-`import` / `run` with flag-driven config, `clean` as local admin).
+`import` / `run` with flag-driven config, `drop` as local admin).
 Orchestrated workload remotes use the five normative role names
-(`schema`, `loader`, `indexes`, `worker`, `check`). `mind-tpcc cleanup`
-**MAY** also launch `clean --run-config --instance` as an admin helper to
+(`schema`, `loader`, `indexes`, `worker`, `check`). `mind-tpcc drop`
+**MAY** also launch `drop --run-config --instance` as an admin helper to
 drop TPC-C objects with the same secret handling as other roles.
 
 ## 5. Configuration Model
@@ -285,8 +285,8 @@ There is no DB-scoped control fence. Operators MUST NOT run two control
 processes against the same database path concurrently. Loss of a worker
 during measurement fails the run; terminals are not reassigned.
 
-Orchestrated remotes (schema, loader, indexes, worker, check, and cleanup
-`clean`) follow the process contract in §9.1.
+Orchestrated remotes (schema, loader, indexes, worker, check, and
+`drop`) follow the process contract in §9.1.
 
 ## 8. Results
 
@@ -364,7 +364,7 @@ mind-tpcc configure --profile <path> --dbms <pgsql|ydb|oceanbase> [options]
 mind-tpcc validate | plan | deploy | undeploy --yes | schema | load | indexes
 mind-tpcc check [--after-import|--after-test]
 mind-tpcc test | status | stop | collect | consolidate
-mind-tpcc run | cleanup --yes
+mind-tpcc run | drop --yes | cleanup --yes
 ```
 
 `configure` writes a complete example profile YAML. `--profile` (or a
@@ -392,13 +392,19 @@ trigger this implicit collect.
 every assigned host; no auto-upload) → schema → load → indexes →
 check(after-import) → test → check(after-test) → collect → consolidate.
 
+`drop --yes` drops TPC-C objects for the profile's database path. It uses
+`--run-id` if given, otherwise the newest matching run (to reuse that
+run-config); if no run exists it materializes a run-config from the profile.
+It launches orchestrated `drop` on the first loader host. It does not remove
+run artifacts; use `cleanup` for that. Requires `--yes`.
+
 `cleanup --yes` tears down an existing run for the profile (explicit
 `--run-id`, else the newest matching run, including terminal states). Phases
 depend on run-state: stop any recorded running processes; when state is past
-`deploying`, launch orchestrated `clean` on the first loader host; when state
-is past `planned`, remove `remote_root/<run_id>` on every runtime host; always
-remove local `result_root/<run_id>` and `state/runs/<run_id>`. Shared worker
-binaries under `remote_root` are left in place.
+`planned`, remove `remote_root/<run_id>` on every runtime host and on the
+control host; always remove local `result_root/<run_id>` and
+`state/runs/<run_id>`. Shared worker binaries under `remote_root` are left
+in place. It does not drop database objects; use `drop` for that.
 
 `undeploy --yes` is the inverse of `deploy`: profile-scoped removal of the
 shared worker binary from every assigned host. It does not tear down a run;

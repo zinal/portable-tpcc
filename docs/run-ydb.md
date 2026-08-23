@@ -99,7 +99,7 @@ $BIN check --endpoint=localhost:2136 --database=/local --path=tpcc -w 10 -t 10 -
 $BIN run --endpoint=localhost:2136 --database=/local --path=tpcc -w 10 \
   --duration=5 -t 4
 $BIN check --endpoint=localhost:2136 --database=/local --path=tpcc -w 10 -t 10 --after-test
-$BIN clean --endpoint=localhost:2136 --database=/local --path=tpcc
+$BIN drop --endpoint=localhost:2136 --database=/local --path=tpcc
 ```
 
 Login (password stays in the environment, not in argv):
@@ -234,7 +234,7 @@ tpcc-ydb loader --run-config run-config.json --instance <loader> [--threads=N]
 tpcc-ydb indexes --run-config run-config.json --instance indexes-0
 tpcc-ydb worker --run-config run-config.json --instance <worker> --start-at=<UTC> [--threads=N]
 tpcc-ydb check  --run-config run-config.json --instance check-0 --after-import|--after-test [--threads=N]
-tpcc-ydb clean  --run-config run-config.json --instance clean-0   # mind-tpcc cleanup
+tpcc-ydb drop   --run-config run-config.json --instance drop-0    # mind-tpcc drop
 ```
 
 Artifacts land under `paths.result_root/<run_id>/` (including
@@ -242,6 +242,7 @@ Artifacts land under `paths.result_root/<run_id>/` (including
 `profile.redacted.yaml`).
 
 ```bash
+./mind-tpcc drop --profile ./profile-ydb.yaml --yes
 ./mind-tpcc cleanup --profile ./profile-ydb.yaml --yes
 ./mind-tpcc undeploy --profile ./profile-ydb.yaml --yes
 ```

@@ -95,6 +95,12 @@ func TestRun_helpMentionsLeaveProcesses(t *testing.T) {
 	if !strings.Contains(string(out), "collects first if needed") {
 		t.Fatalf("help missing consolidate auto-collect:\n%s", out)
 	}
+	if !strings.Contains(string(out), "drop        Drop TPC-C objects") {
+		t.Fatalf("help missing drop command:\n%s", out)
+	}
+	if !strings.Contains(string(out), "Remove run artifacts on all hosts including control") {
+		t.Fatalf("help missing cleanup artifact-only wording:\n%s", out)
+	}
 }
 
 func TestRun_threadsFlagAcceptedOnValidate(t *testing.T) {

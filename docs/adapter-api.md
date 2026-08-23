@@ -24,7 +24,7 @@ are to be interpreted as described in RFC 2119.
 ## 2. Layering
 
 ```text
-mind-tpcc  ──SSH──>  tpcc-<dbms>  (schema | loader | indexes | worker | check)
+mind-tpcc  ──SSH──>  tpcc-<dbms>  (schema | loader | indexes | worker | check | drop)
                          │
                          ├─ shared: domain / generator / transactions /
                          │          runtime / harness / loader / checks / metrics
@@ -129,7 +129,7 @@ Lifecycle of the physical database objects for one workload path:
 | `EnsureSchema` | Create logical tables (idempotent). MAY drop/recreate when the path is empty; MUST NOT destroy foreign data silently. |
 | `EnsureIndexes` | Create access paths required by the workload **after** bulk load. MUST be idempotent (skip existing indexes). |
 | `EnsureStatistics` | `ANALYZE` / equivalent so the planner or tablet layer is ready. MUST be idempotent. |
-| `Clean` | Remove all objects for this path. |
+| `Clean` | Remove all objects for this path. Invoked by the `drop` command/role. |
 | `Describe` | Adapter/server version strings for `result.json`. |
 
 Pipeline order for physical objects: `EnsureSchema` → bulk `PutBatch` (load)
@@ -470,7 +470,7 @@ Binaries **MAY** keep standalone aliases for local use:
 | `init` | ≡ `schema` (local flags; may drop/recreate) |
 | `import` | standalone load without run-config assignment |
 | `run` | standalone worker without run-config / `--start-at` |
-| `clean` | admin helper; standalone `--connection` or mind cleanup via `--run-config --instance` |
+| `drop` | admin helper; standalone `--connection` or `mind-tpcc drop` via `--run-config --instance` |
 
 Non-DBMS logic (assignment interpretation, phase timing, artifact layout)
 comes from shared libraries and the distributed `run-config.json`.

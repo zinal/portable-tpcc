@@ -599,7 +599,7 @@ func TestWaitProcessesFailsUnfinalizedManifestWhenProcessDead(t *testing.T) {
 	data, _ := json.Marshal(manifest)
 	sess := &fakeSession{files: map[string][]byte{
 		"/done":      data,
-		"stderr.log": []byte("TPC-C table 'warehouse' already exists. Already inited or forgot to clean?\n"),
+		"stderr.log": []byte("TPC-C table 'warehouse' already exists. Already inited or forgot to drop?\n"),
 	}, alive: false}
 	proc := &launchedProc{
 		Role:          "worker",

@@ -97,7 +97,7 @@ void CheckDbForInit(const std::string& connectionString, const std::string& path
     try {
         pqxx::connection conn(connectionString);
         auto schema = GetEffectiveSchema(path);
-        CheckNoTablesExist(conn, schema, "Already inited or forgot to clean?");
+        CheckNoTablesExist(conn, schema, "Already inited or forgot to drop?");
     } catch (const std::exception& e) {
         std::cerr << "Pre-flight check for init failed: " << e.what() << std::endl;
         std::exit(1);

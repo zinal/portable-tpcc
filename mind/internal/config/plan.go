@@ -55,10 +55,10 @@ func IndexesArgv(runConfigPath, instance string) []string {
 	}
 }
 
-// CleanArgv returns argv for the clean admin helper (mind-tpcc cleanup).
-func CleanArgv(runConfigPath, instance string) []string {
+// DropArgv returns argv for the drop admin helper (mind-tpcc drop).
+func DropArgv(runConfigPath, instance string) []string {
 	return []string{
-		"clean",
+		"drop",
 		"--run-config", runConfigPath,
 		"--instance", instance,
 	}
