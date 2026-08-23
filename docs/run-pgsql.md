@@ -109,7 +109,7 @@ $BIN run --connection="$CONN" --path=portable_tpcc -w 10 \
 $BIN check --connection="$CONN" --path=portable_tpcc -w 10 -t 10 --after-test
 
 # drop TPC-C tables
-$BIN clean --connection="$CONN" --path=portable_tpcc
+$BIN drop --connection="$CONN" --path=portable_tpcc
 ```
 
 Useful shared flags: `--no-delays` (disable keying/think time), `--help`.
@@ -207,13 +207,14 @@ Artifacts land under `paths.result_root/<run_id>/` (including
 `aggregate.json`).
 
 ```bash
+./mind-tpcc drop --profile ./profile-pgsql.yaml --yes
 ./mind-tpcc cleanup --profile ./profile-pgsql.yaml --yes
 ./mind-tpcc undeploy --profile ./profile-pgsql.yaml --yes
 ```
 
-`cleanup` drops TPC-C objects (when the run is past deploy), remote
-`remote_root/<run_id>`, and local results + state. Shared worker binaries stay
-installed until `undeploy`.
+`drop` removes TPC-C objects. `cleanup` removes remote `remote_root/<run_id>`
+and local results + state (including the control host). Shared worker binaries
+stay installed until `undeploy`.
 
 ## Checklist
 

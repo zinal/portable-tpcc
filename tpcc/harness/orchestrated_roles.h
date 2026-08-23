@@ -65,11 +65,11 @@ int RunOrchestratedIndexes(
     const std::string& instance,
     std::function<void(const TRunConfigDocument&)> ensureIndexes);
 
-// Admin helper for mind-tpcc cleanup (not a workload role).
-int RunOrchestratedClean(
+// Admin helper for mind-tpcc drop (not a workload role).
+int RunOrchestratedDrop(
     const TRunConfigDocument& doc,
     const std::string& instance,
-    std::function<void(const TRunConfigDocument&)> clean);
+    std::function<void(const TRunConfigDocument&)> drop);
 
 inline void RequireNonNegativeThreads(const std::optional<int>& threads) {
     if (threads.has_value() && *threads < 0) {

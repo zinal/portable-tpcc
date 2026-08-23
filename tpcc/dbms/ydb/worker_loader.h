@@ -16,6 +16,6 @@ int RunWorkerFromRunConfig(
     const std::optional<int>& threadOverride = {});
 int RunSchemaFromRunConfig(const std::string& runConfigPath, const std::string& instance);
 int RunIndexesFromRunConfig(const std::string& runConfigPath, const std::string& instance);
-int RunCleanFromRunConfig(const std::string& runConfigPath, const std::string& instance);
+int RunDropFromRunConfig(const std::string& runConfigPath, const std::string& instance);
 
 } // namespace NTpcc

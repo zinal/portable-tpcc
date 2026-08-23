@@ -117,7 +117,7 @@ void CheckDbForInit(const std::string& connectionString, const std::string& path
         auto cfg = ConfigWithPath(connectionString, path);
         const std::string db = EffectiveDatabase(cfg);
         auto conn = ConnectChecked(cfg);
-        CheckNoTablesExist(*conn, db, "Already inited or forgot to clean?");
+        CheckNoTablesExist(*conn, db, "Already inited or forgot to drop?");
     });
 }
 

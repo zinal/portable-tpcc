@@ -277,7 +277,7 @@ void InitSync(
         LOG_I("All TPC-C tables created successfully");
     } catch (const std::exception& e) {
         LOG_E("Failed to create TPC-C tables: " << e.what());
-        LOG_E("After fixing the reason, you might need to run `tpcc clean`.");
+        LOG_E("After fixing the reason, you might need to run `tpcc drop`.");
         throw;
     }
 }

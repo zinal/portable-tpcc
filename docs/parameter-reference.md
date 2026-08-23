@@ -39,7 +39,8 @@ mind-tpcc configure --profile <path> --dbms <pgsql|ydb|oceanbase> [options]
 | `collect` | Copy artifacts from runtime hosts. |
 | `consolidate` | Merge worker results into `aggregate.json` and print a brief stats summary. Runs `collect` first when `collection-manifest.json` is absent. |
 | `run` | Full pipeline. Requires a prior explicit `deploy`. |
-| `cleanup` | Teardown: stop, optional DB `clean`, remote + local run artifacts. Requires `--yes`. |
+| `drop` | Drop TPC-C objects for the profile's database path. Requires `--yes`. |
+| `cleanup` | Teardown: stop, remote + local run artifacts (including the control host). Does not drop database objects. Requires `--yes`. |
 | `help` / `-h` / `--help` | Usage. |
 
 `run` = validate → require prior `deploy` → schema → load → indexes →
@@ -48,11 +49,15 @@ check(after-test) **if** `checks.after_test` → collect → consolidate.
 
 `run` does not upload binaries. Re-run `deploy` after rebuilding `tpcc-*`.
 
+`drop --yes` uses `--run-id` if given, otherwise the newest matching run
+(to reuse that run-config); if no run exists it materializes a run-config
+from the profile. It launches orchestrated `drop` on the first loader host.
+
 `cleanup --yes` uses `--run-id` if given, otherwise the newest matching run.
-When state is past deploy it launches orchestrated `clean` on the first loader
-host; when past planned it removes `remote_root/<run_id>` on every runtime
-host; it always removes `result_root/<run_id>` and `state/runs/<run_id>`.
-Shared binaries stay until `undeploy`.
+When state is past planned it removes `remote_root/<run_id>` on every runtime
+host and on the control host; it always removes `result_root/<run_id>` and
+`state/runs/<run_id>`. Shared binaries stay until `undeploy`. It does not
+drop database objects; use `drop` for that.
 
 ### Flags
 
@@ -66,7 +71,7 @@ Shared binaries stay until `undeploy`.
 | `--measurement <duration>` | profile `phases.measurement` | Measurement override. |
 | `--threads <n>` | profile worker/loader threads and `runtime.check_concurrency` | Launch-time override for this invocation. `test`/`load`/`run` pass `--threads=N` to workers and loaders (`0` = auto at the binary). `check`/`run` pass a resolved session count to `check` (`0` = auto `min(scale.warehouses, 32)`). Does not rewrite an existing run-config. |
 | `--skip <step>` | none | Skip a `run` pipeline step. Repeatable. Names: `deploy`, `schema`, `load`, `indexes`, `check_after_import`, `test` (alias `start`), `check_after_test` (alias `check_after_run`), `collect`, `consolidate`. |
-| `--yes` | false | Required for `cleanup` and `undeploy`. `configure` uses it to overwrite an existing file. |
+| `--yes` | false | Required for `drop`, `cleanup`, and `undeploy`. `configure` uses it to overwrite an existing file. |
 | `--after-import` / `--after-test` | — | Select the `check` phase. `--after-run` is a deprecated alias for `--after-test`. |
 | `--leave-processes` | false | Debug: leave remote processes running when `mind-tpcc` exits. Default is to stop leftovers this invocation launched (and warn if a process is still alive after it reported finished). |
 
@@ -333,7 +338,7 @@ gflags accepts both `--flag-name` and `--flag_name`.
 Normative roles: `schema`, `loader`, `indexes`, `worker`, `check`.
 
 Local aliases: `init` ≡ `schema`; `import` (standalone load); `run`
-(standalone measurement); `clean` (drop TPC-C objects).
+(standalone measurement); `drop` (drop TPC-C objects).
 
 Orchestrated invocation (written by mind):
 
@@ -343,7 +348,7 @@ loader  --run-config <path> --instance <name> [--threads=N]
 indexes --run-config <path> --instance <name>
 worker  --run-config <path> --instance <name> --start-at=<RFC3339-UTC> [--threads=N]
 check   --run-config <path> --instance <name> --after-import|--after-test [--threads=N]
-clean   --run-config <path> --instance <name>
+drop    --run-config <path> --instance <name>
 ```
 
 ### Shared flags

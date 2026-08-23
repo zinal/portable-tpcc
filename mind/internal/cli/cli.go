@@ -190,6 +190,8 @@ func run(args []string, interrupt context.Context) int {
 		return runStage(opts, "consolidate")
 	case "run":
 		return runFull(opts)
+	case "drop":
+		return runDrop(opts, cfg.Yes)
 	case "cleanup":
 		return runCleanup(opts, cfg.Yes)
 	default:
@@ -392,6 +394,30 @@ func withMaterializedProfileLock(o *orchestrator.Orchestrator, fn func(*orchestr
 	return fn(ctx)
 }
 
+func runDrop(opts orchestrator.Options, yes bool) int {
+	if !yes {
+		fmt.Fprintln(os.Stderr, "drop requires --yes")
+		return 2
+	}
+	o, err := orch(opts)
+	if err != nil {
+		return exitErr(err)
+	}
+	if err := withExistingRunCleanup(o, func(ctx *orchestrator.Context) error {
+		return o.Drop(ctx, true)
+	}); err != nil {
+		if !errors.Is(err, orchestrator.ErrNoRuns) {
+			return exitErr(err)
+		}
+		if err := withMaterializedProfileLock(o, func(ctx *orchestrator.Context) error {
+			return o.Drop(ctx, true)
+		}); err != nil {
+			return exitErr(err)
+		}
+	}
+	return 0
+}
+
 func runCleanup(opts orchestrator.Options, yes bool) int {
 	if !yes {
 		fmt.Fprintln(os.Stderr, "cleanup requires --yes")
@@ -488,7 +514,8 @@ Commands:
   collect     Collect artifacts from runtime hosts
   consolidate Merge worker results into aggregate.json (collects first if needed)
   run         Full pipeline (requires prior explicit deploy)
-  cleanup     Full teardown for a run: stop, DB clean, remote+local run artifacts (--yes)
+  drop        Drop TPC-C objects for the profile database path (--yes)
+  cleanup     Remove run artifacts on all hosts including control (--yes)
 
 Options:
   --profile <path>         Profile YAML path
@@ -500,7 +527,7 @@ Options:
   --measurement <duration> Override phases.measurement, e.g. 2m, 120m
   --threads <n>            Override worker/loader threads and check sessions (0 = auto)
   --skip <step>            Skip pipeline step
-  --yes                    Non-interactive confirmation (cleanup, undeploy, configure overwrite)
+  --yes                    Non-interactive confirmation (drop, cleanup, undeploy, configure overwrite)
   --leave-processes        Debug: do not kill remote processes this
                            invocation launched when mind-tpcc exits
   --after-import           check: post-import integrity phase

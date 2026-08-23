@@ -14,6 +14,7 @@ import (
 	"portable-tpcc/mind/internal/collect"
 	"portable-tpcc/mind/internal/config"
 	"portable-tpcc/mind/internal/consolidate"
+	"portable-tpcc/mind/internal/paths"
 	"portable-tpcc/mind/internal/profile"
 	"portable-tpcc/mind/internal/progress"
 	"portable-tpcc/mind/internal/redact"
@@ -25,6 +26,9 @@ import (
 
 // ErrInterrupted is returned when Options.Interrupt is cancelled (e.g. Ctrl+C).
 var ErrInterrupted = errors.New("interrupted")
+
+// ErrNoRuns is returned when a profile has no matching run under state_dir.
+var ErrNoRuns = errors.New("no runs found")
 
 // Options configure the orchestrator runtime.
 type Options struct {
@@ -801,9 +805,9 @@ func (o *Orchestrator) ResolveCleanupRunID() (string, error) {
 			return "", err
 		}
 		if latest == "" {
-			return "", fmt.Errorf("no runs found for profile %q under %s", o.Profile.Metadata.Name, o.StateStore.StateDir)
+			return "", fmt.Errorf("%w for profile %q under %s", ErrNoRuns, o.Profile.Metadata.Name, o.StateStore.StateDir)
 		}
-		progress.Printf("cleanup run_id=%s", latest)
+		progress.Printf("run_id=%s", latest)
 		return latest, nil
 	}
 	if err := validateCleanupRunID(runID); err != nil {
@@ -812,7 +816,7 @@ func (o *Orchestrator) ResolveCleanupRunID() (string, error) {
 	if err := o.verifyRunProfileSHA(runID); err != nil {
 		return "", err
 	}
-	progress.Printf("cleanup run_id=%s", runID)
+	progress.Printf("run_id=%s", runID)
 	return runID, nil
 }
 
@@ -930,15 +934,6 @@ func cleanupNeedsRemote(st string) bool {
 	}
 }
 
-func cleanupNeedsDB(st string) bool {
-	switch st {
-	case "", state.StatePlanned, state.StateDeploying:
-		return false
-	default:
-		return true
-	}
-}
-
 func hasRunningProcesses(rs *state.RunState) bool {
 	for _, p := range rs.Processes {
 		if p.State == "running" && p.PID > 0 {
@@ -948,10 +943,11 @@ func hasRunningProcesses(rs *state.RunState) bool {
 	return false
 }
 
-// Cleanup tears down a run according to its state: stop peers, drop TPC-C
-// objects when schema may exist, remove remote_root/<run_id> on every host,
-// then delete local results and state for the run. Shared worker binaries
-// under remote_root are left in place; use Undeploy to remove them.
+// Cleanup tears down a run according to its state: stop peers, remove
+// remote_root/<run_id> on every runtime host and on the control host, then
+// delete local results and state for the run. Shared worker binaries under
+// remote_root are left in place; use Undeploy to remove them. Database
+// objects are not dropped; use Drop for that.
 func (o *Orchestrator) Cleanup(ctx *Context, yes bool) error {
 	if !yes {
 		return fmt.Errorf("cleanup requires --yes")
@@ -963,8 +959,7 @@ func (o *Orchestrator) Cleanup(ctx *Context, yes bool) error {
 	progress.Printf("cleanup: start (run_id=%s, state=%s)", ctx.RunID, rs.State)
 
 	needRemote := cleanupNeedsRemote(rs.State)
-	needDB := cleanupNeedsDB(rs.State)
-	needSessions := needRemote || needDB || hasRunningProcesses(rs)
+	needSessions := needRemote || hasRunningProcesses(rs)
 
 	if needSessions {
 		sessions, err := o.openSessions()
@@ -979,13 +974,6 @@ func (o *Orchestrator) Cleanup(ctx *Context, yes bool) error {
 				return err
 			}
 		}
-		if needDB {
-			if err := o.cleanupDatabase(ctx, sessions); err != nil {
-				return err
-			}
-		} else {
-			progress.Printf("cleanup: skip database clean (state=%s)", rs.State)
-		}
 		if needRemote {
 			if err := o.removeRemoteRunDirs(ctx, sessions); err != nil {
 				return err
@@ -997,6 +985,9 @@ func (o *Orchestrator) Cleanup(ctx *Context, yes bool) error {
 		progress.Printf("cleanup: no remote sessions needed (state=%s)", rs.State)
 	}
 
+	if err := o.removeControlHostRunDir(ctx.RunID); err != nil {
+		return err
+	}
 	if err := o.removeLocalResults(ctx.RunID); err != nil {
 		return err
 	}
@@ -1007,14 +998,33 @@ func (o *Orchestrator) Cleanup(ctx *Context, yes bool) error {
 	return nil
 }
 
-func (o *Orchestrator) cleanupDatabase(ctx *Context, sessions map[string]remote.Session) error {
+// Drop removes TPC-C objects for the profile's database path via the
+// orchestrated drop role. It does not remove run artifacts.
+func (o *Orchestrator) Drop(ctx *Context, yes bool) error {
+	if !yes {
+		return fmt.Errorf("drop requires --yes")
+	}
+	progress.Printf("drop: start (run_id=%s)", ctx.RunID)
+	sessions, err := o.openSessions()
+	if err != nil {
+		return err
+	}
+	defer o.finishRemote(ctx, sessions)
+	if err := o.dropDatabase(ctx, sessions); err != nil {
+		return err
+	}
+	progress.Printf("drop: complete")
+	return nil
+}
+
+func (o *Orchestrator) dropDatabase(ctx *Context, sessions map[string]remote.Session) error {
 	if len(ctx.RunConfig.LoadAssignment) == 0 {
-		return fmt.Errorf("cleanup: run-config has no load_assignment host for database clean")
+		return fmt.Errorf("drop: run-config has no load_assignment host")
 	}
 	hostKey := ctx.RunConfig.LoadAssignment[0].Host
 	sess, ok := sessions[hostKey]
 	if !ok {
-		return fmt.Errorf("cleanup: no session for host %s", hostKey)
+		return fmt.Errorf("drop: no session for host %s", hostKey)
 	}
 	remoteBin, err := o.sessionBinaryPath(sess, ctx.RunConfig.Binary)
 	if err != nil {
@@ -1025,21 +1035,40 @@ func (o *Orchestrator) cleanupDatabase(ctx *Context, sessions map[string]remote.
 		return err
 	}
 	if !exists {
-		progress.Printf("cleanup: skip database clean (worker binary missing on %s)", hostKey)
-		return nil
+		return fmt.Errorf("drop: worker binary missing on %s; run `mind-tpcc deploy --profile ...` first", hostKey)
 	}
-	instance := "clean-0"
-	argv := config.CleanArgv("run-config.json", instance)
-	progress.Printf("cleanup: drop TPC-C objects via %s/%s", hostKey, instance)
-	proc, err := o.launchRole(ctx, sessions, "clean", hostKey, instance, argv)
+	instance := "drop-0"
+	argv := config.DropArgv("run-config.json", instance)
+	progress.Printf("drop: drop TPC-C objects via %s/%s", hostKey, instance)
+	proc, err := o.launchRole(ctx, sessions, "drop", hostKey, instance, argv)
 	if err != nil {
 		return err
 	}
 	if err := o.waitProcesses(ctx, []*launchedProc{proc}, 30*time.Minute, true); err != nil {
 		return err
 	}
-	progress.Printf("cleanup: database clean finished")
+	progress.Printf("drop: database drop finished")
 	return nil
+}
+
+func (o *Orchestrator) removeControlHostRunDir(runID string) error {
+	root, err := paths.ExpandHome(o.Expanded.RemoteRoot)
+	if err != nil {
+		return err
+	}
+	if abs, err := filepath.Abs(root); err == nil {
+		root = abs
+	}
+	dir := filepath.Join(root, runID)
+	if err := assertSafeRemoteRunDir(dir, runID); err != nil {
+		return fmt.Errorf("control host run dir: %w", err)
+	}
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		progress.Printf("cleanup: control host run dir absent (%s)", dir)
+		return nil
+	}
+	progress.Printf("cleanup: remove control host run dir %s", dir)
+	return os.RemoveAll(dir)
 }
 
 func (o *Orchestrator) removeRemoteRunDirs(ctx *Context, sessions map[string]remote.Session) error {

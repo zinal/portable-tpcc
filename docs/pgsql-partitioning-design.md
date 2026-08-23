@@ -29,7 +29,7 @@ partitions), [specification.md](specification.md) §11.
 Non-goals for the first iteration:
 
 - Changing shared transaction logic or semantic ops.
-- Resharding (changing modulus) without clean + recreate.
+- Resharding (changing modulus) without drop + recreate.
 - Subpartitioning by district (see §7).
 
 ## 2. Workload access patterns (why warehouse key)
@@ -124,7 +124,7 @@ required by PostgreSQL.
 Example: `W = 1000` → ~45 WH/partition → `N ≈ 23` (or round to 32 if a
 power-of-two preference is added later).
 
-Changing `N` later requires clean + recreate (hash modulus is part of the
+Changing `N` later requires drop + recreate (hash modulus is part of the
 physical layout). Document that; TPC-C scale is normally fixed for a run.
 
 ### 3.5. DDL sketch
@@ -298,7 +298,7 @@ has.
 | --- | --- |
 | Bad / missing `N` | Require `partition_count` or warehouses when hashing enabled |
 | Skew (uneven WH per remainder) | Accept statistical skew; TPC-C WH ids are dense integers — hash distributes well enough |
-| Changing `N` after load | Unsupported; clean + recreate |
+| Changing `N` after load | Unsupported; drop + recreate |
 | FK / CASCADE load slowdown | Optional `foreign_keys=false`; measure COPY+DELETE paths |
 | Planner still scans all partitions | `EXPLAIN` regression tests; keep params typed as `int` |
 | COPY into parent | Supported; verify on the PG major used in CI |

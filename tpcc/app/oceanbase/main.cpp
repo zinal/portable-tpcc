@@ -63,7 +63,7 @@ void PrintHelp() {
         "  init      Alias for schema\n"
         "  import    Load TPC-C data (standalone; then run indexes)\n"
         "  run       Run the TPC-C benchmark (standalone)\n"
-        "  clean     Drop all TPC-C tables (local admin)\n"
+        "  drop      Drop all TPC-C tables (local admin)\n"
         "\n"
         "Options:\n"
         "  --connection          OceanBase connection string\n"
@@ -95,7 +95,7 @@ void PrintHelp() {
         "  indexes --run-config <path> --instance <name>\n"
         "  worker  --run-config <path> --instance <name> --start-at=<RFC3339-UTC> [--threads=N]\n"
         "  check   --run-config <path> --instance <name> --after-import|--after-test [--threads=N]\n"
-        "  clean   --run-config <path> --instance <name>\n";
+        "  drop    --run-config <path> --instance <name>\n";
 }
 
 ELogPriority ParseLogLevel(const std::string& level) {
@@ -109,12 +109,12 @@ ELogPriority ParseLogLevel(const std::string& level) {
 
 bool IsValidCommand(const std::string& cmd) {
     return cmd == "schema" || cmd == "init" || cmd == "import" || cmd == "indexes" ||
-           cmd == "run" || cmd == "worker" || cmd == "loader" || cmd == "clean" || cmd == "check";
+           cmd == "run" || cmd == "worker" || cmd == "loader" || cmd == "drop" || cmd == "check";
 }
 
 bool IsOrchestratedRole(const std::string& cmd) {
     return cmd == "worker" || cmd == "loader" || cmd == "schema" || cmd == "indexes" ||
-           cmd == "check" || cmd == "clean";
+           cmd == "check" || cmd == "drop";
 }
 
 void ValidateWarehouseFlag() {
@@ -202,7 +202,7 @@ int RunOrchestrated(
               << " (concurrency=" << checkConcurrency << ")...");
         return NTpcc::RunCheckFromRunConfig(runConfig, instance, afterImport, afterRun, checkConcurrency);
     }
-    if (command == "clean") return NTpcc::RunCleanFromRunConfig(runConfig, instance);
+    if (command == "drop") return NTpcc::RunDropFromRunConfig(runConfig, instance);
     return 1;
 }
 
@@ -331,7 +331,7 @@ void RunBenchmark() {
     NTpcc::RunSync(config, nullptr);
 }
 
-void RunClean() {
+void RunDrop() {
     NTpcc::TObAdminAdapter admin(FLAGS_connection, FLAGS_path);
     admin.Clean();
 }
@@ -425,10 +425,10 @@ int main(int argc, char* argv[]) {
         } else if (command == "run") {
             LOG_I("Running TPC-C benchmark...");
             RunBenchmark();
-        } else if (command == "clean") {
-            LOG_I("Cleaning TPC-C tables...");
-            RunClean();
-            LOG_I("Clean complete");
+        } else if (command == "drop") {
+            LOG_I("Dropping TPC-C tables...");
+            RunDrop();
+            LOG_I("Drop complete");
         } else if (command == "check") {
             LOG_I("Running TPC-C consistency checks...");
             RunCheck();

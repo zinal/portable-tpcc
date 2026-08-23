@@ -166,23 +166,23 @@ int RunOrchestratedIndexes(
     return exitCode;
 }
 
-int RunOrchestratedClean(
+int RunOrchestratedDrop(
     const TRunConfigDocument& doc,
     const std::string& instance,
-    std::function<void(const TRunConfigDocument&)> clean)
+    std::function<void(const TRunConfigDocument&)> drop)
 {
-    const std::string instanceDir = InstanceWorkDir(doc, "clean", instance);
+    const std::string instanceDir = InstanceWorkDir(doc, "drop", instance);
     EnsureInstanceDir(instanceDir);
     const auto paths = MakeArtifactPaths(instanceDir);
     const std::string nonce = GenerateInstanceNonce();
 
-    WriteProcessJson(paths, doc, instance, "clean", static_cast<int>(::getpid()), nonce);
+    WriteProcessJson(paths, doc, instance, "drop", static_cast<int>(::getpid()), nonce);
 
     int exitCode = 0;
     try {
-        clean(doc);
+        drop(doc);
     } catch (const std::exception& ex) {
-        LOG_E("Clean failed: " << ex.what());
+        LOG_E("Drop failed: " << ex.what());
         exitCode = 1;
     }
 
