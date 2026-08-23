@@ -34,7 +34,7 @@ Binaries:
 | `mind-tpcc` | `mind/mind-tpcc` |
 
 For orchestration, copy `tpcc-oceanbase` into the profile's
-`paths.local_artifacts` directory (for example `./dist/tpcc-oceanbase`).
+`paths.local_artifacts` directory (default `.`, the current directory).
 Re-run `mind-tpcc deploy` after rebuilding; `run` does not auto-upload
 binaries.
 
@@ -201,8 +201,7 @@ checks:
 export TPCC_PASSWORD='...'
 # export TPCC_OB_USER='root@root'   # optional when database.user is omitted
 
-mkdir -p dist
-cp tpcc/app/oceanbase/tpcc-oceanbase dist/
+cp tpcc/app/oceanbase/tpcc-oceanbase .
 cp mind/mind-tpcc ./mind-tpcc
 
 # Generate a complete starter profile, or copy the lab example:

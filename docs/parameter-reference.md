@@ -79,6 +79,8 @@ to the built-in default for `--dbms` (PostgreSQL / YDB / OceanBase options
 included; YDB `anonymous` omits login / `sa_key` fields). `metadata.name`
 defaults to the sanitized filename. `ssh.user` defaults to the current
 account. Loader and worker lists default to a single `localhost` entry.
+`paths` defaults: `local_artifacts: .`, `remote_root: portable-tpcc`,
+`result_root: results`, `state_dir: state`.
 
 ```text
 mind-tpcc configure --profile ./profile.yaml --dbms pgsql
@@ -129,12 +131,15 @@ Required even for loopback (`127.0.0.1`) profiles.
 
 ### `paths`
 
-| Field | Required | Meaning |
-| --- | --- | --- |
-| `local_artifacts` | yes | Control-host directory that contains `tpcc-<dbms>` (`~` expanded locally). |
-| `remote_root` | yes | Runtime-host directory for the shared binary and per-run dirs. Interpreted on each runtime host (SSH cwd/home). Do not use a control-host-only absolute path. |
-| `result_root` | yes | Control-host results directory. Artifacts: `result_root/<run_id>/`. |
-| `state_dir` | yes | Control-host orchestrator state. |
+Required in a hand-written profile. `mind-tpcc configure` fills omitted
+values with the defaults below.
+
+| Field | Required | Default | Meaning |
+| --- | --- | --- | --- |
+| `local_artifacts` | yes | `.` | Control-host directory that contains `tpcc-<dbms>` (`~` expanded locally). |
+| `remote_root` | yes | `portable-tpcc` | Runtime-host directory for the shared binary and per-run dirs. Interpreted on each runtime host (SSH cwd/home). Do not use a control-host-only absolute path. |
+| `result_root` | yes | `results` | Control-host results directory. Artifacts: `result_root/<run_id>/`. |
+| `state_dir` | yes | `state` | Control-host orchestrator state. |
 
 ### `database` (common)
 
