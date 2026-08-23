@@ -189,16 +189,16 @@ void InitSync(const TYdbConnectionConfig& connectionConfig, int warehouseCount) 
 
     Exec(client, fmt::format(R"(
         CREATE TABLE `{}` (
+            h_w_id Int32 NOT NULL,
+            hist_id Int64 NOT NULL,
             h_c_w_id Int32 NOT NULL,
             h_c_d_id Int32 NOT NULL,
             h_c_id Int32 NOT NULL,
-            h_c_nano_ts Int64 NOT NULL,
             h_d_id Int32,
-            h_w_id Int32,
             h_date Timestamp,
             h_amount Decimal(22,9),
             h_data Utf8,
-            PRIMARY KEY (h_c_w_id, h_c_d_id, h_c_id, h_c_nano_ts)
+            PRIMARY KEY (h_w_id, hist_id)
         ) {};
     )", historyPath, history), "create history");
 

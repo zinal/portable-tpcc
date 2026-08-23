@@ -13,6 +13,7 @@
 #include <ydb/public/sdk/cpp/include/ydb-cpp-sdk/client/types/status/status.h>
 #include <ydb/public/sdk/cpp/include/ydb-cpp-sdk/client/value/value.h>
 
+#include <atomic>
 #include <chrono>
 #include <optional>
 #include <stdexcept>
@@ -130,6 +131,19 @@ TCustomerRow ParseCustomer(NYdb::TResultSetParser& parser) {
 int64_t HistoryNanoTs() {
     return std::chrono::duration_cast<std::chrono::nanoseconds>(
         std::chrono::system_clock::now().time_since_epoch()).count();
+}
+
+// Technical history key (TPC-C 1.3.1 has no PK). Unique per process even when
+// two Payment inserts share a nanosecond. Load uses small per-warehouse ids.
+int64_t NextHistoryId() {
+    static std::atomic<int64_t> last{0};
+    const int64_t candidate = HistoryNanoTs();
+    int64_t prev = last.load(std::memory_order_relaxed);
+    int64_t next = 0;
+    do {
+        next = candidate > prev ? candidate : prev + 1;
+    } while (!last.compare_exchange_weak(prev, next, std::memory_order_relaxed));
+    return next;
 }
 
 } // anonymous
@@ -697,27 +711,27 @@ TFuture<TOperationResult> TYdbTpccTransaction::Execute(const TSemanticOp& op) {
 
         if (const auto* p = std::get_if<TInsertPaymentHistory>(&op)) {
             auto params = TParamsBuilder()
+                .AddParam("$h_w_id").Int32(p->PaymentWarehouseID).Build()
+                .AddParam("$hist_id").Int64(NextHistoryId()).Build()
                 .AddParam("$h_c_w_id").Int32(p->CustomerWarehouseID).Build()
                 .AddParam("$h_c_d_id").Int32(p->CustomerDistrictID).Build()
                 .AddParam("$h_c_id").Int32(p->CustomerID).Build()
-                .AddParam("$h_c_nano_ts").Int64(HistoryNanoTs()).Build()
-                .AddParam("$h_w_id").Int32(p->PaymentWarehouseID).Build()
                 .AddParam("$h_d_id").Int32(p->PaymentDistrictID).Build()
                 .AddParam("$h_amount").Decimal(Decimal(p->Amount)).Build()
                 .AddParam("$h_data").Utf8(p->Data).Build()
                 .Build();
             return CatchOp(Then(
                 ExecQuery(Prefix(Path_) + R"(
+                DECLARE $h_w_id AS Int32;
+                DECLARE $hist_id AS Int64;
                 DECLARE $h_c_w_id AS Int32;
                 DECLARE $h_c_d_id AS Int32;
                 DECLARE $h_c_id AS Int32;
-                DECLARE $h_c_nano_ts AS Int64;
-                DECLARE $h_w_id AS Int32;
                 DECLARE $h_d_id AS Int32;
                 DECLARE $h_amount AS Decimal(22,9);
                 DECLARE $h_data AS Utf8;
-                UPSERT INTO `history` (h_c_w_id, h_c_d_id, h_c_id, h_c_nano_ts, h_d_id, h_w_id, h_date, h_amount, h_data)
-                VALUES ($h_c_w_id, $h_c_d_id, $h_c_id, $h_c_nano_ts, $h_d_id, $h_w_id,
+                UPSERT INTO `history` (h_w_id, hist_id, h_c_w_id, h_c_d_id, h_c_id, h_d_id, h_date, h_amount, h_data)
+                VALUES ($h_w_id, $hist_id, $h_c_w_id, $h_c_d_id, $h_c_id, $h_d_id,
                         CurrentUtcTimestamp(), $h_amount, $h_data);
             )", std::move(params), FinalCommitMode_),
                 [](TExecuteQueryResult) { return OkOp(1, 1); }));

@@ -114,12 +114,8 @@ std::vector<std::string> BuildCreateStatements(const TSchemaLayout& layout, cons
         : std::string{};
 
     const std::string historyDataSuffix = options.EnableForeignKeys ? "," : "";
-    const std::string historyHistId = layout.UseClusterLayout
-        ? "    hist_id INT          NOT NULL AUTO_INCREMENT,\n"
-        : "";
-    const std::string historyPkClause = layout.UseClusterLayout
-        ? ",\n    PRIMARY KEY (h_w_id, hist_id)"
-        : "";
+    const std::string historyHistId = "    hist_id INT          NOT NULL AUTO_INCREMENT,\n";
+    const std::string historyPkClause = ",\n    PRIMARY KEY (h_w_id, hist_id)";
 
     return {
         fmt::format(R"(CREATE TABLE warehouse (

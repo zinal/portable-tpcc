@@ -182,12 +182,12 @@ const std::shared_ptr<arrow::Schema>& CustomerSchema() {
 
 const std::shared_ptr<arrow::Schema>& HistorySchema() {
     static const auto schema = arrow::schema({
+        arrow::field("h_w_id", arrow::int32(), false),
+        arrow::field("hist_id", arrow::int64(), false),
         arrow::field("h_c_w_id", arrow::int32(), false),
         arrow::field("h_c_d_id", arrow::int32(), false),
         arrow::field("h_c_id", arrow::int32(), false),
-        arrow::field("h_c_nano_ts", arrow::int64(), false),
         arrow::field("h_d_id", arrow::int32(), false),
-        arrow::field("h_w_id", arrow::int32(), false),
         arrow::field("h_date", TimestampType(), false),
         arrow::field("h_amount", DecimalBinaryType(), false),
         arrow::field("h_data", arrow::utf8(), false),
@@ -388,7 +388,7 @@ TPutBatchResult PutWarehouseIdempotent(
                 arrow::TimestampBuilder since(TimestampType(), arrow::default_memory_pool());
 
                 arrow::Int32Builder hCWId, hCDId, hCId, hDId, hWId;
-                arrow::Int64Builder hNanoTs;
+                arrow::Int64Builder hHistId;
                 arrow::TimestampBuilder hDate(TimestampType(), arrow::default_memory_pool());
                 arrow::FixedSizeBinaryBuilder hAmount(DecimalBinaryType());
                 arrow::StringBuilder hData;
@@ -418,13 +418,15 @@ TPutBatchResult PutWarehouseIdempotent(
                     ThrowArrow(data.Append(c.Data), "append c_data");
 
                     auto h = NGenerator::GenerateHistory(seed, warehouseId, d, cid);
-                    const int64_t nanoTs = h.DateUnix * 1000000000LL + cid;
+                    // Unique per warehouse; payment hist_id starts at wall-clock nanos.
+                    const int64_t histId =
+                        static_cast<int64_t>(d - DISTRICT_LOW_ID) * CUSTOMERS_PER_DISTRICT + cid;
+                    ThrowArrow(hWId.Append(h.WarehouseId), "append h_w_id");
+                    ThrowArrow(hHistId.Append(histId), "append hist_id");
                     ThrowArrow(hCWId.Append(h.CustomerWarehouseId), "append h_c_w_id");
                     ThrowArrow(hCDId.Append(h.CustomerDistrictId), "append h_c_d_id");
                     ThrowArrow(hCId.Append(h.CustomerId), "append h_c_id");
-                    ThrowArrow(hNanoTs.Append(nanoTs), "append h_c_nano_ts");
                     ThrowArrow(hDId.Append(h.DistrictId), "append h_d_id");
-                    ThrowArrow(hWId.Append(h.WarehouseId), "append h_w_id");
                     ThrowArrow(hDate.Append(ToTimestampMicros(h.DateUnix)), "append h_date");
                     AppendDecimal(hAmount, ToDecimal(h.Amount));
                     ThrowArrow(hData.Append(h.Data), "append h_data");
@@ -438,8 +440,8 @@ TPutBatchResult PutWarehouseIdempotent(
                     Finish(middle), Finish(data),
                 }, rows));
                 BulkUpsertArrow(connection, TABLE_HISTORY, MakeBatch(HistorySchema(), {
-                    Finish(hCWId), Finish(hCDId), Finish(hCId), Finish(hNanoTs),
-                    Finish(hDId), Finish(hWId), Finish(hDate), Finish(hAmount), Finish(hData),
+                    Finish(hWId), Finish(hHistId), Finish(hCWId), Finish(hCDId), Finish(hCId),
+                    Finish(hDId), Finish(hDate), Finish(hAmount), Finish(hData),
                 }, rows));
             }
 
