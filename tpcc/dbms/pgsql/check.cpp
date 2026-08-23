@@ -38,6 +38,20 @@ void CheckNoRows(pqxx::nontransaction& txn, const std::string& sql, const std::s
     }
 }
 
+template <typename... Args>
+void CheckNoRows(
+    pqxx::nontransaction& txn,
+    const std::string& sql,
+    const std::string& description,
+    Args&&... args)
+{
+    auto result = txn.exec_params(sql, std::forward<Args>(args)...);
+    if (!result.empty()) {
+        throw std::runtime_error(
+            description.empty() ? "Unexpected rows returned" : description);
+    }
+}
+
 //-----------------------------------------------------------------------------
 
 void BaseCheckWarehouseTable(pqxx::nontransaction& txn, int expectedWhNumber) {
@@ -77,11 +91,13 @@ void BaseCheckDistrictTable(pqxx::nontransaction& txn, int expectedWhNumber) {
 }
 
 void BaseCheckCustomerTable(pqxx::nontransaction& txn, int startWh, int endWh) {
-    auto r = txn.exec(fmt::format(
-        "SELECT COUNT(*) AS count, "
-        "MAX(C_W_ID), MIN(C_W_ID), MAX(C_D_ID), MIN(C_D_ID), MAX(C_ID), MIN(C_ID) "
-        "FROM {} WHERE C_W_ID >= {} AND C_W_ID <= {}",
-        TABLE_CUSTOMER, startWh, endWh)).front();
+    auto r = txn.exec_params(
+        fmt::format(
+            "SELECT COUNT(*) AS count, "
+            "MAX(C_W_ID), MIN(C_W_ID), MAX(C_D_ID), MIN(C_D_ID), MAX(C_ID), MIN(C_ID) "
+            "FROM {} WHERE C_W_ID >= $1 AND C_W_ID <= $2",
+            TABLE_CUSTOMER),
+        startWh, endWh).front();
 
     const int rangeWh = endWh - startWh + 1;
     int expectedCount = rangeWh * CUSTOMERS_PER_DISTRICT * DISTRICT_COUNT;
@@ -113,10 +129,12 @@ void BaseCheckItemTable(pqxx::nontransaction& txn) {
 }
 
 void BaseCheckStockTable(pqxx::nontransaction& txn, int startWh, int endWh) {
-    auto r = txn.exec(fmt::format(
-        "SELECT COUNT(*), COUNT(DISTINCT S_W_ID), MAX(S_W_ID), MIN(S_W_ID), MAX(S_I_ID), MIN(S_I_ID) "
-        "FROM {} WHERE S_W_ID >= {} AND S_W_ID <= {}",
-        TABLE_STOCK, startWh, endWh)).front();
+    auto r = txn.exec_params(
+        fmt::format(
+            "SELECT COUNT(*), COUNT(DISTINCT S_W_ID), MAX(S_W_ID), MIN(S_W_ID), MAX(S_I_ID), MIN(S_I_ID) "
+            "FROM {} WHERE S_W_ID >= $1 AND S_W_ID <= $2",
+            TABLE_STOCK),
+        startWh, endWh).front();
 
     const int rangeWh = endWh - startWh + 1;
     int expectedCount = rangeWh * ITEM_COUNT;
@@ -138,10 +156,12 @@ void BaseCheckStockTable(pqxx::nontransaction& txn, int startWh, int endWh) {
 }
 
 void BaseCheckOorderTable(pqxx::nontransaction& txn, int startWh, int endWh) {
-    auto r = txn.exec(fmt::format(
-        "SELECT COUNT(*), MAX(O_W_ID), MIN(O_W_ID), MAX(O_D_ID), MIN(O_D_ID), MAX(O_ID), MIN(O_ID) "
-        "FROM {} WHERE O_W_ID >= {} AND O_W_ID <= {}",
-        TABLE_OORDER, startWh, endWh)).front();
+    auto r = txn.exec_params(
+        fmt::format(
+            "SELECT COUNT(*), MAX(O_W_ID), MIN(O_W_ID), MAX(O_D_ID), MIN(O_D_ID), MAX(O_ID), MIN(O_ID) "
+            "FROM {} WHERE O_W_ID >= $1 AND O_W_ID <= $2",
+            TABLE_OORDER),
+        startWh, endWh).front();
 
     const int rangeWh = endWh - startWh + 1;
     int expectedCount = rangeWh * CUSTOMERS_PER_DISTRICT * DISTRICT_COUNT;
@@ -160,10 +180,12 @@ void BaseCheckOorderTable(pqxx::nontransaction& txn, int startWh, int endWh) {
 }
 
 void BaseCheckNewOrderTable(pqxx::nontransaction& txn, int startWh, int endWh) {
-    auto r = txn.exec(fmt::format(
-        "SELECT COUNT(*), MAX(NO_W_ID), MIN(NO_W_ID), MAX(NO_D_ID), MIN(NO_D_ID), MAX(NO_O_ID), MIN(NO_O_ID) "
-        "FROM {} WHERE NO_W_ID >= {} AND NO_W_ID <= {}",
-        TABLE_NEW_ORDER, startWh, endWh)).front();
+    auto r = txn.exec_params(
+        fmt::format(
+            "SELECT COUNT(*), MAX(NO_W_ID), MIN(NO_W_ID), MAX(NO_D_ID), MIN(NO_D_ID), MAX(NO_O_ID), MIN(NO_O_ID) "
+            "FROM {} WHERE NO_W_ID >= $1 AND NO_W_ID <= $2",
+            TABLE_NEW_ORDER),
+        startWh, endWh).front();
 
     const int rangeWh = endWh - startWh + 1;
     const auto newOrdersPerDistrict = CUSTOMERS_PER_DISTRICT - FIRST_UNPROCESSED_O_ID + 1;
@@ -183,12 +205,15 @@ void BaseCheckNewOrderTable(pqxx::nontransaction& txn, int startWh, int endWh) {
 }
 
 void BaseCheckOrderLineTable(pqxx::nontransaction& txn, int startWh, int endWh) {
-    auto r = txn.exec(fmt::format(
-        "SELECT MIN(order_count) AS min_orders, MAX(order_count) AS max_orders, COUNT(*) AS district_count "
-        "FROM ("
-        "  SELECT OL_W_ID, OL_D_ID, COUNT(DISTINCT OL_O_ID) AS order_count "
-        "  FROM {} WHERE OL_W_ID >= {} AND OL_W_ID <= {} GROUP BY OL_W_ID, OL_D_ID"
-        ") sub", TABLE_ORDER_LINE, startWh, endWh)).front();
+    auto r = txn.exec_params(
+        fmt::format(
+            "SELECT MIN(order_count) AS min_orders, MAX(order_count) AS max_orders, COUNT(*) AS district_count "
+            "FROM ("
+            "  SELECT OL_W_ID, OL_D_ID, COUNT(DISTINCT OL_O_ID) AS order_count "
+            "  FROM {} WHERE OL_W_ID >= $1 AND OL_W_ID <= $2 GROUP BY OL_W_ID, OL_D_ID"
+            ") sub",
+            TABLE_ORDER_LINE),
+        startWh, endWh).front();
 
     const int rangeWh = endWh - startWh + 1;
     int expectedDistrictCount = rangeWh * DISTRICT_COUNT;
@@ -206,10 +231,12 @@ void BaseCheckOrderLineTable(pqxx::nontransaction& txn, int startWh, int endWh) 
 }
 
 void BaseCheckHistoryTable(pqxx::nontransaction& txn, int startWh, int endWh) {
-    auto r = txn.exec(fmt::format(
-        "SELECT COUNT(*), MAX(H_C_W_ID), MIN(H_C_W_ID) FROM {} "
-        "WHERE H_C_W_ID >= {} AND H_C_W_ID <= {}",
-        TABLE_HISTORY, startWh, endWh)).front();
+    auto r = txn.exec_params(
+        fmt::format(
+            "SELECT COUNT(*), MAX(H_C_W_ID), MIN(H_C_W_ID) FROM {} "
+            "WHERE H_C_W_ID >= $1 AND H_C_W_ID <= $2",
+            TABLE_HISTORY),
+        startWh, endWh).front();
 
     const int rangeWh = endWh - startWh + 1;
     int expectedCount = rangeWh * CUSTOMERS_PER_DISTRICT * DISTRICT_COUNT;
@@ -245,30 +272,29 @@ void ConsistencyCheck3322(pqxx::nontransaction& txn, int startWh, int endWh) {
         "SELECT d.D_W_ID, d.D_ID, d.D_NEXT_O_ID, o.max_o_id, n.max_no_o_id "
         "FROM {} AS d "
         "LEFT JOIN (SELECT O_W_ID, O_D_ID, MAX(O_ID) AS max_o_id FROM {} "
-        "           WHERE O_W_ID >= {} AND O_W_ID <= {} GROUP BY O_W_ID, O_D_ID) AS o "
+        "           WHERE O_W_ID >= $1 AND O_W_ID <= $2 GROUP BY O_W_ID, O_D_ID) AS o "
         "  ON d.D_W_ID = o.O_W_ID AND d.D_ID = o.O_D_ID "
         "LEFT JOIN (SELECT NO_W_ID, NO_D_ID, MAX(NO_O_ID) AS max_no_o_id FROM {} "
-        "           WHERE NO_W_ID >= {} AND NO_W_ID <= {} GROUP BY NO_W_ID, NO_D_ID) AS n "
+        "           WHERE NO_W_ID >= $1 AND NO_W_ID <= $2 GROUP BY NO_W_ID, NO_D_ID) AS n "
         "  ON d.D_W_ID = n.NO_W_ID AND d.D_ID = n.NO_D_ID "
-        "WHERE d.D_W_ID >= {} AND d.D_W_ID <= {} "
+        "WHERE d.D_W_ID >= $1 AND d.D_W_ID <= $2 "
         "   AND (o.max_o_id IS NULL "
         "   OR (d.D_NEXT_O_ID - 1) IS DISTINCT FROM o.max_o_id "
         "   OR (n.max_no_o_id IS NOT NULL AND n.max_no_o_id IS DISTINCT FROM o.max_o_id)) "
         "LIMIT 1",
-        TABLE_DISTRICT, TABLE_OORDER, startWh, endWh, TABLE_NEW_ORDER, startWh, endWh,
-        startWh, endWh);
-    CheckNoRows(txn, sql, fmt::format("3.3.2.2 w_id [{},{}]", startWh, endWh));
+        TABLE_DISTRICT, TABLE_OORDER, TABLE_NEW_ORDER);
+    CheckNoRows(txn, sql, fmt::format("3.3.2.2 w_id [{},{}]", startWh, endWh), startWh, endWh);
 }
 
 void ConsistencyCheck3323(pqxx::nontransaction& txn, int startWh, int endWh) {
     // max(NO_O_ID) - min(NO_O_ID) + 1 = count(*) for each warehouse/district
     std::string sql = fmt::format(
         "SELECT NO_W_ID, NO_D_ID, COUNT(*) - (MAX(NO_O_ID) - MIN(NO_O_ID) + 1) AS delta "
-        "FROM {} WHERE NO_W_ID >= {} AND NO_W_ID <= {} "
+        "FROM {} WHERE NO_W_ID >= $1 AND NO_W_ID <= $2 "
         "GROUP BY NO_W_ID, NO_D_ID "
         "HAVING COUNT(*) - (MAX(NO_O_ID) - MIN(NO_O_ID) + 1) != 0 LIMIT 1",
-        TABLE_NEW_ORDER, startWh, endWh);
-    CheckNoRows(txn, sql, fmt::format("3.3.2.3 w_id [{},{}]", startWh, endWh));
+        TABLE_NEW_ORDER);
+    CheckNoRows(txn, sql, fmt::format("3.3.2.3 w_id [{},{}]", startWh, endWh), startWh, endWh);
 }
 
 void ConsistencyCheck3324(pqxx::nontransaction& txn, int startWh, int endWh) {
@@ -276,13 +302,13 @@ void ConsistencyCheck3324(pqxx::nontransaction& txn, int startWh, int endWh) {
     std::string sql = fmt::format(
         "SELECT o.O_W_ID, o.O_D_ID, o.sum_ol_cnt, ol.ol_count "
         "FROM (SELECT O_W_ID, O_D_ID, SUM(O_OL_CNT) AS sum_ol_cnt "
-        "      FROM {} WHERE O_W_ID >= {} AND O_W_ID <= {} GROUP BY O_W_ID, O_D_ID) AS o "
+        "      FROM {} WHERE O_W_ID >= $1 AND O_W_ID <= $2 GROUP BY O_W_ID, O_D_ID) AS o "
         "FULL JOIN (SELECT OL_W_ID, OL_D_ID, COUNT(*) AS ol_count "
-        "           FROM {} WHERE OL_W_ID >= {} AND OL_W_ID <= {} GROUP BY OL_W_ID, OL_D_ID) AS ol "
+        "           FROM {} WHERE OL_W_ID >= $1 AND OL_W_ID <= $2 GROUP BY OL_W_ID, OL_D_ID) AS ol "
         "  ON o.O_W_ID = ol.OL_W_ID AND o.O_D_ID = ol.OL_D_ID "
         "WHERE o.sum_ol_cnt IS DISTINCT FROM ol.ol_count LIMIT 1",
-        TABLE_OORDER, startWh, endWh, TABLE_ORDER_LINE, startWh, endWh);
-    CheckNoRows(txn, sql, fmt::format("3.3.2.4 w_id [{},{}]", startWh, endWh));
+        TABLE_OORDER, TABLE_ORDER_LINE);
+    CheckNoRows(txn, sql, fmt::format("3.3.2.4 w_id [{},{}]", startWh, endWh), startWh, endWh);
 }
 
 void ConsistencyCheck3325(pqxx::nontransaction& txn, int startWh, int endWh) {
@@ -295,19 +321,19 @@ void ConsistencyCheck3325(pqxx::nontransaction& txn, int startWh, int endWh) {
         "  FROM {} AS no "
         "  LEFT JOIN {} AS o "
         "    ON no.NO_W_ID = o.O_W_ID AND no.NO_D_ID = o.O_D_ID AND no.NO_O_ID = o.O_ID "
-        "  WHERE no.NO_W_ID >= {} AND no.NO_W_ID <= {} "
+        "  WHERE no.NO_W_ID >= $1 AND no.NO_W_ID <= $2 "
         "    AND (o.O_W_ID IS NULL OR o.O_CARRIER_ID IS NOT NULL) "
         "  UNION ALL "
         "  SELECT o2.O_W_ID, o2.O_D_ID, o2.O_ID "
         "  FROM {} AS o2 "
         "  LEFT JOIN {} AS no2 "
         "    ON o2.O_W_ID = no2.NO_W_ID AND o2.O_D_ID = no2.NO_D_ID AND o2.O_ID = no2.NO_O_ID "
-        "  WHERE o2.O_W_ID >= {} AND o2.O_W_ID <= {} "
+        "  WHERE o2.O_W_ID >= $1 AND o2.O_W_ID <= $2 "
         "    AND o2.O_CARRIER_ID IS NULL AND no2.NO_W_ID IS NULL"
         ") sub LIMIT 1",
-        TABLE_NEW_ORDER, TABLE_OORDER, startWh, endWh,
-        TABLE_OORDER, TABLE_NEW_ORDER, startWh, endWh);
-    CheckNoRows(txn, sql, fmt::format("3.3.2.5 w_id [{},{}]", startWh, endWh));
+        TABLE_NEW_ORDER, TABLE_OORDER,
+        TABLE_OORDER, TABLE_NEW_ORDER);
+    CheckNoRows(txn, sql, fmt::format("3.3.2.5 w_id [{},{}]", startWh, endWh), startWh, endWh);
 }
 
 void ConsistencyCheck3326(pqxx::nontransaction& txn, int startWh, int endWh) {
@@ -317,21 +343,21 @@ void ConsistencyCheck3326(pqxx::nontransaction& txn, int startWh, int endWh) {
         "  SELECT o.O_W_ID, o.O_D_ID, o.O_ID "
         "  FROM {} AS o "
         "  LEFT JOIN (SELECT OL_W_ID, OL_D_ID, OL_O_ID, COUNT(*) AS cnt "
-        "             FROM {} WHERE OL_W_ID >= {} AND OL_W_ID <= {} "
+        "             FROM {} WHERE OL_W_ID >= $1 AND OL_W_ID <= $2 "
         "             GROUP BY OL_W_ID, OL_D_ID, OL_O_ID) AS l "
         "    ON o.O_W_ID = l.OL_W_ID AND o.O_D_ID = l.OL_D_ID AND o.O_ID = l.OL_O_ID "
-        "  WHERE o.O_W_ID >= {} AND o.O_W_ID <= {} AND o.O_OL_CNT != COALESCE(l.cnt, 0) "
+        "  WHERE o.O_W_ID >= $1 AND o.O_W_ID <= $2 AND o.O_OL_CNT != COALESCE(l.cnt, 0) "
         "  UNION ALL "
         "  SELECT l2.OL_W_ID, l2.OL_D_ID, l2.OL_O_ID "
         "  FROM (SELECT DISTINCT OL_W_ID, OL_D_ID, OL_O_ID FROM {} "
-        "        WHERE OL_W_ID >= {} AND OL_W_ID <= {}) AS l2 "
+        "        WHERE OL_W_ID >= $1 AND OL_W_ID <= $2) AS l2 "
         "  LEFT JOIN {} AS o2 "
         "    ON l2.OL_W_ID = o2.O_W_ID AND l2.OL_D_ID = o2.O_D_ID AND l2.OL_O_ID = o2.O_ID "
         "  WHERE o2.O_W_ID IS NULL"
         ") sub LIMIT 1",
-        TABLE_OORDER, TABLE_ORDER_LINE, startWh, endWh, startWh, endWh,
-        TABLE_ORDER_LINE, startWh, endWh, TABLE_OORDER);
-    CheckNoRows(txn, sql, fmt::format("3.3.2.6 w_id [{},{}]", startWh, endWh));
+        TABLE_OORDER, TABLE_ORDER_LINE,
+        TABLE_ORDER_LINE, TABLE_OORDER);
+    CheckNoRows(txn, sql, fmt::format("3.3.2.6 w_id [{},{}]", startWh, endWh), startWh, endWh);
 }
 
 void ConsistencyCheck3327(pqxx::nontransaction& txn, int startWh, int endWh) {
@@ -343,7 +369,7 @@ void ConsistencyCheck3327(pqxx::nontransaction& txn, int startWh, int endWh) {
         "  SELECT OL_W_ID, OL_D_ID, OL_O_ID, "
         "    BOOL_OR(OL_DELIVERY_D IS NULL) AS some_null, "
         "    BOOL_OR(OL_DELIVERY_D IS NOT NULL) AS some_delivered "
-        "  FROM {} WHERE OL_W_ID >= {} AND OL_W_ID <= {} "
+        "  FROM {} WHERE OL_W_ID >= $1 AND OL_W_ID <= $2 "
         "  GROUP BY OL_W_ID, OL_D_ID, OL_O_ID"
         ") AS l "
         "JOIN {} AS o ON l.OL_W_ID = o.O_W_ID AND l.OL_D_ID = o.O_D_ID AND l.OL_O_ID = o.O_ID "
@@ -351,8 +377,8 @@ void ConsistencyCheck3327(pqxx::nontransaction& txn, int startWh, int endWh) {
         "   OR (o.O_CARRIER_ID IS NULL AND l.some_delivered) "
         "   OR (o.O_CARRIER_ID IS NOT NULL AND l.some_null) "
         "LIMIT 1",
-        TABLE_ORDER_LINE, startWh, endWh, TABLE_OORDER);
-    CheckNoRows(txn, sql, fmt::format("3.3.2.7 w_id [{},{}]", startWh, endWh));
+        TABLE_ORDER_LINE, TABLE_OORDER);
+    CheckNoRows(txn, sql, fmt::format("3.3.2.7 w_id [{},{}]", startWh, endWh), startWh, endWh);
 }
 
 void ConsistencyCheck3328(pqxx::nontransaction& txn, int startWh, int endWh) {
@@ -361,12 +387,12 @@ void ConsistencyCheck3328(pqxx::nontransaction& txn, int startWh, int endWh) {
         "SELECT w.W_ID, w.W_YTD, h.sum_h "
         "FROM {} AS w "
         "LEFT JOIN (SELECT H_W_ID, SUM(H_AMOUNT) AS sum_h FROM {} "
-        "           WHERE H_W_ID >= {} AND H_W_ID <= {} GROUP BY H_W_ID) AS h "
+        "           WHERE H_W_ID >= $1 AND H_W_ID <= $2 GROUP BY H_W_ID) AS h "
         "  ON w.W_ID = h.H_W_ID "
-        "WHERE w.W_ID >= {} AND w.W_ID <= {} "
+        "WHERE w.W_ID >= $1 AND w.W_ID <= $2 "
         "  AND w.W_YTD IS DISTINCT FROM COALESCE(h.sum_h, 0) LIMIT 1",
-        TABLE_WAREHOUSE, TABLE_HISTORY, startWh, endWh, startWh, endWh);
-    CheckNoRows(txn, sql, fmt::format("3.3.2.8 w_id [{},{}]", startWh, endWh));
+        TABLE_WAREHOUSE, TABLE_HISTORY);
+    CheckNoRows(txn, sql, fmt::format("3.3.2.8 w_id [{},{}]", startWh, endWh), startWh, endWh);
 }
 
 void ConsistencyCheck3329(pqxx::nontransaction& txn, int startWh, int endWh) {
@@ -375,12 +401,12 @@ void ConsistencyCheck3329(pqxx::nontransaction& txn, int startWh, int endWh) {
         "SELECT d.D_W_ID, d.D_ID, d.D_YTD, h.sum_h "
         "FROM {} AS d "
         "LEFT JOIN (SELECT H_W_ID, H_D_ID, SUM(H_AMOUNT) AS sum_h FROM {} "
-        "           WHERE H_W_ID >= {} AND H_W_ID <= {} GROUP BY H_W_ID, H_D_ID) AS h "
+        "           WHERE H_W_ID >= $1 AND H_W_ID <= $2 GROUP BY H_W_ID, H_D_ID) AS h "
         "  ON d.D_W_ID = h.H_W_ID AND d.D_ID = h.H_D_ID "
-        "WHERE d.D_W_ID >= {} AND d.D_W_ID <= {} "
+        "WHERE d.D_W_ID >= $1 AND d.D_W_ID <= $2 "
         "  AND d.D_YTD IS DISTINCT FROM COALESCE(h.sum_h, 0) LIMIT 1",
-        TABLE_DISTRICT, TABLE_HISTORY, startWh, endWh, startWh, endWh);
-    CheckNoRows(txn, sql, fmt::format("3.3.2.9 w_id [{},{}]", startWh, endWh));
+        TABLE_DISTRICT, TABLE_HISTORY);
+    CheckNoRows(txn, sql, fmt::format("3.3.2.9 w_id [{},{}]", startWh, endWh), startWh, endWh);
 }
 
 void ConsistencyCheck33210(pqxx::nontransaction& txn, int startWh, int endWh) {
@@ -392,22 +418,21 @@ void ConsistencyCheck33210(pqxx::nontransaction& txn, int startWh, int endWh) {
         "  SELECT o.O_W_ID AS W_ID, o.O_D_ID AS D_ID, o.O_C_ID AS C_ID, SUM(ol.OL_AMOUNT) AS ol_sum "
         "  FROM {} AS o "
         "  JOIN {} AS ol ON ol.OL_W_ID = o.O_W_ID AND ol.OL_D_ID = o.O_D_ID AND ol.OL_O_ID = o.O_ID "
-        "  WHERE ol.OL_DELIVERY_D IS NOT NULL AND o.O_W_ID >= {} AND o.O_W_ID <= {} "
+        "  WHERE ol.OL_DELIVERY_D IS NOT NULL AND o.O_W_ID >= $1 AND o.O_W_ID <= $2 "
         "  GROUP BY o.O_W_ID, o.O_D_ID, o.O_C_ID"
         ") AS ols ON c.C_W_ID = ols.W_ID AND c.C_D_ID = ols.D_ID AND c.C_ID = ols.C_ID "
         "LEFT JOIN ("
         "  SELECT H_C_W_ID, H_C_D_ID, H_C_ID, SUM(H_AMOUNT) AS h_sum "
-        "  FROM {} WHERE H_C_W_ID >= {} AND H_C_W_ID <= {} "
+        "  FROM {} WHERE H_C_W_ID >= $1 AND H_C_W_ID <= $2 "
         "  GROUP BY H_C_W_ID, H_C_D_ID, H_C_ID"
         ") AS hs ON c.C_W_ID = hs.H_C_W_ID AND c.C_D_ID = hs.H_C_D_ID AND c.C_ID = hs.H_C_ID "
-        "WHERE c.C_W_ID >= {} AND c.C_W_ID <= {} "
+        "WHERE c.C_W_ID >= $1 AND c.C_W_ID <= $2 "
         "  AND c.C_BALANCE IS DISTINCT FROM (COALESCE(ols.ol_sum, 0) - COALESCE(hs.h_sum, 0)) "
         "LIMIT 1",
         TABLE_CUSTOMER,
-        TABLE_OORDER, TABLE_ORDER_LINE, startWh, endWh,
-        TABLE_HISTORY, startWh, endWh,
-        startWh, endWh);
-    CheckNoRows(txn, sql, fmt::format("3.3.2.10 w_id [{},{}]", startWh, endWh));
+        TABLE_OORDER, TABLE_ORDER_LINE,
+        TABLE_HISTORY);
+    CheckNoRows(txn, sql, fmt::format("3.3.2.10 w_id [{},{}]", startWh, endWh), startWh, endWh);
 }
 
 void ConsistencyCheck33211(pqxx::nontransaction& txn, int startWh, int endWh) {
@@ -416,15 +441,15 @@ void ConsistencyCheck33211(pqxx::nontransaction& txn, int startWh, int endWh) {
         "       COALESCE(o.O_D_ID, n.NO_D_ID) AS d_id, "
         "       (COALESCE(o.order_cnt, 0) - COALESCE(n.new_order_cnt, 0)) AS delta "
         "FROM (SELECT O_W_ID, O_D_ID, COUNT(*) AS order_cnt FROM {} "
-        "      WHERE O_W_ID >= {} AND O_W_ID <= {} GROUP BY O_W_ID, O_D_ID) AS o "
+        "      WHERE O_W_ID >= $1 AND O_W_ID <= $2 GROUP BY O_W_ID, O_D_ID) AS o "
         "FULL JOIN (SELECT NO_W_ID, NO_D_ID, COUNT(*) AS new_order_cnt FROM {} "
-        "      WHERE NO_W_ID >= {} AND NO_W_ID <= {} GROUP BY NO_W_ID, NO_D_ID) AS n "
+        "      WHERE NO_W_ID >= $1 AND NO_W_ID <= $2 GROUP BY NO_W_ID, NO_D_ID) AS n "
         "  ON o.O_W_ID = n.NO_W_ID AND o.O_D_ID = n.NO_D_ID "
         "WHERE (COALESCE(o.order_cnt, 0) - COALESCE(n.new_order_cnt, 0)) != {} LIMIT 1",
-        TABLE_OORDER, startWh, endWh,
-        TABLE_NEW_ORDER, startWh, endWh,
+        TABLE_OORDER,
+        TABLE_NEW_ORDER,
         FIRST_UNPROCESSED_O_ID - 1);
-    CheckNoRows(txn, sql, fmt::format("3.3.2.11 w_id [{},{}]", startWh, endWh));
+    CheckNoRows(txn, sql, fmt::format("3.3.2.11 w_id [{},{}]", startWh, endWh), startWh, endWh);
 }
 
 void ConsistencyCheck33212(pqxx::nontransaction& txn, int startWh, int endWh) {
@@ -437,16 +462,15 @@ void ConsistencyCheck33212(pqxx::nontransaction& txn, int startWh, int endWh) {
         "  SELECT o.O_W_ID AS W_ID, o.O_D_ID AS D_ID, o.O_C_ID AS C_ID, SUM(ol.OL_AMOUNT) AS ol_sum "
         "  FROM {} AS o "
         "  JOIN {} AS ol ON ol.OL_W_ID = o.O_W_ID AND ol.OL_D_ID = o.O_D_ID AND ol.OL_O_ID = o.O_ID "
-        "  WHERE ol.OL_DELIVERY_D IS NOT NULL AND o.O_W_ID >= {} AND o.O_W_ID <= {} "
+        "  WHERE ol.OL_DELIVERY_D IS NOT NULL AND o.O_W_ID >= $1 AND o.O_W_ID <= $2 "
         "  GROUP BY o.O_W_ID, o.O_D_ID, o.O_C_ID"
         ") AS l ON c.C_W_ID = l.W_ID AND c.C_D_ID = l.D_ID AND c.C_ID = l.C_ID "
-        "WHERE c.C_W_ID >= {} AND c.C_W_ID <= {} "
+        "WHERE c.C_W_ID >= $1 AND c.C_W_ID <= $2 "
         "  AND (c.C_BALANCE + c.C_YTD_PAYMENT) IS DISTINCT FROM COALESCE(l.ol_sum, 0) "
         "LIMIT 1",
         TABLE_CUSTOMER,
-        TABLE_OORDER, TABLE_ORDER_LINE, startWh, endWh,
-        startWh, endWh);
-    CheckNoRows(txn, sql, fmt::format("3.3.2.12 w_id [{},{}]", startWh, endWh));
+        TABLE_OORDER, TABLE_ORDER_LINE);
+    CheckNoRows(txn, sql, fmt::format("3.3.2.12 w_id [{},{}]", startWh, endWh), startWh, endWh);
 }
 
 //-----------------------------------------------------------------------------
@@ -481,11 +505,11 @@ void PostImportCheckDistrictYtd(pqxx::nontransaction& txn) {
 void PostImportCheckNoCarriers(pqxx::nontransaction& txn, int startWh, int endWh) {
     std::string sql = fmt::format(
         "SELECT O_W_ID, O_D_ID, O_ID, O_CARRIER_ID FROM {} "
-        "WHERE O_W_ID >= {} AND O_W_ID <= {} AND O_ID >= {} AND O_CARRIER_ID IS NOT NULL LIMIT 1",
-        TABLE_OORDER, startWh, endWh, FIRST_UNPROCESSED_O_ID);
+        "WHERE O_W_ID >= $1 AND O_W_ID <= $2 AND O_ID >= {} AND O_CARRIER_ID IS NOT NULL LIMIT 1",
+        TABLE_OORDER, FIRST_UNPROCESSED_O_ID);
     CheckNoRows(txn, sql, fmt::format(
         "Unprocessed orders must have NULL O_CARRIER_ID after import (w_id [{},{}])",
-        startWh, endWh));
+        startWh, endWh), startWh, endWh);
 }
 
 void PostImportCheckCarrierRange(pqxx::nontransaction& txn, int startWh, int endWh) {
@@ -493,24 +517,24 @@ void PostImportCheckCarrierRange(pqxx::nontransaction& txn, int startWh, int end
     // unique within [1 .. 10].
     std::string sql = fmt::format(
         "SELECT O_W_ID, O_D_ID, O_ID, O_CARRIER_ID FROM {} "
-        "WHERE O_W_ID >= {} AND O_W_ID <= {} AND O_ID < {} "
+        "WHERE O_W_ID >= $1 AND O_W_ID <= $2 AND O_ID < {} "
         "AND (O_CARRIER_ID IS NULL OR O_CARRIER_ID < 1 OR O_CARRIER_ID > 10) "
         "LIMIT 1",
-        TABLE_OORDER, startWh, endWh, FIRST_UNPROCESSED_O_ID);
+        TABLE_OORDER, FIRST_UNPROCESSED_O_ID);
     CheckNoRows(txn, sql, fmt::format(
         "Delivered orders must have O_CARRIER_ID in [1..10] after import (w_id [{},{}])",
-        startWh, endWh));
+        startWh, endWh), startWh, endWh);
 }
 
 void PostImportCheckNoDeliveryDates(pqxx::nontransaction& txn, int startWh, int endWh) {
     std::string sql = fmt::format(
         "SELECT ol.OL_W_ID, ol.OL_D_ID, ol.OL_O_ID FROM {} AS ol "
-        "WHERE ol.OL_W_ID >= {} AND ol.OL_W_ID <= {} "
+        "WHERE ol.OL_W_ID >= $1 AND ol.OL_W_ID <= $2 "
         "AND ol.OL_O_ID >= {} AND ol.OL_DELIVERY_D IS NOT NULL LIMIT 1",
-        TABLE_ORDER_LINE, startWh, endWh, FIRST_UNPROCESSED_O_ID);
+        TABLE_ORDER_LINE, FIRST_UNPROCESSED_O_ID);
     CheckNoRows(txn, sql, fmt::format(
         "Unprocessed order lines must have NULL OL_DELIVERY_D after import (w_id [{},{}])",
-        startWh, endWh));
+        startWh, endWh), startWh, endWh);
 }
 
 void PostImportCheckDeliveryEqualsEntry(pqxx::nontransaction& txn, int startWh, int endWh) {
@@ -519,26 +543,26 @@ void PostImportCheckDeliveryEqualsEntry(pqxx::nontransaction& txn, int startWh, 
         "SELECT ol.OL_W_ID, ol.OL_D_ID, ol.OL_O_ID, ol.OL_NUMBER "
         "FROM {} AS ol "
         "JOIN {} AS o ON o.O_W_ID = ol.OL_W_ID AND o.O_D_ID = ol.OL_D_ID AND o.O_ID = ol.OL_O_ID "
-        "WHERE ol.OL_W_ID >= {} AND ol.OL_W_ID <= {} AND ol.OL_O_ID < {} AND "
+        "WHERE ol.OL_W_ID >= $1 AND ol.OL_W_ID <= $2 AND ol.OL_O_ID < {} AND "
         "(ol.OL_DELIVERY_D IS NULL OR ol.OL_DELIVERY_D IS DISTINCT FROM o.O_ENTRY_D) "
         "LIMIT 1",
-        TABLE_ORDER_LINE, TABLE_OORDER, startWh, endWh, FIRST_UNPROCESSED_O_ID);
+        TABLE_ORDER_LINE, TABLE_OORDER, FIRST_UNPROCESSED_O_ID);
     CheckNoRows(txn, sql, fmt::format(
         "Delivered order lines must have OL_DELIVERY_D = O_ENTRY_D after import (w_id [{},{}])",
-        startWh, endWh));
+        startWh, endWh), startWh, endWh);
 }
 
 void PostImportCheckDeliveredAmountZero(pqxx::nontransaction& txn, int startWh, int endWh) {
     // TPC-C §4.3.3.1: for initially delivered order lines, OL_AMOUNT = 0.00.
     std::string sql = fmt::format(
         "SELECT OL_W_ID, OL_D_ID, OL_O_ID, OL_NUMBER, OL_AMOUNT FROM {} "
-        "WHERE OL_W_ID >= {} AND OL_W_ID <= {} AND OL_O_ID < {} "
+        "WHERE OL_W_ID >= $1 AND OL_W_ID <= $2 AND OL_O_ID < {} "
         "AND OL_AMOUNT IS DISTINCT FROM 0.00 "
         "LIMIT 1",
-        TABLE_ORDER_LINE, startWh, endWh, FIRST_UNPROCESSED_O_ID);
+        TABLE_ORDER_LINE, FIRST_UNPROCESSED_O_ID);
     CheckNoRows(txn, sql, fmt::format(
         "Delivered order lines must have OL_AMOUNT = 0.00 after import (w_id [{},{}])",
-        startWh, endWh));
+        startWh, endWh), startWh, endWh);
 }
 
 struct TCheckJob {

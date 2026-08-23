@@ -296,11 +296,13 @@ metadata timing, query-timeout rules, check session concurrency, and
 warehouse-range chunk size are in
 [specification.md](specification.md) §9.1–§9.2. Adapters MUST use
 `TCheckRequest.CheckConcurrency` for parallel sessions and
-`kWarehouseCheckRange` (1) for warehouse-scoped scans. After each catalog
-id completes, adapters SHOULD record the result through `RecordCheckResult`
-so `Checking … [OK]/[Failed]/[Skipped]` appears immediately (specification
-§9.2). Dialect differences (OceanBase `LEFT JOIN` + `UNION ALL` instead of
-`FULL JOIN`) are allowed; predicates MUST match the PostgreSQL reference set.
+`kWarehouseCheckRange` (1) for warehouse-scoped scans. Warehouse filter bounds
+MUST be bound parameters so the generated query text is stable across chunks
+(specification §9.2). After each catalog id completes, adapters SHOULD record
+the result through `RecordCheckResult` so `Checking … [OK]/[Failed]/[Skipped]`
+appears immediately (specification §9.2). Dialect differences (OceanBase
+`LEFT JOIN` + `UNION ALL` instead of `FULL JOIN`) are allowed; predicates MUST
+match the PostgreSQL reference set.
 
 ### 4.5. `IErrorClassifier`
 

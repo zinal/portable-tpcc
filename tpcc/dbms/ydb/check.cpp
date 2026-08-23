@@ -18,6 +18,7 @@
 #include <filesystem>
 #include <iostream>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <string_view>
 #include <thread>
@@ -39,18 +40,37 @@ constexpr const char* kZeroMoney = "CAST('0.00' AS Decimal(22,9))";
 // Heavy consistency checks scan order_line/customer; run them in warehouse
 // ranges (same chunk size as PostgreSQL / OceanBase) to stay under YDB
 // transaction memory limits at large scale and to enable check parallelism.
-using TQueryMap = std::unordered_map<std::string, std::vector<std::string>>;
+// Warehouse bounds are bound parameters so the YQL text is identical for
+// every chunk of a catalog id (specification §9.2).
+struct TCheckQuery {
+    std::string Sql;
+    int StartWh = 0;
+    int EndWh = 0;
+    bool HasWarehouseRange = false;
+};
+
+using TQueryMap = std::unordered_map<std::string, std::vector<TCheckQuery>>;
 
 void AddSingle(TQueryMap& q, const std::string& id, std::string sql) {
-    q[id].push_back(std::move(sql));
+    q[id].push_back(TCheckQuery{std::move(sql)});
 }
 
-template <typename F>
-void AddRanged(TQueryMap& q, const std::string& id, int warehouses, int rangeSize, F&& makeSql) {
+void AddRanged(TQueryMap& q, const std::string& id, int warehouses, int rangeSize, std::string sql) {
     for (int startWh = 1; startWh <= warehouses; startWh += rangeSize) {
         const int endWh = std::min(startWh + rangeSize - 1, warehouses);
-        q[id].push_back(makeSql(startWh, endWh));
+        q[id].push_back(TCheckQuery{sql, startWh, endWh, true});
     }
+}
+
+constexpr const char* kWhRangeDecl =
+    "DECLARE $start_wh AS Int32;\n"
+    "DECLARE $end_wh AS Int32;\n";
+
+NYdb::TParams MakeWarehouseRangeParams(int startWh, int endWh) {
+    return NYdb::TParamsBuilder()
+        .AddParam("$start_wh").Int32(startWh).Build()
+        .AddParam("$end_wh").Int32(endWh).Build()
+        .Build();
 }
 
 TQueryMap BuildQueries(int warehouses) {
@@ -62,6 +82,7 @@ TQueryMap BuildQueries(int warehouses) {
 
     TQueryMap q;
     // Cardinality + id ranges (same strength as PostgreSQL / OceanBase base checks).
+    // Scale (warehouse count) is fixed for the run and may stay a literal.
     AddSingle(q, "cardinality.warehouse", fmt::format(
         "SELECT (COUNT(*) = {0} AND MIN(w_id) = 1 AND MAX(w_id) = {0}) AS ok FROM `warehouse`;",
         warehouses));
@@ -69,80 +90,62 @@ TQueryMap BuildQueries(int warehouses) {
         "SELECT (COUNT(*) = {0} AND MIN(d_w_id) = 1 AND MAX(d_w_id) = {1} "
         "AND MIN(d_id) = {2} AND MAX(d_id) = {3}) AS ok FROM `district`;",
         districts, warehouses, DISTRICT_LOW_ID, DISTRICT_HIGH_ID));
-    AddRanged(q, "cardinality.customer", warehouses, kWarehouseCheckRange,
-        [](int startWh, int endWh) {
-            const int64_t expected = static_cast<int64_t>(endWh - startWh + 1) *
-                DISTRICT_COUNT * CUSTOMERS_PER_DISTRICT;
-            return fmt::format(
-                "SELECT (COUNT(*) = {0} AND MIN(c_w_id) = {1} AND MAX(c_w_id) = {2} "
-                "AND MIN(c_d_id) = {3} AND MAX(c_d_id) = {4} "
-                "AND MIN(c_id) = 1 AND MAX(c_id) = {5}) AS ok FROM `customer` "
-                "WHERE c_w_id >= {1} AND c_w_id <= {2};",
-                expected, startWh, endWh, DISTRICT_LOW_ID, DISTRICT_HIGH_ID,
-                CUSTOMERS_PER_DISTRICT);
-        });
+    AddRanged(q, "cardinality.customer", warehouses, kWarehouseCheckRange, fmt::format(
+        "{0}"
+        "SELECT (COUNT(*) = CAST($end_wh - $start_wh + 1 AS Int64) * {1} * {2} "
+        "AND MIN(c_w_id) = $start_wh AND MAX(c_w_id) = $end_wh "
+        "AND MIN(c_d_id) = {3} AND MAX(c_d_id) = {4} "
+        "AND MIN(c_id) = 1 AND MAX(c_id) = {2}) AS ok FROM `customer` "
+        "WHERE c_w_id >= $start_wh AND c_w_id <= $end_wh;",
+        kWhRangeDecl, DISTRICT_COUNT, CUSTOMERS_PER_DISTRICT,
+        DISTRICT_LOW_ID, DISTRICT_HIGH_ID));
     AddSingle(q, "cardinality.item", fmt::format(
         "SELECT (COUNT(*) = {0} AND MIN(i_id) = 1 AND MAX(i_id) = {0}) AS ok FROM `item`;",
         ITEM_COUNT));
-    AddRanged(q, "cardinality.stock", warehouses, kWarehouseCheckRange,
-        [](int startWh, int endWh) {
-            const int rangeWh = endWh - startWh + 1;
-            const int64_t expected = static_cast<int64_t>(rangeWh) * ITEM_COUNT;
-            return fmt::format(
-                "SELECT (COUNT(*) = {0} AND COUNT(DISTINCT s_w_id) = {1} "
-                "AND MIN(s_w_id) = {2} AND MAX(s_w_id) = {3} "
-                "AND MIN(s_i_id) = 1 AND MAX(s_i_id) = {4}) AS ok FROM `stock` "
-                "WHERE s_w_id >= {2} AND s_w_id <= {3};",
-                expected, rangeWh, startWh, endWh, ITEM_COUNT);
-        });
-    AddRanged(q, "cardinality.oorder", warehouses, kWarehouseCheckRange,
-        [](int startWh, int endWh) {
-            const int64_t expected = static_cast<int64_t>(endWh - startWh + 1) *
-                DISTRICT_COUNT * CUSTOMERS_PER_DISTRICT;
-            return fmt::format(
-                "SELECT (COUNT(*) = {0} AND MIN(o_w_id) = {1} AND MAX(o_w_id) = {2} "
-                "AND MIN(o_d_id) = {3} AND MAX(o_d_id) = {4} "
-                "AND MIN(o_id) = 1 AND MAX(o_id) = {5}) AS ok FROM `oorder` "
-                "WHERE o_w_id >= {1} AND o_w_id <= {2};",
-                expected, startWh, endWh, DISTRICT_LOW_ID, DISTRICT_HIGH_ID,
-                CUSTOMERS_PER_DISTRICT);
-        });
-    AddRanged(q, "cardinality.new_order", warehouses, kWarehouseCheckRange,
-        [](int startWh, int endWh) {
-            const int64_t expected = static_cast<int64_t>(endWh - startWh + 1) *
-                DISTRICT_COUNT * (CUSTOMERS_PER_DISTRICT - FIRST_UNPROCESSED_O_ID + 1);
-            return fmt::format(
-                "SELECT (COUNT(*) = {0} AND MIN(no_w_id) = {1} AND MAX(no_w_id) = {2} "
-                "AND MIN(no_d_id) = {3} AND MAX(no_d_id) = {4} "
-                "AND MIN(no_o_id) >= {5} AND MAX(no_o_id) = {6}) AS ok FROM `new_order` "
-                "WHERE no_w_id >= {1} AND no_w_id <= {2};",
-                expected, startWh, endWh, DISTRICT_LOW_ID, DISTRICT_HIGH_ID,
-                FIRST_UNPROCESSED_O_ID, CUSTOMERS_PER_DISTRICT);
-        });
-    AddRanged(q, "cardinality.history", warehouses, kWarehouseCheckRange,
-        [](int startWh, int endWh) {
-            const int64_t expected = static_cast<int64_t>(endWh - startWh + 1) *
-                DISTRICT_COUNT * CUSTOMERS_PER_DISTRICT;
-            return fmt::format(
-                "SELECT (COUNT(*) = {0} AND MIN(h_c_w_id) = {1} AND MAX(h_c_w_id) = {2}) AS ok "
-                "FROM `history` WHERE h_c_w_id >= {1} AND h_c_w_id <= {2};",
-                expected, startWh, endWh);
-        });
+    AddRanged(q, "cardinality.stock", warehouses, kWarehouseCheckRange, fmt::format(
+        "{0}"
+        "SELECT (COUNT(*) = CAST($end_wh - $start_wh + 1 AS Int64) * {1} "
+        "AND COUNT(DISTINCT s_w_id) = ($end_wh - $start_wh + 1) "
+        "AND MIN(s_w_id) = $start_wh AND MAX(s_w_id) = $end_wh "
+        "AND MIN(s_i_id) = 1 AND MAX(s_i_id) = {1}) AS ok FROM `stock` "
+        "WHERE s_w_id >= $start_wh AND s_w_id <= $end_wh;",
+        kWhRangeDecl, ITEM_COUNT));
+    AddRanged(q, "cardinality.oorder", warehouses, kWarehouseCheckRange, fmt::format(
+        "{0}"
+        "SELECT (COUNT(*) = CAST($end_wh - $start_wh + 1 AS Int64) * {1} * {2} "
+        "AND MIN(o_w_id) = $start_wh AND MAX(o_w_id) = $end_wh "
+        "AND MIN(o_d_id) = {3} AND MAX(o_d_id) = {4} "
+        "AND MIN(o_id) = 1 AND MAX(o_id) = {2}) AS ok FROM `oorder` "
+        "WHERE o_w_id >= $start_wh AND o_w_id <= $end_wh;",
+        kWhRangeDecl, DISTRICT_COUNT, CUSTOMERS_PER_DISTRICT,
+        DISTRICT_LOW_ID, DISTRICT_HIGH_ID));
+    AddRanged(q, "cardinality.new_order", warehouses, kWarehouseCheckRange, fmt::format(
+        "{0}"
+        "SELECT (COUNT(*) = CAST($end_wh - $start_wh + 1 AS Int64) * {1} * {2} "
+        "AND MIN(no_w_id) = $start_wh AND MAX(no_w_id) = $end_wh "
+        "AND MIN(no_d_id) = {3} AND MAX(no_d_id) = {4} "
+        "AND MIN(no_o_id) >= {5} AND MAX(no_o_id) = {6}) AS ok FROM `new_order` "
+        "WHERE no_w_id >= $start_wh AND no_w_id <= $end_wh;",
+        kWhRangeDecl, DISTRICT_COUNT,
+        CUSTOMERS_PER_DISTRICT - FIRST_UNPROCESSED_O_ID + 1,
+        DISTRICT_LOW_ID, DISTRICT_HIGH_ID,
+        FIRST_UNPROCESSED_O_ID, CUSTOMERS_PER_DISTRICT));
+    AddRanged(q, "cardinality.history", warehouses, kWarehouseCheckRange, fmt::format(
+        "{0}"
+        "SELECT (COUNT(*) = CAST($end_wh - $start_wh + 1 AS Int64) * {1} * {2} "
+        "AND MIN(h_c_w_id) = $start_wh AND MAX(h_c_w_id) = $end_wh) AS ok "
+        "FROM `history` WHERE h_c_w_id >= $start_wh AND h_c_w_id <= $end_wh;",
+        kWhRangeDecl, DISTRICT_COUNT, CUSTOMERS_PER_DISTRICT));
     // Every district must have exactly CUSTOMERS_PER_DISTRICT distinct order ids in order_line.
-    AddRanged(q, "cardinality.order_line", warehouses, kWarehouseCheckRange,
-        [](int startWh, int endWh) {
-            const int64_t expectedDistricts =
-                static_cast<int64_t>(endWh - startWh + 1) * DISTRICT_COUNT;
-            return fmt::format(R"(
-        SELECT COUNT(*) = {} AS ok FROM (
+    AddRanged(q, "cardinality.order_line", warehouses, kWarehouseCheckRange, fmt::format(R"(
+        {0}SELECT COUNT(*) = CAST($end_wh - $start_wh + 1 AS Int64) * {1} AS ok FROM (
             SELECT ol_w_id, ol_d_id
               FROM `order_line`
-             WHERE ol_w_id >= {} AND ol_w_id <= {}
+             WHERE ol_w_id >= $start_wh AND ol_w_id <= $end_wh
              GROUP BY ol_w_id, ol_d_id
-            HAVING COUNT(DISTINCT ol_o_id) = {}
+            HAVING COUNT(DISTINCT ol_o_id) = {2}
         ) AS good;
-    )", expectedDistricts, startWh, endWh, CUSTOMERS_PER_DISTRICT);
-        });
+    )", kWhRangeDecl, DISTRICT_COUNT, CUSTOMERS_PER_DISTRICT));
 
     AddSingle(q, "post_import.d_next_o_id", fmt::format(
         "SELECT COUNT(*) = 0 AS ok FROM `district` WHERE d_next_o_id != {};", CUSTOMERS_PER_DISTRICT + 1));
@@ -152,48 +155,37 @@ TQueryMap BuildQueries(int warehouses) {
     AddSingle(q, "post_import.d_ytd", fmt::format(
         "SELECT COUNT(*) = 0 AS ok FROM `district` WHERE d_ytd != CAST('{}' AS Decimal(22,9));",
         districtYtd));
-    AddRanged(q, "post_import.o_carrier_id", warehouses, kWarehouseCheckRange,
-        [](int startWh, int endWh) {
-            return fmt::format(
-                "SELECT COUNT(*) = 0 AS ok FROM `oorder` "
-                "WHERE o_w_id >= {} AND o_w_id <= {} AND o_id >= {} AND o_carrier_id IS NOT NULL;",
-                startWh, endWh, FIRST_UNPROCESSED_O_ID);
-        });
-    AddRanged(q, "post_import.o_carrier_id_range", warehouses, kWarehouseCheckRange,
-        [](int startWh, int endWh) {
-            return fmt::format(
-                "SELECT COUNT(*) = 0 AS ok FROM `oorder` "
-                "WHERE o_w_id >= {} AND o_w_id <= {} AND o_id < {} "
-                "AND (o_carrier_id IS NULL OR o_carrier_id < 1 OR o_carrier_id > 10);",
-                startWh, endWh, FIRST_UNPROCESSED_O_ID);
-        });
-    AddRanged(q, "post_import.ol_delivery_d", warehouses, kWarehouseCheckRange,
-        [](int startWh, int endWh) {
-            return fmt::format(
-                "SELECT COUNT(*) = 0 AS ok FROM `order_line` "
-                "WHERE ol_w_id >= {} AND ol_w_id <= {} AND ol_o_id >= {} AND ol_delivery_d IS NOT NULL;",
-                startWh, endWh, FIRST_UNPROCESSED_O_ID);
-        });
-    AddRanged(q, "post_import.ol_amount_delivered", warehouses, kWarehouseCheckRange,
-        [](int startWh, int endWh) {
-            return fmt::format(
-                "SELECT COUNT(*) = 0 AS ok FROM `order_line` "
-                "WHERE ol_w_id >= {} AND ol_w_id <= {} AND ol_o_id < {} AND ol_amount != {};",
-                startWh, endWh, FIRST_UNPROCESSED_O_ID, kZeroMoney);
-        });
+    AddRanged(q, "post_import.o_carrier_id", warehouses, kWarehouseCheckRange, fmt::format(
+        "{0}"
+        "SELECT COUNT(*) = 0 AS ok FROM `oorder` "
+        "WHERE o_w_id >= $start_wh AND o_w_id <= $end_wh AND o_id >= {1} AND o_carrier_id IS NOT NULL;",
+        kWhRangeDecl, FIRST_UNPROCESSED_O_ID));
+    AddRanged(q, "post_import.o_carrier_id_range", warehouses, kWarehouseCheckRange, fmt::format(
+        "{0}"
+        "SELECT COUNT(*) = 0 AS ok FROM `oorder` "
+        "WHERE o_w_id >= $start_wh AND o_w_id <= $end_wh AND o_id < {1} "
+        "AND (o_carrier_id IS NULL OR o_carrier_id < 1 OR o_carrier_id > 10);",
+        kWhRangeDecl, FIRST_UNPROCESSED_O_ID));
+    AddRanged(q, "post_import.ol_delivery_d", warehouses, kWarehouseCheckRange, fmt::format(
+        "{0}"
+        "SELECT COUNT(*) = 0 AS ok FROM `order_line` "
+        "WHERE ol_w_id >= $start_wh AND ol_w_id <= $end_wh AND ol_o_id >= {1} AND ol_delivery_d IS NOT NULL;",
+        kWhRangeDecl, FIRST_UNPROCESSED_O_ID));
+    AddRanged(q, "post_import.ol_amount_delivered", warehouses, kWarehouseCheckRange, fmt::format(
+        "{0}"
+        "SELECT COUNT(*) = 0 AS ok FROM `order_line` "
+        "WHERE ol_w_id >= $start_wh AND ol_w_id <= $end_wh AND ol_o_id < {1} AND ol_amount != {2};",
+        kWhRangeDecl, FIRST_UNPROCESSED_O_ID, kZeroMoney));
     // NULL delivery on a delivered order is a failure (match PG IS DISTINCT FROM semantics).
-    AddRanged(q, "post_import.ol_delivery_eq_entry", warehouses, kWarehouseCheckRange,
-        [](int startWh, int endWh) {
-            return fmt::format(R"(
-        SELECT COUNT(*) = 0 AS ok
+    AddRanged(q, "post_import.ol_delivery_eq_entry", warehouses, kWarehouseCheckRange, fmt::format(R"(
+        {0}SELECT COUNT(*) = 0 AS ok
           FROM `order_line` AS ol
           INNER JOIN `oorder` AS o
              ON o.o_w_id = ol.ol_w_id AND o.o_d_id = ol.ol_d_id AND o.o_id = ol.ol_o_id
-         WHERE ol.ol_w_id >= {0} AND ol.ol_w_id <= {1}
-           AND ol.ol_o_id < {2}
+         WHERE ol.ol_w_id >= $start_wh AND ol.ol_w_id <= $end_wh
+           AND ol.ol_o_id < {1}
            AND (ol.ol_delivery_d IS NULL OR ol.ol_delivery_d != o.o_entry_d);
-    )", startWh, endWh, FIRST_UNPROCESSED_O_ID);
-        });
+    )", kWhRangeDecl, FIRST_UNPROCESSED_O_ID));
 
     // TPC-C §3.3.2.1: W_YTD = sum(D_YTD) per warehouse.
     AddSingle(q, "consistency.3.3.2.1", fmt::format(R"(
@@ -210,176 +202,150 @@ TQueryMap BuildQueries(int warehouses) {
     )", kZeroMoney));
 
     // TPC-C §3.3.2.2: D_NEXT_O_ID - 1 = max(O_ID); when new-orders exist also = max(NO_O_ID).
-    AddRanged(q, "consistency.3.3.2.2", warehouses, kWarehouseCheckRange,
-        [](int startWh, int endWh) {
-            return fmt::format(R"(
-        SELECT COUNT(*) = 0 AS ok FROM (
+    AddRanged(q, "consistency.3.3.2.2", warehouses, kWarehouseCheckRange, fmt::format(R"(
+        {0}SELECT COUNT(*) = 0 AS ok FROM (
             SELECT d.d_w_id, d.d_id
               FROM `district` AS d
               LEFT JOIN (
                   SELECT o_w_id, o_d_id, MAX(o_id) AS max_o_id
                     FROM `oorder`
-                   WHERE o_w_id >= {0} AND o_w_id <= {1}
+                   WHERE o_w_id >= $start_wh AND o_w_id <= $end_wh
                    GROUP BY o_w_id, o_d_id
               ) AS o ON d.d_w_id = o.o_w_id AND d.d_id = o.o_d_id
               LEFT JOIN (
                   SELECT no_w_id, no_d_id, MAX(no_o_id) AS max_no_o_id
                     FROM `new_order`
-                   WHERE no_w_id >= {0} AND no_w_id <= {1}
+                   WHERE no_w_id >= $start_wh AND no_w_id <= $end_wh
                    GROUP BY no_w_id, no_d_id
               ) AS n ON d.d_w_id = n.no_w_id AND d.d_id = n.no_d_id
-             WHERE d.d_w_id >= {0} AND d.d_w_id <= {1}
+             WHERE d.d_w_id >= $start_wh AND d.d_w_id <= $end_wh
                AND (o.max_o_id IS NULL
                 OR (d.d_next_o_id - 1) != o.max_o_id
                 OR (n.max_no_o_id IS NOT NULL AND n.max_no_o_id != o.max_o_id))
         ) AS bad;
-    )", startWh, endWh);
-        });
+    )", kWhRangeDecl));
 
-    AddRanged(q, "consistency.3.3.2.3", warehouses, kWarehouseCheckRange,
-        [](int startWh, int endWh) {
-            return fmt::format(R"(
-        SELECT COUNT(*) = 0 AS ok FROM (
+    AddRanged(q, "consistency.3.3.2.3", warehouses, kWarehouseCheckRange, fmt::format(R"(
+        {0}SELECT COUNT(*) = 0 AS ok FROM (
             SELECT no_w_id, no_d_id
               FROM `new_order`
-             WHERE no_w_id >= {0} AND no_w_id <= {1}
+             WHERE no_w_id >= $start_wh AND no_w_id <= $end_wh
              GROUP BY no_w_id, no_d_id
             HAVING COUNT(*) != MAX(no_o_id) - MIN(no_o_id) + 1
         ) AS bad;
-    )", startWh, endWh);
-        });
+    )", kWhRangeDecl));
 
     // TPC-C §3.3.2.4: sum(O_OL_CNT) = count(order_line) per district.
-    AddRanged(q, "consistency.3.3.2.4", warehouses, kWarehouseCheckRange,
-        [](int startWh, int endWh) {
-            return fmt::format(R"(
-        SELECT COUNT(*) = 0 AS ok FROM (
+    AddRanged(q, "consistency.3.3.2.4", warehouses, kWarehouseCheckRange, fmt::format(R"(
+        {0}SELECT COUNT(*) = 0 AS ok FROM (
             SELECT o.o_w_id, o.o_d_id
               FROM (
                   SELECT o_w_id, o_d_id, SUM(o_ol_cnt) AS sum_ol_cnt
                     FROM `oorder`
-                   WHERE o_w_id >= {0} AND o_w_id <= {1}
+                   WHERE o_w_id >= $start_wh AND o_w_id <= $end_wh
                    GROUP BY o_w_id, o_d_id
               ) AS o
               FULL JOIN (
                   SELECT ol_w_id, ol_d_id, COUNT(*) AS ol_count
                     FROM `order_line`
-                   WHERE ol_w_id >= {0} AND ol_w_id <= {1}
+                   WHERE ol_w_id >= $start_wh AND ol_w_id <= $end_wh
                    GROUP BY ol_w_id, ol_d_id
               ) AS ol ON o.o_w_id = ol.ol_w_id AND o.o_d_id = ol.ol_d_id
              WHERE COALESCE(o.sum_ol_cnt, 0) != COALESCE(ol.ol_count, 0)
         ) AS bad;
-    )", startWh, endWh);
-        });
+    )", kWhRangeDecl));
 
-    AddRanged(q, "consistency.3.3.2.5", warehouses, kWarehouseCheckRange,
-        [](int startWh, int endWh) {
-            return fmt::format(R"(
-        SELECT COUNT(*) = 0 AS ok FROM (
+    AddRanged(q, "consistency.3.3.2.5", warehouses, kWarehouseCheckRange, fmt::format(R"(
+        {0}SELECT COUNT(*) = 0 AS ok FROM (
             SELECT no.no_w_id AS w, no.no_d_id AS d, no.no_o_id AS o
               FROM `new_order` AS no
               LEFT JOIN `oorder` AS oo
                 ON oo.o_w_id = no.no_w_id AND oo.o_d_id = no.no_d_id AND oo.o_id = no.no_o_id
-             WHERE no.no_w_id >= {0} AND no.no_w_id <= {1}
+             WHERE no.no_w_id >= $start_wh AND no.no_w_id <= $end_wh
                AND (oo.o_id IS NULL OR oo.o_carrier_id IS NOT NULL)
             UNION ALL
             SELECT oo.o_w_id AS w, oo.o_d_id AS d, oo.o_id AS o
               FROM `oorder` AS oo
               LEFT JOIN `new_order` AS no
                 ON oo.o_w_id = no.no_w_id AND oo.o_d_id = no.no_d_id AND oo.o_id = no.no_o_id
-             WHERE oo.o_w_id >= {0} AND oo.o_w_id <= {1}
+             WHERE oo.o_w_id >= $start_wh AND oo.o_w_id <= $end_wh
                AND oo.o_carrier_id IS NULL AND no.no_o_id IS NULL
         ) AS bad;
-    )", startWh, endWh);
-        });
+    )", kWhRangeDecl));
 
     // TPC-C §3.3.2.6: each order's O_OL_CNT matches line count; every line has a parent order.
-    AddRanged(q, "consistency.3.3.2.6", warehouses, kWarehouseCheckRange,
-        [](int startWh, int endWh) {
-            return fmt::format(R"(
-        SELECT COUNT(*) = 0 AS ok FROM (
+    AddRanged(q, "consistency.3.3.2.6", warehouses, kWarehouseCheckRange, fmt::format(R"(
+        {0}SELECT COUNT(*) = 0 AS ok FROM (
             SELECT o.o_w_id, o.o_d_id, o.o_id
               FROM `oorder` AS o
               LEFT JOIN (
                   SELECT ol_w_id, ol_d_id, ol_o_id, COUNT(*) AS cnt
                     FROM `order_line`
-                   WHERE ol_w_id >= {0} AND ol_w_id <= {1}
+                   WHERE ol_w_id >= $start_wh AND ol_w_id <= $end_wh
                    GROUP BY ol_w_id, ol_d_id, ol_o_id
               ) AS l ON o.o_w_id = l.ol_w_id AND o.o_d_id = l.ol_d_id AND o.o_id = l.ol_o_id
-             WHERE o.o_w_id >= {0} AND o.o_w_id <= {1}
+             WHERE o.o_w_id >= $start_wh AND o.o_w_id <= $end_wh
                AND o.o_ol_cnt != COALESCE(l.cnt, 0)
             UNION ALL
             SELECT l2.ol_w_id, l2.ol_d_id, l2.ol_o_id
               FROM (
                   SELECT DISTINCT ol_w_id, ol_d_id, ol_o_id
                     FROM `order_line`
-                   WHERE ol_w_id >= {0} AND ol_w_id <= {1}
+                   WHERE ol_w_id >= $start_wh AND ol_w_id <= $end_wh
               ) AS l2
               LEFT JOIN `oorder` AS o2
                 ON l2.ol_w_id = o2.o_w_id AND l2.ol_d_id = o2.o_d_id AND l2.ol_o_id = o2.o_id
              WHERE o2.o_id IS NULL
         ) AS bad;
-    )", startWh, endWh);
-        });
+    )", kWhRangeDecl));
 
-    AddRanged(q, "consistency.3.3.2.7", warehouses, kWarehouseCheckRange,
-        [](int startWh, int endWh) {
-            return fmt::format(R"(
-        SELECT COUNT(*) = 0 AS ok
+    AddRanged(q, "consistency.3.3.2.7", warehouses, kWarehouseCheckRange, fmt::format(R"(
+        {0}SELECT COUNT(*) = 0 AS ok
           FROM `oorder` AS o
           INNER JOIN `order_line` AS ol
              ON o.o_w_id = ol.ol_w_id AND o.o_d_id = ol.ol_d_id AND o.o_id = ol.ol_o_id
-         WHERE o.o_w_id >= {0} AND o.o_w_id <= {1}
+         WHERE o.o_w_id >= $start_wh AND o.o_w_id <= $end_wh
            AND ((o.o_carrier_id IS NULL AND ol.ol_delivery_d IS NOT NULL)
             OR (o.o_carrier_id IS NOT NULL AND ol.ol_delivery_d IS NULL));
-    )", startWh, endWh);
-        });
+    )", kWhRangeDecl));
 
     // TPC-C §3.3.2.8: W_YTD = sum(H_AMOUNT) per warehouse.
-    AddRanged(q, "consistency.3.3.2.8", warehouses, kWarehouseCheckRange,
-        [](int startWh, int endWh) {
-            return fmt::format(R"(
-        SELECT COUNT(*) = 0 AS ok FROM (
+    AddRanged(q, "consistency.3.3.2.8", warehouses, kWarehouseCheckRange, fmt::format(R"(
+        {0}SELECT COUNT(*) = 0 AS ok FROM (
             SELECT w.w_id
               FROM `warehouse` AS w
               LEFT JOIN (
                   SELECT h_w_id, SUM(h_amount) AS sum_h
                     FROM `history`
-                   WHERE h_w_id >= {0} AND h_w_id <= {1}
+                   WHERE h_w_id >= $start_wh AND h_w_id <= $end_wh
                    GROUP BY h_w_id
               ) AS h ON w.w_id = h.h_w_id
-             WHERE w.w_id >= {0} AND w.w_id <= {1}
-               AND w.w_ytd != COALESCE(h.sum_h, {2})
+             WHERE w.w_id >= $start_wh AND w.w_id <= $end_wh
+               AND w.w_ytd != COALESCE(h.sum_h, {1})
         ) AS bad;
-    )", startWh, endWh, kZeroMoney);
-        });
+    )", kWhRangeDecl, kZeroMoney));
 
     // TPC-C §3.3.2.9: D_YTD = sum(H_AMOUNT) per district.
-    AddRanged(q, "consistency.3.3.2.9", warehouses, kWarehouseCheckRange,
-        [](int startWh, int endWh) {
-            return fmt::format(R"(
-        SELECT COUNT(*) = 0 AS ok FROM (
+    AddRanged(q, "consistency.3.3.2.9", warehouses, kWarehouseCheckRange, fmt::format(R"(
+        {0}SELECT COUNT(*) = 0 AS ok FROM (
             SELECT d.d_w_id, d.d_id
               FROM `district` AS d
               LEFT JOIN (
                   SELECT h_w_id, h_d_id, SUM(h_amount) AS sum_h
                     FROM `history`
-                   WHERE h_w_id >= {0} AND h_w_id <= {1}
+                   WHERE h_w_id >= $start_wh AND h_w_id <= $end_wh
                    GROUP BY h_w_id, h_d_id
               ) AS h ON d.d_w_id = h.h_w_id AND d.d_id = h.h_d_id
-             WHERE d.d_w_id >= {0} AND d.d_w_id <= {1}
-               AND d.d_ytd != COALESCE(h.sum_h, {2})
+             WHERE d.d_w_id >= $start_wh AND d.d_w_id <= $end_wh
+               AND d.d_ytd != COALESCE(h.sum_h, {1})
         ) AS bad;
-    )", startWh, endWh, kZeroMoney);
-        });
+    )", kWhRangeDecl, kZeroMoney));
 
     // TPC-C §3.3.2.10: C_BALANCE = sum(delivered OL_AMOUNT) - sum(H_AMOUNT).
     // CAST money aggregates / arithmetic back to Decimal(22,9): YQL widens
     // Decimal on SUM/+/- and rejects implicit narrowing in COALESCE/!=.
-    AddRanged(q, "consistency.3.3.2.10", warehouses, kWarehouseCheckRange,
-        [](int startWh, int endWh) {
-            return fmt::format(R"(
-        SELECT COUNT(*) = 0 AS ok FROM (
+    AddRanged(q, "consistency.3.3.2.10", warehouses, kWarehouseCheckRange, fmt::format(R"(
+        {0}SELECT COUNT(*) = 0 AS ok FROM (
             SELECT c.c_w_id, c.c_d_id, c.c_id
               FROM `customer` AS c
               LEFT JOIN (
@@ -389,52 +355,46 @@ TQueryMap BuildQueries(int warehouses) {
                     JOIN `order_line` AS ol
                       ON ol.ol_w_id = o.o_w_id AND ol.ol_d_id = o.o_d_id AND ol.ol_o_id = o.o_id
                    WHERE ol.ol_delivery_d IS NOT NULL
-                     AND o.o_w_id >= {0} AND o.o_w_id <= {1}
+                     AND o.o_w_id >= $start_wh AND o.o_w_id <= $end_wh
                    GROUP BY o.o_w_id, o.o_d_id, o.o_c_id
               ) AS ols ON c.c_w_id = ols.w_id AND c.c_d_id = ols.d_id AND c.c_id = ols.c_id
               LEFT JOIN (
                   SELECT h_c_w_id, h_c_d_id, h_c_id,
                          CAST(SUM(h_amount) AS Decimal(22,9)) AS h_sum
                     FROM `history`
-                   WHERE h_c_w_id >= {0} AND h_c_w_id <= {1}
+                   WHERE h_c_w_id >= $start_wh AND h_c_w_id <= $end_wh
                    GROUP BY h_c_w_id, h_c_d_id, h_c_id
               ) AS hs ON c.c_w_id = hs.h_c_w_id AND c.c_d_id = hs.h_c_d_id AND c.c_id = hs.h_c_id
-             WHERE c.c_w_id >= {0} AND c.c_w_id <= {1}
+             WHERE c.c_w_id >= $start_wh AND c.c_w_id <= $end_wh
                AND c.c_balance != CAST(
-                     COALESCE(ols.ol_sum, {2}) - COALESCE(hs.h_sum, {2}) AS Decimal(22,9))
+                     COALESCE(ols.ol_sum, {1}) - COALESCE(hs.h_sum, {1}) AS Decimal(22,9))
         ) AS bad;
-    )", startWh, endWh, kZeroMoney);
-        });
+    )", kWhRangeDecl, kZeroMoney));
 
     // TPC-C §3.3.2.11 (after import): orders - new_orders = FIRST_UNPROCESSED_O_ID - 1 per district.
-    AddRanged(q, "consistency.3.3.2.11", warehouses, kWarehouseCheckRange,
-        [deliveredOrdersPerDistrict](int startWh, int endWh) {
-            return fmt::format(R"(
-        SELECT COUNT(*) = 0 AS ok FROM (
+    AddRanged(q, "consistency.3.3.2.11", warehouses, kWarehouseCheckRange, fmt::format(R"(
+        {0}SELECT COUNT(*) = 0 AS ok FROM (
             SELECT COALESCE(o.o_w_id, n.no_w_id) AS w_id,
                    COALESCE(o.o_d_id, n.no_d_id) AS d_id
               FROM (
                   SELECT o_w_id, o_d_id, COUNT(*) AS order_cnt
                     FROM `oorder`
-                   WHERE o_w_id >= {0} AND o_w_id <= {1}
+                   WHERE o_w_id >= $start_wh AND o_w_id <= $end_wh
                    GROUP BY o_w_id, o_d_id
               ) AS o
               FULL JOIN (
                   SELECT no_w_id, no_d_id, COUNT(*) AS new_order_cnt
                     FROM `new_order`
-                   WHERE no_w_id >= {0} AND no_w_id <= {1}
+                   WHERE no_w_id >= $start_wh AND no_w_id <= $end_wh
                    GROUP BY no_w_id, no_d_id
               ) AS n ON o.o_w_id = n.no_w_id AND o.o_d_id = n.no_d_id
-             WHERE (COALESCE(o.order_cnt, 0) - COALESCE(n.new_order_cnt, 0)) != {2}
+             WHERE (COALESCE(o.order_cnt, 0) - COALESCE(n.new_order_cnt, 0)) != {1}
         ) AS bad;
-    )", startWh, endWh, deliveredOrdersPerDistrict);
-        });
+    )", kWhRangeDecl, deliveredOrdersPerDistrict));
 
     // TPC-C §3.3.2.12: C_BALANCE + C_YTD_PAYMENT = sum(delivered OL_AMOUNT).
-    AddRanged(q, "consistency.3.3.2.12", warehouses, kWarehouseCheckRange,
-        [](int startWh, int endWh) {
-            return fmt::format(R"(
-        SELECT COUNT(*) = 0 AS ok FROM (
+    AddRanged(q, "consistency.3.3.2.12", warehouses, kWarehouseCheckRange, fmt::format(R"(
+        {0}SELECT COUNT(*) = 0 AS ok FROM (
             SELECT c.c_w_id, c.c_d_id, c.c_id
               FROM `customer` AS c
               LEFT JOIN (
@@ -444,25 +404,24 @@ TQueryMap BuildQueries(int warehouses) {
                     JOIN `order_line` AS ol
                       ON ol.ol_w_id = o.o_w_id AND ol.ol_d_id = o.o_d_id AND ol.ol_o_id = o.o_id
                    WHERE ol.ol_delivery_d IS NOT NULL
-                     AND o.o_w_id >= {0} AND o.o_w_id <= {1}
+                     AND o.o_w_id >= $start_wh AND o.o_w_id <= $end_wh
                    GROUP BY o.o_w_id, o.o_d_id, o.o_c_id
               ) AS l ON c.c_w_id = l.w_id AND c.c_d_id = l.d_id AND c.c_id = l.c_id
-             WHERE c.c_w_id >= {0} AND c.c_w_id <= {1}
+             WHERE c.c_w_id >= $start_wh AND c.c_w_id <= $end_wh
                AND CAST(c.c_balance + c.c_ytd_payment AS Decimal(22,9))
-                   != COALESCE(l.ol_sum, {2})
+                   != COALESCE(l.ol_sum, {1})
         ) AS bad;
-    )", startWh, endWh, kZeroMoney);
-        });
+    )", kWhRangeDecl, kZeroMoney));
 
     return q;
 }
 
-bool QueryBool(TYdbConnection& connection, const std::string& query) {
+bool QueryBool(TYdbConnection& connection, const TCheckQuery& query) {
     // TablePathPrefix requires the absolute path including the database name.
     const std::string sql = fmt::format(
         "PRAGMA TablePathPrefix(\"{}\");\n{}",
         connection.AbsolutePathPrefix(),
-        query);
+        query.Sql);
     // RetryQuery's GetSession does not accept CreateSession settings.
     // Request the session-balancer capability explicitly so the server
     // can place the session instead of the load-factor elector.
@@ -472,9 +431,14 @@ bool QueryBool(TYdbConnection& connection, const std::string& query) {
     if (!sessionResult.IsSuccess()) {
         throw std::runtime_error(sessionResult.GetIssues().ToOneLineString());
     }
-    auto result = sessionResult.GetSession()
-        .ExecuteQuery(sql, NYdb::NQuery::TTxControl::NoTx())
-        .GetValueSync();
+    auto session = sessionResult.GetSession();
+    std::optional<NYdb::TParams> params;
+    if (query.HasWarehouseRange) {
+        params = MakeWarehouseRangeParams(query.StartWh, query.EndWh);
+    }
+    auto result = params
+        ? session.ExecuteQuery(sql, NYdb::NQuery::TTxControl::NoTx(), *params).GetValueSync()
+        : session.ExecuteQuery(sql, NYdb::NQuery::TTxControl::NoTx()).GetValueSync();
     if (!result.IsSuccess()) {
         throw std::runtime_error(result.GetIssues().ToOneLineString());
     }
@@ -500,7 +464,7 @@ bool QueryBool(TYdbConnection& connection, const std::string& query) {
 // in parallel against the shared QueryClient (thread-safe).
 void RunQueryChunks(
     TYdbConnection& connection,
-    const std::vector<std::string>& queries,
+    const std::vector<TCheckQuery>& queries,
     int concurrency,
     TCheckResult& result,
     bool isCardinality,
