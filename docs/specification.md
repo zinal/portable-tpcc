@@ -591,11 +591,14 @@ visible in the result settings/options.
   exact values as `Double`; no hidden SDK retries; prefer
   `ExecuteFinalAndCommit` for the last statement as an async fused pipeline
   (no `GetValueSync()` on the task-queue thread; adapter-api §4.3).
+  `history` uses technical `PRIMARY KEY (h_w_id, hist_id)` (TPC-C 1.3.1
+  prescribes none); `hist_id` is client-generated.
 - **PostgreSQL:** prepared statements, `COPY`, DECIMAL, SQLSTATE mapping,
   blocking libpqxx IO on a bounded `IExecutor` in `PgSession` (not inside
   `ITpccTransaction` on the scheduler), `ANALYZE` after indexes. Optional
   warehouse `HASH` partitions (see
   [pgsql-partitioning-design.md](pgsql-partitioning-design.md)).
+  `history` uses the same technical PK `(h_w_id, hist_id)` with `IDENTITY`.
 - **OceanBase:** warehouse partitioning, cached statements, clear error
   classes, optional FKs as a recorded physical option, optional
   `CREATE INDEX … PARALLEL n` (`database.options.index_parallel`, default 4),
@@ -605,6 +608,8 @@ visible in the result settings/options.
   (specification §9.2); worker OLTP sessions MAY keep the server default (10s).
   Blocking connector IO belongs on a bounded `IExecutor` in `TObSession`;
   `ITpccTransaction` MUST NOT `.Get()` on the scheduler (adapter-api §4.3).
+  `history` uses technical `PRIMARY KEY (h_w_id, hist_id)` with
+  `AUTO_INCREMENT` (cluster and standalone layouts).
 
 See [adapter-api.md](adapter-api.md) §5–§6 for the full logical/physical and
 query-binding contract.

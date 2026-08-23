@@ -45,11 +45,13 @@ TEST(PgPartitionConfig, SchemaDdlHashAndPlain) {
     EXPECT_EQ(plain.find("PARTITION BY"), std::string::npos);
     EXPECT_NE(plain.find("CREATE TABLE stock"), std::string::npos);
     EXPECT_NE(plain.find("FOREIGN KEY"), std::string::npos);
+    EXPECT_NE(plain.find("PRIMARY KEY (h_w_id, hist_id)"), std::string::npos);
 
     const std::string hashed = BuildTpccSchemaDdl(4);
     EXPECT_NE(hashed.find("PARTITION BY HASH (s_w_id)"), std::string::npos);
     EXPECT_NE(hashed.find("PARTITION BY HASH (c_w_id)"), std::string::npos);
     EXPECT_NE(hashed.find("PARTITION BY HASH (h_w_id)"), std::string::npos);
+    EXPECT_NE(hashed.find("PRIMARY KEY (h_w_id, hist_id)"), std::string::npos);
     EXPECT_NE(hashed.find("PARTITION BY HASH (o_w_id)"), std::string::npos);
     EXPECT_NE(hashed.find("PARTITION BY HASH (no_w_id)"), std::string::npos);
     EXPECT_NE(hashed.find("PARTITION BY HASH (ol_w_id)"), std::string::npos);
@@ -73,6 +75,7 @@ TEST(PgPartitionConfig, SchemaDdlWithoutForeignKeys) {
     EXPECT_EQ(noFk.find("FOREIGN KEY"), std::string::npos);
     EXPECT_NE(noFk.find("CREATE TABLE stock"), std::string::npos);
     EXPECT_NE(noFk.find("PRIMARY KEY (s_w_id, s_i_id)"), std::string::npos);
+    EXPECT_NE(noFk.find("PRIMARY KEY (h_w_id, hist_id)"), std::string::npos);
     EXPECT_NE(noFk.find("CONSTRAINT idx_order UNIQUE"), std::string::npos);
 
     const std::string hashedNoFk = BuildTpccSchemaDdl(4, false);

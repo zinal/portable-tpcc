@@ -373,7 +373,9 @@ Adapters MAY:
 
 - reorder primary-key columns for locality (warehouse-leading keys on YDB);
 - add partitions, tablegroups, or store options;
-- add technical keys where the logical key is weak (e.g. `history`);
+- add technical keys where the logical key is weak. Every adapter uses
+  `PRIMARY KEY (h_w_id, hist_id)` on `history` (`hist_id` is AUTO_INCREMENT /
+  IDENTITY on OceanBase and PostgreSQL, client-generated Int64 on YDB);
 - add indexes beyond the minimum if recorded in settings;
 - omit foreign keys when the DBMS makes them expensive, if that choice is
   recorded (OceanBase optional FKs).

@@ -95,7 +95,7 @@ across adjacent warehouses.
 | `oorder` | `o_w_id` | Order-Status latest-order; Delivery |
 | `new_order` | `no_w_id` | Delivery `ORDER BY no_o_id LIMIT 1` |
 | `order_line` | `ol_w_id` | Order-Status / Delivery / Stock-Level (home WH) |
-| `history` | `h_w_id` | Insert-only in measurement; key = payment warehouse |
+| `history` | `h_w_id` | Insert-only in measurement; technical PK `(h_w_id, hist_id)` includes the partition key |
 
 `ol_supply_w_id` is **not** the partition key for `order_line`: lines are always
 written and read under the **home** order warehouse (`ol_w_id`). Remote stock
