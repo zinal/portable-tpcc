@@ -29,7 +29,7 @@ const (
 	DefaultMeasurement                 = "120m"
 	DefaultTransactionDrain            = "30s"
 	DefaultStopGrace                   = "15s"
-	DefaultMaxClockSkew                = "100"
+	DefaultMaxClockSkew                = "100ms"
 	DefaultPacing                      = "enabled"
 	DefaultThinkTimeDistribution       = "exponential"
 	DefaultRetryMaxAttempts            = 4
