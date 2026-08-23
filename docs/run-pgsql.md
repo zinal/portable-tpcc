@@ -76,6 +76,15 @@ load still replaces warehouse ranges via explicit deletes.
 
 Unknown `database.options.*` keys are rejected for `dbms=pgsql`.
 
+Integrity checks scan warehouse-scoped tables one `w_id` at a time (same
+chunk size as OceanBase and YDB) and open `--threads` parallel sessions.
+Catalog ids run one after another; the parallel sessions apply to the
+current id's warehouse chunks, so `Checking … [OK]` appears as each check
+finishes (shared `RecordCheckResult` helper; specification §9.2). Under
+`mind-tpcc`, `--threads` comes from CLI `--threads` when set, otherwise
+`runtime.check_concurrency` (`0` / omit = `min(scale.warehouses, 32)`).
+TPC-C §3.3.2 predicates are unchanged.
+
 ## Standalone local run
 
 ```bash

@@ -85,6 +85,15 @@ Orchestrated `auth_scheme` must be `anonymous`, `login`, or `sa_key`.
 `password_env` is required for `login` and must be an environment variable
 name matching `[A-Za-z_][A-Za-z0-9_]*`, not a secret literal.
 
+Integrity checks scan warehouse-scoped tables one `w_id` at a time (same
+chunk size as PostgreSQL and OceanBase) and run `--threads` query chunks in
+parallel against the shared QueryClient. Catalog ids run one after another;
+the parallel chunks apply to the current id, so `Checking … [OK]` appears as
+each check finishes (shared `RecordCheckResult` helper; specification §9.2).
+Under `mind-tpcc`, `--threads` comes from CLI `--threads` when set, otherwise
+`runtime.check_concurrency` (`0` / omit = `min(scale.warehouses, 32)`).
+TPC-C §3.3.2 predicates are unchanged.
+
 ## Standalone local run
 
 Anonymous local database:

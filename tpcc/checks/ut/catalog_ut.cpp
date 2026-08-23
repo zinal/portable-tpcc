@@ -1,7 +1,12 @@
 #include <catalog.h>
+#include <report.h>
 #include <types.h>
 
 #include <library/cpp/testing/gtest/gtest.h>
+
+#include <iostream>
+#include <sstream>
+#include <string>
 
 using namespace NTpcc;
 
@@ -28,4 +33,27 @@ TEST(CheckCatalog, PhaseFiltering) {
 TEST(CheckStatus, ToString) {
     EXPECT_STREQ(CheckStatusToString(ECheckStatus::Passed), "passed");
     EXPECT_STREQ(CheckStatusToString(ECheckStatus::Failed), "failed");
+}
+
+TEST(CheckReport, RecordCheckResultPrintsProgressLine) {
+    TCheckReport report;
+    std::ostringstream captured;
+    auto* old = std::cout.rdbuf(captured.rdbuf());
+    RecordCheckResult(report, "cardinality.warehouse", ECheckStatus::Passed, {}, true);
+    RecordCheckResult(
+        report, "cardinality.stock", ECheckStatus::Failed, "query returned false", true);
+    RecordCheckResult(
+        report, "consistency.3.3.2.1", ECheckStatus::Skipped, "skipped: base cardinality failed", true);
+    std::cout.rdbuf(old);
+
+    EXPECT_EQ(captured.str(),
+              "Checking Warehouse cardinality [OK]\n"
+              "Checking Stock cardinality [Failed]: query returned false\n"
+              "Checking W_YTD equals sum(D_YTD) [Skipped]: skipped: base cardinality failed\n");
+    EXPECT_EQ(report.PassedCount, 1);
+    EXPECT_EQ(report.FailedCount, 1);
+    EXPECT_EQ(report.SkippedCount, 1);
+    ASSERT_EQ(report.Results.size(), 3u);
+    EXPECT_EQ(report.Results[0].Title, "Warehouse cardinality");
+    EXPECT_FALSE(report.Ok());
 }

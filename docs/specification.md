@@ -494,7 +494,11 @@ greater than one, each parallel worker MUST open its own DBMS session.
 Catalog ids run one after another in catalog order; parallel sessions apply
 to warehouse chunks of the catalog id currently running. Mixing several
 catalog ids in one work-stealing queue delays the stdout progress line until
-the whole suite finishes and MUST NOT be used.
+the whole suite finishes and MUST NOT be used. This per-catalog-id schedule
+plus an immediate stdout progress line is the **recommended check-progress
+pattern for every adapter** (YDB, PostgreSQL, OceanBase, and future DBMS
+ports). Adapters SHOULD call the shared `RecordCheckResult` helper in
+`tpcc/checks` so the line format stays identical.
 
 Warehouse-scoped scans use inclusive `w_id` chunks of size 1
 (`kWarehouseCheckRange`) so HASH partition pruning (OceanBase) and
@@ -504,17 +508,22 @@ a private chunk size.
 
 SQL predicates stay those of TPC-C §3.3.2; only scheduling and warehouse
 filter bounds change. A change to check scheduling (concurrency wiring, chunk
-size, or which catalog ids are warehouse-ranged) MUST be applied to every
-adapter. Do not leave one DBMS serial or on a private range size. Do not
+size, which catalog ids are warehouse-ranged, or when the stdout progress
+line is printed) MUST be applied to every adapter. Do not leave one DBMS
+serial, silent until the suite ends, or on a private range size. Do not
 rewrite §3.3.2 predicates for speed (PX / `PARALLEL` hints, skipped catalog
 entries, DBMS-only SQL “optimizations”) unless explicitly requested. Dialect
 translation that keeps the same condition (for example OceanBase `LEFT JOIN` +
 `UNION ALL` instead of `FULL JOIN`) is allowed.
 
-Stdout `Checking … [OK]/[Failed]/[Skipped]` is informative: one line per
-catalog id after that job completes (all warehouse chunks). Per-chunk progress
-lines are not required. The JSON report is the structured contract for
-orchestrator diagnostics and consolidate.
+Stdout `Checking … [OK]/[Failed]/[Skipped]` is the recommended live progress
+signal for every adapter: one line per catalog id, printed as soon as that
+job completes (all warehouse chunks). `mind-tpcc` tails `stdout.log` and
+relays those lines while check is still running. Per-chunk progress lines
+are not required. The JSON report is the structured contract for
+orchestrator diagnostics and consolidate. Do not dump the whole suite only
+after `join()` (or equivalent): that is the failure mode this pattern
+avoids.
 
 The check role MUST write `{run_dir}/checks/{phase}.json` on the runtime host
 before the artifact manifest (`phase` is `after-import` or `after-test`).
