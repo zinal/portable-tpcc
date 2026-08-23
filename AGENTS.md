@@ -135,3 +135,22 @@ the spec as the requirement (see the introduction).
 Check role **implementation** (not the protocol source of truth):
 `tpcc/checks/`, `tpcc/dbms/{pgsql,ydb,oceanbase}/check.cpp`,
 `mind/internal/config/plan.go`, `mind/internal/orchestrator/`.
+
+## 7. YDB AI skills
+
+When a task touches YDB adapter code, schema, YQL, or the C++ SDK
+(`tpcc/dbms/ydb`, `tpcc/app/ydb`, in-tree `ydb/`), agents **SHOULD**
+attach and follow the skills from
+[ydb-platform/ydb-ai-skills](https://github.com/ydb-platform/ydb-ai-skills/)
+(`ydb-core`, `ydb-table`). They cover Query Service types, YQL, and SDK
+result handling that are easy to get wrong from memory (for example
+`Optional<T>` vs primitive getters).
+
+Install into the current project for Cursor (writes `.cursor/skills/`):
+
+```bash
+curl -fsSL https://ai.ydb.sh | bash -s -- --agent=cursor
+```
+
+Other agents and options are listed in that repository. These skills do
+**not** override this document or [`docs/specification.md`](docs/specification.md).

@@ -55,7 +55,8 @@ TFuture<bool> GetDeliveryTask(
                 in.WarehouseID, districtID});
             ThrowIfRetryable(r);
             if (!r.Ok) {
-                co_return FailPermanent(context.TerminalID, "Delivery oldest new order failed");
+                co_return FailPermanent(context.TerminalID, "Delivery oldest new order failed",
+                    r.Message);
             }
             if (r.ActualRows == 0) {
                 LOG_T("Terminal " << context.TerminalID << " no new orders for district " << districtID);
@@ -72,7 +73,8 @@ TFuture<bool> GetDeliveryTask(
                 in.WarehouseID, districtID, orderID});
             ThrowIfRetryable(r);
             if (!r.Ok) {
-                co_return FailPermanent(context.TerminalID, "Delivery order info failed");
+                co_return FailPermanent(context.TerminalID, "Delivery order info failed",
+                    r.Message);
             }
             const auto& info = std::get<TDeliveryOrderInfo>(r.Payload);
             if (info.LineCount == 0) {
@@ -102,7 +104,8 @@ TFuture<bool> GetDeliveryTask(
                 in.WarehouseID, districtID, order.OrderID, in.CarrierID, order.LineCount});
             ThrowIfRetryable(r);
             if (!r.Ok) {
-                co_return FailPermanent(context.TerminalID, "Delivery complete order failed");
+                co_return FailPermanent(context.TerminalID, "Delivery complete order failed",
+                    r.Message);
             }
         }
 
@@ -112,7 +115,8 @@ TFuture<bool> GetDeliveryTask(
                 in.WarehouseID, districtID, order.CustomerId, order.TotalAmount});
             ThrowIfRetryable(finalResult.Operation);
             if (!finalResult.Operation.Ok) {
-                co_return FailPermanent(context.TerminalID, "Delivery apply customer failed");
+                co_return FailPermanent(context.TerminalID, "Delivery apply customer failed",
+                    finalResult.Operation.Message);
             }
             ThrowIfCommitFailed(finalResult.Commit);
         } else {
@@ -120,7 +124,8 @@ TFuture<bool> GetDeliveryTask(
                 in.WarehouseID, districtID, order.CustomerId, order.TotalAmount});
             ThrowIfRetryable(r);
             if (!r.Ok) {
-                co_return FailPermanent(context.TerminalID, "Delivery apply customer failed");
+                co_return FailPermanent(context.TerminalID, "Delivery apply customer failed",
+                    r.Message);
             }
         }
     }

@@ -23,6 +23,7 @@ SRCS(
     runner.cpp
     run_config.cpp
     clock_calibration.cpp
+    ydb_value_parse.cpp
     worker_loader.cpp
 )
 

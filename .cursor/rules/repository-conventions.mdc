@@ -14,6 +14,7 @@ Full text: [AGENTS.md](../../AGENTS.md).
 - Before making changes, study the context, dependencies, and the component's `ya.make` or `go.mod`; minimize the diff.
 - Build ya modules from the repository root with `./ya make …`; build and test the root `mind/` module with `go -C mind build ./cmd/mind-tpcc` and `go -C mind test ./...` (see [AGENTS.md](../../AGENTS.md) §3).
 - Build YDB (`tpcc/app/ydb`) with `-DHAVE_CUDA=no -DCUDA_VERSION=11.4` (see [AGENTS.md](../../AGENTS.md) §3 “Building the YDB variant”); `./build.sh` passes these flags automatically.
+- When changing YDB adapter, YQL, or SDK usage, attach the skills from [ydb-platform/ydb-ai-skills](https://github.com/ydb-platform/ydb-ai-skills/) (see [AGENTS.md](../../AGENTS.md) §7).
 - Ask the user if the task is ambiguous or requires changes in protected areas.
 
 ## Do not modify without an explicit user request

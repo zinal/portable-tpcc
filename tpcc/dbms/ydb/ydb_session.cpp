@@ -1,6 +1,7 @@
 #include "ydb_session.h"
 
 #include "ydb_future.h"
+#include "ydb_value_parse.h"
 
 #include <future_util.h>
 #include <log.h>
@@ -73,20 +74,36 @@ TDecimalValue Decimal(TMoney value) {
 }
 
 TMoney ParseMoney(NYdb::TResultSetParser& parser, const char* column) {
-    return TMoney::Parse(parser.ColumnParser(column).GetDecimal().ToString());
+    return TMoney::Parse(DecimalFromValue(parser.ColumnParser(column)).ToString());
 }
 
 TRate ParseRate(NYdb::TResultSetParser& parser, const char* column) {
-    return TRate::Parse(parser.ColumnParser(column).GetDecimal().ToString());
+    return TRate::Parse(DecimalFromValue(parser.ColumnParser(column)).ToString());
 }
 
 std::string ParseUtf8(NYdb::TResultSetParser& parser, const char* column) {
-    return std::string(*parser.ColumnParser(column).GetOptionalUtf8());
+    return Utf8FromValue(parser.ColumnParser(column));
+}
+
+int32_t ParseInt32(NYdb::TResultSetParser& parser, const char* column) {
+    return Int32FromValue(parser.ColumnParser(column));
+}
+
+uint64_t ParseCount(NYdb::TResultSetParser& parser, const char* column) {
+    return CountFromValue(parser.ColumnParser(column));
+}
+
+std::optional<int32_t> ParseOptionalInt32(NYdb::TResultSetParser& parser, const char* column) {
+    return OptionalInt32FromValue(parser.ColumnParser(column));
+}
+
+std::optional<TInstant> ParseOptionalTimestamp(NYdb::TResultSetParser& parser, const char* column) {
+    return OptionalTimestampFromValue(parser.ColumnParser(column));
 }
 
 TCustomerRow ParseCustomer(NYdb::TResultSetParser& parser) {
     TCustomerRow cust;
-    cust.CustomerID = parser.ColumnParser("c_id").GetInt32();
+    cust.CustomerID = ParseInt32(parser, "c_id");
     cust.First = ParseUtf8(parser, "c_first");
     cust.Middle = ParseUtf8(parser, "c_middle");
     cust.Last = ParseUtf8(parser, "c_last");
@@ -101,10 +118,10 @@ TCustomerRow ParseCustomer(NYdb::TResultSetParser& parser) {
     cust.Discount = ParseRate(parser, "c_discount");
     cust.Balance = ParseMoney(parser, "c_balance");
     cust.YtdPayment = ParseMoney(parser, "c_ytd_payment");
-    cust.PaymentCount = parser.ColumnParser("c_payment_cnt").GetInt32();
-    cust.DeliveryCount = parser.ColumnParser("c_delivery_cnt").GetInt32();
+    cust.PaymentCount = ParseInt32(parser, "c_payment_cnt");
+    cust.DeliveryCount = ParseInt32(parser, "c_delivery_cnt");
     cust.Data = ParseUtf8(parser, "c_data");
-    if (auto ts = parser.ColumnParser("c_since").GetOptionalTimestamp()) {
+    if (auto ts = ParseOptionalTimestamp(parser, "c_since")) {
         cust.Since = TimestampToString(*ts);
     }
     return cust;
@@ -330,7 +347,7 @@ TFuture<TOperationResult> TYdbTpccTransaction::Execute(const TSemanticOp& op) {
                     if (!parser.TryNextRow()) {
                         return ReadyOp(FailOp(EErrorClass::Integrity, "district not found"));
                     }
-                    const int nextId = parser.ColumnParser("d_next_o_id").GetInt32();
+                    const int nextId = ParseInt32(parser, "d_next_o_id");
                     const TRate tax = ParseRate(parser, "d_tax");
                     auto updateParams = TParamsBuilder()
                         .AddParam("$w_id").Int32(warehouseId).Build()
@@ -430,7 +447,7 @@ TFuture<TOperationResult> TYdbTpccTransaction::Execute(const TSemanticOp& op) {
                     std::vector<TItemRow> items;
                     while (parser.TryNextRow()) {
                         TItemRow item;
-                        item.ItemID = parser.ColumnParser("i_id").GetInt32();
+                        item.ItemID = ParseInt32(parser, "i_id");
                         item.Price = ParseMoney(parser, "i_price");
                         item.Name = ParseUtf8(parser, "i_name");
                         item.Data = ParseUtf8(parser, "i_data");
@@ -502,12 +519,12 @@ TFuture<TOperationResult> TYdbTpccTransaction::Execute(const TSemanticOp& op) {
                     std::vector<TStockRow> stocks;
                     while (parser.TryNextRow()) {
                         TStockRow row;
-                        row.WarehouseID = parser.ColumnParser("s_w_id").GetInt32();
-                        row.ItemID = parser.ColumnParser("s_i_id").GetInt32();
-                        row.Quantity = parser.ColumnParser("s_quantity").GetInt32();
+                        row.WarehouseID = ParseInt32(parser, "s_w_id");
+                        row.ItemID = ParseInt32(parser, "s_i_id");
+                        row.Quantity = ParseInt32(parser, "s_quantity");
                         row.Ytd = ParseMoney(parser, "s_ytd");
-                        row.OrderCount = parser.ColumnParser("s_order_cnt").GetInt32();
-                        row.RemoteCount = parser.ColumnParser("s_remote_cnt").GetInt32();
+                        row.OrderCount = ParseInt32(parser, "s_order_cnt");
+                        row.RemoteCount = ParseInt32(parser, "s_remote_cnt");
                         row.Data = ParseUtf8(parser, "s_data");
                         row.DistInfo = ParseUtf8(parser, "s_dist_info");
                         stocks.push_back(std::move(row));
@@ -728,12 +745,12 @@ TFuture<TOperationResult> TYdbTpccTransaction::Execute(const TSemanticOp& op) {
                         return OkOp(0, 0);
                     }
                     TOrderHeader header;
-                    header.OrderID = parser.ColumnParser("o_id").GetInt32();
-                    header.CustomerID = parser.ColumnParser("o_c_id").GetInt32();
-                    if (auto carrier = parser.ColumnParser("o_carrier_id").GetOptionalInt32()) {
+                    header.OrderID = ParseInt32(parser, "o_id");
+                    header.CustomerID = ParseInt32(parser, "o_c_id");
+                    if (auto carrier = ParseOptionalInt32(parser, "o_carrier_id")) {
                         header.CarrierID = *carrier;
                     }
-                    if (auto ts = parser.ColumnParser("o_entry_d").GetOptionalTimestamp()) {
+                    if (auto ts = ParseOptionalTimestamp(parser, "o_entry_d")) {
                         header.EntryDate = TimestampToString(*ts);
                     }
                     return OkOp(1, 1, std::move(header));
@@ -761,11 +778,11 @@ TFuture<TOperationResult> TYdbTpccTransaction::Execute(const TSemanticOp& op) {
                     std::vector<TOrderStatusLine> lines;
                     while (parser.TryNextRow()) {
                         TOrderStatusLine line;
-                        line.ItemID = parser.ColumnParser("ol_i_id").GetInt32();
-                        line.SupplyWarehouseID = parser.ColumnParser("ol_supply_w_id").GetInt32();
-                        line.Quantity = parser.ColumnParser("ol_quantity").GetInt32();
+                        line.ItemID = ParseInt32(parser, "ol_i_id");
+                        line.SupplyWarehouseID = ParseInt32(parser, "ol_supply_w_id");
+                        line.Quantity = ParseInt32(parser, "ol_quantity");
                         line.Amount = ParseMoney(parser, "ol_amount");
-                        if (auto ts = parser.ColumnParser("ol_delivery_d").GetOptionalTimestamp()) {
+                        if (auto ts = ParseOptionalTimestamp(parser, "ol_delivery_d")) {
                             line.DeliveryDate = TimestampToString(*ts);
                         }
                         lines.push_back(std::move(line));
@@ -793,7 +810,7 @@ TFuture<TOperationResult> TYdbTpccTransaction::Execute(const TSemanticOp& op) {
                     if (!parser.TryNextRow()) {
                         return OkOp(0, 0, 0);
                     }
-                    return OkOp(1, 1, parser.ColumnParser("no_o_id").GetInt32());
+                    return OkOp(1, 1, ParseInt32(parser, "no_o_id"));
                 }));
         }
 
@@ -819,7 +836,7 @@ TFuture<TOperationResult> TYdbTpccTransaction::Execute(const TSemanticOp& op) {
                         return FailOp(EErrorClass::Integrity, "order not found");
                     }
                     TDeliveryOrderInfo info;
-                    info.CustomerID = order.ColumnParser("o_c_id").GetInt32();
+                    info.CustomerID = ParseInt32(order, "o_c_id");
                     NYdb::TResultSetParser lines(result.GetResultSet(1));
                     int64_t totalCents = 0;
                     while (lines.TryNextRow()) {
@@ -899,7 +916,7 @@ TFuture<TOperationResult> TYdbTpccTransaction::Execute(const TSemanticOp& op) {
                     if (!distParser.TryNextRow()) {
                         return ReadyOp(FailOp(EErrorClass::Integrity, "district not found"));
                     }
-                    const int nextOid = distParser.ColumnParser("d_next_o_id").GetInt32();
+                    const int nextOid = ParseInt32(distParser, "d_next_o_id");
                     auto stockParams = TParamsBuilder()
                         .AddParam("$w_id").Int32(warehouseId).Build()
                         .AddParam("$d_id").Int32(districtId).Build()
@@ -926,7 +943,7 @@ TFuture<TOperationResult> TYdbTpccTransaction::Execute(const TSemanticOp& op) {
                             NYdb::TResultSetParser stockParser(stock.GetResultSet(0));
                             int count = 0;
                             if (stockParser.TryNextRow()) {
-                                count = static_cast<int>(stockParser.ColumnParser("low_stock").GetUint64());
+                                count = static_cast<int>(ParseCount(stockParser, "low_stock"));
                             }
                             return OkOp(1, 1, count);
                         });

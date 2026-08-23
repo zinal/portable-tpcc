@@ -41,7 +41,8 @@ TFuture<bool> GetStockLevelTask(
             in.WarehouseID, in.DistrictID, in.Threshold, 20});
         ThrowIfRetryable(finalResult.Operation);
         if (!finalResult.Operation.Ok) {
-            co_return FailPermanent(context.TerminalID, "StockLevel count failed");
+            co_return FailPermanent(context.TerminalID, "StockLevel count failed",
+                finalResult.Operation.Message);
         }
         ThrowIfCommitFailed(finalResult.Commit);
     }
