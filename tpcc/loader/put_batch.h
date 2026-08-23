@@ -6,6 +6,15 @@
 
 namespace NTpcc {
 
+// parameter-reference.md: data.batch_rows is 2000 when omitted or ≤ 0.
+// mind-tpcc materializes this into run-config.json; adapters MUST apply the
+// same fallback for standalone import and a run-config that still has 0.
+constexpr int DEFAULT_LOAD_BATCH_ROWS = 2000;
+
+inline int EffectiveLoadBatchRows(int batchRows) {
+    return batchRows > 0 ? batchRows : DEFAULT_LOAD_BATCH_ROWS;
+}
+
 // Logical key range for an idempotent load batch (half-open where End is exclusive
 // for warehouse ids; table-specific encoding is adapter-local).
 struct TLoadKeyRange {

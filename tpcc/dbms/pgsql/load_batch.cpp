@@ -82,7 +82,7 @@ void CopyDistricts(pqxx::work& txn, uint64_t seed, int wh) {
 }
 
 void CopyStock(pqxx::work& txn, uint64_t seed, int wh, int batchRows) {
-    const int chunk = batchRows > 0 ? batchRows : ITEM_COUNT;
+    const int chunk = EffectiveLoadBatchRows(batchRows);
     for (int start = 1; start <= ITEM_COUNT; start += chunk) {
         const int end = std::min(start + chunk - 1, ITEM_COUNT);
         auto stream = MakeCopyStream(txn, "stock",
@@ -115,7 +115,7 @@ void CopyStock(pqxx::work& txn, uint64_t seed, int wh, int batchRows) {
 }
 
 void CopyCustomers(pqxx::work& txn, uint64_t seed, int wh, int district, int batchRows) {
-    const int chunk = batchRows > 0 ? batchRows : CUSTOMERS_PER_DISTRICT;
+    const int chunk = EffectiveLoadBatchRows(batchRows);
     for (int start = C_FIRST_CUSTOMER_ID; start <= CUSTOMERS_PER_DISTRICT; start += chunk) {
         const int end = std::min(start + chunk - 1, CUSTOMERS_PER_DISTRICT);
         auto stream = MakeCopyStream(txn, "customer",
@@ -305,7 +305,7 @@ TPutBatchResult PutItemsIdempotent(
             ") ON COMMIT DROP");
 
         {
-            const int chunk = batchRows > 0 ? batchRows : ITEM_COUNT;
+            const int chunk = EffectiveLoadBatchRows(batchRows);
             for (int start = 1; start <= ITEM_COUNT; start += chunk) {
                 const int end = std::min(start + chunk - 1, ITEM_COUNT);
                 auto stream = MakeCopyStream(txn, "item_stage",

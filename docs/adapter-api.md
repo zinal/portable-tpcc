@@ -159,6 +159,10 @@ Normative properties (specification §6):
   population); others own disjoint warehouse ranges.
 - `PutBatch` is semantic: the adapter MAY use `COPY`, `BulkUpsert`, staging +
   replace-range, or upsert. The loader MUST NOT depend on SQL `INSERT`.
+- When `data.batch_rows` is omitted or ≤ 0, adapters MUST use the same
+  default as `mind-tpcc` (`DEFAULT_LOAD_BATCH_ROWS` = 2000), including
+  standalone import. OceanBase MAY still cap a batch by the MySQL prepared-
+  statement placeholder limit (65535).
 
 Optional helpers: `EnsureEmptyRange`, local checkpoint of completed batches
 (optimization only; absence MUST still be correct via retry).

@@ -7,7 +7,8 @@ using namespace NTpcc;
 TEST(YdbLoadBatchRows, DefaultsWhenNonPositive) {
     EXPECT_EQ(EffectiveYdbLoadBatchRows(0), DEFAULT_YDB_LOAD_BATCH_ROWS);
     EXPECT_EQ(EffectiveYdbLoadBatchRows(-1), DEFAULT_YDB_LOAD_BATCH_ROWS);
-    EXPECT_EQ(DEFAULT_YDB_LOAD_BATCH_ROWS, 2000);
+    EXPECT_EQ(DEFAULT_YDB_LOAD_BATCH_ROWS, DEFAULT_LOAD_BATCH_ROWS);
+    EXPECT_EQ(DEFAULT_LOAD_BATCH_ROWS, 2000);
 }
 
 TEST(YdbLoadBatchRows, HonorsPositiveOverride) {

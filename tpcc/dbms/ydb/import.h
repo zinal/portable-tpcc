@@ -21,6 +21,7 @@ struct TImportConfig {
     bool OwnsGlobalData = true;
     int TotalWarehouses = 0;
     uint64_t Seed = 1;
+    // BulkUpsert batch size. ≤ 0 uses DEFAULT_LOAD_BATCH_ROWS.
     int BatchRows = 0;
     std::string RunId;
 };

@@ -4,17 +4,35 @@
 
 #include <put_batch.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <string>
 
 namespace NTpcc {
 
+// Hard MySQL / OceanBase prepared-statement limit (ER_PS_MANY_PARAM / 1390).
+constexpr size_t MaxPreparedPlaceholders = 65535;
+
+inline size_t MaxRowsForColumns(size_t columnCount) {
+    if (columnCount == 0) {
+        return 1;
+    }
+    return std::max<size_t>(1, MaxPreparedPlaceholders / columnCount);
+}
+
+inline size_t EffectiveObLoadBatchRows(size_t columnCount, int batchRows) {
+    return std::min(
+        static_cast<size_t>(EffectiveLoadBatchRows(batchRows)),
+        MaxRowsForColumns(columnCount));
+}
+
 // Idempotent population helpers (specification §6):
 // - item: INSERT ... ON DUPLICATE KEY UPDATE
 // - warehouse range: INSERT first; on ERROR 1062 (ER_DUP_ENTRY), DELETE
 //   warehouse-scoped tables and INSERT again
-// Load path mirrors tpcc-oceanbase-cpp: multi-row INSERT batches of at most 200
-// rows and a short transaction per table (not one warehouse-sized TX).
+// Load path: multi-row INSERT batches (DEFAULT_LOAD_BATCH_ROWS when
+// batchRows ≤ 0) and a short transaction per table, capped by the prepared
+// statement placeholder limit.
 
 TPutBatchResult PutItemsIdempotent(
     TObConnection& conn,
