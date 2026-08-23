@@ -178,7 +178,7 @@ func TestCleanupSchemaDropsRemoteAndRunsClean(t *testing.T) {
 	if err := os.MkdirAll(runDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	// Local runtimeRoot Abs-expands remote_root; mirror that.
+	// Local runtimeRoot resolves relative remote_root under the account home.
 	absRemote, err := filepath.Abs(o.Expanded.RemoteRoot)
 	if err != nil {
 		t.Fatal(err)

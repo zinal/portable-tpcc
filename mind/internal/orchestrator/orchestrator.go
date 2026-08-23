@@ -15,7 +15,6 @@ import (
 	"portable-tpcc/mind/internal/config"
 	"portable-tpcc/mind/internal/consolidate"
 	"portable-tpcc/mind/internal/deploy"
-	"portable-tpcc/mind/internal/paths"
 	"portable-tpcc/mind/internal/profile"
 	"portable-tpcc/mind/internal/progress"
 	"portable-tpcc/mind/internal/redact"
@@ -409,18 +408,14 @@ func usesLocalRuntime(p *profile.Profile) bool {
 }
 
 func (o *Orchestrator) writeLocalDeployManifest() error {
-	localRoot, err := paths.ExpandHome(o.Expanded.RemoteRoot)
+	localRoot, err := o.localRuntimeRoot()
 	if err != nil {
 		return err
 	}
-	abs, err := filepath.Abs(localRoot)
-	if err != nil {
-		return err
-	}
-	progress.Printf("writing local deploy manifest under %s", abs)
+	progress.Printf("writing local deploy manifest under %s", localRoot)
 	ld := &deploy.LocalDeploy{
 		SourceRoot: o.Expanded.LocalArtifacts,
-		TargetRoot: abs,
+		TargetRoot: localRoot,
 	}
 	_, err = ld.Deploy(o.Expanded.LocalArtifacts, false)
 	return err
@@ -1147,12 +1142,9 @@ func (o *Orchestrator) removeLocalRunState(runID string) error {
 }
 
 func (o *Orchestrator) removeLocalDeployManifest() error {
-	root, err := paths.ExpandHome(o.Expanded.RemoteRoot)
+	root, err := o.localRuntimeRoot()
 	if err != nil {
 		return err
-	}
-	if abs, err := filepath.Abs(root); err == nil {
-		root = abs
 	}
 	manifestPath := deploy.DeployManifestPath(root)
 	if _, err := os.Stat(manifestPath); err != nil {

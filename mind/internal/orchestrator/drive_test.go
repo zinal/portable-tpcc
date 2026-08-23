@@ -1366,3 +1366,43 @@ func TestLogAggregateSummaryPrintsBriefStats(t *testing.T) {
 		t.Fatalf("missing response-time stats:\n%s", got)
 	}
 }
+
+func TestRuntimeRootRelativeUsesHomeNotCwd(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(wd) })
+	cwd := t.TempDir()
+	if err := os.Chdir(cwd); err != nil {
+		t.Fatal(err)
+	}
+
+	o := &Orchestrator{Expanded: config.ExpandedPaths{RemoteRoot: "portable-tpcc"}}
+	local, err := remote.NewLocal("local", "127.0.0.1", t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer local.Close()
+
+	got, err := o.runtimeRoot(local)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(home, "portable-tpcc")
+	if got != want {
+		t.Fatalf("local runtimeRoot=%q, want %q (cwd=%q)", got, want, cwd)
+	}
+
+	sshRoot, err := o.runtimeRoot(&fakeSession{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sshRoot != "~/portable-tpcc" {
+		t.Fatalf("ssh runtimeRoot=%q, want ~/portable-tpcc", sshRoot)
+	}
+}

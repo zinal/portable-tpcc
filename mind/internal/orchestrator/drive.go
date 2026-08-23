@@ -62,22 +62,18 @@ func remoteBinaryPath(remoteRoot, binName string) string {
 }
 
 // runtimeRoot returns paths.remote_root as it should be used on sess.
-// Local loopback expands ~/ and resolves against the control-host cwd; SSH keeps
-// the host-native form (relative, absolute, or ~/ on the remote account).
+// Relative remote_root is the runtime account home (SSH login home / loopback
+// user home), not the control-host process cwd.
 func (o *Orchestrator) runtimeRoot(sess remote.Session) (string, error) {
 	root := o.Expanded.RemoteRoot
 	if _, ok := sess.(*remote.Local); !ok {
-		return root, nil
+		return paths.RemoteHomeForm(root), nil
 	}
-	expanded, err := paths.ExpandHome(root)
-	if err != nil {
-		return "", err
-	}
-	abs, err := filepath.Abs(expanded)
-	if err != nil {
-		return "", err
-	}
-	return abs, nil
+	return o.localRuntimeRoot()
+}
+
+func (o *Orchestrator) localRuntimeRoot() (string, error) {
+	return paths.ResolveUnderHome(o.Expanded.RemoteRoot)
 }
 
 func (o *Orchestrator) sessionRunDir(sess remote.Session, runID string) (string, error) {
@@ -97,15 +93,11 @@ func (o *Orchestrator) sessionBinaryPath(sess remote.Session, binName string) (s
 }
 
 func (o *Orchestrator) dialConfig() (remote.DialConfig, error) {
-	localRoot, err := paths.ExpandHome(o.Expanded.RemoteRoot)
+	localRoot, err := o.localRuntimeRoot()
 	if err != nil {
 		return remote.DialConfig{}, err
 	}
-	abs, err := filepath.Abs(localRoot)
-	if err != nil {
-		return remote.DialConfig{}, err
-	}
-	return remote.DialConfigFromProfile(o.Profile, o.Expanded.KnownHosts, abs)
+	return remote.DialConfigFromProfile(o.Profile, o.Expanded.KnownHosts, localRoot)
 }
 
 func (o *Orchestrator) openSessions() (map[string]remote.Session, error) {
