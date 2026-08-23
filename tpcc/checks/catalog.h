@@ -26,4 +26,7 @@ const TCheckCatalogEntry* FindCheckCatalogEntry(std::string_view id);
 
 bool CheckAppliesToPhase(ECheckPhase entryPhase, ECheckPhase requested);
 
+// Catalog ids that apply to `requested` (Both + the matching phase).
+int CountCatalogChecks(ECheckPhase requested);
+
 } // namespace NTpcc

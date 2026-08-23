@@ -576,6 +576,7 @@ TCheckReport RunYdbChecks(const TYdbConnectionConfig& connectionConfig, const TC
     report.Instance = request.Instance;
     report.Phase = PhaseName(request.Phase);
     report.WarehouseCount = request.WarehouseCount;
+    report.ProgressTotal = CountCatalogChecks(request.Phase);
 
     TYdbConnection connection(connectionConfig);
     auto queries = BuildQueries(request.WarehouseCount);

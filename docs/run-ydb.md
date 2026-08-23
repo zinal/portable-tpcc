@@ -88,8 +88,9 @@ name matching `[A-Za-z_][A-Za-z0-9_]*`, not a secret literal.
 Integrity checks scan warehouse-scoped tables one `w_id` at a time (same
 chunk size as PostgreSQL and OceanBase) and run `--threads` query chunks in
 parallel against the shared QueryClient. Catalog ids run one after another;
-the parallel chunks apply to the current id, so `Checking … [OK]` appears as
-each check finishes (shared `RecordCheckResult` helper; specification §9.2).
+the parallel chunks apply to the current id, so `Checking [i/n] … [OK]`
+appears as each check finishes (shared `RecordCheckResult` helper;
+specification §9.2).
 The driver uses `TBalancingPolicy::UseAllNodes`. Query `CreateSession` sends
 the `session-balancer` client capability so the server can place sessions
 (Table API already does this; Query API does not by default).

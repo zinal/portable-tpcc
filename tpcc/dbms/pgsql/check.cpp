@@ -770,6 +770,7 @@ TCheckReport RunPgChecks(const std::string& connectionString, const TCheckReques
     report.Instance = request.Instance;
     report.Phase = request.Phase == ECheckPhase::AfterImport ? "after-import" : "after-test";
     report.WarehouseCount = request.WarehouseCount;
+    report.ProgressTotal = CountCatalogChecks(request.Phase);
 
     const bool print = true;
     const bool afterImport = request.Phase == ECheckPhase::AfterImport;

@@ -35,8 +35,19 @@ TEST(CheckStatus, ToString) {
     EXPECT_STREQ(CheckStatusToString(ECheckStatus::Failed), "failed");
 }
 
+TEST(CheckCatalog, CountCatalogChecksByPhase) {
+    const int all = static_cast<int>(CheckCatalog().size());
+    EXPECT_EQ(CountCatalogChecks(ECheckPhase::AfterImport), all);
+    EXPECT_LT(CountCatalogChecks(ECheckPhase::AfterTest), all);
+    EXPECT_GT(CountCatalogChecks(ECheckPhase::AfterTest), 0);
+    const auto* postImport = FindCheckCatalogEntry("post_import.w_ytd");
+    ASSERT_NE(postImport, nullptr);
+    EXPECT_FALSE(CheckAppliesToPhase(postImport->Phase, ECheckPhase::AfterTest));
+}
+
 TEST(CheckReport, RecordCheckResultPrintsProgressLine) {
     TCheckReport report;
+    report.ProgressTotal = 3;
     std::ostringstream captured;
     auto* old = std::cout.rdbuf(captured.rdbuf());
     RecordCheckResult(report, "cardinality.warehouse", ECheckStatus::Passed, {}, true);
@@ -47,9 +58,9 @@ TEST(CheckReport, RecordCheckResultPrintsProgressLine) {
     std::cout.rdbuf(old);
 
     EXPECT_EQ(captured.str(),
-              "Checking Warehouse cardinality [OK]\n"
-              "Checking Stock cardinality [Failed]: query returned false\n"
-              "Checking W_YTD equals sum(D_YTD) [Skipped]: skipped: base cardinality failed\n");
+              "Checking [1/3] Warehouse cardinality [OK]\n"
+              "Checking [2/3] Stock cardinality [Failed]: query returned false\n"
+              "Checking [3/3] W_YTD equals sum(D_YTD) [Skipped]: skipped: base cardinality failed\n");
     EXPECT_EQ(report.PassedCount, 1);
     EXPECT_EQ(report.FailedCount, 1);
     EXPECT_EQ(report.SkippedCount, 1);
