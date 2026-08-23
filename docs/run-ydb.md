@@ -205,6 +205,8 @@ mkdir -p dist
 cp tpcc/app/ydb/tpcc-ydb dist/
 cp mind/mind-tpcc ./mind-tpcc
 
+# Generate a complete starter profile, or copy the lab example:
+# ./mind-tpcc configure --profile ./profile-ydb.yaml --dbms ydb
 # cp docs/examples/profile.ydb.v1.yaml ./profile-ydb.yaml
 
 ./mind-tpcc validate --profile ./profile-ydb.yaml

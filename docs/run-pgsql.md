@@ -128,7 +128,14 @@ Minimum profile fields: `apiVersion` / `kind` / `metadata.name`, `ssh`,
 and `phases` durations. Omitted workload fields use built-in TPC-C 5.11-style
 defaults. Full schema: [parameter-reference.md](parameter-reference.md#profile-yaml).
 
-Use `database.dbms: pgsql`. A minimal example lives in
+Use `database.dbms: pgsql`. Generate a complete starter profile (every field
+set to the built-in default, hosts `localhost`):
+
+```bash
+./mind-tpcc configure --profile ./profile-pgsql.yaml --dbms pgsql
+```
+
+A minimal hand-written example lives in
 [`mind/testdata/profile.valid.yaml`](../mind/testdata/profile.valid.yaml):
 
 ```yaml

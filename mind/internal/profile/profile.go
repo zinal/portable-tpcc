@@ -128,6 +128,11 @@ func (h *NamedHost) UnmarshalYAML(value *yaml.Node) error {
 	return nil
 }
 
+// MarshalYAML writes a loader/worker entry as a host address string.
+func (h NamedHost) MarshalYAML() (interface{}, error) {
+	return h.Host, nil
+}
+
 type Phases struct {
 	StartLead        string `yaml:"start_lead"`
 	RampUp           string `yaml:"ramp_up"`

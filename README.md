@@ -23,6 +23,8 @@ fields needed to run):
 
 Complete parameter reference (profile YAML, CLI flags, environment variables):
 [docs/parameter-reference.md](docs/parameter-reference.md).
+`mind-tpcc configure --profile <path> --dbms <pgsql|ydb|oceanbase>` writes a
+complete starter profile with every field set to the built-in default.
 
 Build everything from the repository root with `./build.sh` (it always passes
 `-DHAVE_CUDA=no -DCUDA_VERSION=11.4` for C++ targets; required by `tpcc-ydb`).

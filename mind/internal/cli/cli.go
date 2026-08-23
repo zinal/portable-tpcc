@@ -36,6 +36,10 @@ func Run(args []string) int {
 	}
 	// Help must work without required flags such as --profile.
 	if wantsHelp(args) {
+		if args[0] == "configure" {
+			printConfigureUsage()
+			return 0
+		}
 		printUsage()
 		return 0
 	}
@@ -49,8 +53,12 @@ func Run(args []string) int {
 
 // run is the testable entrypoint; interrupt is cancelled on SIGINT/SIGTERM in Run.
 func run(args []string, interrupt context.Context) int {
-	cfg := &Config{}
 	cmd := args[0]
+	if cmd == "configure" {
+		return runConfigure(args[1:])
+	}
+
+	cfg := &Config{}
 	rest := args[1:]
 	for i := 0; i < len(rest); i++ {
 		arg := rest[i]
@@ -461,8 +469,10 @@ mind-tpcc — portable-tpcc orchestrator
 
 Usage:
   mind-tpcc <command> --profile <path> [options]
+  mind-tpcc configure --profile <path> --dbms <pgsql|ydb|oceanbase> [options]
 
 Commands:
+  configure   Write a complete example profile YAML (defaults + optional overrides)
   validate    Validate profile without side effects
   plan        Show planned assignment and argv
   deploy      Deploy shared worker binary (profile-scoped; no run_id / FSM)
@@ -490,7 +500,7 @@ Options:
   --measurement <duration> Override phases.measurement, e.g. 2m, 120m
   --threads <n>            Override worker/loader threads and check sessions (0 = auto)
   --skip <step>            Skip pipeline step
-  --yes                    Non-interactive confirmation
+  --yes                    Non-interactive confirmation (cleanup, undeploy, configure overwrite)
   --leave-processes        Debug: do not kill remote processes this
                            invocation launched when mind-tpcc exits
   --after-import           check: post-import integrity phase
