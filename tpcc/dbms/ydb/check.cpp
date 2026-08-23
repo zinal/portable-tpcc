@@ -457,13 +457,17 @@ TQueryMap BuildQueries(int warehouses) {
     return q;
 }
 
-bool QueryBool(TYdbConnection& connection, const std::string& query) {
+bool QueryBool(
+    NYdb::NQuery::TQueryClient& client,
+    const std::string& pathPrefix,
+    const std::string& query)
+{
     // TablePathPrefix requires the absolute path including the database name.
     const std::string sql = fmt::format(
         "PRAGMA TablePathPrefix(\"{}\");\n{}",
-        connection.AbsolutePathPrefix(),
+        pathPrefix,
         query);
-    auto result = connection.QueryClient().RetryQuery([&](NYdb::NQuery::TSession session) {
+    auto result = client.RetryQuery([&](NYdb::NQuery::TSession session) {
         return session.ExecuteQuery(sql, NYdb::NQuery::TTxControl::NoTx());
     }).GetValueSync();
     if (!result.IsSuccess()) {
@@ -488,7 +492,8 @@ bool QueryBool(TYdbConnection& connection, const std::string& query) {
 
 // Runs one or more query chunks for a single catalog check. All chunks must
 // return ok=true. When concurrency > 1, warehouse-range chunks are executed
-// in parallel against the shared QueryClient (thread-safe).
+// in parallel. Each worker pins to one QueryClient so CreateSession stays
+// on that client's node (TYdbConnection round-robins clients across nodes).
 void RunQueryChunks(
     TYdbConnection& connection,
     const std::vector<std::string>& queries,
@@ -508,9 +513,11 @@ void RunQueryChunks(
         : std::min(static_cast<size_t>(concurrency), queries.size());
 
     if (workers == 1) {
+        auto& client = connection.QueryClient();
+        const std::string pathPrefix = connection.AbsolutePathPrefix();
         try {
             for (size_t i = 0; i < queries.size(); ++i) {
-                if (!QueryBool(connection, queries[i])) {
+                if (!QueryBool(client, pathPrefix, queries[i])) {
                     result.Status = ECheckStatus::Failed;
                     result.Detail = queries.size() == 1
                         ? "query returned false"
@@ -538,7 +545,9 @@ void RunQueryChunks(
     std::string detail;
     std::atomic<size_t> next{0};
 
+    const std::string pathPrefix = connection.AbsolutePathPrefix();
     auto workerFn = [&]() {
+        auto& client = connection.QueryClient();
         for (;;) {
             if (failed.load(std::memory_order_relaxed) ||
                 errored.load(std::memory_order_relaxed)) {
@@ -549,7 +558,7 @@ void RunQueryChunks(
                 return;
             }
             try {
-                if (!QueryBool(connection, queries[i])) {
+                if (!QueryBool(client, pathPrefix, queries[i])) {
                     bool expected = false;
                     if (failed.compare_exchange_strong(expected, true)) {
                         std::lock_guard lock(detailMutex);

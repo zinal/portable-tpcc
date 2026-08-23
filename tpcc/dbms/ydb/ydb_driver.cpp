@@ -2,15 +2,20 @@
 
 #include <log.h>
 
+#include <ydb/public/sdk/cpp/include/ydb-cpp-sdk/client/discovery/discovery.h>
 #include <ydb/public/sdk/cpp/include/ydb-cpp-sdk/client/iam/iam.h>
 #include <ydb/public/sdk/cpp/include/ydb-cpp-sdk/client/types/credentials/credentials.h>
+#include <ydb/public/sdk/cpp/include/ydb-cpp-sdk/client/types/ydb.h>
 
 #include <password_secret.h>
 
+#include <cstdint>
 #include <cstdlib>
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
+#include <string>
+#include <unordered_set>
 
 namespace NTpcc {
 
@@ -204,13 +209,77 @@ NYdb::TDriverConfig BuildYdbDriverConfig(const TYdbConnectionConfig& config) {
               << " ssl=on ca_file=" << config.CaFile);
     }
 
+    // Query Service CreateSession is executed on the node that receives the
+    // RPC. Prefer all discovered nodes over the default "local DC + lowest
+    // load_factor" elector, which otherwise piles a burst of sessions onto
+    // one node (check --threads, worker Begin, …).
+    driverConfig.SetBalancingPolicy(NYdb::TBalancingPolicy::UseAllNodes());
+
     return driverConfig;
+}
+
+namespace {
+
+constexpr uint32_t kMaxQuerySessions = 8192;
+
+NYdb::NQuery::TClientSettings MakeQueryClientSettings() {
+    return NYdb::NQuery::TClientSettings()
+        .SessionPoolSettings(
+            NYdb::NQuery::TSessionPoolSettings()
+                .MaxActiveSessions(kMaxQuerySessions)
+                .MinPoolSize(0));
+}
+
+std::string PickDiscoveredNodeAddress(const NYdb::NDiscovery::TEndpointInfo& endpoint) {
+    if (!endpoint.Address.empty()) {
+        return endpoint.Address;
+    }
+    if (!endpoint.IPv4Addrs.empty()) {
+        return endpoint.IPv4Addrs.front();
+    }
+    if (!endpoint.IPv6Addrs.empty()) {
+        return endpoint.IPv6Addrs.front();
+    }
+    return {};
+}
+
+} // anonymous
+
+std::string FormatYdbNodeHostPort(const std::string& address, uint32_t port) {
+    if (address.empty() || port == 0) {
+        return {};
+    }
+    if (address.find(':') != std::string::npos && address.front() != '[') {
+        return "[" + address + "]:" + std::to_string(port);
+    }
+    return address + ":" + std::to_string(port);
+}
+
+std::vector<std::string> UniqueYdbNodeHostPorts(const std::vector<TYdbDiscoveredNode>& nodes) {
+    std::vector<std::string> hostPorts;
+    std::unordered_set<uint32_t> seenNodeIds;
+    std::unordered_set<std::string> seenHostPorts;
+    hostPorts.reserve(nodes.size());
+    for (const auto& node : nodes) {
+        const std::string hostPort = FormatYdbNodeHostPort(node.Address, node.Port);
+        if (hostPort.empty()) {
+            continue;
+        }
+        if (node.NodeId != 0 && !seenNodeIds.insert(node.NodeId).second) {
+            continue;
+        }
+        if (!seenHostPorts.insert(hostPort).second) {
+            continue;
+        }
+        hostPorts.push_back(hostPort);
+    }
+    return hostPorts;
 }
 
 TYdbConnection::TYdbConnection(TYdbConnectionConfig config)
     : Config_(std::move(config))
     , Driver_(BuildYdbDriverConfig(Config_))
-    , QueryClient_(Driver_)
+    , QueryClient_(Driver_, MakeQueryClientSettings())
     , TableClient_(Driver_)
 {
 }
@@ -223,8 +292,55 @@ NYdb::TDriver& TYdbConnection::Driver() {
     return Driver_;
 }
 
+void TYdbConnection::InitNodeQueryClients() {
+    try {
+        NYdb::NDiscovery::TDiscoveryClient discovery(Driver_);
+        const auto result = discovery.ListEndpoints().GetValueSync();
+        if (!result.IsSuccess()) {
+            LOG_W("YDB ListEndpoints failed; query sessions use the shared client: "
+                  << result.GetIssues().ToOneLineString());
+            return;
+        }
+
+        std::vector<TYdbDiscoveredNode> nodes;
+        nodes.reserve(result.GetEndpointsInfo().size());
+        for (const auto& endpoint : result.GetEndpointsInfo()) {
+            TYdbDiscoveredNode node;
+            node.NodeId = endpoint.NodeId;
+            node.Address = PickDiscoveredNodeAddress(endpoint);
+            node.Port = endpoint.Port;
+            nodes.push_back(std::move(node));
+        }
+
+        const std::vector<std::string> hostPorts = UniqueYdbNodeHostPorts(nodes);
+        if (hostPorts.size() <= 1) {
+            LOG_D("YDB discovered " << hostPorts.size()
+                  << " query node(s); using the shared QueryClient");
+            return;
+        }
+
+        NodeQueryClients_.reserve(hostPorts.size());
+        for (const auto& hostPort : hostPorts) {
+            auto settings = MakeQueryClientSettings();
+            settings.DiscoveryEndpoint(hostPort);
+            settings.DiscoveryMode(NYdb::EDiscoveryMode::Off);
+            NodeQueryClients_.emplace_back(Driver_, settings);
+        }
+        LOG_I("YDB query sessions will be spread across "
+              << NodeQueryClients_.size() << " nodes");
+    } catch (const std::exception& ex) {
+        LOG_W("YDB node discovery for session spread failed; using the shared QueryClient: "
+              << ex.what());
+    }
+}
+
 NYdb::NQuery::TQueryClient& TYdbConnection::QueryClient() {
-    return QueryClient_;
+    std::call_once(NodeQueryClientsOnce_, [this] { InitNodeQueryClients(); });
+    if (NodeQueryClients_.empty()) {
+        return QueryClient_;
+    }
+    const size_t i = NextNodeQueryClient_.fetch_add(1, std::memory_order_relaxed);
+    return NodeQueryClients_[i % NodeQueryClients_.size()];
 }
 
 NYdb::NTable::TTableClient& TYdbConnection::TableClient() {

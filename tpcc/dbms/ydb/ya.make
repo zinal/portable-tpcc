@@ -39,6 +39,7 @@ PEERDIR(
     ydb/public/api/grpc
     ydb/public/api/protos
     ydb/public/sdk/cpp/src/client/driver
+    ydb/public/sdk/cpp/src/client/discovery
     ydb/public/sdk/cpp/src/client/query
     ydb/public/sdk/cpp/src/client/table
     ydb/public/sdk/cpp/src/client/scheme

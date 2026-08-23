@@ -409,6 +409,10 @@ Adapters MUST:
   (`BridgeYdbFuture` in `tpcc/dbms/ydb/ydb_future.h`). Session acquire is
   deferred to async `Begin`. Loader / check / schema admin paths MAY still
   wait synchronously.
+- Query Service `CreateSession` is node-local. The adapter MUST spread
+  `GetSession` / `RetryQuery` across discovered nodes (per-node QueryClient
+  with `DiscoveryMode::Off`); a single shared client plus the default
+  load-factor elector piles a burst of sessions onto one node.
 - Do not store exact values as `Double`.
 - Do not hide retries inside SDK helpers; classify and bubble errors.
 - System tables, compaction, and index implementation details stay inside the
