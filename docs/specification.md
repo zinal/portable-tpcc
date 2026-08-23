@@ -369,10 +369,13 @@ mind-tpcc run | cleanup --yes
 
 `configure` writes a complete example profile YAML. `--profile` (or a
 positional path) and `--dbms` are required. Omitted settings use the
-built-in defaults; `loaders` and `workers` default to `localhost`. The
-file MUST contain every current profile field, including DBMS-specific
-`database` keys, set to those defaults. Optional flags override individual
-fields. `configure --yes` overwrites an existing file.
+built-in defaults; `loaders` and `workers` default to `localhost`. `paths`
+defaults are `local_artifacts: .`, `remote_root: portable-tpcc`,
+`result_root: results`, and `state_dir: state`. Relative `remote_root`
+is left host-native (not absolutized on the control host). The file MUST contain
+every current profile field, including DBMS-specific `database` keys, set
+to those defaults. Optional flags override individual fields.
+`configure --yes` overwrites an existing file.
 
 `test` arms workers and runs ramp-up / measurement / drain. `start` is a
 compatibility alias for `test`. `--skip start` skips the same `run` step.

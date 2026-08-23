@@ -62,22 +62,21 @@ func remoteBinaryPath(remoteRoot, binName string) string {
 }
 
 // runtimeRoot returns paths.remote_root as it should be used on sess.
-// Local loopback expands ~/ and resolves against the control-host cwd; SSH keeps
-// the host-native form (relative, absolute, or ~/ on the remote account).
+// The profile value is left host-native: relative and ~/ forms are not
+// converted to an absolute path on the control host (os.UserHomeDir and
+// filepath.Abs would use the wrong machine / cwd). SSH interprets them
+// in the remote login directory. Local loopback only expands ~/ for the
+// local filesystem.
 func (o *Orchestrator) runtimeRoot(sess remote.Session) (string, error) {
 	root := o.Expanded.RemoteRoot
-	if _, ok := sess.(*remote.Local); !ok {
-		return root, nil
+	if _, ok := sess.(*remote.Local); ok {
+		return paths.ExpandHome(root)
 	}
-	expanded, err := paths.ExpandHome(root)
-	if err != nil {
-		return "", err
-	}
-	abs, err := filepath.Abs(expanded)
-	if err != nil {
-		return "", err
-	}
-	return abs, nil
+	return root, nil
+}
+
+func (o *Orchestrator) localRuntimeRoot() (string, error) {
+	return paths.ExpandHome(o.Expanded.RemoteRoot)
 }
 
 func (o *Orchestrator) sessionRunDir(sess remote.Session, runID string) (string, error) {
@@ -97,15 +96,10 @@ func (o *Orchestrator) sessionBinaryPath(sess remote.Session, binName string) (s
 }
 
 func (o *Orchestrator) dialConfig() (remote.DialConfig, error) {
-	localRoot, err := paths.ExpandHome(o.Expanded.RemoteRoot)
-	if err != nil {
-		return remote.DialConfig{}, err
-	}
-	abs, err := filepath.Abs(localRoot)
-	if err != nil {
-		return remote.DialConfig{}, err
-	}
-	return remote.DialConfigFromProfile(o.Profile, o.Expanded.KnownHosts, abs)
+	// Local sessions interpret relative remote paths against the process cwd.
+	// Do not pass Abs(remote_root): that would prefix portable-tpcc/run onto
+	// .../portable-tpcc and also leak a control-host absolute path.
+	return remote.DialConfigFromProfile(o.Profile, o.Expanded.KnownHosts, ".")
 }
 
 func (o *Orchestrator) openSessions() (map[string]remote.Session, error) {

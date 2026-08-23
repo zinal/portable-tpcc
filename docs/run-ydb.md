@@ -34,7 +34,7 @@ Binaries:
 | `mind-tpcc` | `mind/mind-tpcc` |
 
 For orchestration, copy `tpcc-ydb` into the profile's `paths.local_artifacts`
-directory (for example `./dist/tpcc-ydb`). Re-run `mind-tpcc deploy` after
+directory (default `.`, the current directory). Re-run `mind-tpcc deploy` after
 rebuilding; `run` does not auto-upload binaries.
 
 ## Prepare YDB
@@ -201,8 +201,7 @@ database:
 ```bash
 export YDB_PASSWORD='...'   # login only
 
-mkdir -p dist
-cp tpcc/app/ydb/tpcc-ydb dist/
+cp tpcc/app/ydb/tpcc-ydb .
 cp mind/mind-tpcc ./mind-tpcc
 
 # Generate a complete starter profile, or copy the lab example:

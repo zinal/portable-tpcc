@@ -71,6 +71,10 @@ func TestExample_pgsqlIncludesOptions(t *testing.T) {
 		"batch_rows: 10000",
 		"terminals_per_warehouse: 10",
 		"max_inflight_per_worker: 100",
+		"local_artifacts: .",
+		"remote_root: portable-tpcc",
+		"result_root: results",
+		"state_dir: state",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("pgsql example missing %q\n%s", want, text)

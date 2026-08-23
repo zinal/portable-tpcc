@@ -9,6 +9,9 @@ import (
 
 // ExpandHome expands a leading ~/ in path using the current user's home directory.
 func ExpandHome(path string) (string, error) {
+	if path == "~" {
+		return os.UserHomeDir()
+	}
 	if !strings.HasPrefix(path, "~/") {
 		return path, nil
 	}

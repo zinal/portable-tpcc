@@ -33,7 +33,7 @@ Binaries:
 | `mind-tpcc` | `mind/mind-tpcc` |
 
 For orchestration, copy `tpcc-pgsql` into the profile's `paths.local_artifacts`
-directory (for example `./dist/tpcc-pgsql`). Re-run `mind-tpcc deploy` after
+directory (default `.`, the current directory). Re-run `mind-tpcc deploy` after
 rebuilding; `run` does not auto-upload binaries.
 
 ## Prepare PostgreSQL
@@ -177,8 +177,7 @@ checks:
 ```bash
 export TPCC_PASSWORD='...'
 
-mkdir -p dist
-cp tpcc/app/pgsql/tpcc-pgsql dist/
+cp tpcc/app/pgsql/tpcc-pgsql .
 cp mind/mind-tpcc ./mind-tpcc
 
 ./mind-tpcc validate --profile ./profile-pgsql.yaml
