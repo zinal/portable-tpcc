@@ -6,7 +6,7 @@
 
 namespace NTpcc {
 
-// Evaluates the shared catalog and prints Checking … [OK]/[Failed]/[Skipped]
+// Evaluates the shared catalog and prints Checking [i/n] … [OK]/[Failed]/[Skipped]
 // after each catalog id (RecordCheckResult; specification §9.2).
 TCheckReport RunYdbChecks(const TYdbConnectionConfig& connectionConfig, const TCheckRequest& request);
 

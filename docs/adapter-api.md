@@ -110,7 +110,8 @@ PostgreSQL, YDB, and OceanBase each evaluate the same catalog
 (specification §9.2), not an adapter-private optimization. Live stdout
 progress uses the same recommended helper: `RecordCheckResult` in
 `tpcc/checks`, called once per catalog id after that id's warehouse
-chunks finish.
+chunks finish. Set `TCheckReport.ProgressTotal` to
+`CountCatalogChecks(request.Phase)` so the line includes `[i/n]`.
 
 ### 3.7. `tpcc/metrics`
 
@@ -299,7 +300,7 @@ warehouse-range chunk size are in
 `kWarehouseCheckRange` (1) for warehouse-scoped scans. Warehouse filter bounds
 MUST be bound parameters so the generated query text is stable across chunks
 (specification §9.2). After each catalog id completes, adapters SHOULD record
-the result through `RecordCheckResult` so `Checking … [OK]/[Failed]/[Skipped]`
+the result through `RecordCheckResult` so `Checking [i/n] … [OK]/[Failed]/[Skipped]`
 appears immediately (specification §9.2). Dialect differences (OceanBase
 `LEFT JOIN` + `UNION ALL` instead of `FULL JOIN`) are allowed; predicates MUST
 match the PostgreSQL reference set.

@@ -28,7 +28,13 @@ void RecordCheckResult(TCheckReport& report, TCheckResult result, bool print) {
         } else if (result.Status == ECheckStatus::Skipped) {
             tag = "[Skipped]";
         }
-        std::cout << "Checking " << result.Title << " " << tag;
+        const int index = report.PassedCount + report.FailedCount
+            + report.SkippedCount + report.ErrorCount;
+        std::cout << "Checking ";
+        if (report.ProgressTotal > 0) {
+            std::cout << "[" << index << "/" << report.ProgressTotal << "] ";
+        }
+        std::cout << result.Title << " " << tag;
         if (!result.Detail.empty() && result.Status != ECheckStatus::Passed) {
             std::cout << ": " << result.Detail;
         }

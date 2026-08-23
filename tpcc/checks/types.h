@@ -29,6 +29,9 @@ struct TCheckReport {
     int PassedCount = 0;
     int SkippedCount = 0;
     int ErrorCount = 0;
+    // Stdout progress only (`Checking [i/n] …`); not written to JSON.
+    // Adapters SHOULD set this to CountCatalogChecks(request.Phase).
+    int ProgressTotal = 0;
 
     bool Ok() const {
         return FailedCount == 0 && ErrorCount == 0;

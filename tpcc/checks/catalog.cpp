@@ -61,4 +61,14 @@ bool CheckAppliesToPhase(ECheckPhase entryPhase, ECheckPhase requested) {
     return entryPhase == requested;
 }
 
+int CountCatalogChecks(ECheckPhase requested) {
+    int n = 0;
+    for (const auto& e : Catalog()) {
+        if (CheckAppliesToPhase(e.Phase, requested)) {
+            ++n;
+        }
+    }
+    return n;
+}
+
 } // namespace NTpcc

@@ -498,7 +498,7 @@ the whole suite finishes and MUST NOT be used. This per-catalog-id schedule
 plus an immediate stdout progress line is the **recommended check-progress
 pattern for every adapter** (YDB, PostgreSQL, OceanBase, and future DBMS
 ports). Adapters SHOULD call the shared `RecordCheckResult` helper in
-`tpcc/checks` so the line format stays identical.
+`tpcc/checks` so the line format stays identical, including `[i/n]`.
 
 Warehouse-scoped scans use inclusive `w_id` chunks of size 1
 (`kWarehouseCheckRange`) so HASH partition pruning (OceanBase) and
@@ -520,9 +520,11 @@ entries, DBMS-only SQL “optimizations”) unless explicitly requested. Dialect
 translation that keeps the same condition (for example OceanBase `LEFT JOIN` +
 `UNION ALL` instead of `FULL JOIN`) is allowed.
 
-Stdout `Checking … [OK]/[Failed]/[Skipped]` is the recommended live progress
-signal for every adapter: one line per catalog id, printed as soon as that
-job completes (all warehouse chunks). `mind-tpcc` tails `stdout.log` and
+Stdout `Checking [i/n] … [OK]/[Failed]/[Skipped]` is the recommended live
+progress signal for every adapter: one line per catalog id, printed as soon
+as that job completes (all warehouse chunks). `i` is the 1-based catalog
+index so far and `n` is `CountCatalogChecks` for the phase, so an operator
+can see how much of the suite remains. `mind-tpcc` tails `stdout.log` and
 relays those lines while check is still running. Per-chunk progress lines
 are not required. The JSON report is the structured contract for
 orchestrator diagnostics and consolidate. Do not dump the whole suite only
