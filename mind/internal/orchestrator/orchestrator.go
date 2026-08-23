@@ -14,7 +14,6 @@ import (
 	"portable-tpcc/mind/internal/collect"
 	"portable-tpcc/mind/internal/config"
 	"portable-tpcc/mind/internal/consolidate"
-	"portable-tpcc/mind/internal/deploy"
 	"portable-tpcc/mind/internal/profile"
 	"portable-tpcc/mind/internal/progress"
 	"portable-tpcc/mind/internal/redact"
@@ -330,16 +329,6 @@ func (o *Orchestrator) Deploy() error {
 	if err := o.deployToHosts(sessions); err != nil {
 		return err
 	}
-
-	// LocalDeploy writes deploy-manifest.json under the control-host view of
-	// remote_root for undeploy of shared local artifact trees. Skip it for
-	// pure SSH runs: it copies+hashes local_artifacts into a local path and
-	// can stall deploy for tens of seconds with no effect on remote hosts.
-	if usesLocalRuntime(o.Profile) {
-		if err := o.writeLocalDeployManifest(); err != nil {
-			progress.Printf("local deploy manifest: %v", err)
-		}
-	}
 	progress.Printf("deploy: complete")
 	return nil
 }
@@ -363,11 +352,6 @@ func (o *Orchestrator) Undeploy(yes bool) error {
 
 	if err := o.undeployFromHosts(sessions); err != nil {
 		return err
-	}
-	if usesLocalRuntime(o.Profile) {
-		if err := o.removeLocalDeployManifest(); err != nil {
-			return err
-		}
 	}
 	progress.Printf("undeploy: complete")
 	return nil
@@ -395,30 +379,6 @@ func (o *Orchestrator) requireWorkerBinary() error {
 		"shared worker binary %s missing on host(s) %s; run `mind-tpcc deploy --profile ...` first (and after any binary rebuild)",
 		binName, strings.Join(missing, ", "),
 	)
-}
-
-// usesLocalRuntime reports whether any loader/worker host uses a Local session.
-func usesLocalRuntime(p *profile.Profile) bool {
-	for _, host := range remote.UniqueHosts(p) {
-		if remote.IsLoopback(host) {
-			return true
-		}
-	}
-	return false
-}
-
-func (o *Orchestrator) writeLocalDeployManifest() error {
-	localRoot, err := o.localRuntimeRoot()
-	if err != nil {
-		return err
-	}
-	progress.Printf("writing local deploy manifest under %s", localRoot)
-	ld := &deploy.LocalDeploy{
-		SourceRoot: o.Expanded.LocalArtifacts,
-		TargetRoot: localRoot,
-	}
-	_, err = ld.Deploy(o.Expanded.LocalArtifacts, false)
-	return err
 }
 
 // Run executes the full pipeline (specification §9).
@@ -1139,23 +1099,6 @@ func (o *Orchestrator) removeLocalRunState(runID string) error {
 	}
 	progress.Printf("cleanup: remove local run state %s", dir)
 	return os.RemoveAll(dir)
-}
-
-func (o *Orchestrator) removeLocalDeployManifest() error {
-	root, err := o.localRuntimeRoot()
-	if err != nil {
-		return err
-	}
-	manifestPath := deploy.DeployManifestPath(root)
-	if _, err := os.Stat(manifestPath); err != nil {
-		if os.IsNotExist(err) {
-			progress.Printf("undeploy: no local deploy manifest under %s", root)
-			return nil
-		}
-		return err
-	}
-	progress.Printf("undeploy: removing local deploy manifest paths under %s", root)
-	return deploy.Cleanup(root, true)
 }
 
 // WritePlanJSON encodes plan snapshot to JSON.

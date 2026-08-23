@@ -413,20 +413,6 @@ func TestLaunchRoleRequiresDeployedBinary(t *testing.T) {
 	}
 }
 
-func TestUsesLocalRuntime(t *testing.T) {
-	if usesLocalRuntime(&profile.Profile{
-		Workers: []profile.NamedHost{{Name: "w", Host: "ob-runner-1"}},
-	}) {
-		t.Fatal("SSH-only profile should not use local runtime")
-	}
-	if !usesLocalRuntime(&profile.Profile{
-		Loaders: []profile.NamedHost{{Name: "l", Host: "127.0.0.1"}},
-		Workers: []profile.NamedHost{{Name: "w", Host: "ob-runner-1"}},
-	}) {
-		t.Fatal("mixed profile with loopback should use local runtime")
-	}
-}
-
 func TestCompleteLogLinesAdvancesOnlyPastNewlines(t *testing.T) {
 	data := []byte("line1\nline2\npartial")
 	lines, off := completeLogLines(data, 0)

@@ -401,8 +401,8 @@ remove local `result_root/<run_id>` and `state/runs/<run_id>`. Shared worker
 binaries under `remote_root` are left in place.
 
 `undeploy --yes` is the inverse of `deploy`: profile-scoped removal of the
-shared worker binary from every assigned host (and loopback deploy-manifest
-paths when present). It does not tear down a run; use `cleanup` for that.
+shared worker binary from every assigned host. It does not tear down a run;
+use `cleanup` for that.
 
 Worker artifact semantics are not independently version-negotiated. The
 operator **MUST** invoke `deploy` after selecting, building, or updating the
