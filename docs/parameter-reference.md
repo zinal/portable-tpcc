@@ -17,12 +17,14 @@ verification.
 
 ```text
 mind-tpcc <command> --profile <path> [options]
+mind-tpcc configure --profile <path> --dbms <pgsql|ydb|oceanbase> [options]
 ```
 
 ### Commands
 
 | Command | Purpose |
 | --- | --- |
+| `configure` | Write a complete example profile YAML. Requires `--profile` (or a positional path) and `--dbms`. Omitted fields use built-in defaults; host lists default to `localhost`. |
 | `validate` | Validate the profile; print JSON (structural errors fail; TPC-C setting deviations are informational). |
 | `plan` | Show planned warehouse assignment and argv. |
 | `deploy` | Install the shared worker binary under `paths.remote_root` (profile-scoped; no `run_id`). |
@@ -64,11 +66,33 @@ Shared binaries stay until `undeploy`.
 | `--measurement <duration>` | profile `phases.measurement` | Measurement override. |
 | `--threads <n>` | profile worker/loader threads and `runtime.check_concurrency` | Launch-time override for this invocation. `test`/`load`/`run` pass `--threads=N` to workers and loaders (`0` = auto at the binary). `check`/`run` pass a resolved session count to `check` (`0` = auto `min(scale.warehouses, 32)`). Does not rewrite an existing run-config. |
 | `--skip <step>` | none | Skip a `run` pipeline step. Repeatable. Names: `deploy`, `schema`, `load`, `indexes`, `check_after_import`, `test` (alias `start`), `check_after_test` (alias `check_after_run`), `collect`, `consolidate`. |
-| `--yes` | false | Required for `cleanup` and `undeploy`. |
+| `--yes` | false | Required for `cleanup` and `undeploy`. `configure` uses it to overwrite an existing file. |
 | `--after-import` / `--after-test` | — | Select the `check` phase. `--after-run` is a deprecated alias for `--after-test`. |
 | `--leave-processes` | false | Debug: leave remote processes running when `mind-tpcc` exits. Default is to stop leftovers this invocation launched (and warn if a process is still alive after it reported finished). |
 
 Unknown flags and extra positional arguments fail the invocation (exit 2).
+
+### `configure`
+
+Writes a secret-free example `TpccRunProfile` with every current field set
+to the built-in default for `--dbms` (PostgreSQL / YDB / OceanBase options
+included; YDB `anonymous` omits login / `sa_key` fields). `metadata.name`
+defaults to the sanitized filename. `ssh.user` defaults to the current
+account. Loader and worker lists default to a single `localhost` entry.
+
+```text
+mind-tpcc configure --profile ./profile.yaml --dbms pgsql
+mind-tpcc configure ./profile.yaml --dbms ydb --warehouses 50 --endpoint localhost:2136
+```
+
+Optional flags override the corresponding profile fields (`--name`,
+`--ssh-user`, `--endpoint`, `--database`, `--path`, `--user`,
+`--password-env`, `--warehouses`, `--seed`, `--loaders`, `--workers`,
+phase durations, runtime / retry / histogram / checks / collect knobs,
+and DBMS-specific `--auth-scheme`, `--partitioning`, `--partitions`,
+`--foreign-keys`, `--query-timeout`, `--index-parallel`, …). See
+`mind-tpcc configure --help`. The generated file is rejected if the
+result would not pass structural `validate`.
 
 ## Profile YAML
 

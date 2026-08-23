@@ -360,11 +360,19 @@ aggregate carries the settings themselves.
 ## 9. Orchestrator Commands
 
 ```text
+mind-tpcc configure --profile <path> --dbms <pgsql|ydb|oceanbase> [options]
 mind-tpcc validate | plan | deploy | undeploy --yes | schema | load | indexes
 mind-tpcc check [--after-import|--after-test]
 mind-tpcc test | status | stop | collect | consolidate
 mind-tpcc run | cleanup --yes
 ```
+
+`configure` writes a complete example profile YAML. `--profile` (or a
+positional path) and `--dbms` are required. Omitted settings use the
+built-in defaults; `loaders` and `workers` default to `localhost`. The
+file MUST contain every current profile field, including DBMS-specific
+`database` keys, set to those defaults. Optional flags override individual
+fields. `configure --yes` overwrites an existing file.
 
 `test` arms workers and runs ramp-up / measurement / drain. `start` is a
 compatibility alias for `test`. `--skip start` skips the same `run` step.

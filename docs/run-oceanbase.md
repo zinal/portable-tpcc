@@ -205,6 +205,8 @@ mkdir -p dist
 cp tpcc/app/oceanbase/tpcc-oceanbase dist/
 cp mind/mind-tpcc ./mind-tpcc
 
+# Generate a complete starter profile, or copy the lab example:
+# ./mind-tpcc configure --profile ./profile-oceanbase.yaml --dbms oceanbase
 # cp docs/examples/profile.oceanbase.v1.yaml ./profile-oceanbase.yaml
 
 ./mind-tpcc validate --profile ./profile-oceanbase.yaml
