@@ -1,7 +1,5 @@
 #include "ydb_driver.h"
 
-#include <log.h>
-
 #include <ydb/public/sdk/cpp/include/ydb-cpp-sdk/client/iam/iam.h>
 #include <ydb/public/sdk/cpp/include/ydb-cpp-sdk/client/types/credentials/credentials.h>
 
@@ -155,20 +153,6 @@ bool ParseYdbAuthScheme(const std::string& value, EYdbAuthScheme& out) {
     return false;
 }
 
-const char* YdbAuthSchemeToString(EYdbAuthScheme scheme) {
-    switch (scheme) {
-        case EYdbAuthScheme::Anonymous:
-            return "anonymous";
-        case EYdbAuthScheme::Login:
-            return "login";
-        case EYdbAuthScheme::SaKey:
-            return "sa_key";
-        case EYdbAuthScheme::Token:
-            return "token";
-    }
-    return "unknown";
-}
-
 std::string ReadYdbToken(const TYdbConnectionConfig& config) {
     if (!config.Token.empty()) {
         return config.Token;
@@ -194,15 +178,6 @@ NYdb::TDriverConfig BuildYdbDriverConfig(const TYdbConnectionConfig& config) {
     driverConfig.SetDatabase(config.Database);
     ApplySecureConnection(driverConfig, enableSsl, config.CaFile);
     ApplyCredentials(driverConfig, config);
-
-    const bool ssl = enableSsl || !config.CaFile.empty();
-    if (config.CaFile.empty()) {
-        LOG_I("YDB auth_scheme=" << YdbAuthSchemeToString(config.AuthScheme)
-              << " ssl=" << (ssl ? "on" : "off"));
-    } else {
-        LOG_I("YDB auth_scheme=" << YdbAuthSchemeToString(config.AuthScheme)
-              << " ssl=on ca_file=" << config.CaFile);
-    }
 
     return driverConfig;
 }
