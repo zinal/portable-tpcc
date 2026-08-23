@@ -16,7 +16,7 @@ import (
 const (
 	DefaultHost                        = "localhost"
 	DefaultWarehouses                  = 10
-	DefaultBatchRows                   = 10000
+	DefaultBatchRows                   = 2000
 	DefaultSeed                  int64 = 1
 	DefaultSSHKnownHosts               = "~/.ssh/known_hosts"
 	DefaultSSHConnectTimeout           = "10s"

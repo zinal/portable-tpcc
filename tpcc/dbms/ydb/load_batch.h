@@ -9,11 +9,11 @@
 
 namespace NTpcc {
 
-// parameter-reference.md: data.batch_rows is 10000 when ≤ 0. The YDB loader
+// parameter-reference.md: data.batch_rows is 2000 when ≤ 0. The YDB loader
 // must apply this itself: standalone import and a run-config with 0 otherwise
 // send one BulkUpsert per table (100k stock rows), which can exceed the
 // server 300s upload deadline.
-constexpr int DEFAULT_YDB_LOAD_BATCH_ROWS = 10000;
+constexpr int DEFAULT_YDB_LOAD_BATCH_ROWS = 2000;
 
 inline int EffectiveYdbLoadBatchRows(int batchRows) {
     return batchRows > 0 ? batchRows : DEFAULT_YDB_LOAD_BATCH_ROWS;

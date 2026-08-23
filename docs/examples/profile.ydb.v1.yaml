@@ -37,7 +37,7 @@ scale:
 data:
   # Explicit seed for repeatable cross-DBMS engineering comparison.
   seed: 731910246
-  batch_rows: 10000
+  batch_rows: 2000
 
 # Omitted workload fields use defaults embedded in mind-tpcc.
 workload:

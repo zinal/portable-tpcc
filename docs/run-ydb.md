@@ -139,7 +139,7 @@ runs can keep `--threads` / `threads_per_worker` low (including auto
 `indexes` creates secondary indexes after load (YDB has no PostgreSQL-style
 `ANALYZE` step).
 
-Load uses idempotent Arrow `BulkUpsert`. `data.batch_rows` (default **10000**
+Load uses idempotent Arrow `BulkUpsert`. `data.batch_rows` (default **2000**
 when omitted or ≤ 0) sizes each request. The YDB server upload actor has a
 hard **300s** deadline (`TUploadRowsBase`). A timeout looks like:
 
@@ -152,7 +152,7 @@ string form of an uninitialized `TLongTxId` (`NodeId == 0`). Row-table
 `BulkUpsert` writes through DataShard and never begins a LongTx; the timeout
 handler always prints that field. The loader retries TIMEOUT / overload
 (specification §6: `PutBatch` is idempotent). If timeouts persist, lower
-`data.batch_rows` (for example 2000) or reduce loader `--threads`.
+`data.batch_rows` further or reduce loader `--threads`.
 
 ## Orchestrated run (`mind-tpcc`)
 
