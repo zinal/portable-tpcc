@@ -197,10 +197,10 @@ NYdb::TDriverConfig BuildYdbDriverConfig(const TYdbConnectionConfig& config) {
 
     const bool ssl = enableSsl || !config.CaFile.empty();
     if (config.CaFile.empty()) {
-        LOG_I("YDB auth_scheme=" << YdbAuthSchemeToString(config.AuthScheme)
+        LOG_D("YDB auth_scheme=" << YdbAuthSchemeToString(config.AuthScheme)
               << " ssl=" << (ssl ? "on" : "off"));
     } else {
-        LOG_I("YDB auth_scheme=" << YdbAuthSchemeToString(config.AuthScheme)
+        LOG_D("YDB auth_scheme=" << YdbAuthSchemeToString(config.AuthScheme)
               << " ssl=on ca_file=" << config.CaFile);
     }
 
