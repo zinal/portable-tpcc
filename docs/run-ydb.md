@@ -90,6 +90,9 @@ chunk size as PostgreSQL and OceanBase) and run `--threads` query chunks in
 parallel against the shared QueryClient. Catalog ids run one after another;
 the parallel chunks apply to the current id, so `Checking … [OK]` appears as
 each check finishes (shared `RecordCheckResult` helper; specification §9.2).
+The driver uses `TBalancingPolicy::UseAllNodes`. Query `CreateSession` sends
+the `session-balancer` client capability so the server can place sessions
+(Table API already does this; Query API does not by default).
 Under `mind-tpcc`, `--threads` comes from CLI `--threads` when set, otherwise
 `runtime.check_concurrency` (`0` / omit = `min(scale.warehouses, 32)`).
 TPC-C §3.3.2 predicates are unchanged.

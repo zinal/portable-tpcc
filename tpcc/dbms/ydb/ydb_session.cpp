@@ -960,7 +960,7 @@ TYdbTpccSession::TYdbTpccSession(TYdbConnection& connection, std::string path)
 
 TFuture<std::unique_ptr<ITpccTransaction>> TYdbTpccSession::Begin(EIsolationLevel /*isolation*/) {
     return Then(
-        BridgeYdbFuture(Connection_.QueryClient().GetSession()),
+        BridgeYdbFuture(Connection_.QueryClient().GetSession(MakeYdbCreateSessionSettings())),
         [this](NYdb::NQuery::TCreateSessionResult result) {
             if (!result.IsSuccess()) {
                 throw NYdb::NStatusHelpers::TYdbErrorException(std::move(result));

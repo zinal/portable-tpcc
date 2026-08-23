@@ -4,7 +4,6 @@
 #include <ydb/public/sdk/cpp/include/ydb-cpp-sdk/client/query/client.h>
 #include <ydb/public/sdk/cpp/include/ydb-cpp-sdk/client/table/table.h>
 
-#include <memory>
 #include <string>
 
 namespace NTpcc {
@@ -37,6 +36,11 @@ const char* YdbAuthSchemeToString(EYdbAuthScheme scheme);
 
 std::string ReadYdbToken(const TYdbConnectionConfig& config);
 NYdb::TDriverConfig BuildYdbDriverConfig(const TYdbConnectionConfig& config);
+
+// CreateSession settings that enable the server-side session balancer
+// (x-ydb-client-capabilities: session-balancer). TableClient always sends
+// this; QueryClient does not, so every adapter GetSession must pass it.
+NYdb::NQuery::TCreateSessionSettings MakeYdbCreateSessionSettings();
 
 class TYdbConnection {
 public:

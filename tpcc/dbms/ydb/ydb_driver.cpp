@@ -3,10 +3,13 @@
 #include <log.h>
 
 #include <ydb/public/sdk/cpp/include/ydb-cpp-sdk/client/iam/iam.h>
+#include <ydb/public/sdk/cpp/include/ydb-cpp-sdk/client/resources/ydb_resources.h>
 #include <ydb/public/sdk/cpp/include/ydb-cpp-sdk/client/types/credentials/credentials.h>
+#include <ydb/public/sdk/cpp/include/ydb-cpp-sdk/client/types/ydb.h>
 
 #include <password_secret.h>
 
+#include <cstdint>
 #include <cstdlib>
 #include <fstream>
 #include <sstream>
@@ -204,13 +207,43 @@ NYdb::TDriverConfig BuildYdbDriverConfig(const TYdbConnectionConfig& config) {
               << " ssl=on ca_file=" << config.CaFile);
     }
 
+    // Same policy as `ydb workload`: consider every discovered node, not only
+    // the preferred location. Session placement itself is still done by the
+    // SDK elector + server session-balancer (see MakeYdbCreateSessionSettings).
+    driverConfig.SetBalancingPolicy(NYdb::TBalancingPolicy::UseAllNodes());
+
     return driverConfig;
+}
+
+namespace {
+
+// Default QueryClient pool is 50 active / 10 idle — too small for check
+// --threads and for a worker with many terminals. The pool does not
+// pre-create MaxActiveSessions.
+constexpr uint32_t kMaxQuerySessions = 8192;
+
+NYdb::NQuery::TClientSettings MakeQueryClientSettings() {
+    return NYdb::NQuery::TClientSettings()
+        .SessionPoolSettings(
+            NYdb::NQuery::TSessionPoolSettings()
+                .MaxActiveSessions(kMaxQuerySessions)
+                .MinPoolSize(0));
+}
+
+} // anonymous
+
+NYdb::NQuery::TCreateSessionSettings MakeYdbCreateSessionSettings() {
+    NYdb::NQuery::TCreateSessionSettings settings;
+    settings.Header({
+        {NYdb::YDB_CLIENT_CAPABILITIES, NYdb::YDB_CLIENT_CAPABILITY_SESSION_BALANCER},
+    });
+    return settings;
 }
 
 TYdbConnection::TYdbConnection(TYdbConnectionConfig config)
     : Config_(std::move(config))
     , Driver_(BuildYdbDriverConfig(Config_))
-    , QueryClient_(Driver_)
+    , QueryClient_(Driver_, MakeQueryClientSettings())
     , TableClient_(Driver_)
 {
 }

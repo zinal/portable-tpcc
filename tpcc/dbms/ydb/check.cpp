@@ -463,9 +463,18 @@ bool QueryBool(TYdbConnection& connection, const std::string& query) {
         "PRAGMA TablePathPrefix(\"{}\");\n{}",
         connection.AbsolutePathPrefix(),
         query);
-    auto result = connection.QueryClient().RetryQuery([&](NYdb::NQuery::TSession session) {
-        return session.ExecuteQuery(sql, NYdb::NQuery::TTxControl::NoTx());
-    }).GetValueSync();
+    // RetryQuery's GetSession does not accept CreateSession settings.
+    // Request the session-balancer capability explicitly so the server
+    // can place the session instead of the load-factor elector.
+    auto sessionResult = connection.QueryClient()
+        .GetSession(MakeYdbCreateSessionSettings())
+        .GetValueSync();
+    if (!sessionResult.IsSuccess()) {
+        throw std::runtime_error(sessionResult.GetIssues().ToOneLineString());
+    }
+    auto result = sessionResult.GetSession()
+        .ExecuteQuery(sql, NYdb::NQuery::TTxControl::NoTx())
+        .GetValueSync();
     if (!result.IsSuccess()) {
         throw std::runtime_error(result.GetIssues().ToOneLineString());
     }
