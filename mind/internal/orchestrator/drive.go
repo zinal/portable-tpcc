@@ -75,10 +75,6 @@ func (o *Orchestrator) runtimeRoot(sess remote.Session) (string, error) {
 	return root, nil
 }
 
-func (o *Orchestrator) localRuntimeRoot() (string, error) {
-	return paths.ExpandHome(o.Expanded.RemoteRoot)
-}
-
 func (o *Orchestrator) sessionRunDir(sess remote.Session, runID string) (string, error) {
 	root, err := o.runtimeRoot(sess)
 	if err != nil {
