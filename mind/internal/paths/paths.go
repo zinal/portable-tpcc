@@ -22,42 +22,6 @@ func ExpandHome(path string) (string, error) {
 	return filepath.Join(home, path[2:]), nil
 }
 
-// ResolveUnderHome interprets a runtime-host path against the account home.
-// Absolute paths are cleaned. "~" / "~/" expand to home. Other relative
-// paths (including "./foo") are joined under home — never the process cwd.
-func ResolveUnderHome(path string) (string, error) {
-	path = strings.TrimSpace(path)
-	if path == "" {
-		return "", fmt.Errorf("empty path")
-	}
-	if filepath.IsAbs(path) {
-		return filepath.Clean(path), nil
-	}
-	expanded, err := ExpandHome(path)
-	if err != nil {
-		return "", err
-	}
-	if expanded != path {
-		return filepath.Clean(expanded), nil
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Clean(filepath.Join(home, path)), nil
-}
-
-// RemoteHomeForm is the host-native form of a runtime path for SSH.
-// Absolute and ~/ paths are unchanged. A relative path becomes ~/rel so the
-// remote account home is used, not the control-host process cwd.
-func RemoteHomeForm(path string) string {
-	path = strings.TrimSpace(path)
-	if path == "" || path == "~" || strings.HasPrefix(path, "~/") || filepath.IsAbs(path) {
-		return path
-	}
-	return "~/" + strings.TrimPrefix(path, "./")
-}
-
 // Normalize resolves symlinks and rejects escapes outside permitted roots.
 func Normalize(path string, permittedRoots []string) (string, error) {
 	abs, err := filepath.Abs(path)

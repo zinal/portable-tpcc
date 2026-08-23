@@ -1367,11 +1367,7 @@ func TestLogAggregateSummaryPrintsBriefStats(t *testing.T) {
 	}
 }
 
-func TestRuntimeRootRelativeUsesHomeNotCwd(t *testing.T) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		t.Fatal(err)
-	}
+func TestRuntimeRootKeepsRelativeRemoteRoot(t *testing.T) {
 	wd, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
@@ -1393,16 +1389,18 @@ func TestRuntimeRootRelativeUsesHomeNotCwd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := filepath.Join(home, "portable-tpcc")
-	if got != want {
-		t.Fatalf("local runtimeRoot=%q, want %q (cwd=%q)", got, want, cwd)
+	if got != "portable-tpcc" {
+		t.Fatalf("local runtimeRoot=%q, want portable-tpcc (cwd=%q)", got, cwd)
+	}
+	if filepath.IsAbs(got) {
+		t.Fatalf("local runtimeRoot must stay relative, got %q", got)
 	}
 
 	sshRoot, err := o.runtimeRoot(&fakeSession{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sshRoot != "~/portable-tpcc" {
-		t.Fatalf("ssh runtimeRoot=%q, want ~/portable-tpcc", sshRoot)
+	if sshRoot != "portable-tpcc" {
+		t.Fatalf("ssh runtimeRoot=%q, want portable-tpcc", sshRoot)
 	}
 }

@@ -137,7 +137,7 @@ values with the defaults below.
 | Field | Required | Default | Meaning |
 | --- | --- | --- | --- |
 | `local_artifacts` | yes | `.` | Control-host directory that contains `tpcc-<dbms>` (`~` expanded locally). |
-| `remote_root` | yes | `portable-tpcc` | Runtime-host directory for the shared binary and per-run dirs. Relative paths and `~/` are under the **runtime account home** (SSH login home, or the loopback user's home). They are **not** resolved against the control-host process cwd. Do not use a control-host-only absolute path. |
+| `remote_root` | yes | `portable-tpcc` | Runtime-host directory for the shared binary and per-run dirs. Relative and `~/` values are passed through as-is and interpreted on that host (SSH login directory). `mind-tpcc` does **not** convert them to an absolute path. Do not use a control-host-only absolute path. |
 | `result_root` | yes | `results` | Control-host results directory. Artifacts: `result_root/<run_id>/`. |
 | `state_dir` | yes | `state` | Control-host orchestrator state. |
 

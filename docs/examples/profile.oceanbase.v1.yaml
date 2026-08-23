@@ -12,7 +12,7 @@ ssh:
 
 paths:
   local_artifacts: ./dist
-  # Interpreted on each runtime host under the account home. Relative OK; do
+  # Interpreted on each runtime host (SSH login directory). Relative OK; do
   # not use a control-host absolute path unless that same path exists remotely.
   remote_root: ./remote
   result_root: ./results

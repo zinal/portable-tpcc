@@ -158,10 +158,9 @@ type ExpandedPaths struct {
 
 // ExpandProfilePaths resolves ~ in control-host path fields.
 //
-// paths.remote_root is left host-native: relative paths and ~/ are interpreted
-// on each runtime host under the account home (SSH login home / loopback home),
-// not against the control-host process cwd. Local loopback sessions expand
-// that form when opening the session.
+// paths.remote_root is left host-native: relative and ~/ forms are not
+// converted to an absolute path here (that would use the control-host cwd
+// or os.UserHomeDir). Each runtime host interprets them itself.
 func ExpandProfilePaths(p *profile.Profile) (ExpandedPaths, error) {
 	local, err := paths.ExpandHome(p.Paths.LocalArtifacts)
 	if err != nil {
