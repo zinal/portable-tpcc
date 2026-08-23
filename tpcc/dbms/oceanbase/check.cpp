@@ -431,39 +431,6 @@ void PostImportCheckDeliveredAmountZero(TObConnection& conn, int startWh, int en
                     startWh, endWh));
 }
 
-void RecordResult(TCheckReport& report, const std::string& id, ECheckStatus status,
-                  const std::string& detail, bool print) {
-    TCheckResult r;
-    r.Id = id;
-    if (const auto* entry = FindCheckCatalogEntry(id)) {
-        r.Title = std::string(entry->Title);
-    } else {
-        r.Title = id;
-    }
-    r.Status = status;
-    r.Detail = detail;
-    switch (status) {
-        case ECheckStatus::Passed: ++report.PassedCount; break;
-        case ECheckStatus::Failed: ++report.FailedCount; break;
-        case ECheckStatus::Skipped: ++report.SkippedCount; break;
-        case ECheckStatus::Error: ++report.ErrorCount; break;
-    }
-    if (print) {
-        const char* tag = "[OK]";
-        if (status == ECheckStatus::Failed || status == ECheckStatus::Error) {
-            tag = "[Failed]";
-        } else if (status == ECheckStatus::Skipped) {
-            tag = "[Skipped]";
-        }
-        std::cout << "Checking " << r.Title << " " << tag;
-        if (!detail.empty() && status != ECheckStatus::Passed) {
-            std::cout << ": " << detail;
-        }
-        std::cout << std::endl;
-    }
-    report.Results.push_back(std::move(r));
-}
-
 struct TCheckJob {
     std::string Id;
     // All tasks must succeed for the check to pass (used for warehouse-range chunks).
@@ -542,7 +509,7 @@ void RunCheckJobs(
 
     for (auto& job : jobs) {
         if (job.Tasks.empty()) {
-            RecordResult(report, job.Id, ECheckStatus::Passed, {}, print);
+            RecordCheckResult(report, job.Id, ECheckStatus::Passed, {}, print);
             continue;
         }
 
@@ -592,9 +559,9 @@ void RunCheckJobs(
                 std::lock_guard lock(outcome.DetailMutex);
                 detail = outcome.Detail;
             }
-            RecordResult(report, job.Id, ECheckStatus::Failed, detail, print);
+            RecordCheckResult(report, job.Id, ECheckStatus::Failed, detail, print);
         } else {
-            RecordResult(report, job.Id, ECheckStatus::Passed, {}, print);
+            RecordCheckResult(report, job.Id, ECheckStatus::Passed, {}, print);
         }
     }
 }
@@ -672,7 +639,7 @@ TCheckReport RunObChecks(const std::string& connectionString, const TCheckReques
     const int concurrency = request.CheckConcurrency <= 1 ? 1 : request.CheckConcurrency;
 
     if (request.WarehouseCount <= 0) {
-        RecordResult(report, "cardinality.warehouse", ECheckStatus::Error,
+        RecordCheckResult(report, "cardinality.warehouse", ECheckStatus::Error,
                      "Zero warehouses specified", print);
         return report;
     }
@@ -703,7 +670,7 @@ TCheckReport RunObChecks(const std::string& connectionString, const TCheckReques
                 if (!CheckAppliesToPhase(entry.Phase, request.Phase)) {
                     continue;
                 }
-                RecordResult(report, std::string(entry.Id), ECheckStatus::Skipped,
+                RecordCheckResult(report, std::string(entry.Id), ECheckStatus::Skipped,
                              "skipped: base cardinality failed", print);
             }
             return report;
@@ -712,7 +679,7 @@ TCheckReport RunObChecks(const std::string& connectionString, const TCheckReques
         auto consistencyJobs = BuildConsistencyJobs(request, afterImport);
         RunCheckJobs(report, connectionString, request.Path, concurrency, consistencyJobs, print);
     } catch (const std::exception& ex) {
-        RecordResult(report, "connection", ECheckStatus::Error, ex.what(), print);
+        RecordCheckResult(report, "connection", ECheckStatus::Error, ex.what(), print);
     }
 
     if (report.Ok()) {

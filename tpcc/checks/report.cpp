@@ -1,14 +1,60 @@
 #include "report.h"
 
+#include "catalog.h"
+
 #include <nlohmann/json.hpp>
 
 #include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <stdexcept>
+#include <utility>
 
 namespace fs = std::filesystem;
 
 namespace NTpcc {
+
+void RecordCheckResult(TCheckReport& report, TCheckResult result, bool print) {
+    switch (result.Status) {
+        case ECheckStatus::Passed: ++report.PassedCount; break;
+        case ECheckStatus::Failed: ++report.FailedCount; break;
+        case ECheckStatus::Skipped: ++report.SkippedCount; break;
+        case ECheckStatus::Error: ++report.ErrorCount; break;
+    }
+    if (print) {
+        const char* tag = "[OK]";
+        if (result.Status == ECheckStatus::Failed || result.Status == ECheckStatus::Error) {
+            tag = "[Failed]";
+        } else if (result.Status == ECheckStatus::Skipped) {
+            tag = "[Skipped]";
+        }
+        std::cout << "Checking " << result.Title << " " << tag;
+        if (!result.Detail.empty() && result.Status != ECheckStatus::Passed) {
+            std::cout << ": " << result.Detail;
+        }
+        std::cout << std::endl;
+    }
+    report.Results.push_back(std::move(result));
+}
+
+void RecordCheckResult(
+    TCheckReport& report,
+    std::string id,
+    ECheckStatus status,
+    const std::string& detail,
+    bool print)
+{
+    TCheckResult result;
+    result.Id = std::move(id);
+    if (const auto* entry = FindCheckCatalogEntry(result.Id)) {
+        result.Title = std::string(entry->Title);
+    } else {
+        result.Title = result.Id;
+    }
+    result.Status = status;
+    result.Detail = detail;
+    RecordCheckResult(report, std::move(result), print);
+}
 
 void WriteCheckReportJson(const std::string& path, const TCheckReport& report) {
     nlohmann::json checks = nlohmann::json::array();

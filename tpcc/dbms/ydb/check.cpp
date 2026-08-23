@@ -33,24 +33,6 @@ std::string PhaseName(ECheckPhase phase) {
     return phase == ECheckPhase::AfterImport ? "after-import" : "after-test";
 }
 
-void AddResult(TCheckReport& report, TCheckResult result) {
-    switch (result.Status) {
-        case ECheckStatus::Passed:
-            ++report.PassedCount;
-            break;
-        case ECheckStatus::Failed:
-            ++report.FailedCount;
-            break;
-        case ECheckStatus::Skipped:
-            ++report.SkippedCount;
-            break;
-        case ECheckStatus::Error:
-            ++report.ErrorCount;
-            break;
-    }
-    report.Results.push_back(std::move(result));
-}
-
 // Zero money literal matching the Decimal(22,9) physical type.
 constexpr const char* kZeroMoney = "CAST('0.00' AS Decimal(22,9))";
 
@@ -624,13 +606,17 @@ TCheckReport RunYdbChecks(const TYdbConnectionConfig& connectionConfig, const TC
 
     TYdbConnection connection(connectionConfig);
     auto queries = BuildQueries(request.WarehouseCount);
+    const bool print = true;
     const int concurrency = request.CheckConcurrency <= 1 ? 1 : request.CheckConcurrency;
     if (concurrency > 1) {
-        LOG_I("Running YDB checks with concurrency=" << concurrency);
+        std::cout << "Running checks with concurrency=" << concurrency << std::endl;
     }
 
     // Match PG/OceanBase: abort consistency/post-import suite if base cardinality failed.
+    // Catalog ids run one at a time (specification §9.2) so Checking … [OK]/[Failed]
+    // is printed as soon as that job's warehouse chunks finish.
     bool baseFailed = false;
+    bool announcedBaseFailure = false;
     for (const auto& entry : CheckCatalog()) {
         if (!CheckAppliesToPhase(entry.Phase, request.Phase)) {
             continue;
@@ -642,9 +628,13 @@ TCheckReport RunYdbChecks(const TYdbConnectionConfig& connectionConfig, const TC
         const bool isCardinality = std::string_view(entry.Id).rfind("cardinality.", 0) == 0;
 
         if (baseFailed && !isCardinality) {
+            if (!announcedBaseFailure) {
+                std::cout << "Base checks failed, aborting consistency checks!" << std::endl;
+                announcedBaseFailure = true;
+            }
             result.Status = ECheckStatus::Skipped;
             result.Detail = "skipped: base cardinality failed";
-            AddResult(report, std::move(result));
+            RecordCheckResult(report, std::move(result), print);
             continue;
         }
 
@@ -652,14 +642,17 @@ TCheckReport RunYdbChecks(const TYdbConnectionConfig& connectionConfig, const TC
         if (it == queries.end()) {
             result.Status = ECheckStatus::Skipped;
             result.Detail = "not implemented for YDB yet";
-            AddResult(report, std::move(result));
+            RecordCheckResult(report, std::move(result), print);
             continue;
         }
 
         RunQueryChunks(connection, it->second, concurrency, result, isCardinality, baseFailed);
-        AddResult(report, std::move(result));
+        RecordCheckResult(report, std::move(result), print);
     }
 
+    if (report.Ok()) {
+        std::cout << "Everything is good!" << std::endl;
+    }
     return report;
 }
 
@@ -674,13 +667,6 @@ void CheckSync(
     request.Phase = afterImport ? ECheckPhase::AfterImport : ECheckPhase::AfterTest;
     request.CheckConcurrency = checkConcurrency <= 1 ? 1 : checkConcurrency;
     auto report = RunYdbChecks(connectionConfig, request);
-    for (const auto& r : report.Results) {
-        std::cout << r.Id << ": " << CheckStatusToString(r.Status);
-        if (!r.Detail.empty()) {
-            std::cout << " (" << r.Detail << ")";
-        }
-        std::cout << "\n";
-    }
     if (!report.Ok()) {
         throw std::runtime_error("YDB TPC-C checks failed");
     }

@@ -6,8 +6,11 @@
 
 namespace NTpcc {
 
+// Evaluates the shared catalog and prints Checking … [OK]/[Failed]/[Skipped]
+// after each catalog id (RecordCheckResult; specification §9.2).
 TCheckReport RunYdbChecks(const TYdbConnectionConfig& connectionConfig, const TCheckRequest& request);
 
+// Standalone CLI helper: prints progress and throws if any check fails.
 void CheckSync(
     const TYdbConnectionConfig& connectionConfig,
     int warehouseCount,
