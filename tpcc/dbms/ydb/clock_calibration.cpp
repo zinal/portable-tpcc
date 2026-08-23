@@ -4,6 +4,19 @@
 
 namespace NTpcc {
 
+int64_t ServerEpochMsFromTimestampValue(NYdb::TValueParser& parser) {
+    // YQL may wrap CurrentUtcTimestamp() as Optional<Timestamp>. The previous
+    // CAST(... AS Int64) / 1000 form was always Optional (CAST is fallible).
+    if (parser.GetKind() == NYdb::TTypeParser::ETypeKind::Optional) {
+        const auto ts = parser.GetOptionalTimestamp();
+        if (!ts.has_value()) {
+            throw std::runtime_error("clock calibration query returned null timestamp");
+        }
+        return static_cast<int64_t>(ts->MilliSeconds());
+    }
+    return static_cast<int64_t>(parser.GetTimestamp().MilliSeconds());
+}
+
 TClockCalibration MeasureClockCalibration(const TYdbConnectionConfig& connectionConfig,
                                           const std::string& timeSource) {
     TYdbConnection connection(connectionConfig);
@@ -11,7 +24,7 @@ TClockCalibration MeasureClockCalibration(const TYdbConnectionConfig& connection
         [&connection]() -> int64_t {
             auto result = connection.QueryClient().RetryQuery([](NYdb::NQuery::TSession session) {
                 return session.ExecuteQuery(
-                    "SELECT CAST(CurrentUtcTimestamp() AS Int64) / 1000 AS server_ms;",
+                    "SELECT CurrentUtcTimestamp() AS server_ts;",
                     NYdb::NQuery::TTxControl::NoTx());
             }).GetValueSync();
             if (!result.IsSuccess()) {
@@ -21,7 +34,7 @@ TClockCalibration MeasureClockCalibration(const TYdbConnectionConfig& connection
             if (!parser.TryNextRow()) {
                 throw std::runtime_error("clock calibration query returned no rows");
             }
-            return parser.ColumnParser("server_ms").GetInt64();
+            return ServerEpochMsFromTimestampValue(parser.ColumnParser("server_ts"));
         },
         timeSource);
 }
