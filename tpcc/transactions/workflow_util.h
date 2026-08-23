@@ -9,6 +9,7 @@
 #include <log.h>
 #include <task_queue.h>
 
+#include <string_view>
 #include <utility>
 
 namespace NTpcc {
@@ -82,8 +83,12 @@ inline void ThrowIfFinalCommitFailed(const TFinalCommitResult& r) {
     ThrowIfCommitFailed(r.Commit);
 }
 
-inline bool FailPermanent(size_t terminalId, const char* msg) {
-    LOG_E("Terminal " << terminalId << " " << msg);
+inline bool FailPermanent(size_t terminalId, const char* msg, std::string_view detail = {}) {
+    if (detail.empty()) {
+        LOG_E("Terminal " << terminalId << " " << msg);
+    } else {
+        LOG_E("Terminal " << terminalId << " " << msg << ": " << detail);
+    }
     RequestStopWithError();
     return false;
 }

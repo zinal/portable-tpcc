@@ -66,7 +66,8 @@ TFuture<bool> GetPaymentTask(
             in.WarehouseID, in.DistrictID, in.PaymentAmount});
         ThrowIfRetryable(r);
         if (!r.Ok) {
-            co_return FailPermanent(context.TerminalID, "Payment location update failed");
+            co_return FailPermanent(context.TerminalID, "Payment location update failed",
+                r.Message);
         }
         loc = std::get<TWarehouseDistrictInfo>(r.Payload);
     }
@@ -77,7 +78,8 @@ TFuture<bool> GetPaymentTask(
             in.CustomerWarehouseID, in.CustomerDistrictID, in.LastName});
         ThrowIfRetryable(r);
         if (!r.Ok) {
-            co_return FailPermanent(context.TerminalID, "Payment customer by name failed");
+            co_return FailPermanent(context.TerminalID, "Payment customer by name failed",
+                r.Message);
         }
         auto selected = SelectCustomerByLastNameMedian(
             std::get<std::vector<TCustomerRow>>(r.Payload));
@@ -90,7 +92,8 @@ TFuture<bool> GetPaymentTask(
             in.CustomerWarehouseID, in.CustomerDistrictID, in.CustomerID});
         ThrowIfRetryable(r);
         if (!r.Ok) {
-            co_return FailPermanent(context.TerminalID, "Payment customer not found");
+            co_return FailPermanent(context.TerminalID, "Payment customer not found",
+                r.Message);
         }
         customer = std::get<TCustomerRow>(r.Payload);
     }
@@ -127,7 +130,8 @@ TFuture<bool> GetPaymentTask(
             true, std::move(newData)});
         ThrowIfRetryable(r);
         if (!r.Ok) {
-            co_return FailPermanent(context.TerminalID, "Payment update customer failed");
+            co_return FailPermanent(context.TerminalID, "Payment update customer failed",
+                r.Message);
         }
     } else {
         auto r = co_await SuspendExecute(tx, context, TUpdateCustomerPayment{
@@ -136,7 +140,8 @@ TFuture<bool> GetPaymentTask(
             false, {}});
         ThrowIfRetryable(r);
         if (!r.Ok) {
-            co_return FailPermanent(context.TerminalID, "Payment update customer failed");
+            co_return FailPermanent(context.TerminalID, "Payment update customer failed",
+                r.Message);
         }
     }
 
@@ -152,7 +157,8 @@ TFuture<bool> GetPaymentTask(
             in.WarehouseID, in.DistrictID, in.PaymentAmount, historyData});
         ThrowIfRetryable(finalResult.Operation);
         if (!finalResult.Operation.Ok) {
-            co_return FailPermanent(context.TerminalID, "Payment insert history failed");
+            co_return FailPermanent(context.TerminalID, "Payment insert history failed",
+                finalResult.Operation.Message);
         }
         ThrowIfCommitFailed(finalResult.Commit);
     }
