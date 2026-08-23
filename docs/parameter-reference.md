@@ -222,7 +222,7 @@ terminals are never split across workers.
 | Field | Default | Meaning |
 | --- | --- | --- |
 | `seed` | omitted → loader default **1** | Deterministic generator seed. Set explicitly for cross-DBMS comparison. |
-| `batch_rows` | `10000` if ≤ 0 | Bulk-load batch size. Must not be negative. |
+| `batch_rows` | `2000` if ≤ 0 | Bulk-load batch size. Must not be negative. `mind-tpcc` and every adapter (`tpcc/loader` `DEFAULT_LOAD_BATCH_ROWS`) apply this fallback. |
 
 ### `workload`
 

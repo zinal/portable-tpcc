@@ -23,7 +23,8 @@ TPutBatchResult PutItemsIdempotent(
 // Loads all data owned by a single warehouse id (warehouse, district, stock,
 // customer, history, oorder, new_order, order_line). On primary-key conflict
 // (duplicate key), deletes that warehouse range and reloads.
-// When batchRows > 0, large COPY streams are flushed every batchRows rows.
+// Large COPY streams (item/stock/customer) flush every EffectiveLoadBatchRows
+// rows (2000 when batchRows ≤ 0).
 TPutBatchResult PutWarehouseIdempotent(
     pqxx::connection& conn,
     uint64_t seed,

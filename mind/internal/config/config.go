@@ -299,7 +299,7 @@ func BuildRunConfig(in BuildInput) (*RunConfig, error) {
 
 	batchRows := p.Data.BatchRows
 	if batchRows <= 0 {
-		batchRows = 10000
+		batchRows = profile.DefaultBatchRows
 	}
 
 	data := DataBlock{BatchRows: batchRows}

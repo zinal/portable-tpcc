@@ -16,7 +16,7 @@
       }
     },
     "scale": {"warehouses": 200},
-    "data": {"seed": 731910246, "batch_rows": 10000},
+    "data": {"seed": 731910246, "batch_rows": 2000},
     "workload": {
       "terminals_per_warehouse": 10,
       "transaction_mix": {

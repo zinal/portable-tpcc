@@ -62,26 +62,6 @@ TPutBatchResult FailResult(const std::exception& ex) {
     return r;
 }
 
-// Match tpcc-oceanbase-cpp ObSession::ExecuteBulk (BULK_BATCH_ROWS = 200):
-// fixed-size multi-row INSERTs + short transactions. Larger batches / one giant
-// warehouse TX make mysql_stmt_prepare exceed default ob_query_timeout (10s)
-// while DB I/O looks idle.
-constexpr size_t BulkBatchRows = 200;
-// Hard MySQL / OceanBase prepared-statement limit (ER_PS_MANY_PARAM / 1390).
-constexpr size_t MaxPreparedPlaceholders = 65535;
-
-size_t MaxRowsForColumns(size_t columnCount) {
-    if (columnCount == 0) {
-        return 1;
-    }
-    return std::max<size_t>(1, MaxPreparedPlaceholders / columnCount);
-}
-
-size_t EffectiveBatchSize(size_t columnCount, int batchRows) {
-    const size_t requested = batchRows > 0 ? static_cast<size_t>(batchRows) : BulkBatchRows;
-    return std::min({requested, BulkBatchRows, MaxRowsForColumns(columnCount)});
-}
-
 void InsertRowsChunk(
     TObConnection& conn,
     const std::string& table,
@@ -161,7 +141,7 @@ void BulkInsert(
 {
     conn.BeginRepeatableRead();
     try {
-        EmitBatches(conn, table, columns, EffectiveBatchSize(columns.size(), batchRows), emit, suffix);
+        EmitBatches(conn, table, columns, EffectiveObLoadBatchRows(columns.size(), batchRows), emit, suffix);
         conn.Commit();
     } catch (...) {
         conn.Rollback();

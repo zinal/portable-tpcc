@@ -3,6 +3,8 @@
 #include "ob_connection.h"
 #include "ob_errors.h"
 
+#include <put_batch.h>
+
 #include <stdexcept>
 
 namespace NTpcc {
@@ -296,7 +298,7 @@ TFuture<void> TObSession::ExecuteBulk(
             CheckShutdown();
             EnsureTxn(*Conn_, InTxn_);
 
-            constexpr size_t BULK_BATCH_ROWS = 200;
+            constexpr size_t BULK_BATCH_ROWS = static_cast<size_t>(DEFAULT_LOAD_BATCH_ROWS);
             std::vector<TObBulkRow> batch;
             batch.reserve(BULK_BATCH_ROWS);
 
