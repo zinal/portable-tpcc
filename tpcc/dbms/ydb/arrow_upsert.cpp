@@ -1,11 +1,18 @@
 #include "arrow_upsert.h"
 
+#include "ydb_error_classifier.h"
+
+#include <log.h>
+
 #include <contrib/libs/apache/arrow/cpp/src/arrow/io/memory.h>
 #include <contrib/libs/apache/arrow/cpp/src/arrow/ipc/writer.h>
 #include <ydb/public/sdk/cpp/include/ydb-cpp-sdk/client/table/table.h>
 
+#include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <stdexcept>
+#include <thread>
 
 namespace NTpcc {
 
@@ -94,6 +101,19 @@ std::string SerializeArrowBatch(const std::shared_ptr<arrow::RecordBatch>& batch
     return out;
 }
 
+bool ShouldRetryYdbBulkUpsert(const NYdb::TStatus& status) {
+    // PutBatch is idempotent (specification §6), so even AmbiguousCommit is
+    // safe: a retry overwrites the same primary keys.
+    switch (TYdbErrorClassifier{}.ClassifyStatus(status)) {
+        case EErrorClass::RetryableAbort:
+        case EErrorClass::NotCommitted:
+        case EErrorClass::AmbiguousCommit:
+            return true;
+        default:
+            return false;
+    }
+}
+
 void BulkUpsertArrow(
     TYdbConnection& connection,
     const std::string& table,
@@ -104,14 +124,37 @@ void BulkUpsertArrow(
     }
     const std::string schema = SerializeArrowSchema(*batch->schema());
     const std::string data = SerializeArrowBatch(batch);
-    auto status = connection.TableClient().BulkUpsert(
-        connection.TablePath(table),
-        NYdb::NTable::EDataFormat::ApacheArrow,
-        data,
-        schema).GetValueSync();
-    if (!status.IsSuccess()) {
-        throw std::runtime_error(
-            "bulk upsert " + table + ": " + status.GetIssues().ToOneLineString());
+    const std::string path = connection.TablePath(table);
+
+    // YDB TUploadRowsBase caps BulkUpsert at 300s. The SDK retries OVERLOADED
+    // but not TIMEOUT, so a single shard stall used to fail the whole loader.
+    constexpr int kMaxAttempts = 8;
+    NYdb::NTable::TBulkUpsertSettings settings;
+    settings.RetrySettings(
+        NYdb::NRetry::TRetryOperationSettings()
+            .MaxRetries(0)
+            .Idempotent(true));
+
+    for (int attempt = 1; ; ++attempt) {
+        auto status = connection.TableClient().BulkUpsert(
+            path,
+            NYdb::NTable::EDataFormat::ApacheArrow,
+            data,
+            schema,
+            settings).GetValueSync();
+        if (status.IsSuccess()) {
+            return;
+        }
+        if (!ShouldRetryYdbBulkUpsert(status) || attempt >= kMaxAttempts) {
+            throw std::runtime_error(
+                "bulk upsert " + table + ": " + status.GetIssues().ToOneLineString());
+        }
+        const auto delay = std::chrono::seconds(std::min(30, 1 << std::min(attempt - 1, 5)));
+        LOG_W("YDB bulk upsert " << table << " attempt " << attempt << "/" << kMaxAttempts
+              << " failed (" << static_cast<size_t>(status.GetStatus()) << "): "
+              << status.GetIssues().ToOneLineString()
+              << "; retrying in " << delay.count() << "s");
+        std::this_thread::sleep_for(delay);
     }
 }
 

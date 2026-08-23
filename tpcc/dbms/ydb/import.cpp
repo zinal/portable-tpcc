@@ -81,6 +81,7 @@ void ImportSync(const TImportConfig& config) {
           << ") using " << threadCount << " threads (seed=" << config.Seed
           << ", run_id=" << (config.RunId.empty() ? "-" : config.RunId)
           << ", batch_rows=" << config.BatchRows
+          << " effective=" << EffectiveYdbLoadBatchRows(config.BatchRows)
           << "; each warehouse includes ~100k stock rows)");
 
     auto startTime = Clock::now();

@@ -246,7 +246,7 @@ TPutBatchResult PutItemsIdempotent(
         LOG_I("YDB idempotent upsert of " << ITEM_COUNT << " items (seed=" << seed
               << ", run_id=" << (runId.empty() ? "-" : runId)
               << ", batch_rows=" << batchRows << ")");
-        const int chunk = batchRows > 0 ? batchRows : ITEM_COUNT;
+        const int chunk = EffectiveYdbLoadBatchRows(batchRows);
         for (int start = 1; start <= ITEM_COUNT; start += chunk) {
             const int end = std::min(start + chunk - 1, ITEM_COUNT);
             const int64_t rows = end - start + 1;
@@ -343,7 +343,7 @@ TPutBatchResult PutWarehouseIdempotent(
             }, rows));
         }
 
-        const int stockChunk = batchRows > 0 ? batchRows : ITEM_COUNT;
+        const int stockChunk = EffectiveYdbLoadBatchRows(batchRows);
         for (int start = 1; start <= ITEM_COUNT; start += stockChunk) {
             const int end = std::min(start + stockChunk - 1, ITEM_COUNT);
             const int64_t rows = end - start + 1;
@@ -374,7 +374,7 @@ TPutBatchResult PutWarehouseIdempotent(
         }
 
         for (int d = DISTRICT_LOW_ID; d <= DISTRICT_HIGH_ID; ++d) {
-            const int customerChunk = batchRows > 0 ? batchRows : CUSTOMERS_PER_DISTRICT;
+            const int customerChunk = EffectiveYdbLoadBatchRows(batchRows);
             for (int start = C_FIRST_CUSTOMER_ID; start <= CUSTOMERS_PER_DISTRICT; start += customerChunk) {
                 const int end = std::min(start + customerChunk - 1, CUSTOMERS_PER_DISTRICT);
                 const int64_t rows = end - start + 1;
