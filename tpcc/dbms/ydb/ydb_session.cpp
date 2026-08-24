@@ -418,9 +418,10 @@ TFuture<TBatchResult> TYdbTpccTransaction::ExecuteOrderLineBatch(const std::vect
                     $row.supply_w_id AS ol_supply_w_id,
                     $row.quantity AS ol_quantity,
                     $row.dist_info AS ol_dist_info));
-                UPSERT INTO `order_line` (ol_w_id, ol_d_id, ol_o_id, ol_number, ol_i_id,
-                                          ol_amount, ol_supply_w_id, ol_quantity, ol_dist_info)
-                SELECT * FROM AS_TABLE(ListMap($values, $mapper));
+                -- Same as ydb workload tpcc InsertOrderLines: UPSERT SELECT *
+                -- with no column list. A column list plus SELECT * fails YQL
+                -- type annotation (star / qualified star in projection).
+                UPSERT INTO `order_line` SELECT * FROM AS_TABLE(ListMap($values, $mapper));
             )", std::move(built)),
         [opCount](TExecuteQueryResult) {
             return OkBatch(opCount);
