@@ -16,6 +16,7 @@
 #include <atomic>
 #include <chrono>
 #include <optional>
+#include <set>
 #include <stdexcept>
 #include <utility>
 #include <variant>
@@ -441,10 +442,13 @@ TFuture<TOperationResult> TYdbTpccTransaction::Execute(const TSemanticOp& op) {
         }
 
         if (const auto* p = std::get_if<TGetItems>(&op)) {
-            const size_t expected = p->ItemIDs.size();
+            // ydb workload tpcc GetItems uniques IDs first. IN returns one row
+            // per id; NURand item picks commonly repeat on a New-Order.
+            const std::set<int> uniqueIds(p->ItemIDs.begin(), p->ItemIDs.end());
+            const size_t expected = uniqueIds.size();
             TParamsBuilder builder;
             auto& params = builder.AddParam("$item_ids").BeginList();
-            for (int id : p->ItemIDs) {
+            for (int id : uniqueIds) {
                 params.AddListItem().Int32(id);
             }
             auto builtParams = params.EndList().Build().Build();
