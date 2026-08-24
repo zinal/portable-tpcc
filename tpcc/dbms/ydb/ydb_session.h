@@ -29,6 +29,12 @@ public:
 
 private:
     TFuture<TOperationResult> CatchOp(TFuture<TOperationResult> future);
+    TFuture<TBatchResult> CatchBatch(TFuture<TBatchResult> future);
+    TFuture<TBatchResult> ExecuteBatchSequentially(std::vector<TSemanticOp> ops);
+    TFuture<TBatchResult> ExecuteStockBatch(const std::vector<TSemanticOp>& ops);
+    TFuture<TBatchResult> ExecuteOrderLineBatch(const std::vector<TSemanticOp>& ops);
+    TFuture<TBatchResult> ExecuteCompleteDeliveryBatch(const std::vector<TSemanticOp>& ops);
+    TFuture<TBatchResult> ExecuteApplyDeliveryBatch(const std::vector<TSemanticOp>& ops);
     TFuture<NYdb::NQuery::TExecuteQueryResult> ExecQuery(
         std::string query,
         std::optional<NYdb::TParams> params = std::nullopt,

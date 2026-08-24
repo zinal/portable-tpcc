@@ -103,23 +103,14 @@ TFuture<bool> GetPaymentTask(
     customer.PaymentCount += 1;
 
     if (customer.Credit == "BC") {
-        std::string cData;
-        {
-            auto r = co_await SuspendExecute(tx, context, TGetCustomerData{
-                in.CustomerWarehouseID, in.CustomerDistrictID, customer.CustomerID});
-            ThrowIfRetryable(r);
-            if (r.Ok) {
-                cData = std::get<std::string>(r.Payload);
-            }
-        }
-
+        // C_DATA is already loaded by TGetCustomerById / TGetCustomersByLastName.
         std::string newData =
             std::to_string(customer.CustomerID) + " " +
             std::to_string(in.CustomerDistrictID) + " " +
             std::to_string(in.CustomerWarehouseID) + " " +
             std::to_string(in.DistrictID) + " " +
             std::to_string(in.WarehouseID) + " " +
-            in.PaymentAmount.ToString() + " | " + cData;
+            in.PaymentAmount.ToString() + " | " + customer.Data;
         if (newData.size() > 500) {
             newData.resize(500);
         }

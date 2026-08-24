@@ -8,6 +8,7 @@
 
 #include <array>
 #include <optional>
+#include <vector>
 
 namespace NTpcc {
 
@@ -86,54 +87,52 @@ TFuture<bool> GetDeliveryTask(
         }
     }
 
-    int lastDistrictWithOrder = -1;
-    for (int districtID = DISTRICT_LOW_ID; districtID <= DISTRICT_HIGH_ID; ++districtID) {
-        if (orders[districtID - DISTRICT_LOW_ID]) {
-            lastDistrictWithOrder = districtID;
-        }
-    }
-
+    std::vector<TSemanticOp> completeOps;
+    std::vector<TSemanticOp> applyOps;
+    completeOps.reserve(DISTRICT_COUNT);
+    applyOps.reserve(DISTRICT_COUNT);
     for (int districtID = DISTRICT_LOW_ID; districtID <= DISTRICT_HIGH_ID; ++districtID) {
         if (!orders[districtID - DISTRICT_LOW_ID]) {
             continue;
         }
         auto& order = *orders[districtID - DISTRICT_LOW_ID];
+        completeOps.emplace_back(TCompleteOrderDelivery{
+            in.WarehouseID, districtID, order.OrderID, in.CarrierID, order.LineCount});
+        applyOps.emplace_back(TApplyDeliveryToCustomer{
+            in.WarehouseID, districtID, order.CustomerId, order.TotalAmount});
+    }
 
-        {
-            auto r = co_await SuspendExecute(tx, context, TCompleteOrderDelivery{
-                in.WarehouseID, districtID, order.OrderID, in.CarrierID, order.LineCount});
-            ThrowIfRetryable(r);
-            if (!r.Ok) {
-                co_return FailPermanent(context.TerminalID, "Delivery complete order failed",
-                    r.Message);
-            }
-        }
-
-        if (districtID == lastDistrictWithOrder) {
-            LOG_T("Terminal " << context.TerminalID << " committing Delivery");
-            auto finalResult = co_await SuspendExecuteFinalAndCommit(tx, context, TApplyDeliveryToCustomer{
-                in.WarehouseID, districtID, order.CustomerId, order.TotalAmount});
-            ThrowIfRetryable(finalResult.Operation);
-            if (!finalResult.Operation.Ok) {
-                co_return FailPermanent(context.TerminalID, "Delivery apply customer failed",
-                    finalResult.Operation.Message);
-            }
-            ThrowIfCommitFailed(finalResult.Commit);
-        } else {
-            auto r = co_await SuspendExecute(tx, context, TApplyDeliveryToCustomer{
-                in.WarehouseID, districtID, order.CustomerId, order.TotalAmount});
-            ThrowIfRetryable(r);
-            if (!r.Ok) {
-                co_return FailPermanent(context.TerminalID, "Delivery apply customer failed",
-                    r.Message);
-            }
+    if (!completeOps.empty()) {
+        auto batch = co_await SuspendExecuteBatch(tx, context, completeOps);
+        ThrowIfBatchRetryable(batch);
+        if (!batch.Ok) {
+            co_return FailPermanent(context.TerminalID, "Delivery complete order failed",
+                batch.Message);
         }
     }
 
-    if (lastDistrictWithOrder < 0) {
+    if (applyOps.empty()) {
         LOG_T("Terminal " << context.TerminalID << " committing Delivery");
         auto commit = co_await SuspendCommit(tx, context);
         ThrowIfCommitFailed(commit);
+    } else {
+        if (applyOps.size() > 1) {
+            std::vector<TSemanticOp> prefix(applyOps.begin(), applyOps.end() - 1);
+            auto batch = co_await SuspendExecuteBatch(tx, context, prefix);
+            ThrowIfBatchRetryable(batch);
+            if (!batch.Ok) {
+                co_return FailPermanent(context.TerminalID, "Delivery apply customer failed",
+                    batch.Message);
+            }
+        }
+        LOG_T("Terminal " << context.TerminalID << " committing Delivery");
+        auto finalResult = co_await SuspendExecuteFinalAndCommit(tx, context, applyOps.back());
+        ThrowIfRetryable(finalResult.Operation);
+        if (!finalResult.Operation.Ok) {
+            co_return FailPermanent(context.TerminalID, "Delivery apply customer failed",
+                finalResult.Operation.Message);
+        }
+        ThrowIfCommitFailed(finalResult.Commit);
     }
 
     latency = std::chrono::duration_cast<std::chrono::microseconds>(

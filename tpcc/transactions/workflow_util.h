@@ -11,6 +11,7 @@
 
 #include <string_view>
 #include <utility>
+#include <vector>
 
 namespace NTpcc {
 
@@ -56,12 +57,32 @@ inline auto SuspendExecute(
     return TSuspendWithFuture(tx.Execute(op), context.TaskQueue, context.TerminalID);
 }
 
+inline auto SuspendExecuteBatch(
+    ITpccTransaction& tx,
+    TTransactionContext& context,
+    const std::vector<TSemanticOp>& ops)
+{
+    return TSuspendWithFuture(tx.ExecuteBatch(ops), context.TaskQueue, context.TerminalID);
+}
+
 inline auto SuspendExecuteFinalAndCommit(
     ITpccTransaction& tx,
     TTransactionContext& context,
     const TSemanticOp& op)
 {
     return TSuspendWithFuture(tx.ExecuteFinalAndCommit(op), context.TaskQueue, context.TerminalID);
+}
+
+inline void ThrowIfBatchRetryable(const TBatchResult& batch) {
+    if (batch.Ok) {
+        return;
+    }
+    TOperationResult r;
+    r.Ok = false;
+    r.ErrorClass = batch.ErrorClass;
+    r.NativeCode = batch.NativeCode;
+    r.Message = batch.Message;
+    ThrowIfRetryable(r);
 }
 
 inline auto SuspendCommit(ITpccTransaction& tx, TTransactionContext& context) {

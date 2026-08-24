@@ -174,6 +174,16 @@ TFuture<bool> GetNewOrderTask(
         }
     }
 
+    // Collect per-line stock/order-line work, then issue one ExecuteBatch per
+    // kind (YDB fuses each batch to a single AS_TABLE round trip; other
+    // adapters still apply ops sequentially). TPC-C §2.4.2.3 unused-item
+    // rollback still runs every valid line's ITEM/STOCK/ORDER-LINE work first.
+    std::vector<TSemanticOp> stockOps;
+    std::vector<TSemanticOp> lineOps;
+    stockOps.reserve(static_cast<size_t>(in.NumItems));
+    lineOps.reserve(static_cast<size_t>(in.NumItems));
+    bool hasUnusedItem = false;
+
     for (int olNum = 1; olNum <= in.NumItems; ++olNum) {
         const int idx = olNum - 1;
         const int supWh = in.SupplierWarehouseIDs[idx];
@@ -181,23 +191,8 @@ TFuture<bool> GetNewOrderTask(
         const int qty = in.OrderQuantities[idx];
 
         if (iid == INVALID_ITEM_ID) {
-            // TPC-C §2.4.2.3 / §5.1.2: only the expected ITEM not-found followed
-            // by a confirmed rollback may be counted as intentional UserAborted.
-            auto r = co_await SuspendExecute(tx, context, TGetItems{{iid}});
-            ThrowIfRetryable(r);
-            if (r.Ok) {
-                co_return FailPermanent(context.TerminalID,
-                    "NewOrder expected unused item to be missing");
-            }
-            if (!IsExpectedItemNotFound(r)) {
-                throw TClassifiedError(
-                    r.ErrorClass,
-                    r.NativeCode,
-                    r.Message.empty() ? "NewOrder unused item lookup failed" : r.Message);
-            }
-            auto rollback = co_await SuspendRollback(tx, context);
-            ThrowIfRollbackFailed(rollback);
-            throw TUserAbortedException();
+            hasUnusedItem = true;
+            continue;
         }
 
         auto priceIt = itemPrices.find(iid);
@@ -217,41 +212,66 @@ TFuture<bool> GetNewOrderTask(
         } else {
             stock.Quantity += -qty + 91;
         }
+        const int remoteInc = (supWh == in.WarehouseID ? 0 : 1);
+        stock.Ytd += TMoney::FromCents(static_cast<int64_t>(qty) * TMoney::Scale);
+        stock.OrderCount += 1;
+        stock.RemoteCount += remoteInc;
 
-        {
-            auto r = co_await SuspendExecute(tx, context, TUpdateStock{
-                supWh, iid, stock.Quantity, qty,
-                (supWh == in.WarehouseID ? 0 : 1)});
-            ThrowIfRetryable(r);
-            if (!r.Ok) {
-                co_return FailPermanent(context.TerminalID, "NewOrder update stock failed",
-                    r.Message);
-            }
-        }
+        stockOps.emplace_back(TUpdateStock{
+            .WarehouseID = supWh,
+            .ItemID = iid,
+            .NewQuantity = stock.Quantity,
+            .OrderedQuantity = qty,
+            .RemoteIncrement = remoteInc,
+            .NewYtd = stock.Ytd,
+            .NewOrderCount = stock.OrderCount,
+            .NewRemoteCount = stock.RemoteCount});
+        lineOps.emplace_back(TInsertOrderLine{
+            in.WarehouseID, in.DistrictID, nextOrderID, olNum, iid,
+            supWh, qty, olAmount, stock.DistInfo});
+    }
 
-        const bool lastLine = (olNum == in.NumItems);
-        if (lastLine) {
-            LOG_T("Terminal " << context.TerminalID << " committing NewOrder");
-            auto finalResult = co_await SuspendExecuteFinalAndCommit(tx, context, TInsertOrderLine{
-                in.WarehouseID, in.DistrictID, nextOrderID, olNum, iid,
-                supWh, qty, olAmount, stock.DistInfo});
-            ThrowIfRetryable(finalResult.Operation);
-            if (!finalResult.Operation.Ok) {
-                co_return FailPermanent(context.TerminalID, "NewOrder insert order line failed",
-                    finalResult.Operation.Message);
-            }
-            ThrowIfCommitFailed(finalResult.Commit);
-        } else {
-            auto r = co_await SuspendExecute(tx, context, TInsertOrderLine{
-                in.WarehouseID, in.DistrictID, nextOrderID, olNum, iid,
-                supWh, qty, olAmount, stock.DistInfo});
-            ThrowIfRetryable(r);
-            if (!r.Ok) {
-                co_return FailPermanent(context.TerminalID, "NewOrder insert order line failed",
-                    r.Message);
-            }
+    if (!stockOps.empty()) {
+        auto batch = co_await SuspendExecuteBatch(tx, context, stockOps);
+        ThrowIfBatchRetryable(batch);
+        if (!batch.Ok) {
+            co_return FailPermanent(context.TerminalID, "NewOrder update stock failed",
+                batch.Message);
         }
     }
+
+    if (!lineOps.empty()) {
+        auto batch = co_await SuspendExecuteBatch(tx, context, lineOps);
+        ThrowIfBatchRetryable(batch);
+        if (!batch.Ok) {
+            co_return FailPermanent(context.TerminalID, "NewOrder insert order line failed",
+                batch.Message);
+        }
+    }
+
+    if (hasUnusedItem) {
+        // TPC-C §2.4.2.3 / §5.1.2: only the expected ITEM not-found followed
+        // by a confirmed rollback may be counted as intentional UserAborted.
+        auto r = co_await SuspendExecute(tx, context, TGetItems{{INVALID_ITEM_ID}});
+        ThrowIfRetryable(r);
+        if (r.Ok) {
+            co_return FailPermanent(context.TerminalID,
+                "NewOrder expected unused item to be missing");
+        }
+        if (!IsExpectedItemNotFound(r)) {
+            throw TClassifiedError(
+                r.ErrorClass,
+                r.NativeCode,
+                r.Message.empty() ? "NewOrder unused item lookup failed" : r.Message);
+        }
+        auto rollback = co_await SuspendRollback(tx, context);
+        ThrowIfRollbackFailed(rollback);
+        throw TUserAbortedException();
+    }
+
+    LOG_T("Terminal " << context.TerminalID << " committing NewOrder");
+    auto commit = co_await SuspendCommit(tx, context);
+    ThrowIfCommitFailed(commit);
 
     latency = std::chrono::duration_cast<std::chrono::microseconds>(
         std::chrono::steady_clock::now() - startTs);
