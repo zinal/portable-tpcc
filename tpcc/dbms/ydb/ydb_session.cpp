@@ -938,6 +938,8 @@ TFuture<TOperationResult> TYdbTpccTransaction::Execute(const TSemanticOp& op) {
                         .AddParam("$min_o_id").Int32(nextOid - recentOrderCount).Build()
                         .AddParam("$threshold").Int32(threshold).Build()
                         .Build();
+                    // YQL JOIN equality must depend on JOIN inputs only;
+                    // $w_id belongs in WHERE (ydb workload tpcc GetStockCount).
                     return Then(
                         ExecQuery(Prefix(Path_) + R"(
                 DECLARE $w_id AS Int32;
@@ -948,9 +950,10 @@ TFuture<TOperationResult> TYdbTpccTransaction::Execute(const TSemanticOp& op) {
                 SELECT COUNT(DISTINCT s.s_i_id) AS low_stock
                   FROM `order_line` AS ol
                   INNER JOIN `stock` AS s
-                     ON s.s_w_id = $w_id AND s.s_i_id = ol.ol_i_id
+                     ON s.s_i_id = ol.ol_i_id
                  WHERE ol.ol_w_id = $w_id AND ol.ol_d_id = $d_id
                    AND ol.ol_o_id < $max_o_id AND ol.ol_o_id >= $min_o_id
+                   AND s.s_w_id = $w_id
                    AND s.s_quantity < $threshold;
             )", std::move(stockParams), FinalCommitMode_),
                         [](TExecuteQueryResult stock) {
