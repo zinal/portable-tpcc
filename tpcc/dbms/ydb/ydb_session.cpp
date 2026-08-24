@@ -507,26 +507,28 @@ TFuture<TOperationResult> TYdbTpccTransaction::Execute(const TSemanticOp& op) {
                 .AddParam("$stocks").BeginList();
             for (const auto& key : p->Stocks) {
                 params.AddListItem()
-                    .BeginStruct()
-                    .AddMember("s_w_id").Int32(key.WarehouseID)
-                    .AddMember("s_i_id").Int32(key.ItemID)
-                    .EndStruct();
+                    .BeginTuple()
+                    .AddElement().Int32(key.WarehouseID)
+                    .AddElement().Int32(key.ItemID)
+                    .EndTuple();
             }
             auto builtParams = params.EndList().Build().Build();
+            // Same composite-key IN as ydb workload tpcc GetStock. A JOIN on
+            // AS_TABLE($stocks) makes YQL emit qualified names (s.s_w_id), so
+            // ColumnParser("s_w_id") fails with "Unknown column".
             return CatchOp(Then(
                 ExecQuery(Prefix(Path_) + R"(
                 DECLARE $d_id AS Int32;
-                DECLARE $stocks AS List<Struct<s_w_id: Int32, s_i_id: Int32>>;
-                SELECT s.s_w_id, s.s_i_id, s.s_quantity, s.s_ytd, s.s_order_cnt, s.s_remote_cnt, s.s_data,
+                DECLARE $stocks AS List<Tuple<Int32, Int32>>;
+                SELECT s_w_id, s_i_id, s_quantity, s_ytd, s_order_cnt, s_remote_cnt, s_data,
                        CASE $d_id
-                         WHEN 1 THEN s.s_dist_01 WHEN 2 THEN s.s_dist_02 WHEN 3 THEN s.s_dist_03
-                         WHEN 4 THEN s.s_dist_04 WHEN 5 THEN s.s_dist_05 WHEN 6 THEN s.s_dist_06
-                         WHEN 7 THEN s.s_dist_07 WHEN 8 THEN s.s_dist_08 WHEN 9 THEN s.s_dist_09
-                         ELSE s.s_dist_10
+                         WHEN 1 THEN s_dist_01 WHEN 2 THEN s_dist_02 WHEN 3 THEN s_dist_03
+                         WHEN 4 THEN s_dist_04 WHEN 5 THEN s_dist_05 WHEN 6 THEN s_dist_06
+                         WHEN 7 THEN s_dist_07 WHEN 8 THEN s_dist_08 WHEN 9 THEN s_dist_09
+                         ELSE s_dist_10
                        END AS s_dist_info
-                  FROM AS_TABLE($stocks) AS k
-                  INNER JOIN `stock` AS s
-                     ON s.s_w_id = k.s_w_id AND s.s_i_id = k.s_i_id;
+                  FROM `stock`
+                 WHERE (s_w_id, s_i_id) IN $stocks;
             )", std::move(builtParams)),
                 [expected](TExecuteQueryResult result) {
                     NYdb::TResultSetParser parser(result.GetResultSet(0));
