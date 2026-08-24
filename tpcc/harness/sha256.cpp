@@ -11,7 +11,7 @@ namespace NTpcc {
 namespace {
 
 std::string ReadFile(const std::string& path) {
-    std::ifstream in(path);
+    std::ifstream in(path, std::ios::binary);
     if (!in) {
         throw std::runtime_error("failed to open file: " + path);
     }

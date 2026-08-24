@@ -1,6 +1,8 @@
 package collect
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -33,6 +35,11 @@ var allowedArtifactPayloads = map[string]bool{
 	"process.json": true,
 	"stdout.log":   true,
 	"stderr.log":   true,
+}
+
+var stdioArtifactPayloads = map[string]bool{
+	"stdout.log": true,
+	"stderr.log": true,
 }
 
 // ValidateArtifactPayloadPath rejects payload names outside the worker artifact set.
@@ -120,9 +127,21 @@ func (c *Collector) CollectInstance(runID, role, instance, sourceDir string) err
 		if err != nil {
 			return err
 		}
-		if got != p.SHA256 {
-			return fmt.Errorf("tampered artifact %s: hash mismatch", p.Path)
+		if got == p.SHA256 {
+			continue
 		}
+		if stdioArtifactPayloads[p.Path] {
+			if err := verifyStdioPrefixHash(dst, p); err == nil {
+				continue
+			}
+		}
+		st, statErr := os.Stat(dst)
+		size := int64(-1)
+		if statErr == nil {
+			size = st.Size()
+		}
+		return fmt.Errorf("tampered artifact %s: hash mismatch (manifest sha256=%s size=%d, file sha256=%s size=%d)",
+			p.Path, p.SHA256, p.Size, got, size)
 	}
 	if err := os.RemoveAll(destFinal); err != nil && !os.IsNotExist(err) {
 		return err
@@ -156,6 +175,42 @@ func (c *Collector) WriteCollectionManifest(runID string, processes []ArtifactMa
 		return err
 	}
 	return os.Rename(tmp, CollectionManifestPath(c.ResultRoot, runID))
+}
+
+// verifyStdioPrefixHash accepts stdout.log / stderr.log that grew after the
+// binary hashed them. Destructor and threaded-log output can append after
+// artifact-manifest.json is written; the hashed prefix must still match.
+func verifyStdioPrefixHash(path string, p ArtifactPayloadEntry) error {
+	if p.Size < 0 {
+		return fmt.Errorf("negative payload size")
+	}
+	st, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if st.Size() < p.Size {
+		return fmt.Errorf("stdio artifact truncated")
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if p.Size > 0 {
+		n, err := io.CopyN(h, f, p.Size)
+		if err != nil {
+			return err
+		}
+		if n != p.Size {
+			return fmt.Errorf("short stdio prefix")
+		}
+	}
+	got := hex.EncodeToString(h.Sum(nil))
+	if got != p.SHA256 {
+		return fmt.Errorf("stdio prefix hash mismatch")
+	}
+	return nil
 }
 
 func copyFile(src, dst string) error {

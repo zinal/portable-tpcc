@@ -6,6 +6,8 @@
 #include <util/system/guard.h>
 #include <util/system/mutex.h>
 
+#include <cstdio>
+#include <unistd.h>
 #include <utility>
 
 namespace {
@@ -181,6 +183,26 @@ void StopLogCaptureAndFlush(IOutputStream& os) {
     if (GlobalLogBackend) {
         GlobalLogBackend->StopCaptureAndFlush(os);
     }
+}
+
+void FlushLogs() {
+    std::shared_ptr<TLog> log;
+    {
+        TGuard guard(LogMutex);
+        log = GlobalLog;
+    }
+    if (log) {
+        // ReopenLog on TOwningThreadedLogBackend waits until previously queued
+        // records are written to the slave (Cerr).
+        log->ReopenLog();
+    }
+    Cerr.Flush();
+    Cout.Flush();
+    fflush(stderr);
+    fflush(stdout);
+    // Best-effort: ignore EINVAL when stdio is not a regular file.
+    ::fsync(STDOUT_FILENO);
+    ::fsync(STDERR_FILENO);
 }
 
 } // namespace NTpcc
