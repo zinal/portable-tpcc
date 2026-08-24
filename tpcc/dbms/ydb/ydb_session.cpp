@@ -1111,42 +1111,63 @@ TFuture<TOperationResult> TYdbTpccTransaction::Execute(const TSemanticOp& op) {
         }
 
         if (const auto* p = std::get_if<TCountRecentLowStock>(&op)) {
+            const int warehouseId = p->WarehouseID;
+            const int districtId = p->DistrictID;
+            const int recentOrderCount = p->RecentOrderCount;
+            const int threshold = p->Threshold;
             auto params = TParamsBuilder()
-                .AddParam("$w_id").Int32(p->WarehouseID).Build()
-                .AddParam("$d_id").Int32(p->DistrictID).Build()
-                .AddParam("$recent").Int32(p->RecentOrderCount).Build()
-                .AddParam("$threshold").Int32(p->Threshold).Build()
+                .AddParam("$w_id").Int32(warehouseId).Build()
+                .AddParam("$d_id").Int32(districtId).Build()
                 .Build();
-            // One round trip: missing district → 0 rows (integrity); ydb
-            // workload tpcc uses two ExecuteQuery calls plus a separate commit.
+            // Two queries, same as ydb workload tpcc GetDistrictOrderId +
+            // GetStockCount. YQL JOIN ON must be equality predicates only, so
+            // the order-id window cannot live in ON (it belongs in WHERE with
+            // bound $min_o_id / $max_o_id).
             return CatchOp(Then(
                 ExecQuery(Prefix(Path_) + R"(
                 DECLARE $w_id AS Int32;
                 DECLARE $d_id AS Int32;
-                DECLARE $recent AS Int32;
-                DECLARE $threshold AS Int32;
-                SELECT
-                    COUNT(DISTINCT CASE
-                        WHEN s.s_quantity < $threshold THEN s.s_i_id
-                        ELSE NULL
-                    END) AS low_stock
-                  FROM `district` AS d
-                  LEFT JOIN `order_line` AS ol
-                    ON ol.ol_w_id = d.d_w_id AND ol.ol_d_id = d.d_id
-                   AND ol.ol_o_id < d.d_next_o_id
-                   AND ol.ol_o_id >= d.d_next_o_id - $recent
-                  LEFT JOIN `stock` AS s
-                    ON s.s_i_id = ol.ol_i_id AND s.s_w_id = d.d_w_id
-                 WHERE d.d_w_id = $w_id AND d.d_id = $d_id
-                 GROUP BY d.d_next_o_id;
-            )", std::move(params), FinalCommitMode_),
-                [](TExecuteQueryResult stock) {
-                    NYdb::TResultSetParser stockParser(stock.GetResultSet(0));
-                    if (!stockParser.TryNextRow()) {
-                        return FailOp(EErrorClass::Integrity, "district not found");
+                SELECT d_next_o_id FROM `district`
+                 WHERE d_w_id = $w_id AND d_id = $d_id;
+            )", std::move(params)),
+                [this, warehouseId, districtId, recentOrderCount, threshold](TExecuteQueryResult dist)
+                    -> TFuture<TOperationResult> {
+                    NYdb::TResultSetParser distParser(dist.GetResultSet(0));
+                    if (!distParser.TryNextRow()) {
+                        return ReadyOp(FailOp(EErrorClass::Integrity, "district not found"));
                     }
-                    const int count = static_cast<int>(ParseCount(stockParser, "low_stock"));
-                    return OkOp(1, 1, count);
+                    const int nextOid = ParseInt32(distParser, "d_next_o_id");
+                    auto stockParams = TParamsBuilder()
+                        .AddParam("$w_id").Int32(warehouseId).Build()
+                        .AddParam("$d_id").Int32(districtId).Build()
+                        .AddParam("$max_o_id").Int32(nextOid).Build()
+                        .AddParam("$min_o_id").Int32(nextOid - recentOrderCount).Build()
+                        .AddParam("$threshold").Int32(threshold).Build()
+                        .Build();
+                    return Then(
+                        ExecQuery(Prefix(Path_) + R"(
+                DECLARE $w_id AS Int32;
+                DECLARE $d_id AS Int32;
+                DECLARE $max_o_id AS Int32;
+                DECLARE $min_o_id AS Int32;
+                DECLARE $threshold AS Int32;
+                SELECT COUNT(DISTINCT s.s_i_id) AS low_stock
+                  FROM `order_line` AS ol
+                  INNER JOIN `stock` AS s
+                     ON s.s_i_id = ol.ol_i_id
+                 WHERE ol.ol_w_id = $w_id AND ol.ol_d_id = $d_id
+                   AND ol.ol_o_id < $max_o_id AND ol.ol_o_id >= $min_o_id
+                   AND s.s_w_id = $w_id
+                   AND s.s_quantity < $threshold;
+            )", std::move(stockParams), FinalCommitMode_),
+                        [](TExecuteQueryResult stock) {
+                            NYdb::TResultSetParser stockParser(stock.GetResultSet(0));
+                            int count = 0;
+                            if (stockParser.TryNextRow()) {
+                                count = static_cast<int>(ParseCount(stockParser, "low_stock"));
+                            }
+                            return OkOp(1, 1, count);
+                        });
                 }));
         }
 
