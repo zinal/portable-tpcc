@@ -1,17 +1,21 @@
 #include "artifacts.h"
 #include "sha256.h"
 
+#include <log_backend.h>
 #include <nlohmann/json.hpp>
 
 #include <constants.h>
 #include <think_time.h>
 
 #include <chrono>
+#include <fcntl.h>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <random>
 #include <sstream>
+#include <stdexcept>
+#include <unistd.h>
 
 namespace fs = std::filesystem;
 
@@ -39,6 +43,22 @@ Json WarehouseRangesJson(const std::vector<TWarehouseRange>& ranges) {
         arr.push_back(Json::array({r.Start, r.End}));
     }
     return arr;
+}
+
+// After flushing, point fds 1/2 at /dev/null so destructor / SDK output
+// cannot append to the hashed stdout.log / stderr.log files.
+void RedirectStdioToDevNull() {
+    const int devnull = ::open("/dev/null", O_RDWR);
+    if (devnull < 0) {
+        throw std::runtime_error("failed to open /dev/null to seal process stdio");
+    }
+    if (::dup2(devnull, STDOUT_FILENO) < 0 || ::dup2(devnull, STDERR_FILENO) < 0) {
+        ::close(devnull);
+        throw std::runtime_error("failed to redirect stdio to /dev/null");
+    }
+    if (devnull != STDOUT_FILENO && devnull != STDERR_FILENO) {
+        ::close(devnull);
+    }
 }
 
 void WriteJsonAtomic(const std::string& path, const Json& value) {
@@ -271,6 +291,12 @@ void WriteWorkerResultJson(const TArtifactPaths& paths, const TRunConfigDocument
 
 void WriteArtifactManifest(const TArtifactPaths& paths, const std::string& instance,
                            const std::string& instanceNonce, int exitCode) {
+    // stdout.log / stderr.log are the live process stdio. Hash them only after
+    // the threaded logger and libc buffers are drained, then detach fds so
+    // later destructor output cannot change the snapshot collect will verify.
+    FlushLogs();
+    RedirectStdioToDevNull();
+
     Json payloads = Json::array();
     auto addPayload = [&](const std::string& rel) {
         const std::string full = paths.InstanceDir + "/" + rel;

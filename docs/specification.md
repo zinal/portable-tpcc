@@ -459,7 +459,18 @@ nonce matches the launched `process.json`. A non-zero `exit_status` fails the
 stage.
 
 `stdout.log` and `stderr.log` in the instance directory are the process
-stdio. On check failure, `mind-tpcc` SHOULD also print failed/error items from
+stdio. Payload hashes of those files in `artifact-manifest.json` MUST be
+taken only after the process has flushed its log backend and libc stdio.
+After that snapshot the binary MUST NOT append to those files (remaining
+destructor or SDK output MUST go elsewhere, for example `/dev/null`).
+
+Collect MUST verify payload hashes. For `stdout.log` and `stderr.log` only,
+a longer file whose first `payloads[].size` bytes match the recorded SHA-256
+MUST be accepted: older binaries hashed live stdio before process exit, so
+destructor or log-backend output MAY still append after the manifest. Any
+other payload, and any mutation of those first bytes, MUST fail collect.
+
+On check failure, `mind-tpcc` SHOULD also print failed/error items from
 the check report (§9.2), not only `exited with status N`.
 
 `mind-tpcc --threads` is a launch-time override for this invocation. It MUST

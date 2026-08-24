@@ -206,6 +206,49 @@ func TestCollectInstanceRejectsAbsolutePayloadPath(t *testing.T) {
 	}
 }
 
+func TestCollectInstanceAcceptsStdioGrowth(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "source")
+	writeFinalizedSource(t, source, map[string][]byte{"stderr.log": []byte("before-exit\n")})
+	f, err := os.OpenFile(filepath.Join(source, "stderr.log"), os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString("destructor-flush\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	c := &collect.Collector{ResultRoot: filepath.Join(root, "results")}
+	if err := c.CollectInstance("run-1", "loader", "ydb-runner-1-l1", source); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(root, "results", "run-1", "raw", "loader", "ydb-runner-1-l1", "stderr.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "before-exit\ndestructor-flush\n" {
+		t.Fatalf("collected stderr=%q", got)
+	}
+}
+
+func TestCollectInstanceRejectsStdioPrefixTamper(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "source")
+	writeFinalizedSource(t, source, map[string][]byte{"stderr.log": []byte("before-exit\n")})
+	if err := os.WriteFile(filepath.Join(source, "stderr.log"), []byte("BEFORE-exit\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	c := &collect.Collector{ResultRoot: filepath.Join(root, "results")}
+	err := c.CollectInstance("run-1", "loader", "ydb-runner-1-l1", source)
+	if err == nil || !strings.Contains(err.Error(), "hash mismatch") {
+		t.Fatalf("expected hash mismatch, got %v", err)
+	}
+}
+
 func TestHasCollectionManifest(t *testing.T) {
 	root := t.TempDir()
 	runID := "run-1"

@@ -61,4 +61,8 @@ void StartLogCapture();
 void StopLogCapture();
 void StopLogCaptureAndFlush(IOutputStream& os);
 
+// Drain the threaded log backend (if InitLogging ran) and flush Cerr/Cout
+// plus libc stdout/stderr. Call this before hashing process stdio files.
+void FlushLogs();
+
 } // namespace NTpcc
