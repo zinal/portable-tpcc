@@ -1,5 +1,7 @@
 #include "clean.h"
 
+#include "ydb_error_classifier.h"
+
 #include <constants.h>
 #include <log.h>
 
@@ -23,7 +25,7 @@ void CleanSync(const TYdbConnectionConfig& connectionConfig) {
         if (!status.IsSuccess() && status.GetStatus() != NYdb::EStatus::SCHEME_ERROR &&
             status.GetStatus() != NYdb::EStatus::NOT_FOUND)
         {
-            throw std::runtime_error("drop table failed: " + status.GetIssues().ToOneLineString());
+            throw std::runtime_error("drop table failed: " + YdbIssuesToString(status));
         }
     }
     LOG_I("YDB TPC-C tables dropped");

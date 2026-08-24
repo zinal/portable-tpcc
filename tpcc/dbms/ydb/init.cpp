@@ -1,6 +1,7 @@
 #include "init.h"
 
 #include "data_splitter.h"
+#include "ydb_error_classifier.h"
 
 #include <constants.h>
 #include <log.h>
@@ -38,7 +39,7 @@ std::string PartitionClause(const std::vector<int>& splitKeys, int minParts, int
 
 void ThrowIfFailed(const NYdb::TStatus& status, const std::string& what) {
     if (!status.IsSuccess()) {
-        throw std::runtime_error(what + ": " + status.GetIssues().ToOneLineString());
+        throw std::runtime_error(what + ": " + YdbIssuesToString(status));
     }
 }
 

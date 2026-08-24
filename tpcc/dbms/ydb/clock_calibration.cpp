@@ -1,5 +1,7 @@
 #include "clock_calibration.h"
 
+#include "ydb_error_classifier.h"
+
 #include <stdexcept>
 
 namespace NTpcc {
@@ -28,7 +30,7 @@ TClockCalibration MeasureClockCalibration(const TYdbConnectionConfig& connection
                     NYdb::NQuery::TTxControl::NoTx());
             }).GetValueSync();
             if (!result.IsSuccess()) {
-                throw std::runtime_error(result.GetIssues().ToOneLineString());
+                throw std::runtime_error(YdbIssuesToString(result));
             }
             NYdb::TResultSetParser parser(result.GetResultSet(0));
             if (!parser.TryNextRow()) {

@@ -9,6 +9,7 @@ SRCS(
     ydb_driver_ut.cpp
     arrow_upsert_ut.cpp
     load_batch_ut.cpp
+    ydb_error_classifier_ut.cpp
 )
 
 PEERDIR(

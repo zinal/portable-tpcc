@@ -18,7 +18,9 @@ public:
     EErrorClass ClassifyException(const std::exception& ex, bool duringCommit) const;
 };
 
+// "OVERLOADED (400060)": YDB CLI ToString(EStatus) plus the numeric code.
 std::string YdbStatusCodeOf(NYdb::EStatus status);
+// One-line error text: "OVERLOADED (400060): <issues>".
 std::string YdbIssuesToString(const NYdb::TStatus& status);
 
 } // namespace NTpcc

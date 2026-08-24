@@ -1,5 +1,7 @@
 #include "path_checker.h"
 
+#include "ydb_error_classifier.h"
+
 #include <constants.h>
 #include <log.h>
 
@@ -18,7 +20,7 @@ void CheckTables(const TYdbConnectionConfig& connectionConfig) {
         auto status = scheme.DescribePath(connection.TablePath(table)).GetValueSync();
         if (!status.IsSuccess()) {
             LOG_E("YDB table is not available: " << connection.TablePath(table)
-                  << ": " << status.GetIssues().ToOneLineString());
+                  << ": " << YdbIssuesToString(status));
             std::exit(1);
         }
     }
