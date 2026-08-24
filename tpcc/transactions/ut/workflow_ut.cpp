@@ -93,3 +93,39 @@ TEST(ThrowIfRollbackFailed, AcceptsConfirmedRollbackOnly) {
     committed.Outcome = ECommitOutcome::Committed;
     EXPECT_THROW(ThrowIfRollbackFailed(committed), TClassifiedError);
 }
+
+TEST(ThrowIfBatchRetryable, OkDoesNotThrow) {
+    TBatchResult batch;
+    batch.Ok = true;
+    EXPECT_NO_THROW(ThrowIfBatchRetryable(batch));
+}
+
+TEST(ThrowIfBatchRetryable, RetryableAndAmbiguousThrow) {
+    TBatchResult retryable;
+    retryable.Ok = false;
+    retryable.ErrorClass = EErrorClass::RetryableAbort;
+    retryable.NativeCode = "ABORTED";
+    retryable.Message = "transaction aborted";
+    try {
+        ThrowIfBatchRetryable(retryable);
+        FAIL() << "expected TClassifiedError";
+    } catch (const TClassifiedError& ex) {
+        EXPECT_EQ(ex.Class, EErrorClass::RetryableAbort);
+        EXPECT_EQ(ex.NativeCode, "ABORTED");
+        EXPECT_EQ(std::string(ex.what()), "transaction aborted");
+    }
+
+    TBatchResult ambiguous;
+    ambiguous.Ok = false;
+    ambiguous.ErrorClass = EErrorClass::AmbiguousCommit;
+    ambiguous.Message = "commit status unknown";
+    EXPECT_THROW(ThrowIfBatchRetryable(ambiguous), TClassifiedError);
+}
+
+TEST(ThrowIfBatchRetryable, PermanentDoesNotThrow) {
+    TBatchResult permanent;
+    permanent.Ok = false;
+    permanent.ErrorClass = EErrorClass::Permanent;
+    permanent.Message = "syntax error";
+    EXPECT_NO_THROW(ThrowIfBatchRetryable(permanent));
+}

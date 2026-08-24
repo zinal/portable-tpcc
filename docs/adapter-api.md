@@ -408,7 +408,13 @@ Adapters MUST:
   document split policy in `options` / settings.
 - Typed `BulkUpsert` (or equivalent) for `PutBatch`.
 - Prefer set-oriented YQL and **`ExecuteFinalAndCommit`** so the last
-  statement and commit are one round trip.
+  statement and commit are one round trip. Homogeneous `ExecuteBatch` of
+  `TUpdateStock` / `TInsertOrderLine` / `TCompleteOrderDelivery` /
+  `TApplyDeliveryToCustomer` is fused to one `AS_TABLE(ListMap)` (or
+  `IN`-list) round trip, matching `ydb workload tpcc` New-Order stock and
+  order-line batches. Money stays `Decimal(22,9)`, not `Double`. Unused-item
+  New-Order still runs every valid line’s ITEM/STOCK/ORDER-LINE work before
+  the ITEM not-found lookup and confirmed rollback (TPC-C §2.4.2.3).
 - Worker `ITpccTransaction` MUST bridge YDB SDK async futures to
   `NTpcc::TFuture` without `GetValueSync()` on the task-queue thread
   (`BridgeYdbFuture` in `tpcc/dbms/ydb/ydb_future.h`). Session acquire is

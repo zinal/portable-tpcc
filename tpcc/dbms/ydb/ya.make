@@ -11,6 +11,7 @@ SRCS(
     ydb_error_classifier.cpp
     ydb_capabilities.cpp
     ydb_session.cpp
+    ydb_batch.cpp
     init.cpp
     data_splitter.cpp
     import.cpp

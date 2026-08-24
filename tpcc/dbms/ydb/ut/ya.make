@@ -10,6 +10,7 @@ SRCS(
     arrow_upsert_ut.cpp
     load_batch_ut.cpp
     ydb_error_classifier_ut.cpp
+    ydb_batch_ut.cpp
 )
 
 PEERDIR(
