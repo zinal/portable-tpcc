@@ -53,5 +53,6 @@ TEST(YdbErrorClassifier, ClassifiesMessageWhenNativeCodeMissing) {
     const TYdbErrorClassifier classifier;
     EXPECT_EQ(classifier.Classify({}, "query failed: OVERLOADED"), EErrorClass::RetryableAbort);
     EXPECT_EQ(classifier.Classify({}, "TRANSPORT_UNAVAILABLE"), EErrorClass::NotCommitted);
+    EXPECT_EQ(classifier.Classify({}, "CLIENT_INTERNAL_ERROR"), EErrorClass::NotCommitted);
     EXPECT_EQ(classifier.Classify({}, "syntax error"), EErrorClass::Permanent);
 }

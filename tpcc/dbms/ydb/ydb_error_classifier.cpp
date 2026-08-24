@@ -57,17 +57,20 @@ std::optional<NYdb::EStatus> TryParseYdbStatus(std::string_view nativeCode) {
 
 EErrorClass ClassifyByMessage(std::string_view message) {
     if (message.find("ABORTED") != std::string_view::npos ||
-        message.find("UNAVAILABLE") != std::string_view::npos ||
         message.find("OVERLOADED") != std::string_view::npos ||
         message.find("SESSION_BUSY") != std::string_view::npos)
     {
         return EErrorClass::RetryableAbort;
     }
+    // TRANSPORT_UNAVAILABLE contains UNAVAILABLE; check transport/client first.
     if (message.find("UNDETERMINED") != std::string_view::npos ||
         message.find("TRANSPORT") != std::string_view::npos ||
         message.find("CLIENT_") != std::string_view::npos)
     {
         return EErrorClass::NotCommitted;
+    }
+    if (message.find("UNAVAILABLE") != std::string_view::npos) {
+        return EErrorClass::RetryableAbort;
     }
     return EErrorClass::Permanent;
 }
