@@ -147,11 +147,11 @@ void BulkUpsertArrow(
         }
         if (!ShouldRetryYdbBulkUpsert(status) || attempt >= kMaxAttempts) {
             throw std::runtime_error(
-                "bulk upsert " + table + ": " + status.GetIssues().ToOneLineString());
+                "bulk upsert " + table + ": " + YdbIssuesToString(status));
         }
         const auto delay = std::chrono::seconds(std::min(30, 1 << std::min(attempt - 1, 5)));
         LOG_W("YDB bulk upsert " << table << " attempt " << attempt << "/" << kMaxAttempts
-              << " failed (" << static_cast<size_t>(status.GetStatus()) << "): "
+              << " failed (" << YdbStatusCodeOf(status.GetStatus()) << "): "
               << status.GetIssues().ToOneLineString()
               << "; retrying in " << delay.count() << "s");
         std::this_thread::sleep_for(delay);
