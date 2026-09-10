@@ -8,6 +8,7 @@
 #include <fmt/format.h>
 
 #include <algorithm>
+#include <cstdint>
 #include <ctime>
 #include <iomanip>
 #include <optional>
@@ -20,7 +21,7 @@ namespace NTpcc {
 
 namespace {
 
-using TCell = std::optional<std::string>;
+using TCell = TObParams::TValue;
 using TRow = std::vector<TCell>;
 
 std::string FormatUnixTimestamp(int64_t unixSeconds) {
@@ -33,7 +34,7 @@ std::string FormatUnixTimestamp(int64_t unixSeconds) {
 }
 
 TCell Cell(int v) {
-    return std::to_string(v);
+    return static_cast<int32_t>(v);
 }
 
 TCell Cell(const std::string& v) {
@@ -41,12 +42,17 @@ TCell Cell(const std::string& v) {
 }
 
 TCell Cell(std::optional<int> v) {
-    if (!v) return std::nullopt;
-    return std::to_string(*v);
+    if (!v) {
+        return TObParams::TNull{};
+    }
+    return static_cast<int32_t>(*v);
 }
 
 TCell Cell(std::optional<std::string> v) {
-    return v;
+    if (!v) {
+        return TObParams::TNull{};
+    }
+    return std::move(*v);
 }
 
 TPutBatchResult OkResult() {
@@ -62,42 +68,20 @@ TPutBatchResult FailResult(const std::exception& ex) {
     return r;
 }
 
-void InsertRowsChunk(
-    TObConnection& conn,
-    const std::string& table,
-    const std::vector<std::string>& columns,
-    const std::vector<TRow>& rows,
-    size_t begin,
-    size_t end,
-    const std::string& suffix)
-{
-    std::string sql = "INSERT INTO " + QuoteIdent(table) + " (";
-    for (size_t i = 0; i < columns.size(); ++i) {
-        if (i) sql += ',';
-        sql += QuoteIdent(columns[i]);
+void BindInsertParams(TObParams& params, std::vector<TRow>& rows, const std::string& table, size_t columnCount) {
+    size_t cells = 0;
+    for (const auto& row : rows) {
+        cells += row.size();
     }
-    sql += ") VALUES ";
-
-    TObParams params;
-    for (size_t r = begin; r < end; ++r) {
-        if (r > begin) sql += ',';
-        sql += '(';
-        if (rows[r].size() != columns.size()) {
+    params.Reserve(cells);
+    for (auto& row : rows) {
+        if (row.size() != columnCount) {
             throw std::runtime_error("row column count mismatch for " + table);
         }
-        for (size_t c = 0; c < rows[r].size(); ++c) {
-            if (c) sql += ',';
-            sql += '?';
-            if (rows[r][c]) {
-                params(*rows[r][c]);
-            } else {
-                params(nullptr);
-            }
+        for (auto& cell : row) {
+            params.Add(std::move(cell));
         }
-        sql += ')';
     }
-    sql += suffix;
-    conn.Execute(sql, params);
 }
 
 template <typename TEmit>
@@ -112,11 +96,19 @@ void EmitBatches(
     batchSize = std::min(std::max<size_t>(1, batchSize), MaxRowsForColumns(columns.size()));
     std::vector<TRow> batch;
     batch.reserve(batchSize);
+    std::string cachedSql;
+    size_t cachedRowCount = 0;
     auto flush = [&]() {
         if (batch.empty()) {
             return;
         }
-        InsertRowsChunk(conn, table, columns, batch, 0, batch.size(), suffix);
+        if (batch.size() != cachedRowCount) {
+            cachedSql = BuildObMultiRowInsertSql(table, columns, batch.size(), suffix);
+            cachedRowCount = batch.size();
+        }
+        TObParams params;
+        BindInsertParams(params, batch, table, columns.size());
+        conn.Execute(cachedSql, params);
         batch.clear();
     };
     auto add = [&](TRow row) {
@@ -337,6 +329,50 @@ bool IsDuplicateKeyError(const std::exception& ex) {
 }
 
 } // namespace
+
+std::string BuildObMultiRowInsertSql(
+    const std::string& table,
+    const std::vector<std::string>& columns,
+    size_t rowCount,
+    const std::string& suffix)
+{
+    if (rowCount == 0) {
+        throw std::invalid_argument("BuildObMultiRowInsertSql: rowCount must be > 0");
+    }
+    if (columns.empty()) {
+        throw std::invalid_argument("BuildObMultiRowInsertSql: columns must not be empty");
+    }
+
+    std::string sql;
+    sql.reserve(
+        16 + table.size() + columns.size() * 16
+        + rowCount * (columns.size() * 2 + 2) + suffix.size());
+    sql += "INSERT INTO ";
+    sql += QuoteIdent(table);
+    sql += " (";
+    for (size_t i = 0; i < columns.size(); ++i) {
+        if (i) {
+            sql += ',';
+        }
+        sql += QuoteIdent(columns[i]);
+    }
+    sql += ") VALUES ";
+    for (size_t r = 0; r < rowCount; ++r) {
+        if (r) {
+            sql += ',';
+        }
+        sql += '(';
+        for (size_t c = 0; c < columns.size(); ++c) {
+            if (c) {
+                sql += ',';
+            }
+            sql += '?';
+        }
+        sql += ')';
+    }
+    sql += suffix;
+    return sql;
+}
 
 TPutBatchResult PutItemsIdempotent(
     TObConnection& conn,

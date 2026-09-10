@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace NTpcc {
 
@@ -26,13 +27,22 @@ inline size_t EffectiveObLoadBatchRows(size_t columnCount, int batchRows) {
         MaxRowsForColumns(columnCount));
 }
 
+// Placeholder-only INSERT text. The connection caches the prepared statement
+// by this SQL, so a full-size batch is prepared once per table (and once more
+// for a trailing short batch), not on every flush.
+std::string BuildObMultiRowInsertSql(
+    const std::string& table,
+    const std::vector<std::string>& columns,
+    size_t rowCount,
+    const std::string& suffix = {});
+
 // Idempotent population helpers (specification §6):
 // - item: INSERT ... ON DUPLICATE KEY UPDATE
 // - warehouse range: INSERT first; on ERROR 1062 (ER_DUP_ENTRY), DELETE
 //   warehouse-scoped tables and INSERT again
 // Load path: multi-row INSERT batches (DEFAULT_LOAD_BATCH_ROWS when
 // batchRows ≤ 0) and a short transaction per table, capped by the prepared
-// statement placeholder limit.
+// statement placeholder limit. Integer cells bind as MYSQL_TYPE_LONG.
 
 TPutBatchResult PutItemsIdempotent(
     TObConnection& conn,

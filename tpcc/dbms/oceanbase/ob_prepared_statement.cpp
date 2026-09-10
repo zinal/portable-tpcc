@@ -5,10 +5,12 @@
 #include <mysql.h>
 
 #include <cstring>
+#include <list>
 #include <memory>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
+#include <unordered_map>
 #include <vector>
 
 namespace NTpcc {
@@ -29,7 +31,7 @@ struct TParamBinding {
     int64_t I64 = 0;
     uint64_t U64 = 0;
     double Dbl = 0;
-    std::string Str;
+    const char* StrPtr = nullptr;
     unsigned long StrLength = 0;
     MYSQL_TIME Ts{};
     MYSQL_BIND Bind{};
@@ -66,8 +68,7 @@ void SetupParamBind(TParamBinding& slot) {
             break;
         case TParamBinding::EKind::String:
             slot.Bind.buffer_type = MYSQL_TYPE_STRING;
-            slot.StrLength = static_cast<unsigned long>(slot.Str.size());
-            slot.Bind.buffer = slot.Str.data();
+            slot.Bind.buffer = const_cast<char*>(slot.StrPtr ? slot.StrPtr : "");
             slot.Bind.buffer_length = slot.StrLength;
             slot.Bind.length = &slot.StrLength;
             break;
@@ -98,7 +99,8 @@ void FillParamSlot(TParamBinding& slot, const TObParams::TValue& value) {
                 slot.Dbl = v;
             } else if constexpr (std::is_same_v<T, std::string>) {
                 slot.Kind = TParamBinding::EKind::String;
-                slot.Str = v;
+                slot.StrPtr = v.data();
+                slot.StrLength = static_cast<unsigned long>(v.size());
             } else if constexpr (std::is_same_v<T, TObParams::TTimestamp>) {
                 slot.Kind = TParamBinding::EKind::Timestamp;
                 slot.Ts.year = v.Year;
@@ -129,16 +131,6 @@ void BindParams(
         ThrowStmtError(stmt, "mysql_stmt_bind_param failed");
     }
 }
-
-struct TStmtGuard {
-    MYSQL_STMT* Stmt = nullptr;
-
-    ~TStmtGuard() {
-        if (Stmt) {
-            mysql_stmt_close(Stmt);
-        }
-    }
-};
 
 MYSQL_STMT* PrepareTextStmt(MYSQL* mysql, const std::string& sql) {
     MYSQL_STMT* stmt = mysql_stmt_init(mysql);
@@ -220,6 +212,8 @@ QueryResult MaterializeStmtResult(MYSQL_STMT* stmt, MYSQL_RES* meta) {
 } // namespace
 
 struct TObStatementCache::TImpl {
+    static constexpr size_t MaxCachedTextStatements = 64;
+
     struct TStmtEntry {
         MYSQL_STMT* Stmt = nullptr;
         bool Prepared = false;
@@ -227,8 +221,15 @@ struct TObStatementCache::TImpl {
         std::vector<MYSQL_BIND> ParamBinds;
     };
 
+    struct TTextStmtEntry {
+        TStmtEntry Stmt;
+        std::list<std::string>::iterator LruIt;
+    };
+
     MYSQL* Mysql = nullptr;
     TStmtEntry Entries[static_cast<size_t>(EObQueryId::Count)];
+    std::unordered_map<std::string, TTextStmtEntry> TextEntries;
+    std::list<std::string> TextLru;
 
     explicit TImpl(void* mysql)
         : Mysql(static_cast<MYSQL*>(mysql))
@@ -236,6 +237,16 @@ struct TObStatementCache::TImpl {
 
     TStmtEntry& Get(EObQueryId id) {
         return Entries[static_cast<size_t>(id)];
+    }
+
+    void CloseEntry(TStmtEntry& entry) {
+        if (entry.Stmt) {
+            mysql_stmt_close(entry.Stmt);
+            entry.Stmt = nullptr;
+        }
+        entry.Prepared = false;
+        entry.ParamSlots.clear();
+        entry.ParamBinds.clear();
     }
 
     void Prepare(TStmtEntry& entry, EObQueryId id) {
@@ -253,16 +264,47 @@ struct TObStatementCache::TImpl {
         entry.Prepared = true;
     }
 
+    void EvictOldestText() {
+        if (TextLru.empty()) {
+            return;
+        }
+        auto it = TextEntries.find(TextLru.back());
+        if (it != TextEntries.end()) {
+            CloseEntry(it->second.Stmt);
+            TextEntries.erase(it);
+        }
+        TextLru.pop_back();
+    }
+
+    TStmtEntry& GetText(const std::string& sql) {
+        if (auto it = TextEntries.find(sql); it != TextEntries.end()) {
+            TextLru.splice(TextLru.begin(), TextLru, it->second.LruIt);
+            return it->second.Stmt;
+        }
+
+        while (TextEntries.size() >= MaxCachedTextStatements) {
+            EvictOldestText();
+        }
+
+        TTextStmtEntry incoming;
+        incoming.Stmt.Stmt = PrepareTextStmt(Mysql, sql);
+        incoming.Stmt.Prepared = true;
+        TextLru.push_front(sql);
+        incoming.LruIt = TextLru.begin();
+        auto [it, inserted] = TextEntries.emplace(sql, std::move(incoming));
+        (void)inserted;
+        return it->second.Stmt;
+    }
+
     void Clear() {
         for (size_t i = 0; i < static_cast<size_t>(EObQueryId::Count); ++i) {
-            if (Entries[i].Stmt) {
-                mysql_stmt_close(Entries[i].Stmt);
-                Entries[i].Stmt = nullptr;
-            }
-            Entries[i].Prepared = false;
-            Entries[i].ParamSlots.clear();
-            Entries[i].ParamBinds.clear();
+            CloseEntry(Entries[i]);
         }
+        for (auto& [sql, entry] : TextEntries) {
+            CloseEntry(entry.Stmt);
+        }
+        TextEntries.clear();
+        TextLru.clear();
     }
 };
 
@@ -302,26 +344,22 @@ uint64_t TObStatementCache::Execute(EObQueryId id, const TObParams& params) {
 }
 
 QueryResult TObStatementCache::QueryText(const std::string& sql, const TObParams& params) {
-    TStmtGuard guard{PrepareTextStmt(Impl_->Mysql, sql)};
-    std::vector<TParamBinding> slots;
-    std::vector<MYSQL_BIND> binds;
-    BindParams(guard.Stmt, params, slots, binds);
-    if (mysql_stmt_execute(guard.Stmt) != 0) {
-        ThrowStmtError(guard.Stmt, "mysql_stmt_execute failed");
+    auto& entry = Impl_->GetText(sql);
+    BindParams(entry.Stmt, params, entry.ParamSlots, entry.ParamBinds);
+    if (mysql_stmt_execute(entry.Stmt) != 0) {
+        ThrowStmtError(entry.Stmt, "mysql_stmt_execute failed");
     }
-    MYSQL_RES* meta = mysql_stmt_result_metadata(guard.Stmt);
-    return MaterializeStmtResult(guard.Stmt, meta);
+    MYSQL_RES* meta = mysql_stmt_result_metadata(entry.Stmt);
+    return MaterializeStmtResult(entry.Stmt, meta);
 }
 
 uint64_t TObStatementCache::ExecuteText(const std::string& sql, const TObParams& params) {
-    TStmtGuard guard{PrepareTextStmt(Impl_->Mysql, sql)};
-    std::vector<TParamBinding> slots;
-    std::vector<MYSQL_BIND> binds;
-    BindParams(guard.Stmt, params, slots, binds);
-    if (mysql_stmt_execute(guard.Stmt) != 0) {
-        ThrowStmtError(guard.Stmt, "mysql_stmt_execute failed");
+    auto& entry = Impl_->GetText(sql);
+    BindParams(entry.Stmt, params, entry.ParamSlots, entry.ParamBinds);
+    if (mysql_stmt_execute(entry.Stmt) != 0) {
+        ThrowStmtError(entry.Stmt, "mysql_stmt_execute failed");
     }
-    return static_cast<uint64_t>(mysql_stmt_affected_rows(guard.Stmt));
+    return static_cast<uint64_t>(mysql_stmt_affected_rows(entry.Stmt));
 }
 
 } // namespace NTpcc
