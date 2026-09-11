@@ -569,7 +569,9 @@ Secrets: the profile names a control-host environment variable
 (`password_env`); `mind-tpcc` delivers the value to workers as a mode-0600
 `password_file` beside `run-config.json` and must not place the secret in
 argv, SSH/nohup command lines, profile artifacts, or logs. Host-key checking
-is required unless explicitly disabled in the profile (recorded in run-state).
+is required unless explicitly disabled in the profile
+(`ssh.insecure_ignore_host_key`) or via `--insecure-ignore-host-key`
+(recorded in run-state).
 
 ## 10. Validation
 

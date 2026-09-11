@@ -9,14 +9,15 @@ import (
 // ProfileOverrides are optional CLI replacements for profile fields.
 // Nil pointers mean "use the profile value".
 type ProfileOverrides struct {
-	Warehouses  *int
-	RampUp      *string
-	Measurement *string
+	Warehouses            *int
+	RampUp                *string
+	Measurement           *string
+	InsecureIgnoreHostKey *bool
 }
 
 // Any reports whether at least one override is set.
 func (o ProfileOverrides) Any() bool {
-	return o.Warehouses != nil || o.RampUp != nil || o.Measurement != nil
+	return o.Warehouses != nil || o.RampUp != nil || o.Measurement != nil || o.InsecureIgnoreHostKey != nil
 }
 
 // ApplyOverrides mutates p with CLI overrides.
@@ -53,6 +54,9 @@ func ApplyOverrides(p *profile.Profile, o ProfileOverrides) error {
 			return fmt.Errorf("--measurement must be greater than zero")
 		}
 		p.Phases.Measurement = *o.Measurement
+	}
+	if o.InsecureIgnoreHostKey != nil {
+		p.SSH.InsecureIgnore = *o.InsecureIgnoreHostKey
 	}
 	return nil
 }

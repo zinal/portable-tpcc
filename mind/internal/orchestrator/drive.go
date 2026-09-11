@@ -104,6 +104,9 @@ func (o *Orchestrator) openSessions() (map[string]remote.Session, error) {
 		return nil, err
 	}
 	hosts := remote.UniqueHosts(o.Profile)
+	if cfg.InsecureIgnoreHost {
+		progress.Printf("ssh: host-key checking disabled (insecure_ignore_host_key)")
+	}
 	progress.Printf("connecting to %d runtime host(s)", len(hosts))
 	sessions := map[string]remote.Session{}
 	for _, host := range hosts {

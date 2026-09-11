@@ -70,6 +70,7 @@ drop database objects; use `drop` for that.
 | `--ramp-up <duration>` | profile `phases.ramp_up` | Warmup override (`30s`, `5m`, …). |
 | `--measurement <duration>` | profile `phases.measurement` | Measurement override. |
 | `--threads <n>` | profile worker/loader threads and `runtime.check_concurrency` | Launch-time override for this invocation. `test`/`load`/`run` pass `--threads=N` to workers and loaders (`0` = auto at the binary). `check`/`run` pass a resolved session count to `check` (`0` = auto `min(scale.warehouses, 32)`). Does not rewrite an existing run-config. |
+| `--insecure-ignore-host-key` | profile `ssh.insecure_ignore_host_key` | Skip SSH host-key checking (lab / reimaged hosts). Same as `ssh.insecure_ignore_host_key: true`. Recorded in run-state. `known_hosts` is then optional. |
 | `--skip <step>` | none | Skip a `run` pipeline step. Repeatable. Names: `deploy`, `schema`, `load`, `indexes`, `check_after_import`, `test` (alias `start`), `check_after_test` (alias `check_after_run`), `collect`, `consolidate`. |
 | `--yes` | false | Required for `drop`, `cleanup`, and `undeploy`. `configure` uses it to overwrite an existing file. |
 | `--after-import` / `--after-test` | — | Select the `check` phase. `--after-run` is a deprecated alias for `--after-test`. |
@@ -95,10 +96,10 @@ mind-tpcc configure ./profile.yaml --dbms ydb --warehouses 50 --endpoint localho
 Optional flags override the corresponding profile fields (`--name`,
 `--ssh-user`, `--endpoint`, `--database`, `--path`, `--user`,
 `--password-env`, `--warehouses`, `--seed`, `--loaders`, `--workers`,
-phase durations, runtime / retry / histogram / checks / collect knobs,
-and DBMS-specific `--auth-scheme`, `--partitioning`, `--partitions`,
-`--foreign-keys`, `--query-timeout`, `--index-parallel`, …). See
-`mind-tpcc configure --help`. The generated file is rejected if the
+`--insecure-ignore-host-key`, phase durations, runtime / retry / histogram /
+checks / collect knobs, and DBMS-specific `--auth-scheme`, `--partitioning`,
+`--partitions`, `--foreign-keys`, `--query-timeout`, `--index-parallel`, …).
+See `mind-tpcc configure --help`. The generated file is rejected if the
 result would not pass structural `validate`.
 
 ## Profile YAML
@@ -132,7 +133,7 @@ Required even for loopback (`127.0.0.1`) profiles.
 | `use_agent` | no | `false` | Use `SSH_AUTH_SOCK`. |
 | `known_hosts` | unless `insecure_ignore_host_key` | — | Host-key file (`~` expanded on the control host). |
 | `connect_timeout` | no | — | Go duration, e.g. `10s`. |
-| `insecure_ignore_host_key` | no | `false` | Disable host-key checking (recorded in run-state). |
+| `insecure_ignore_host_key` | no | `false` | Disable host-key checking (recorded in run-state). Use this, or CLI `--insecure-ignore-host-key`, when lab hosts are reimaged and `knownhosts: key mismatch` would otherwise block SSH. |
 
 ### `paths`
 

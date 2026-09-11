@@ -101,6 +101,9 @@ func TestRun_helpMentionsLeaveProcesses(t *testing.T) {
 	if !strings.Contains(string(out), "Remove run artifacts on all hosts including control") {
 		t.Fatalf("help missing cleanup artifact-only wording:\n%s", out)
 	}
+	if !strings.Contains(string(out), "--insecure-ignore-host-key") {
+		t.Fatalf("help missing --insecure-ignore-host-key:\n%s", out)
+	}
 }
 
 func TestRun_threadsFlagAcceptedOnValidate(t *testing.T) {
@@ -141,6 +144,41 @@ func TestRun_unexpectedArgumentRejected(t *testing.T) {
 	})
 	if !strings.Contains(stderr, `unexpected argument "leftover"`) {
 		t.Fatalf("stderr=%q", stderr)
+	}
+}
+
+func TestRun_insecureIgnoreHostKeyAcceptedOnValidate(t *testing.T) {
+	dir := t.TempDir()
+	profilePath := writeCLITestProfile(t, dir)
+	for _, args := range [][]string{
+		{"validate", "--profile", profilePath, "--insecure-ignore-host-key"},
+		{"validate", "--profile=" + profilePath, "--insecure-ignore-host-key=true"},
+	} {
+		if code := Run(args); code != 0 {
+			t.Fatalf("Run(%v)=%d, want 0", args, code)
+		}
+	}
+}
+
+func TestRun_insecureIgnoreAllowsMissingKnownHosts(t *testing.T) {
+	dir := t.TempDir()
+	profilePath := writeCLITestProfile(t, dir)
+	data, err := os.ReadFile(profilePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stripped := strings.ReplaceAll(string(data), "  known_hosts: ~/.ssh/known_hosts\n", "")
+	if stripped == string(data) {
+		t.Fatal("test fixture missing known_hosts line")
+	}
+	if err := os.WriteFile(profilePath, []byte(stripped), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if code := Run([]string{"validate", "--profile", profilePath}); code == 0 {
+		t.Fatal("expected validate to fail without known_hosts")
+	}
+	if code := Run([]string{"validate", "--profile", profilePath, "--insecure-ignore-host-key"}); code != 0 {
+		t.Fatalf("expected validate to pass with --insecure-ignore-host-key, got %d", code)
 	}
 }
 

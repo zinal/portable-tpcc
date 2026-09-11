@@ -52,7 +52,7 @@ func DialSSH(key, address string, cfg DialConfig) (*SSH, error) {
 	}
 	client, err := ssh.Dial("tcp", host, clientCfg)
 	if err != nil {
-		return nil, fmt.Errorf("ssh dial %s: %w", host, err)
+		return nil, fmt.Errorf("ssh dial %s: %w", host, wrapSSHDialError(err))
 	}
 	return &SSH{key: key, address: address, client: client}, nil
 }
@@ -106,6 +106,23 @@ func hostKeyPolicy(cfg DialConfig, hostWithPort string) (ssh.HostKeyCallback, []
 		return nil, nil, fmt.Errorf("load known_hosts %s: %w", cfg.KnownHostsPath, err)
 	}
 	return cb, hostKeyAlgorithms(cb, hostWithPort), nil
+}
+
+const hostKeyHint = "update known_hosts, or set ssh.insecure_ignore_host_key: true / pass --insecure-ignore-host-key to skip checking"
+
+func wrapSSHDialError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var keyErr *knownhosts.KeyError
+	if errors.As(err, &keyErr) {
+		return fmt.Errorf("%w; %s", err, hostKeyHint)
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "knownhosts: key mismatch") || strings.Contains(msg, "knownhosts: key is unknown") {
+		return fmt.Errorf("%w; %s", err, hostKeyHint)
+	}
+	return err
 }
 
 // hostKeyAlgorithms returns algorithms for keys already recorded for host.

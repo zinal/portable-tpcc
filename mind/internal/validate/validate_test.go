@@ -28,6 +28,24 @@ func TestValidate_validProfile(t *testing.T) {
 	}
 }
 
+func TestValidate_insecureIgnoreAllowsEmptyKnownHosts(t *testing.T) {
+	path := filepath.Join("..", "..", "testdata", "profile.valid.yaml")
+	p, err := profile.ParseFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.SSH.KnownHosts = ""
+	res := validate.Profile(p)
+	if res.Valid {
+		t.Fatal("expected empty known_hosts to fail without insecure_ignore_host_key")
+	}
+	p.SSH.InsecureIgnore = true
+	res = validate.Profile(p)
+	if !res.Valid {
+		t.Fatalf("insecure_ignore_host_key should allow empty known_hosts, errors: %v", res.Errors)
+	}
+}
+
 func TestValidate_tpccSettingsConformantWhenDefaultsMatch(t *testing.T) {
 	path := filepath.Join("..", "..", "testdata", "profile.valid.yaml")
 	p, err := profile.ParseFile(path)

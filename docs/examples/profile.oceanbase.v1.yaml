@@ -9,6 +9,8 @@ ssh:
   use_agent: false
   known_hosts: ~/.ssh/known_hosts
   connect_timeout: 10s
+  # Lab / reimaged hosts: true skips known_hosts (also --insecure-ignore-host-key).
+  insecure_ignore_host_key: false
 
 paths:
   local_artifacts: ./dist

@@ -1,9 +1,11 @@
 package remote
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"golang.org/x/crypto/ssh"
@@ -87,5 +89,22 @@ func TestHostKeyPolicyInsecureHasNoAlgos(t *testing.T) {
 	}
 	if algos != nil {
 		t.Fatalf("expected nil algos when insecure, got %v", algos)
+	}
+}
+
+func TestWrapSSHDialErrorHintsHowToSkip(t *testing.T) {
+	mismatch := &knownhosts.KeyError{Want: []knownhosts.KnownKey{{}}}
+	got := wrapSSHDialError(mismatch)
+	if got == nil || !strings.Contains(got.Error(), "--insecure-ignore-host-key") {
+		t.Fatalf("mismatch hint missing: %v", got)
+	}
+	unknown := fmt.Errorf("ssh: handshake failed: knownhosts: key mismatch")
+	got = wrapSSHDialError(unknown)
+	if got == nil || !strings.Contains(got.Error(), "ssh.insecure_ignore_host_key") {
+		t.Fatalf("string mismatch hint missing: %v", got)
+	}
+	other := fmt.Errorf("connection refused")
+	if wrapSSHDialError(other) != other {
+		t.Fatalf("non-host-key error should pass through")
 	}
 }
