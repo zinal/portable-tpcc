@@ -31,6 +31,7 @@ struct TParamBinding {
     int64_t I64 = 0;
     uint64_t U64 = 0;
     double Dbl = 0;
+    std::string StrStorage;
     const char* StrPtr = nullptr;
     unsigned long StrLength = 0;
     MYSQL_TIME Ts{};
@@ -99,8 +100,9 @@ void FillParamSlot(TParamBinding& slot, const TObParams::TValue& value) {
                 slot.Dbl = v;
             } else if constexpr (std::is_same_v<T, std::string>) {
                 slot.Kind = TParamBinding::EKind::String;
-                slot.StrPtr = v.data();
-                slot.StrLength = static_cast<unsigned long>(v.size());
+                slot.StrStorage = v;
+                slot.StrPtr = slot.StrStorage.data();
+                slot.StrLength = static_cast<unsigned long>(slot.StrStorage.size());
             } else if constexpr (std::is_same_v<T, TObParams::TTimestamp>) {
                 slot.Kind = TParamBinding::EKind::Timestamp;
                 slot.Ts.year = v.Year;
@@ -268,12 +270,21 @@ struct TObStatementCache::TImpl {
         if (TextLru.empty()) {
             return;
         }
-        auto it = TextEntries.find(TextLru.back());
-        if (it != TextEntries.end()) {
-            CloseEntry(it->second.Stmt);
-            TextEntries.erase(it);
+        RemoveTextEntry(TextLru.back());
+    }
+
+    void RemoveTextEntry(const std::string& sql) {
+        auto it = TextEntries.find(sql);
+        if (it == TextEntries.end()) {
+            return;
         }
-        TextLru.pop_back();
+        CloseEntry(it->second.Stmt);
+        TextLru.erase(it->second.LruIt);
+        TextEntries.erase(it);
+    }
+
+    void Invalidate(EObQueryId id) {
+        CloseEntry(Entries[static_cast<size_t>(id)]);
     }
 
     TStmtEntry& GetText(const std::string& sql) {
@@ -327,7 +338,12 @@ QueryResult TObStatementCache::Query(EObQueryId id, const TObParams& params) {
     Impl_->Prepare(entry, id);
     BindParams(entry.Stmt, params, entry.ParamSlots, entry.ParamBinds);
     if (mysql_stmt_execute(entry.Stmt) != 0) {
-        ThrowStmtError(entry.Stmt, "mysql_stmt_execute failed");
+        const int code = static_cast<int>(mysql_stmt_errno(entry.Stmt));
+        const std::string msg = mysql_stmt_error(entry.Stmt);
+        Impl_->Invalidate(id);
+        throw TObDbError(
+            code,
+            std::string("mysql_stmt_execute failed: [") + std::to_string(code) + "] " + msg);
     }
     MYSQL_RES* meta = mysql_stmt_result_metadata(entry.Stmt);
     return MaterializeStmtResult(entry.Stmt, meta);
@@ -338,7 +354,12 @@ uint64_t TObStatementCache::Execute(EObQueryId id, const TObParams& params) {
     Impl_->Prepare(entry, id);
     BindParams(entry.Stmt, params, entry.ParamSlots, entry.ParamBinds);
     if (mysql_stmt_execute(entry.Stmt) != 0) {
-        ThrowStmtError(entry.Stmt, "mysql_stmt_execute failed");
+        const int code = static_cast<int>(mysql_stmt_errno(entry.Stmt));
+        const std::string msg = mysql_stmt_error(entry.Stmt);
+        Impl_->Invalidate(id);
+        throw TObDbError(
+            code,
+            std::string("mysql_stmt_execute failed: [") + std::to_string(code) + "] " + msg);
     }
     return static_cast<uint64_t>(mysql_stmt_affected_rows(entry.Stmt));
 }
@@ -347,7 +368,12 @@ QueryResult TObStatementCache::QueryText(const std::string& sql, const TObParams
     auto& entry = Impl_->GetText(sql);
     BindParams(entry.Stmt, params, entry.ParamSlots, entry.ParamBinds);
     if (mysql_stmt_execute(entry.Stmt) != 0) {
-        ThrowStmtError(entry.Stmt, "mysql_stmt_execute failed");
+        const int code = static_cast<int>(mysql_stmt_errno(entry.Stmt));
+        const std::string msg = mysql_stmt_error(entry.Stmt);
+        Impl_->RemoveTextEntry(sql);
+        throw TObDbError(
+            code,
+            std::string("mysql_stmt_execute failed: [") + std::to_string(code) + "] " + msg);
     }
     MYSQL_RES* meta = mysql_stmt_result_metadata(entry.Stmt);
     return MaterializeStmtResult(entry.Stmt, meta);
@@ -357,7 +383,12 @@ uint64_t TObStatementCache::ExecuteText(const std::string& sql, const TObParams&
     auto& entry = Impl_->GetText(sql);
     BindParams(entry.Stmt, params, entry.ParamSlots, entry.ParamBinds);
     if (mysql_stmt_execute(entry.Stmt) != 0) {
-        ThrowStmtError(entry.Stmt, "mysql_stmt_execute failed");
+        const int code = static_cast<int>(mysql_stmt_errno(entry.Stmt));
+        const std::string msg = mysql_stmt_error(entry.Stmt);
+        Impl_->RemoveTextEntry(sql);
+        throw TObDbError(
+            code,
+            std::string("mysql_stmt_execute failed: [") + std::to_string(code) + "] " + msg);
     }
     return static_cast<uint64_t>(mysql_stmt_affected_rows(entry.Stmt));
 }

@@ -24,6 +24,7 @@ EErrorClass ClassifyCode(int code, bool commit) {
             return EErrorClass::Cancelled;
         case 2006:
         case 2013:
+        case 2027:
             return commit ? EErrorClass::AmbiguousCommit : EErrorClass::NotCommitted;
         default:
             return EErrorClass::Permanent;

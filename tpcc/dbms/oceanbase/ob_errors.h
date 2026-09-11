@@ -30,6 +30,7 @@ inline EObDbErrorKind ClassifyDbError(int nativeCode, std::string_view /*message
             return EObDbErrorKind::Shutdown;
         case 2006:
         case 2013:
+        case 2027: // ER_MALFORMED_PACKET: protocol desync, stale prepared stmt
             return EObDbErrorKind::ConnectionLost;
         default:
             return EObDbErrorKind::Other;
