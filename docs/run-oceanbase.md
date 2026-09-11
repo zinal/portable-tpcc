@@ -57,6 +57,28 @@ line.
 
 Client user: profile `database.user`, else `TPCC_OB_USER`, else `root@root`.
 
+### Tenant memory and prepared statements
+
+Each worker session caches TPC-C statements with `COM_STMT_PREPARE` (Payment’s
+`UPDATE warehouse SET w_ytd = w_ytd + ? WHERE w_id = ?` is typical). Observer
+error **`-4013`** (`No memory or reach tenant memory limit`) on
+`OB_MYSQL_COM_STMT_PREPARE` means the **tenant** hit `MEMORY_SIZE`, not a
+proxy/client version mismatch. Connector/C often then reports `2013` Lost
+connection; replacing every session immediately retries PREPARE and makes the
+OOM worse.
+
+Size the tenant for `connections × prepared statements` (on the order of
+30 OLTP statements per session once warmed), not only for memstore of table
+data. Check `GV$OB_UNITS` / `tenant_hold` vs `tenant_limit` in observer.log.
+Increase `MEMORY_SIZE` (`ALTER RESOURCE UNIT` or recreate the unit/pool) or
+reduce `runtime.max_inflight_per_worker` / connection count. `complex_oltp`
+is a workload type, not a guarantee that tenant memory is large enough.
+
+The adapter classifies `-4013` / that error text as a tenant-memory failure
+(not lost-connection), logs it at ERROR, and slows reconnects while many
+sessions are being replaced. The run continues; the cluster still needs more
+tenant memory or fewer sessions.
+
 ## OceanBase-specific settings
 
 | Standalone | Profile | Meaning |

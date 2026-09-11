@@ -53,10 +53,15 @@ TObSession::TObSession(TObSession&& other) noexcept
     , Executor_(other.Executor_)
     , ShutdownFlag_(std::move(other.ShutdownFlag_))
     , Broken_(other.Broken_)
+    , LastErrorCode_(other.LastErrorCode_)
+    , LastErrorKind_(other.LastErrorKind_)
+    , LastErrorMessage_(std::move(other.LastErrorMessage_))
 {
     other.InTxn_ = false;
     other.Executor_ = nullptr;
     other.Broken_ = true;
+    other.LastErrorCode_ = 0;
+    other.LastErrorKind_ = EObDbErrorKind::Other;
 }
 
 TObSession& TObSession::operator=(TObSession&& other) noexcept {
@@ -66,9 +71,14 @@ TObSession& TObSession::operator=(TObSession&& other) noexcept {
         Executor_ = other.Executor_;
         ShutdownFlag_ = std::move(other.ShutdownFlag_);
         Broken_ = other.Broken_;
+        LastErrorCode_ = other.LastErrorCode_;
+        LastErrorKind_ = other.LastErrorKind_;
+        LastErrorMessage_ = std::move(other.LastErrorMessage_);
         other.InTxn_ = false;
         other.Executor_ = nullptr;
         other.Broken_ = true;
+        other.LastErrorCode_ = 0;
+        other.LastErrorKind_ = EObDbErrorKind::Other;
     }
     return *this;
 }
@@ -90,6 +100,18 @@ void TObSession::CheckShutdown() const {
 }
 
 void TObSession::MarkException(const std::exception& ex) {
+    // Keep the first tenant-memory error: a follow-up 2013 on rollback
+    // would otherwise hide OB -4013 and trigger a reconnect storm.
+    if (LastErrorKind_ != EObDbErrorKind::TenantMemoryLimit) {
+        LastErrorMessage_ = ex.what();
+        if (const auto* db = dynamic_cast<const TObDbError*>(&ex)) {
+            LastErrorCode_ = db->Code();
+            LastErrorKind_ = db->Kind();
+        } else {
+            LastErrorCode_ = 0;
+            LastErrorKind_ = EObDbErrorKind::Other;
+        }
+    }
     if (IsBrokenConnectionException(ex)) {
         Broken_ = true;
     }

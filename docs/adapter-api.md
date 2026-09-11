@@ -325,7 +325,10 @@ PostgreSQL SHOULD classify by SQLSTATE (serialization failure, deadlock,
 unique violation, connection failure, …). YDB SHOULD classify by status /
 issues without enabling hidden `RetryOperation` loops that bypass the budget.
 OceanBase SHOULD distinguish deadlock, lock wait timeout, serialization
-failure, killed transaction, disconnect, and ambiguous commit.
+failure, killed transaction, disconnect, tenant memory limit (`-4013` /
+`No memory or reach tenant memory limit`), and ambiguous commit.
+Tenant memory limit is `permanent` (not a lost-connection retry): reconnect
+storms retry `COM_STMT_PREPARE` and increase tenant memory hold.
 
 ### 4.6. `ICapabilities`
 

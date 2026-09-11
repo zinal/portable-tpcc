@@ -1,5 +1,7 @@
 #include "ob_connection_pool.h"
 
+#include "ob_errors.h"
+
 #include <log.h>
 
 #include <algorithm>
@@ -11,6 +13,22 @@ namespace {
 
 constexpr auto ReconnectInitialBackoff = std::chrono::milliseconds(100);
 constexpr auto ReconnectMaxBackoff = std::chrono::milliseconds(2000);
+constexpr auto TenantMemoryReconnectInitialBackoff = std::chrono::seconds(5);
+constexpr auto TenantMemoryReconnectMaxBackoff = std::chrono::seconds(30);
+
+const char* TenantMemoryHint() {
+    return "OceanBase tenant is out of memory (OB -4013 / "
+           "\"No memory or reach tenant memory limit\"). "
+           "COM_STMT_PREPARE of worker SQL (for example Payment "
+           "UPDATE warehouse) fails, and reconnecting retries PREPARE "
+           "on every new session, which makes the limit worse. "
+           "Increase tenant MEMORY_SIZE (ALTER RESOURCE UNIT / GV$OB_UNITS) "
+           "or reduce max_inflight / connections.";
+}
+
+size_t MassReplacementThreshold(size_t poolSize) {
+    return std::max<size_t>(8, poolSize / 8);
+}
 
 } // namespace
 
@@ -84,6 +102,9 @@ std::optional<TObSession> TObConnectionPool::TryAcquireSession() {
 
 void TObConnectionPool::ReleaseSession(TObSession session) {
     bool reusable = false;
+    const int lastCode = session.LastErrorCode();
+    const EObDbErrorKind lastKind = session.LastErrorKind();
+    const std::string lastMsg = session.LastErrorMessage();
     auto conn = session.ReleaseConnection(&reusable);
     if (!conn) {
         return;
@@ -110,16 +131,44 @@ void TObConnectionPool::ReleaseSession(TObSession session) {
         return;
     }
 
-    LOG_W("Dropping non-reusable OceanBase session and opening a replacement");
+    const bool tenantMemory = lastKind == EObDbErrorKind::TenantMemoryLimit
+        || IsTenantMemoryLimitCode(lastCode)
+        || LooksLikeTenantMemoryLimit(lastMsg);
+    if (tenantMemory) {
+        TenantMemoryPressure_.store(true, std::memory_order_relaxed);
+        if (!TenantMemoryHintLogged_.exchange(true, std::memory_order_relaxed)) {
+            LOG_E(TenantMemoryHint());
+        }
+        if (!lastMsg.empty()) {
+            LOG_E("Dropping OceanBase session after tenant memory error: " << lastMsg);
+        } else {
+            LOG_E("Dropping OceanBase session after tenant memory error (OB -4013)");
+        }
+    } else if (!lastMsg.empty()) {
+        LOG_W("Dropping non-reusable OceanBase session: " << lastMsg);
+    } else {
+        LOG_W("Dropping non-reusable OceanBase session and opening a replacement");
+    }
     conn->Abandon();
     conn.reset();
 
+    size_t pending = 0;
     {
         std::lock_guard lock(Mutex_);
         if (Shutdown_) {
             return;
         }
         ++PendingReplacements_;
+        pending = PendingReplacements_;
+    }
+    if (!tenantMemory && pending >= MassReplacementThreshold(PoolSize_)) {
+        TenantMemoryPressure_.store(true, std::memory_order_relaxed);
+        if (!TenantMemoryHintLogged_.exchange(true, std::memory_order_relaxed)) {
+            LOG_E("Many OceanBase sessions dropped at once (" << pending
+                  << " replacements pending of pool " << PoolSize_
+                  << "). If sql audit shows OB -4013 / tenant memory limit, "
+                  << TenantMemoryHint());
+        }
     }
     Executor_->Submit([this] { ReplaceBrokenConnections(); });
 }
@@ -130,6 +179,17 @@ void TObConnectionPool::ReplaceBrokenConnections() {
     size_t failures = 0;
 
     for (;;) {
+        const bool memoryPressure = TenantMemoryPressure_.load(std::memory_order_relaxed);
+        const auto maxBackoff = memoryPressure
+            ? std::chrono::duration_cast<std::chrono::milliseconds>(
+                  TenantMemoryReconnectMaxBackoff)
+            : ReconnectMaxBackoff;
+        const auto pressureInitial = std::chrono::duration_cast<std::chrono::milliseconds>(
+            TenantMemoryReconnectInitialBackoff);
+        if (memoryPressure && backoff < pressureInitial) {
+            backoff = pressureInitial;
+        }
+
         {
             std::lock_guard lock(Mutex_);
             if (Shutdown_ || PendingReplacements_ == 0) {
@@ -159,9 +219,22 @@ void TObConnectionPool::ReplaceBrokenConnections() {
                       << remaining << " replacement(s) still pending");
             }
             failures = 0;
-            backoff = ReconnectInitialBackoff;
-        } catch (const std::exception& ex) {
+            if (remaining == 0) {
+                TenantMemoryPressure_.store(false, std::memory_order_relaxed);
+            }
+            backoff = memoryPressure && remaining > 0
+                ? pressureInitial
+                : ReconnectInitialBackoff;
+        } catch (const TObDbError& ex) {
             ++failures;
+            if (ex.Kind() == EObDbErrorKind::TenantMemoryLimit
+                || LooksLikeTenantMemoryLimit(ex.what()))
+            {
+                TenantMemoryPressure_.store(true, std::memory_order_relaxed);
+                if (!TenantMemoryHintLogged_.exchange(true, std::memory_order_relaxed)) {
+                    LOG_E(TenantMemoryHint());
+                }
+            }
             LOG_W("Failed to recreate OceanBase connection (attempt " << failures
                   << ", will retry): " << ex.what());
             std::unique_lock lock(Mutex_);
@@ -173,8 +246,30 @@ void TObConnectionPool::ReplaceBrokenConnections() {
                 return;
             }
             lock.unlock();
-            if (backoff < ReconnectMaxBackoff) {
-                backoff = std::min(backoff * 2, ReconnectMaxBackoff);
+            if (backoff < maxBackoff) {
+                backoff = std::min(backoff * 2, maxBackoff);
+            }
+        } catch (const std::exception& ex) {
+            ++failures;
+            if (LooksLikeTenantMemoryLimit(ex.what())) {
+                TenantMemoryPressure_.store(true, std::memory_order_relaxed);
+                if (!TenantMemoryHintLogged_.exchange(true, std::memory_order_relaxed)) {
+                    LOG_E(TenantMemoryHint());
+                }
+            }
+            LOG_W("Failed to recreate OceanBase connection (attempt " << failures
+                  << ", will retry): " << ex.what());
+            std::unique_lock lock(Mutex_);
+            if (Shutdown_) {
+                return;
+            }
+            Cv_.wait_for(lock, backoff, [this] { return Shutdown_; });
+            if (Shutdown_) {
+                return;
+            }
+            lock.unlock();
+            if (backoff < maxBackoff) {
+                backoff = std::min(backoff * 2, maxBackoff);
             }
         }
     }

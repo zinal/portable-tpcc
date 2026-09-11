@@ -41,3 +41,33 @@ TEST(ObErrorClassifier, MalformedPacketIsNotCommitted) {
     EXPECT_EQ(classifier.ClassifyCommitException(err), EErrorClass::AmbiguousCommit);
     EXPECT_EQ(classifier.Classify("2027"), EErrorClass::NotCommitted);
 }
+
+TEST(ObErrors, TenantMemoryLimitIsNotConnectionLost) {
+    EXPECT_EQ(ClassifyDbError(4013), EObDbErrorKind::TenantMemoryLimit);
+    EXPECT_EQ(ClassifyDbError(-4013), EObDbErrorKind::TenantMemoryLimit);
+    EXPECT_EQ(
+        ClassifyDbError(2013, "No memory or reach tenant memory limit"),
+        EObDbErrorKind::TenantMemoryLimit);
+    EXPECT_FALSE(IsConnectionLostCode(4013));
+    EXPECT_FALSE(IsRetryableTxError(EObDbErrorKind::TenantMemoryLimit));
+    EXPECT_EQ(PreferObNativeCode(2013, 4013, "Lost connection to MySQL server during query"), 4013);
+    EXPECT_EQ(
+        PreferObNativeCode(2013, 0, "mysql_stmt_prepare failed: No memory or reach tenant memory limit"),
+        4013);
+}
+
+TEST(ObErrorClassifier, TenantMemoryLimitIsPermanent) {
+    TObErrorClassifier classifier;
+    TObDbError err(
+        4013,
+        "mysql_stmt_prepare failed: [4013] No memory or reach tenant memory limit");
+    EXPECT_EQ(classifier.ClassifyException(err), EErrorClass::Permanent);
+    EXPECT_EQ(classifier.ClassifyCommitException(err), EErrorClass::Permanent);
+    EXPECT_EQ(classifier.Classify("4013", "No memory or reach tenant memory limit"),
+              EErrorClass::Permanent);
+    TObDbError wrapped(
+        2013,
+        "mysql_stmt_prepare failed: [2013] No memory or reach tenant memory limit");
+    EXPECT_EQ(classifier.ClassifyException(wrapped), EErrorClass::Permanent);
+    EXPECT_EQ(wrapped.Kind(), EObDbErrorKind::TenantMemoryLimit);
+}
