@@ -93,17 +93,20 @@ public:
 
 private:
     std::unique_ptr<TObConnection> CreateConnection() const;
+    void ReplaceBrokenConnections();
 
     TObConnectionConfig Config_;
     size_t PoolSize_ = 0;
     std::unique_ptr<TThreadPool> Executor_;
     std::mutex Mutex_;
+    std::mutex ReconnectMutex_;
     std::condition_variable Cv_;
     std::queue<std::unique_ptr<TObConnection>> Connections_;
     std::vector<TObConnection*> CheckedOut_;
     std::shared_ptr<std::atomic<bool>> ShutdownFlag_ =
         std::make_shared<std::atomic<bool>>(false);
     bool Shutdown_ = false;
+    size_t PendingReplacements_ = 0;
 };
 
 } // namespace NTpcc

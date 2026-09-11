@@ -16,6 +16,24 @@ enum class EObDbErrorKind {
     Shutdown,
 };
 
+// Client library codes that mean the MYSQL* handle is no longer usable.
+// 2002/2003: connect failed; 2006/2013/2055: server gone/lost;
+// 2014: protocol desync; 2027: malformed packet (common through OBProxy).
+inline bool IsConnectionLostCode(int nativeCode) {
+    switch (nativeCode) {
+        case 2002:
+        case 2003:
+        case 2006:
+        case 2013:
+        case 2014:
+        case 2027:
+        case 2055:
+            return true;
+        default:
+            return false;
+    }
+}
+
 inline EObDbErrorKind ClassifyDbError(int nativeCode, std::string_view /*message*/ = {}) {
     switch (nativeCode) {
         case 1213:
@@ -28,10 +46,10 @@ inline EObDbErrorKind ClassifyDbError(int nativeCode, std::string_view /*message
             return EObDbErrorKind::TransactionInvalidated;
         case 1317:
             return EObDbErrorKind::Shutdown;
-        case 2006:
-        case 2013:
-            return EObDbErrorKind::ConnectionLost;
         default:
+            if (IsConnectionLostCode(nativeCode)) {
+                return EObDbErrorKind::ConnectionLost;
+            }
             return EObDbErrorKind::Other;
     }
 }

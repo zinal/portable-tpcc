@@ -26,6 +26,9 @@ public:
     uint64_t ExecuteText(const std::string& sql, const TObParams& params);
 
     void Clear();
+    // Drop local MYSQL_STMT* pointers without talking to the server.
+    // mysql_close() on the owning connection frees the handles.
+    void Detach();
 
 private:
     struct TImpl;

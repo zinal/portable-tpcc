@@ -59,6 +59,10 @@ struct TObConnection {
 
     void Reconnect(const TObConnectionConfig& config, bool selectDatabase = true);
 
+    // Close a dead handle without COM_STMT_CLOSE / a long COM_QUIT wait.
+    // Used before replacing a non-reusable pool slot.
+    void Abandon();
+
     QueryResult QuerySimple(const std::string& sql);
     uint64_t ExecuteSimple(const std::string& sql);
 
