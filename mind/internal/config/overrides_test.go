@@ -102,3 +102,21 @@ func TestApplyOverrides_rejectsNegativeRampUp(t *testing.T) {
 		t.Fatalf("expected negative duration error, got %v", err)
 	}
 }
+
+func TestApplyOverrides_insecureIgnoreHostKey(t *testing.T) {
+	p := &profile.Profile{SSH: profile.SSHConfig{KnownHosts: "~/.ssh/known_hosts"}}
+	on := true
+	if err := config.ApplyOverrides(p, config.ProfileOverrides{InsecureIgnoreHostKey: &on}); err != nil {
+		t.Fatal(err)
+	}
+	if !p.SSH.InsecureIgnore {
+		t.Fatal("expected ssh.insecure_ignore_host_key=true")
+	}
+	off := false
+	if err := config.ApplyOverrides(p, config.ProfileOverrides{InsecureIgnoreHostKey: &off}); err != nil {
+		t.Fatal(err)
+	}
+	if p.SSH.InsecureIgnore {
+		t.Fatal("expected ssh.insecure_ignore_host_key=false")
+	}
+}

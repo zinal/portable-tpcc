@@ -129,6 +129,14 @@ func run(args []string, interrupt context.Context) int {
 			i = next
 		case arg == "--yes":
 			cfg.Yes = true
+		case arg == "--insecure-ignore-host-key" || strings.HasPrefix(arg, "--insecure-ignore-host-key="):
+			v, next, err := requireFlagBool(rest, i, "--insecure-ignore-host-key")
+			if err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 2
+			}
+			cfg.Overrides.InsecureIgnoreHostKey = &v
+			i = next
 		case arg == "--leave-processes":
 			cfg.LeaveProcesses = true
 		case arg == "--after-import":
@@ -526,6 +534,7 @@ Options:
   --ramp-up <duration>     Override phases.ramp_up (warmup), e.g. 30s, 5m
   --measurement <duration> Override phases.measurement, e.g. 2m, 120m
   --threads <n>            Override worker/loader threads and check sessions (0 = auto)
+  --insecure-ignore-host-key  Skip SSH host-key checking (lab / reimaged hosts)
   --skip <step>            Skip pipeline step
   --yes                    Non-interactive confirmation (drop, cleanup, undeploy, configure overwrite)
   --leave-processes        Debug: do not kill remote processes this

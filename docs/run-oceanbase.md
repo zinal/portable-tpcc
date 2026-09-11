@@ -229,7 +229,9 @@ Artifacts land under `paths.result_root/<run_id>/` (including
 
 On a single host, list `127.0.0.1` for every loader/worker (local
 sessions, no SSH). Multi-host runs need SSH access and tightly synchronized
-clocks.
+clocks. Host-key checking uses `ssh.known_hosts`. If a host was reimaged and
+`deploy` fails with `knownhosts: key mismatch`, set
+`ssh.insecure_ignore_host_key: true` or pass `--insecure-ignore-host-key`.
 
 ### Multiple workers / co-location
 

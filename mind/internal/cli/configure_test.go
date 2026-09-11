@@ -119,6 +119,26 @@ func TestRun_configureYdbLoginFromUser(t *testing.T) {
 	}
 }
 
+func TestRun_configureInsecureIgnoreHostKey(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "lab.yaml")
+	code := Run([]string{
+		"configure", "--profile", path, "--dbms", "oceanbase",
+		"--ssh-user", "tpcc",
+		"--insecure-ignore-host-key",
+	})
+	if code != 0 {
+		t.Fatalf("exit=%d", code)
+	}
+	p, err := profile.ParseFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !p.SSH.InsecureIgnore {
+		t.Fatal("expected ssh.insecure_ignore_host_key=true")
+	}
+}
+
 func TestRun_configureRefusesOverwriteWithoutYes(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "p.yaml")

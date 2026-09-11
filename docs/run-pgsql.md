@@ -210,7 +210,9 @@ it runs `collect` first when `collection-manifest.json` is absent.
 
 On a single host, list `127.0.0.1` for every loader/worker (local
 sessions, no SSH). Multi-host runs need SSH access and tightly synchronized
-clocks. Repeated host strings mean co-location on one machine.
+clocks. Host-key checking uses `ssh.known_hosts` unless
+`ssh.insecure_ignore_host_key` / `--insecure-ignore-host-key`. Repeated host
+strings mean co-location on one machine.
 
 Artifacts land under `paths.result_root/<run_id>/` (including
 `aggregate.json`).
