@@ -301,38 +301,48 @@ TFuture<void> TObSession::ExecuteBulk(
             constexpr size_t BULK_BATCH_ROWS = static_cast<size_t>(DEFAULT_LOAD_BATCH_ROWS);
             std::vector<TObBulkRow> batch;
             batch.reserve(BULK_BATCH_ROWS);
+            std::string cachedSql;
+            size_t cachedRowCount = 0;
 
             auto flush = [&]() {
                 if (batch.empty()) {
                     return;
                 }
-                std::string sql = "INSERT INTO " + QuoteIdent(tableName) + " (";
-                for (size_t i = 0; i < columns.size(); ++i) {
-                    if (i) sql += ',';
-                    sql += QuoteIdent(columns[i]);
+                if (batch.size() != cachedRowCount) {
+                    cachedSql = "INSERT INTO " + QuoteIdent(tableName) + " (";
+                    for (size_t i = 0; i < columns.size(); ++i) {
+                        if (i) cachedSql += ',';
+                        cachedSql += QuoteIdent(columns[i]);
+                    }
+                    cachedSql += ") VALUES ";
+                    for (size_t r = 0; r < batch.size(); ++r) {
+                        if (r) cachedSql += ',';
+                        cachedSql += '(';
+                        for (size_t c = 0; c < columns.size(); ++c) {
+                            if (c) cachedSql += ',';
+                            cachedSql += '?';
+                        }
+                        cachedSql += ')';
+                    }
+                    cachedRowCount = batch.size();
                 }
-                sql += ") VALUES ";
 
                 TObParams params;
+                params.Reserve(batch.size() * columns.size());
                 for (size_t r = 0; r < batch.size(); ++r) {
-                    if (r) sql += ',';
-                    sql += '(';
                     const auto& row = batch[r];
                     if (row.size() != columns.size()) {
                         throw std::runtime_error("bulk row column count mismatch");
                     }
                     for (size_t c = 0; c < row.size(); ++c) {
-                        if (c) sql += ',';
-                        sql += '?';
                         if (row[c]) {
                             params(*row[c]);
                         } else {
                             params(nullptr);
                         }
                     }
-                    sql += ')';
                 }
-                Conn_->Execute(sql, params);
+                Conn_->Execute(cachedSql, params);
                 batch.clear();
             };
 

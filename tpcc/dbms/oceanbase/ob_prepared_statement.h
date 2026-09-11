@@ -20,6 +20,8 @@ public:
     QueryResult Query(EObQueryId id, const TObParams& params);
     uint64_t Execute(EObQueryId id, const TObParams& params);
 
+    // Text SQL is cached (LRU) so multi-row load INSERTs are prepared once
+    // per distinct statement, not on every batch.
     QueryResult QueryText(const std::string& sql, const TObParams& params);
     uint64_t ExecuteText(const std::string& sql, const TObParams& params);
 

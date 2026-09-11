@@ -70,6 +70,16 @@ public:
     struct TNull {};
     using TValue = std::variant<TNull, int32_t, int64_t, uint64_t, double, std::string, TTimestamp>;
 
+    // Named to avoid overload ambiguity with operator()(int32_t) / string.
+    TObParams& Add(TValue v) {
+        Values_.push_back(std::move(v));
+        return *this;
+    }
+
+    void Reserve(size_t n) {
+        Values_.reserve(n);
+    }
+
     const std::vector<TValue>& Values() const {
         return Values_;
     }
