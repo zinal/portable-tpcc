@@ -20,8 +20,9 @@ namespace NTpcc {
 namespace {
 
 [[noreturn]] void ThrowMysqlError(MYSQL* mysql, const char* what) {
-    const int code = mysql ? static_cast<int>(mysql_errno(mysql)) : 0;
+    const int raw = mysql ? static_cast<int>(mysql_errno(mysql)) : 0;
     const char* msg = mysql ? mysql_error(mysql) : "null mysql handle";
+    const int code = PreferObNativeCode(raw, 0, msg ? msg : "");
     throw TObDbError(code, std::string(what) + ": [" + std::to_string(code) + "] " + msg);
 }
 

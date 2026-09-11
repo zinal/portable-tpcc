@@ -2,6 +2,7 @@
 
 #include "ob_params.h"
 #include "ob_queries.h"
+#include "ob_errors.h"
 #include "query_result.h"
 
 #include <future.h>
@@ -57,6 +58,18 @@ public:
     bool IsReusable() const;
     std::unique_ptr<TObConnection> ReleaseConnection(bool* reusable = nullptr);
 
+    int LastErrorCode() const {
+        return LastErrorCode_;
+    }
+
+    EObDbErrorKind LastErrorKind() const {
+        return LastErrorKind_;
+    }
+
+    const std::string& LastErrorMessage() const {
+        return LastErrorMessage_;
+    }
+
     void SetShutdownFlag(std::shared_ptr<std::atomic<bool>> flag) {
         ShutdownFlag_ = std::move(flag);
     }
@@ -70,6 +83,9 @@ private:
     IExecutor* Executor_ = nullptr;
     std::shared_ptr<std::atomic<bool>> ShutdownFlag_;
     bool Broken_ = false;
+    int LastErrorCode_ = 0;
+    EObDbErrorKind LastErrorKind_ = EObDbErrorKind::Other;
+    std::string LastErrorMessage_;
 };
 
 } // namespace NTpcc

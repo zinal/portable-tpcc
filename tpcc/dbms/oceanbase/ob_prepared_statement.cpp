@@ -16,9 +16,17 @@
 namespace NTpcc {
 namespace {
 
-[[noreturn]] void ThrowStmtError(MYSQL_STMT* stmt, const char* what) {
-    const int code = stmt ? static_cast<int>(mysql_stmt_errno(stmt)) : 0;
-    const char* msg = stmt ? mysql_stmt_error(stmt) : "null stmt handle";
+[[noreturn]] void ThrowStmtError(MYSQL_STMT* stmt, MYSQL* mysql, const char* what) {
+    const int stmtCode = stmt ? static_cast<int>(mysql_stmt_errno(stmt)) : 0;
+    const char* stmtMsg = stmt ? mysql_stmt_error(stmt) : "null stmt handle";
+    const int connCode = mysql ? static_cast<int>(mysql_errno(mysql)) : 0;
+    const char* connMsg = mysql ? mysql_error(mysql) : "";
+    const int code = PreferObNativeCode(
+        stmtCode,
+        connCode,
+        stmtMsg ? stmtMsg : "",
+        connMsg ? connMsg : "");
+    const char* msg = (stmtMsg && stmtMsg[0] != '\0') ? stmtMsg : (connMsg ? connMsg : "");
     throw TObDbError(code, std::string(what) + ": [" + std::to_string(code) + "] " + msg);
 }
 
@@ -117,6 +125,7 @@ void FillParamSlot(TParamBinding& slot, const TObParams::TValue& value) {
 
 void BindParams(
     MYSQL_STMT* stmt,
+    MYSQL* mysql,
     const TObParams& params,
     std::vector<TParamBinding>& slots,
     std::vector<MYSQL_BIND>& binds)
@@ -128,8 +137,24 @@ void BindParams(
         binds[i] = slots[i].Bind;
     }
     if (!params.Empty() && mysql_stmt_bind_param(stmt, binds.data()) != 0) {
-        ThrowStmtError(stmt, "mysql_stmt_bind_param failed");
+        ThrowStmtError(stmt, mysql, "mysql_stmt_bind_param failed");
     }
+}
+
+[[noreturn]] void ThrowPrepareError(MYSQL_STMT* stmt, MYSQL* mysql) {
+    const int stmtCode = stmt ? static_cast<int>(mysql_stmt_errno(stmt)) : 0;
+    const char* stmtMsg = stmt ? mysql_stmt_error(stmt) : "";
+    const int connCode = mysql ? static_cast<int>(mysql_errno(mysql)) : 0;
+    const char* connMsg = mysql ? mysql_error(mysql) : "";
+    const int code = PreferObNativeCode(
+        stmtCode,
+        connCode,
+        stmtMsg ? stmtMsg : "",
+        connMsg ? connMsg : "");
+    const char* msg = (stmtMsg && stmtMsg[0] != '\0') ? stmtMsg : (connMsg ? connMsg : "");
+    throw TObDbError(
+        code,
+        std::string("mysql_stmt_prepare failed: [") + std::to_string(code) + "] " + msg);
 }
 
 MYSQL_STMT* PrepareTextStmt(MYSQL* mysql, const std::string& sql) {
@@ -138,17 +163,17 @@ MYSQL_STMT* PrepareTextStmt(MYSQL* mysql, const std::string& sql) {
         throw std::runtime_error("mysql_stmt_init failed");
     }
     if (mysql_stmt_prepare(stmt, sql.data(), static_cast<unsigned long>(sql.size())) != 0) {
-        const int code = static_cast<int>(mysql_stmt_errno(stmt));
-        const std::string msg = mysql_stmt_error(stmt);
-        mysql_stmt_close(stmt);
-        throw TObDbError(
-            code,
-            std::string("mysql_stmt_prepare failed: [") + std::to_string(code) + "] " + msg);
+        try {
+            ThrowPrepareError(stmt, mysql);
+        } catch (...) {
+            mysql_stmt_close(stmt);
+            throw;
+        }
     }
     return stmt;
 }
 
-QueryResult MaterializeStmtResult(MYSQL_STMT* stmt, MYSQL_RES* meta) {
+QueryResult MaterializeStmtResult(MYSQL_STMT* stmt, MYSQL* mysql, MYSQL_RES* meta) {
     if (!meta) {
         return QueryResult{};
     }
@@ -179,7 +204,7 @@ QueryResult MaterializeStmtResult(MYSQL_STMT* stmt, MYSQL_RES* meta) {
 
     if (mysql_stmt_bind_result(stmt, resultBinds.data()) != 0) {
         mysql_free_result(meta);
-        ThrowStmtError(stmt, "mysql_stmt_bind_result failed");
+        ThrowStmtError(stmt, mysql, "mysql_stmt_bind_result failed");
     }
 
     std::vector<std::vector<std::optional<std::string>>> rows;
@@ -190,7 +215,7 @@ QueryResult MaterializeStmtResult(MYSQL_STMT* stmt, MYSQL_RES* meta) {
         }
         if (rc != 0 && rc != MYSQL_DATA_TRUNCATED) {
             mysql_free_result(meta);
-            ThrowStmtError(stmt, "mysql_stmt_fetch failed");
+            ThrowStmtError(stmt, mysql, "mysql_stmt_fetch failed");
         }
 
         std::vector<std::optional<std::string>> row;
@@ -253,13 +278,20 @@ struct TObStatementCache::TImpl {
         if (entry.Prepared) {
             return;
         }
+        CloseEntry(entry);
         entry.Stmt = mysql_stmt_init(Mysql);
         if (!entry.Stmt) {
             throw std::runtime_error("mysql_stmt_init failed");
         }
         const std::string_view sql = QuerySql(id);
         if (mysql_stmt_prepare(entry.Stmt, sql.data(), static_cast<unsigned long>(sql.size())) != 0) {
-            ThrowStmtError(entry.Stmt, "mysql_stmt_prepare failed");
+            // Capture errno before CloseEntry: mysql_stmt_close can clear it.
+            try {
+                ThrowPrepareError(entry.Stmt, Mysql);
+            } catch (...) {
+                CloseEntry(entry);
+                throw;
+            }
         }
         entry.Prepared = true;
     }
@@ -349,39 +381,39 @@ void TObStatementCache::Detach() {
 QueryResult TObStatementCache::Query(EObQueryId id, const TObParams& params) {
     auto& entry = Impl_->Get(id);
     Impl_->Prepare(entry, id);
-    BindParams(entry.Stmt, params, entry.ParamSlots, entry.ParamBinds);
+    BindParams(entry.Stmt, Impl_->Mysql, params, entry.ParamSlots, entry.ParamBinds);
     if (mysql_stmt_execute(entry.Stmt) != 0) {
-        ThrowStmtError(entry.Stmt, "mysql_stmt_execute failed");
+        ThrowStmtError(entry.Stmt, Impl_->Mysql, "mysql_stmt_execute failed");
     }
     MYSQL_RES* meta = mysql_stmt_result_metadata(entry.Stmt);
-    return MaterializeStmtResult(entry.Stmt, meta);
+    return MaterializeStmtResult(entry.Stmt, Impl_->Mysql, meta);
 }
 
 uint64_t TObStatementCache::Execute(EObQueryId id, const TObParams& params) {
     auto& entry = Impl_->Get(id);
     Impl_->Prepare(entry, id);
-    BindParams(entry.Stmt, params, entry.ParamSlots, entry.ParamBinds);
+    BindParams(entry.Stmt, Impl_->Mysql, params, entry.ParamSlots, entry.ParamBinds);
     if (mysql_stmt_execute(entry.Stmt) != 0) {
-        ThrowStmtError(entry.Stmt, "mysql_stmt_execute failed");
+        ThrowStmtError(entry.Stmt, Impl_->Mysql, "mysql_stmt_execute failed");
     }
     return static_cast<uint64_t>(mysql_stmt_affected_rows(entry.Stmt));
 }
 
 QueryResult TObStatementCache::QueryText(const std::string& sql, const TObParams& params) {
     auto& entry = Impl_->GetText(sql);
-    BindParams(entry.Stmt, params, entry.ParamSlots, entry.ParamBinds);
+    BindParams(entry.Stmt, Impl_->Mysql, params, entry.ParamSlots, entry.ParamBinds);
     if (mysql_stmt_execute(entry.Stmt) != 0) {
-        ThrowStmtError(entry.Stmt, "mysql_stmt_execute failed");
+        ThrowStmtError(entry.Stmt, Impl_->Mysql, "mysql_stmt_execute failed");
     }
     MYSQL_RES* meta = mysql_stmt_result_metadata(entry.Stmt);
-    return MaterializeStmtResult(entry.Stmt, meta);
+    return MaterializeStmtResult(entry.Stmt, Impl_->Mysql, meta);
 }
 
 uint64_t TObStatementCache::ExecuteText(const std::string& sql, const TObParams& params) {
     auto& entry = Impl_->GetText(sql);
-    BindParams(entry.Stmt, params, entry.ParamSlots, entry.ParamBinds);
+    BindParams(entry.Stmt, Impl_->Mysql, params, entry.ParamSlots, entry.ParamBinds);
     if (mysql_stmt_execute(entry.Stmt) != 0) {
-        ThrowStmtError(entry.Stmt, "mysql_stmt_execute failed");
+        ThrowStmtError(entry.Stmt, Impl_->Mysql, "mysql_stmt_execute failed");
     }
     return static_cast<uint64_t>(mysql_stmt_affected_rows(entry.Stmt));
 }

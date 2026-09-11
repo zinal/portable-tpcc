@@ -107,6 +107,8 @@ private:
         std::make_shared<std::atomic<bool>>(false);
     bool Shutdown_ = false;
     size_t PendingReplacements_ = 0;
+    std::atomic<bool> TenantMemoryPressure_{false};
+    std::atomic<bool> TenantMemoryHintLogged_{false};
 };
 
 } // namespace NTpcc

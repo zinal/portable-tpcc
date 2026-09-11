@@ -205,6 +205,9 @@ automatic from warehouse scale (`warehouse_range`).
 
 OceanBase user: `database.user`, else `TPCC_OB_USER`, else `root@root`.
 Schema creates the tables database if missing.
+Worker OLTP uses per-session `COM_STMT_PREPARE`; observer `-4013` (tenant
+memory limit) is sized in [run-oceanbase.md](run-oceanbase.md) (not a
+connection-string option).
 
 ### `scale`
 

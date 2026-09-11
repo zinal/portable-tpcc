@@ -621,6 +621,11 @@ visible in the result settings/options.
   keep the server default (10s).
   Blocking connector IO belongs on a bounded `IExecutor` in `TObSession`;
   `ITpccTransaction` MUST NOT `.Get()` on the scheduler (adapter-api §4.3).
+  Worker OLTP uses per-session `COM_STMT_PREPARE` (cached in `TObStatementCache`).
+  Observer `-4013` (`No memory or reach tenant memory limit`) is tenant resource
+  exhaustion, not a disconnect: reconnecting retries PREPARE and can make the
+  limit worse. Size tenant `MEMORY_SIZE` for `sessions × prepared statements`
+  (see [run-oceanbase.md](run-oceanbase.md)).
   `history` uses technical `PRIMARY KEY (h_w_id, hist_id)` with
   `AUTO_INCREMENT` (cluster and standalone layouts).
 

@@ -13,21 +13,22 @@ int ParseCode(std::string_view nativeCode) {
     return std::atoi(std::string(nativeCode).c_str());
 }
 
-EErrorClass ClassifyCode(int code, bool commit) {
-    switch (code) {
-        case 1213:
-        case 1205:
-        case 6235:
-        case 6002:
+EErrorClass ClassifyCode(int code, bool commit, std::string_view message = {}) {
+    switch (ClassifyDbError(code, message)) {
+        case EObDbErrorKind::Deadlock:
+        case EObDbErrorKind::LockWaitTimeout:
+        case EObDbErrorKind::SerializationFailure:
+        case EObDbErrorKind::TransactionInvalidated:
             return EErrorClass::RetryableAbort;
-        case 1317:
+        case EObDbErrorKind::Shutdown:
             return EErrorClass::Cancelled;
-        default:
-            if (IsConnectionLostCode(code)) {
-                return commit ? EErrorClass::AmbiguousCommit : EErrorClass::NotCommitted;
-            }
+        case EObDbErrorKind::ConnectionLost:
+            return commit ? EErrorClass::AmbiguousCommit : EErrorClass::NotCommitted;
+        case EObDbErrorKind::TenantMemoryLimit:
+        case EObDbErrorKind::Other:
             return EErrorClass::Permanent;
     }
+    return EErrorClass::Permanent;
 }
 
 } // namespace
@@ -41,21 +42,21 @@ std::string ObNativeCodeOf(const std::exception& ex) {
 
 EErrorClass TObErrorClassifier::Classify(
     std::string_view nativeCode,
-    std::string_view /*message*/) const
+    std::string_view message) const
 {
-    return ClassifyCode(ParseCode(nativeCode), false);
+    return ClassifyCode(ParseCode(nativeCode), false, message);
 }
 
 EErrorClass TObErrorClassifier::ClassifyException(const std::exception& ex) const {
     if (const auto* db = dynamic_cast<const TObDbError*>(&ex)) {
-        return ClassifyCode(db->Code(), false);
+        return ClassifyCode(db->Code(), false, db->what());
     }
     return EErrorClass::Permanent;
 }
 
 EErrorClass TObErrorClassifier::ClassifyCommitException(const std::exception& ex) const {
     if (const auto* db = dynamic_cast<const TObDbError*>(&ex)) {
-        return ClassifyCode(db->Code(), true);
+        return ClassifyCode(db->Code(), true, db->what());
     }
     return EErrorClass::Permanent;
 }
