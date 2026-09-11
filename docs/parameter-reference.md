@@ -200,7 +200,7 @@ automatic from warehouse scale (`warehouse_range`).
 | --- | --- | --- | --- |
 | `partitions` | `-1`, `0`, or `1`…`8192` | `0` | `-1` off, `0` derive from warehouses, `N` explicit HASH count (schema time only). |
 | `foreign_keys` | bool or `on`/`off`/… | `on` | FOREIGN KEY constraints at schema time. |
-| `query_timeout` | positive int (seconds) | `600` | Session `ob_query_timeout` for bulk import / `CREATE INDEX` / `DBMS_STATS` / integrity checks. |
+| `query_timeout` | positive int (seconds) | `600` | Session `ob_query_timeout` for bulk import / `CREATE INDEX` / `DBMS_STATS` / integrity checks / pre-flight catalog queries. |
 | `index_parallel` | positive int | `4` | `CREATE INDEX … PARALLEL n`. `1` = serial. |
 
 OceanBase user: `database.user`, else `TPCC_OB_USER`, else `root@root`.

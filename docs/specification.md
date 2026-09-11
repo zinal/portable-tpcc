@@ -561,8 +561,9 @@ string, **every check session MUST use it**, including each parallel worker
 session. Worker OLTP sessions MAY keep the DBMS default so a hung transaction
 fails fast. OceanBase:
 `database.options.query_timeout` (seconds, default 600) sets session
-`ob_query_timeout` for load, indexes, statistics, and check; the server
-default without that SET is 10s. See [run-oceanbase.md](run-oceanbase.md).
+`ob_query_timeout` for load, indexes, statistics, check, and pre-flight
+catalog queries; the server default without that SET is 10s. See
+[run-oceanbase.md](run-oceanbase.md).
 
 Secrets: the profile names a control-host environment variable
 (`password_env`); `mind-tpcc` delivers the value to workers as a mode-0600
@@ -615,8 +616,9 @@ visible in the result settings/options.
   `CREATE INDEX … PARALLEL n` (`database.options.index_parallel`, default 4),
   `DBMS_STATS.GATHER_TABLE_STATS` with gather DOP equal to the HASH partition
   count. Session `ob_query_timeout` (`database.options.query_timeout`, default
-  600s) MUST apply to load, indexes, statistics, and integrity-check sessions
-  (specification §9.2); worker OLTP sessions MAY keep the server default (10s).
+  600s) MUST apply to load, indexes, statistics, integrity-check, and
+  pre-flight catalog sessions (specification §9.2); worker OLTP sessions MAY
+  keep the server default (10s).
   Blocking connector IO belongs on a bounded `IExecutor` in `TObSession`;
   `ITpccTransaction` MUST NOT `.Get()` on the scheduler (adapter-api §4.3).
   `history` uses technical `PRIMARY KEY (h_w_id, hist_id)` with

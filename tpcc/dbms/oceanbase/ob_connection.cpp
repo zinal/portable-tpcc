@@ -180,6 +180,24 @@ std::string QuoteIdent(const std::string& ident) {
     return "`" + ident + "`";
 }
 
+std::string QuoteSqlString(const std::string& value) {
+    if (value.empty()) {
+        throw std::invalid_argument("empty SQL string literal");
+    }
+    std::string quoted;
+    quoted.reserve(value.size() + 2);
+    quoted.push_back('\'');
+    for (unsigned char ch : value) {
+        if (ch == '\'' || ch == '\\' || ch == '\0') {
+            throw std::invalid_argument(
+                "invalid SQL string literal '" + value + "'");
+        }
+        quoted.push_back(static_cast<char>(ch));
+    }
+    quoted.push_back('\'');
+    return quoted;
+}
+
 std::string ObClientVersion() {
     return mysql_get_client_info();
 }
@@ -398,9 +416,9 @@ std::unique_ptr<TObConnection> ConnectToTargetDatabase(const TObConnectionConfig
     }
 
     auto conn = TObConnection::Connect(config, false);
-    auto exists = conn->Query(
-        "SELECT 1 AS ok FROM information_schema.schemata WHERE schema_name = ? LIMIT 1",
-        MakeParams(db));
+    auto exists = conn->QuerySimple(
+        "SELECT 1 AS ok FROM information_schema.schemata WHERE schema_name = "
+        + QuoteSqlString(db) + " LIMIT 1");
     if (!exists.TryNextRow()) {
         try {
             conn->CreateDatabaseIfNotExists(db);
