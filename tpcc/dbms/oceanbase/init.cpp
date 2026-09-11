@@ -252,29 +252,11 @@ void CreateTableGroup(TObConnection& conn, const TSchemaLayout& layout) {
 }
 
 bool IndexExists(TObConnection& conn, const std::string& database, const std::string& indexName) {
-    auto result = conn.Query(
-        "SELECT 1 AS ok FROM information_schema.statistics "
-        "WHERE table_schema = ? AND index_name = ? LIMIT 1",
-        MakeParams(database, indexName));
+    auto result = conn.QuerySimple(
+        "SELECT 1 AS ok FROM information_schema.statistics WHERE table_schema = "
+        + QuoteSqlString(database) + " AND index_name = " + QuoteSqlString(indexName)
+        + " LIMIT 1");
     return result.TryNextRow();
-}
-
-std::string QuoteSqlString(const std::string& value) {
-    if (value.empty()) {
-        throw std::invalid_argument("empty SQL string literal");
-    }
-    std::string quoted;
-    quoted.reserve(value.size() + 2);
-    quoted.push_back('\'');
-    for (unsigned char ch : value) {
-        if (ch == '\'' || ch == '\\' || ch == '\0') {
-            throw std::invalid_argument(
-                "invalid SQL string literal '" + value + "'");
-        }
-        quoted.push_back(static_cast<char>(ch));
-    }
-    quoted.push_back('\'');
-    return quoted;
 }
 
 } // namespace

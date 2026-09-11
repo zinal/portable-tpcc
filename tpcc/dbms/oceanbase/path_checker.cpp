@@ -1,16 +1,22 @@
 #include "path_checker.h"
 
 #include "ob_connection.h"
+#include "ob_errors.h"
 
 #include <constants.h>
 #include <log.h>
 
+#include <chrono>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <unordered_set>
 
 namespace NTpcc {
 namespace {
+
+constexpr int kPreflightAttempts = 5;
+constexpr auto kPreflightInitialBackoff = std::chrono::milliseconds(200);
 
 std::unique_ptr<TObConnection> ConnectChecked(const TObConnectionConfig& cfg) {
     const std::string db = EffectiveDatabase(cfg);
@@ -19,9 +25,12 @@ std::unique_ptr<TObConnection> ConnectChecked(const TObConnectionConfig& cfg) {
     }
 
     auto conn = TObConnection::Connect(cfg, false);
-    auto exists = conn->Query(
-        "SELECT 1 AS ok FROM information_schema.schemata WHERE schema_name = ? LIMIT 1",
-        MakeParams(db));
+    // information_schema on a large partitioned tenant can exceed the 10s
+    // server default; same query_timeout as load/index/check.
+    conn->ConfigureBulkLoadSession();
+    auto exists = conn->QuerySimple(
+        "SELECT 1 AS ok FROM information_schema.schemata WHERE schema_name = "
+        + QuoteSqlString(db) + " LIMIT 1");
     if (!exists.TryNextRow()) {
         return conn;
     }
@@ -30,10 +39,9 @@ std::unique_ptr<TObConnection> ConnectChecked(const TObConnectionConfig& cfg) {
 }
 
 std::unordered_set<std::string> ListTables(TObConnection& conn, const std::string& database) {
-    auto result = conn.Query(
+    auto result = conn.QuerySimple(
         "SELECT table_name AS table_name FROM information_schema.tables "
-        "WHERE table_schema = ? AND table_type = 'BASE TABLE'",
-        MakeParams(database));
+        "WHERE table_schema = " + QuoteSqlString(database) + " AND table_type = 'BASE TABLE'");
 
     std::unordered_set<std::string> tables;
     while (result.TryNextRow()) {
@@ -47,10 +55,10 @@ std::unordered_set<std::string> ListIndexes(
     const std::string& database,
     const std::string& tableName)
 {
-    auto result = conn.Query(
+    auto result = conn.QuerySimple(
         "SELECT index_name AS index_name FROM information_schema.statistics "
-        "WHERE table_schema = ? AND table_name = ?",
-        MakeParams(database, tableName));
+        "WHERE table_schema = " + QuoteSqlString(database)
+        + " AND table_name = " + QuoteSqlString(tableName));
 
     std::unordered_set<std::string> indexes;
     while (result.TryNextRow()) {
@@ -103,10 +111,23 @@ int GetWarehouseCount(TObConnection& conn) {
 
 template <typename Fn>
 void WithPreflight(const char* label, Fn&& fn) {
-    try {
-        fn();
-    } catch (const std::exception& e) {
-        throw std::runtime_error(std::string(label) + e.what());
+    auto backoff = kPreflightInitialBackoff;
+    for (int attempt = 1; ; ++attempt) {
+        try {
+            fn();
+            return;
+        } catch (const TObDbError& e) {
+            if (!IsConnectionLostCode(e.Code()) || attempt >= kPreflightAttempts) {
+                throw std::runtime_error(std::string(label) + e.what());
+            }
+            LOG_W(label << "lost connection on attempt " << attempt
+                  << "/" << kPreflightAttempts << ": " << e.what()
+                  << "; retrying");
+            std::this_thread::sleep_for(backoff);
+            backoff *= 2;
+        } catch (const std::exception& e) {
+            throw std::runtime_error(std::string(label) + e.what());
+        }
     }
 }
 

@@ -35,9 +35,9 @@ void CleanSync(const std::string& connectionString, const std::string& path) {
     }
 
     auto conn = TObConnection::Connect(cfg, false);
-    auto exists = conn->Query(
-        "SELECT 1 AS ok FROM information_schema.schemata WHERE schema_name = ? LIMIT 1",
-        MakeParams(db));
+    auto exists = conn->QuerySimple(
+        "SELECT 1 AS ok FROM information_schema.schemata WHERE schema_name = "
+        + QuoteSqlString(db) + " LIMIT 1");
     if (!exists.TryNextRow()) {
         LOG_I("Database '" << db << "' does not exist; nothing to clean");
         return;

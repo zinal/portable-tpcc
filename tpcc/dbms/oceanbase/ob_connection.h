@@ -28,6 +28,7 @@ struct TObConnectionConfig {
 TObConnectionConfig ParseConnectionString(const std::string& connection);
 std::string EffectiveDatabase(const TObConnectionConfig& config);
 std::string QuoteIdent(const std::string& ident);
+std::string QuoteSqlString(const std::string& value);
 std::string ObClientVersion();
 
 struct TObConnection {
@@ -45,7 +46,8 @@ struct TObConnection {
     void CreateDatabaseIfNotExists(const std::string& database);
     // Raise session ob_query_timeout from QueryTimeoutSeconds (connection property
     // query_timeout; default OB_DEFAULT_QUERY_TIMEOUT_SECONDS). Used for bulk
-    // import, CREATE INDEX, DBMS_STATS gather, and integrity-check scans.
+    // import, CREATE INDEX, DBMS_STATS, integrity-check scans, and pre-flight
+    // catalog queries. Worker OLTP sessions keep the server default.
     void ConfigureBulkLoadSession();
     void BeginRepeatableRead();
     void Commit();
