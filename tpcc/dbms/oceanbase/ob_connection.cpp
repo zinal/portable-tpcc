@@ -8,6 +8,7 @@
 #include <mysql.h>
 
 #include <cctype>
+#include <mutex>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
@@ -97,6 +98,18 @@ void SetSessionRepeatableRead(MYSQL* mysql) {
     }
 }
 
+void EnsureMysqlLibrary() {
+    static std::once_flag once;
+    std::call_once(once, [] {
+        if (mysql_library_init(0, nullptr, nullptr) != 0) {
+            throw std::runtime_error("mysql_library_init failed");
+        }
+    });
+}
+
+constexpr unsigned int OB_CONNECT_TIMEOUT_SECONDS = 10;
+constexpr unsigned int OB_ABANDON_TIMEOUT_SECONDS = 1;
+
 } // namespace
 
 struct TObConnection::TImpl {
@@ -112,6 +125,13 @@ struct TObConnection::TImpl {
     void ClearStatementCache() {
         if (StmtCache) {
             StmtCache->Clear();
+            StmtCache.reset();
+        }
+    }
+
+    void DetachStatementCache() {
+        if (StmtCache) {
+            StmtCache->Detach();
             StmtCache.reset();
         }
     }
@@ -165,10 +185,14 @@ std::string ObClientVersion() {
 }
 
 void TObConnection::EstablishConnection(const TObConnectionConfig& config, bool selectDatabase) {
+    EnsureMysqlLibrary();
     Impl_->Mysql = mysql_init(nullptr);
     if (!Impl_->Mysql) {
         throw std::runtime_error("mysql_init failed");
     }
+
+    unsigned int connectTimeout = OB_CONNECT_TIMEOUT_SECONDS;
+    mysql_options(Impl_->Mysql, MYSQL_OPT_CONNECT_TIMEOUT, &connectTimeout);
 
 #ifdef MYSQL_OPT_SSL_ENFORCE
     const int sslEnforce = 0;
@@ -224,6 +248,21 @@ void TObConnection::Reconnect(const TObConnectionConfig& config, bool selectData
         Impl_->Mysql = nullptr;
     }
     EstablishConnection(config, selectDatabase);
+}
+
+void TObConnection::Abandon() {
+    if (!Impl_) {
+        return;
+    }
+    Impl_->DetachStatementCache();
+    if (!Impl_->Mysql) {
+        return;
+    }
+    unsigned int timeoutSec = OB_ABANDON_TIMEOUT_SECONDS;
+    mysql_options(Impl_->Mysql, MYSQL_OPT_READ_TIMEOUT, &timeoutSec);
+    mysql_options(Impl_->Mysql, MYSQL_OPT_WRITE_TIMEOUT, &timeoutSec);
+    mysql_close(Impl_->Mysql);
+    Impl_->Mysql = nullptr;
 }
 
 void TObConnection::UseDatabase(const std::string& database) {

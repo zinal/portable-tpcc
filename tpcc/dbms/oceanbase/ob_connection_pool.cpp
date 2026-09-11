@@ -1,12 +1,18 @@
 #include "ob_connection_pool.h"
 
-#include <domain_util.h>
 #include <log.h>
 
 #include <algorithm>
+#include <chrono>
 #include <stdexcept>
 
 namespace NTpcc {
+namespace {
+
+constexpr auto ReconnectInitialBackoff = std::chrono::milliseconds(100);
+constexpr auto ReconnectMaxBackoff = std::chrono::milliseconds(2000);
+
+} // namespace
 
 TObConnectionPool::TObConnectionPool(
     const std::string& connectionString,
@@ -92,36 +98,86 @@ void TObConnectionPool::ReleaseSession(TObSession session) {
         }
     }
 
-    std::unique_ptr<TObConnection> replacement;
-    if (!reusable) {
-        LOG_W("Dropping non-reusable OceanBase session and opening a replacement");
-        try {
-            replacement = CreateConnection();
-        } catch (const std::exception& ex) {
-            LOG_E("Failed to recreate OceanBase connection: " << ex.what());
-            ShutdownFlag_->store(true, std::memory_order_release);
-            {
-                std::lock_guard lock(Mutex_);
-                Shutdown_ = true;
+    if (reusable) {
+        {
+            std::lock_guard lock(Mutex_);
+            if (Shutdown_) {
+                return;
             }
-            RequestStopWithError();
-            Cv_.notify_all();
-            return;
+            Connections_.push(std::move(conn));
         }
+        Cv_.notify_one();
+        return;
     }
+
+    LOG_W("Dropping non-reusable OceanBase session and opening a replacement");
+    conn->Abandon();
+    conn.reset();
 
     {
         std::lock_guard lock(Mutex_);
         if (Shutdown_) {
             return;
         }
-        if (reusable) {
-            Connections_.push(std::move(conn));
-        } else {
-            Connections_.push(std::move(replacement));
+        ++PendingReplacements_;
+    }
+    Executor_->Submit([this] { ReplaceBrokenConnections(); });
+}
+
+void TObConnectionPool::ReplaceBrokenConnections() {
+    std::unique_lock reconnectLock(ReconnectMutex_);
+    auto backoff = ReconnectInitialBackoff;
+    size_t failures = 0;
+
+    for (;;) {
+        {
+            std::lock_guard lock(Mutex_);
+            if (Shutdown_ || PendingReplacements_ == 0) {
+                return;
+            }
+        }
+
+        try {
+            auto replacement = CreateConnection();
+            size_t remaining = 0;
+            {
+                std::lock_guard lock(Mutex_);
+                if (Shutdown_) {
+                    return;
+                }
+                if (PendingReplacements_ == 0) {
+                    return;
+                }
+                --PendingReplacements_;
+                remaining = PendingReplacements_;
+                Connections_.push(std::move(replacement));
+            }
+            Cv_.notify_one();
+            if (failures > 0) {
+                LOG_I("Recreated OceanBase connection after " << failures
+                      << " failed attempt(s); "
+                      << remaining << " replacement(s) still pending");
+            }
+            failures = 0;
+            backoff = ReconnectInitialBackoff;
+        } catch (const std::exception& ex) {
+            ++failures;
+            LOG_W("Failed to recreate OceanBase connection (attempt " << failures
+                  << ", will retry): " << ex.what());
+            std::unique_lock lock(Mutex_);
+            if (Shutdown_) {
+                return;
+            }
+            Cv_.wait_for(lock, backoff, [this] { return Shutdown_; });
+            if (Shutdown_) {
+                return;
+            }
+            lock.unlock();
+            if (backoff < ReconnectMaxBackoff) {
+                backoff = std::min(backoff * 2, ReconnectMaxBackoff);
+            }
         }
     }
-    Cv_.notify_one();
 }
 
 void TObConnectionPool::CancelAll() {

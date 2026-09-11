@@ -306,6 +306,24 @@ struct TObStatementCache::TImpl {
         TextEntries.clear();
         TextLru.clear();
     }
+
+    void ForgetEntry(TStmtEntry& entry) {
+        entry.Stmt = nullptr;
+        entry.Prepared = false;
+        entry.ParamSlots.clear();
+        entry.ParamBinds.clear();
+    }
+
+    void Detach() {
+        for (size_t i = 0; i < static_cast<size_t>(EObQueryId::Count); ++i) {
+            ForgetEntry(Entries[i]);
+        }
+        for (auto& [sql, entry] : TextEntries) {
+            ForgetEntry(entry.Stmt);
+        }
+        TextEntries.clear();
+        TextLru.clear();
+    }
 };
 
 TObStatementCache::TObStatementCache(void* mysql)
@@ -319,6 +337,12 @@ TObStatementCache::~TObStatementCache() {
 void TObStatementCache::Clear() {
     if (Impl_) {
         Impl_->Clear();
+    }
+}
+
+void TObStatementCache::Detach() {
+    if (Impl_) {
+        Impl_->Detach();
     }
 }
 

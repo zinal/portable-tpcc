@@ -22,10 +22,10 @@ EErrorClass ClassifyCode(int code, bool commit) {
             return EErrorClass::RetryableAbort;
         case 1317:
             return EErrorClass::Cancelled;
-        case 2006:
-        case 2013:
-            return commit ? EErrorClass::AmbiguousCommit : EErrorClass::NotCommitted;
         default:
+            if (IsConnectionLostCode(code)) {
+                return commit ? EErrorClass::AmbiguousCommit : EErrorClass::NotCommitted;
+            }
             return EErrorClass::Permanent;
     }
 }

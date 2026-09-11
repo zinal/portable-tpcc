@@ -4,6 +4,7 @@ SUBSCRIBER(g:tpcc)
 
 SRCS(
     load_batch_ut.cpp
+    ob_errors_ut.cpp
     schema_options_ut.cpp
 )
 
