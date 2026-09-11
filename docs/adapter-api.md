@@ -433,8 +433,11 @@ Adapters MUST:
 
 ### 5.3. OceanBase
 
-- Partition / tablegroup by warehouse for local tables; separate placement for
-  DB-wide `item`.
+- Partition / tablegroup by warehouse for local tables. DB-wide `item` is an
+  OceanBase duplicate table (`DUPLICATE_SCOPE = 'cluster'`): every observer in
+  the tenant holds a replica so New-Order item lookups stay local. `item` is
+  not HASH-partitioned. Duplicate tables require a user tenant (not `sys`).
+  Non-OceanBase MySQL targets keep an ordinary `item` table.
 - Cached prepared statements with bound parameters.
 - Blocking MariaDB C API: IO MUST run on a bounded `IExecutor` **in
   `TObSession`**. `TObTpccTransaction` MUST chain those incomplete

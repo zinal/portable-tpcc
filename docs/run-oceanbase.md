@@ -103,6 +103,14 @@ schema time** (`tpcc-oceanbase schema` / `mind-tpcc` schema stage). The same
 value is reused at `indexes` as the `DBMS_STATS.GATHER_TABLE_STATS` degree of
 parallelism (`1` when partitioning is off).
 
+DB-wide `item` is not HASH-partitioned. On OceanBase it is created as a
+**duplicate table** (`DUPLICATE_SCOPE = 'cluster'`) so every observer in the
+tenant holds a replica; New-Order item lookups can then run locally instead
+of concentrating on a single node. Duplicate tables require a **user tenant**
+(the `sys` tenant cannot create them). Non-OceanBase MySQL targets keep an
+ordinary `item` table. Plain-table mode (`partitions=-1`) still uses the
+duplicate `item` table when the target is OceanBase.
+
 Integrity checks scan warehouse-scoped tables one `w_id` at a time (same
 chunk size as PostgreSQL and YDB) and open `--threads` parallel sessions so
 HASH partition pruning can apply. Catalog ids run one after another; the
@@ -115,7 +123,7 @@ TPC-C §3.3.2 predicates are unchanged.
 
 | Value | Meaning |
 | --- | --- |
-| `-1` | No tablegroup / no HASH partitions (plain tables) |
+| `-1` | No tablegroup / no HASH partitions (plain warehouse-scoped tables). On OceanBase, `item` is still a cluster duplicate table. |
 | `0` (default) | Derive partition count from warehouse scale (`max(1, warehouses)`) |
 | `N` (`1`…`8192`) | Explicit HASH partition count |
 
