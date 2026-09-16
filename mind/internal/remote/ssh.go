@@ -57,20 +57,52 @@ func DialSSH(key, address string, cfg DialConfig) (*SSH, error) {
 	return &SSH{key: key, address: address, client: client}, nil
 }
 
+// defaultIdentityFiles matches common OpenSSH IdentityFile defaults.
+var defaultIdentityFiles = []string{"id_ed25519", "id_rsa", "id_ecdsa"}
+
 func sshAuthMethods(cfg DialConfig) ([]ssh.AuthMethod, error) {
-	var methods []ssh.AuthMethod
+	signers, err := sshSigners(cfg)
+	if err != nil {
+		return nil, err
+	}
+	// golang.org/x/crypto/ssh records attempted methods by name ("publickey").
+	// Separate ssh.PublicKeys(...) entries would only try the first key, so a
+	// host that authorized id_ecdsa (or any later file) would fail even though
+	// OpenSSH succeeds. One PublicKeys list probes each signer until one is
+	// accepted.
+	return []ssh.AuthMethod{ssh.PublicKeys(signers...)}, nil
+}
+
+func sshSigners(cfg DialConfig) ([]ssh.Signer, error) {
+	var signers []ssh.Signer
+	seen := make(map[string]struct{})
+	add := func(s ssh.Signer) {
+		if s == nil {
+			return
+		}
+		id := string(s.PublicKey().Marshal())
+		if _, ok := seen[id]; ok {
+			return
+		}
+		seen[id] = struct{}{}
+		signers = append(signers, s)
+	}
+
 	if cfg.UseAgent {
 		if sock := os.Getenv("SSH_AUTH_SOCK"); sock != "" {
-			conn, err := net.Dial("unix", sock)
-			if err == nil {
-				ag := agent.NewClient(conn)
-				methods = append(methods, ssh.PublicKeysCallback(ag.Signers))
+			if conn, err := net.Dial("unix", sock); err == nil {
+				if list, err := agent.NewClient(conn).Signers(); err == nil {
+					for _, s := range list {
+						add(s)
+					}
+				}
 			}
 		}
 	}
-	// Default identity files when agent unavailable / unused.
-	for _, name := range []string{"id_ed25519", "id_rsa", "id_ecdsa"} {
-		path := filepath.Join(os.Getenv("HOME"), ".ssh", name)
+
+	home := os.Getenv("HOME")
+	for _, name := range defaultIdentityFiles {
+		path := filepath.Join(home, ".ssh", name)
 		key, err := os.ReadFile(path)
 		if err != nil {
 			continue
@@ -79,12 +111,12 @@ func sshAuthMethods(cfg DialConfig) ([]ssh.AuthMethod, error) {
 		if err != nil {
 			continue
 		}
-		methods = append(methods, ssh.PublicKeys(signer))
+		add(signer)
 	}
-	if len(methods) == 0 {
+	if len(signers) == 0 {
 		return nil, fmt.Errorf("no SSH authentication methods available (agent/keys)")
 	}
-	return methods, nil
+	return signers, nil
 }
 
 // hostKeyPolicy returns the host-key callback and, when known_hosts lists keys

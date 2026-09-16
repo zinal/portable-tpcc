@@ -135,6 +135,12 @@ Required even for loopback (`127.0.0.1`) profiles.
 | `connect_timeout` | no | — | Go duration, e.g. `10s`. |
 | `insecure_ignore_host_key` | no | `false` | Disable host-key checking (recorded in run-state). Use this, or CLI `--insecure-ignore-host-key`, when lab hosts are reimaged and `knownhosts: key mismatch` would otherwise block SSH. |
 
+Client authentication uses `SSH_AUTH_SOCK` when `use_agent` is true, then
+the default identity files `~/.ssh/id_ed25519`, `id_rsa`, and `id_ecdsa`.
+All loaded keys are offered in a single `publickey` attempt so a later file
+is used if an earlier one is not in `authorized_keys`. Encrypted identity
+files are skipped unless the agent holds them.
+
 ### `paths`
 
 Required in a hand-written profile. `mind-tpcc configure` fills omitted
