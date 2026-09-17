@@ -713,4 +713,25 @@ std::unique_ptr<ITpccSession> TObSessionFactory::TryCreateSession() {
     return std::make_unique<TObOwnedTpccSession>(std::move(*guard));
 }
 
+TFuture<std::unique_ptr<ITpccSession>> TObSessionFactory::WaitCreateSession() {
+    // Get a future for the TObSession; resolves immediately when the pool has a
+    // free connection, or once another terminal releases one (no polling).
+    auto sessionFuture = std::make_shared<TFuture<TObSession>>(Pool_.AcquireSessionAsync());
+    auto sharedPromise = std::make_shared<TPromise<std::unique_ptr<ITpccSession>>>();
+    auto result = sharedPromise->GetFuture();
+
+    sessionFuture->Subscribe([sessionFuture, sharedPromise, pool = &Pool_]() mutable {
+        try {
+            auto session = sessionFuture->Get();
+            auto guard = TObConnectionPool::TSessionGuard(*pool, std::move(session));
+            sharedPromise->SetValue(
+                std::make_unique<TObOwnedTpccSession>(std::move(guard)));
+        } catch (...) {
+            sharedPromise->SetException(std::current_exception());
+        }
+    });
+
+    return result;
+}
+
 } // namespace NTpcc
