@@ -16,7 +16,10 @@ namespace NTpcc {
 
 class TYdbTpccTransaction : public ITpccTransaction {
 public:
-    TYdbTpccTransaction(NYdb::NQuery::TSession session, std::string path);
+    TYdbTpccTransaction(
+        NYdb::NQuery::TSession session,
+        std::string path,
+        NYdb::NQuery::TTxSettings txSettings);
 
     TFuture<TOperationResult> Execute(const TSemanticOp& op) override;
     TFuture<TBatchResult> ExecuteBatch(const std::vector<TSemanticOp>& ops) override;
@@ -42,6 +45,7 @@ private:
 
     NYdb::NQuery::TSession Session_;
     std::optional<NYdb::NQuery::TTransaction> Tx_;
+    NYdb::NQuery::TTxSettings TxSettings_;
     std::string Path_;
     TYdbErrorClassifier Classifier_;
     bool Terminal_ = false;

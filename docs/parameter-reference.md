@@ -97,7 +97,7 @@ Optional flags override the corresponding profile fields (`--name`,
 `--ssh-user`, `--endpoint`, `--database`, `--path`, `--user`,
 `--password-env`, `--warehouses`, `--seed`, `--loaders`, `--workers`,
 `--insecure-ignore-host-key`, phase durations, runtime / retry / histogram /
-checks / collect knobs, and DBMS-specific `--auth-scheme`, `--partitioning`,
+checks / collect knobs, and DBMS-specific `--auth-scheme`, `--tx-mode`, `--partitioning`,
 `--partitions`, `--foreign-keys`, `--query-timeout`, `--index-parallel`, …).
 See `mind-tpcc configure --help`. The generated file is rejected if the
 result would not pass structural `validate`.
@@ -166,7 +166,7 @@ values with the defaults below.
 | `auth_scheme` | ydb | no | `anonymous` \| `login` \| `sa_key`. Inferred if omitted. |
 | `sa_key_file` | ydb | for `sa_key` | Service-account JSON on the control host. Delivered as `sa-key.json`. |
 | `ca_file` | ydb | no | PEM CA bundle. Delivered as `ca.pem`. |
-| `options` | pgsql, oceanbase | no | Adapter options. YDB accepts none. |
+| `options` | pgsql, ydb, oceanbase | no | Adapter options. Unknown keys are rejected. |
 
 Default ports when `endpoint` has no port: PostgreSQL **5432**, OceanBase
 **2881**. YDB standalone default endpoint is `localhost:2136` (no implicit
@@ -187,6 +187,14 @@ argv, SSH/`nohup` command lines, stored profiles, or logs.
 See [pgsql-partitioning-design.md](pgsql-partitioning-design.md).
 PostgreSQL user: `database.user`, else `postgres`.
 
+#### YDB `database.options`
+
+| Key | Values | Default | Meaning |
+| --- | --- | --- | --- |
+| `tx_mode` | `snapshot-rw` \| `serializable-rw` | `snapshot-rw` | Worker OLTP transaction mode. `snapshot-rw` is YDB snapshot isolation (Repeatable Read analogue). `serializable-rw` is SerializableRW. |
+
+Range partitioning is automatic from warehouse scale (`warehouse_range`).
+
 #### YDB authentication
 
 | `auth_scheme` | Inferred when | Fields |
@@ -197,9 +205,6 @@ PostgreSQL user: `database.user`, else `postgres`.
 
 Standalone `tpcc-ydb` also supports `token` / `--token` / `--token-env`.
 Orchestrated profiles do not.
-
-YDB `database.options` must be empty (or omitted). Range partitioning is
-automatic from warehouse scale (`warehouse_range`).
 
 #### OceanBase `database.options`
 
@@ -404,6 +409,7 @@ drop    --run-config <path> --instance <name>
 | `--token-env` | empty | Env var with token. |
 | `--sa-key-file` | empty | Service-account JSON. |
 | `--ca-file` | empty | PEM CA certificates. |
+| `--tx-mode` | `snapshot-rw` | `snapshot-rw` \| `serializable-rw`. Worker OLTP isolation. |
 
 ### OceanBase (`tpcc-oceanbase`)
 

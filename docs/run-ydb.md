@@ -52,9 +52,10 @@ Do not put passwords, tokens, or key material in profile YAML/JSON.
 
 ## YDB-specific settings
 
-YDB has no `database.options` keys. Unknown options are rejected at worker
-startup. Warehouse-leading keys and range partitions (`warehouse_range`) are
-chosen automatically from the warehouse scale at schema time.
+YDB has no other `database.options` keys besides `tx_mode`. Unknown options
+are rejected at worker startup. Warehouse-leading keys and range partitions
+(`warehouse_range`) are chosen automatically from the warehouse scale at
+schema time.
 
 | Standalone | Profile | Meaning |
 | --- | --- | --- |
@@ -67,8 +68,17 @@ chosen automatically from the warehouse scale at schema time.
 | `--token` / `--token-env` | — | Standalone token auth only. Not accepted in the profile. |
 | `--sa-key-file` | `database.sa_key_file` | Service-account JSON key (`auth_scheme=sa_key`). |
 | `--ca-file` | `database.ca_file` | PEM CA bundle for TLS. Orchestrator delivers it as `ca.pem`. |
+| `--tx-mode` | `database.options.tx_mode` | `snapshot-rw` (default) or `serializable-rw`. |
 
 `database.dbms` must be `ydb`.
+
+### Transaction isolation
+
+Worker OLTP uses Query Service `BeginTx`. Default is **snapshot-rw**
+(YDB snapshot isolation, Repeatable Read analogue). Set
+`database.options.tx_mode` or standalone `--tx-mode` to `serializable-rw`
+for SerializableRW. Unknown values are rejected. Isolation applies to
+measurement workers, not to load / indexes / check.
 
 ### Authentication
 
@@ -189,6 +199,8 @@ database:
   # ca_file: ./certs/ydb-ca.pem
   # auth_scheme: sa_key
   # sa_key_file: ./secrets/sa-key.json
+  options:
+    tx_mode: snapshot-rw      # or serializable-rw
 
 scale:
   warehouses: 200

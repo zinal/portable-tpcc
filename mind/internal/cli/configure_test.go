@@ -119,6 +119,35 @@ func TestRun_configureYdbLoginFromUser(t *testing.T) {
 	}
 }
 
+func TestRun_configureYdbTxMode(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "ydb.yaml")
+	code := Run([]string{
+		"configure", "--profile", path, "--dbms", "ydb",
+		"--ssh-user", "tpcc",
+		"--tx-mode", "serializable-rw",
+	})
+	if code != 0 {
+		t.Fatalf("exit=%d", code)
+	}
+	p, err := profile.ParseFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Database.Options["tx_mode"] != "serializable-rw" {
+		t.Fatalf("tx_mode=%v", p.Database.Options["tx_mode"])
+	}
+	stderr := captureStderr(t, func() {
+		code := Run([]string{"configure", "--profile", "x.yaml", "--dbms", "pgsql", "--tx-mode", "snapshot-rw"})
+		if code != 2 {
+			t.Fatalf("foreign flag exit=%d", code)
+		}
+	})
+	if !strings.Contains(stderr, "only valid for --dbms ydb") {
+		t.Fatalf("stderr=%q", stderr)
+	}
+}
+
 func TestRun_configureInsecureIgnoreHostKey(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "lab.yaml")
@@ -217,7 +246,7 @@ func TestRun_configureHelp(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(out)
-	for _, want := range []string{"--profile", "--dbms", "--loaders", "--auth-scheme", "--partitions"} {
+	for _, want := range []string{"--profile", "--dbms", "--loaders", "--auth-scheme", "--partitions", "--tx-mode"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("configure help missing %q:\n%s", want, text)
 		}

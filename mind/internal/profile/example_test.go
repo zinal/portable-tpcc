@@ -104,6 +104,7 @@ func TestExample_ydbAnonymousOmitsLoginFields(t *testing.T) {
 		"database: /local",
 		"path: tpcc",
 		"auth_scheme: anonymous",
+		"tx_mode: snapshot-rw",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("ydb example missing %q\n%s", want, text)
@@ -112,7 +113,6 @@ func TestExample_ydbAnonymousOmitsLoginFields(t *testing.T) {
 	for _, reject := range []string{
 		"password_env:",
 		"sa_key_file:",
-		"options:",
 	} {
 		if strings.Contains(text, reject) {
 			t.Fatalf("ydb anonymous example must not include %q\n%s", reject, text)

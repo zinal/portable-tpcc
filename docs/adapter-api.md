@@ -260,7 +260,10 @@ MUST NOT assume fusion always happens: semantics after success equal
 `Begin` takes `EIsolationLevel` (`ReadCommitted`, `RepeatableRead`,
 `Serializable`). The adapter maps to the nearest supported level and records
 the effective choice in capabilities / result settings. PostgreSQL currently
-uses repeatable-read snapshot transactions in `PgSession`.
+uses repeatable-read snapshot transactions in `PgSession`. YDB maps
+`RepeatableRead` to Query Service `snapshot-rw` (snapshot isolation) and
+`Serializable` to `serializable-rw`. The selected mode is
+`database.options.tx_mode` / `--tx-mode` (default `snapshot-rw`).
 
 #### 4.3.4. PostgreSQL `PgSession` implementation detail
 
@@ -409,6 +412,9 @@ Adapters MUST:
 
 - Warehouse-leading keys and range partitions for warehouse-local tables;
   document split policy in `options` / settings.
+- Worker OLTP `tx_mode`: `snapshot-rw` (default, snapshot isolation /
+  Repeatable Read analogue) or `serializable-rw`. See
+  [run-ydb.md](run-ydb.md).
 - Typed `BulkUpsert` (or equivalent) for `PutBatch`.
 - Prefer set-oriented YQL and **`ExecuteFinalAndCommit`** so the last
   statement and commit are one round trip. Homogeneous `ExecuteBatch` of

@@ -50,6 +50,7 @@ const (
 	DefaultYDBPath                     = "tpcc"
 	DefaultYDBEndpoint                 = "localhost:2136"
 	DefaultYDBAuthScheme               = "anonymous"
+	DefaultYDBTxMode                   = "snapshot-rw"
 	DefaultOBUser                      = "root@root"
 	DefaultOBDatabase                  = "tpcc"
 	DefaultOBPath                      = "tpcc"
@@ -243,6 +244,9 @@ func ExampleWithName(dbms, name, sshUser string) (*Profile, error) {
 			Database:   DefaultYDBDatabase,
 			Path:       DefaultYDBPath,
 			AuthScheme: DefaultYDBAuthScheme,
+			Options: map[string]interface{}{
+				"tx_mode": DefaultYDBTxMode,
+			},
 		}
 	case "oceanbase":
 		p.Database = Database{
@@ -424,6 +428,8 @@ func encodeOptions(dbms string, options map[string]interface{}) *yaml.Node {
 	switch dbms {
 	case "pgsql":
 		keys = []string{"partitioning", "foreign_keys", "partition_count"}
+	case "ydb":
+		keys = []string{"tx_mode"}
 	case "oceanbase":
 		keys = []string{"partitions", "foreign_keys", "query_timeout", "index_parallel"}
 	default:

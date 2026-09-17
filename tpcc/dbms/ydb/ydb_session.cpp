@@ -2,6 +2,7 @@
 
 #include "ydb_batch.h"
 #include "ydb_future.h"
+#include "ydb_tx_mode.h"
 #include "ydb_value_parse.h"
 
 #include <future_util.h>
@@ -170,8 +171,12 @@ int64_t NextHistoryId() {
 
 } // anonymous
 
-TYdbTpccTransaction::TYdbTpccTransaction(TSession session, std::string path)
+TYdbTpccTransaction::TYdbTpccTransaction(
+    TSession session,
+    std::string path,
+    TTxSettings txSettings)
     : Session_(std::move(session))
+    , TxSettings_(std::move(txSettings))
     , Path_(std::move(path))
 {}
 
@@ -208,7 +213,7 @@ TFuture<TExecuteQueryResult> TYdbTpccTransaction::ExecQuery(
 {
     TTxControl txControl = Tx_
         ? TTxControl::Tx(*Tx_)
-        : TTxControl::BeginTx(TTxSettings::SerializableRW());
+        : TTxControl::BeginTx(TxSettings_);
     if (commit) {
         txControl.CommitTx(true);
     }
@@ -1180,15 +1185,16 @@ TYdbTpccSession::TYdbTpccSession(TYdbConnection& connection, std::string path)
     , Path_(std::move(path))
 {}
 
-TFuture<std::unique_ptr<ITpccTransaction>> TYdbTpccSession::Begin(EIsolationLevel /*isolation*/) {
+TFuture<std::unique_ptr<ITpccTransaction>> TYdbTpccSession::Begin(EIsolationLevel isolation) {
+    const TTxSettings txSettings = YdbTxSettingsForIsolation(isolation);
     return Then(
         BridgeYdbFuture(Connection_.QueryClient().GetSession(MakeYdbCreateSessionSettings())),
-        [this](NYdb::NQuery::TCreateSessionResult result) {
+        [this, txSettings](NYdb::NQuery::TCreateSessionResult result) {
             if (!result.IsSuccess()) {
                 throw NYdb::NStatusHelpers::TYdbErrorException(std::move(result));
             }
             return std::unique_ptr<ITpccTransaction>(
-                std::make_unique<TYdbTpccTransaction>(result.GetSession(), Path_));
+                std::make_unique<TYdbTpccTransaction>(result.GetSession(), Path_, txSettings));
         });
 }
 

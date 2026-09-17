@@ -1,5 +1,7 @@
 #include "run_config.h"
 
+#include "ydb_tx_mode.h"
+
 #include <sha256.h>
 #include <think_time.h>
 
@@ -377,10 +379,23 @@ TRunConfigDocument LoadRunConfigDocument(const std::string& path) {
             if (!db["options"].is_object()) {
                 throw std::runtime_error("database.options must be an object");
             }
-            // YDB currently accepts no adapter options here; reject unknowns.
-            for (const auto& item : db["options"].items()) {
-                throw std::runtime_error(
-                    "unknown database.options." + item.key() + " for dbms=ydb");
+            const auto& options = db["options"];
+            for (const auto& item : options.items()) {
+                const std::string& key = item.key();
+                if (key == "tx_mode") {
+                    if (!item.value().is_string()) {
+                        throw std::runtime_error("database.options.tx_mode must be a string");
+                    }
+                    doc.TxMode = item.value().get<std::string>();
+                    EIsolationLevel isolation;
+                    if (doc.TxMode.empty() || !ParseYdbTxMode(doc.TxMode, isolation)) {
+                        throw std::runtime_error(
+                            "database.options.tx_mode must be \"snapshot-rw\" or \"serializable-rw\"");
+                    }
+                } else {
+                    throw std::runtime_error(
+                        "unknown database.options." + key + " for dbms=ydb");
+                }
             }
         }
     }

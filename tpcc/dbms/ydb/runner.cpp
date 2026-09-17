@@ -3,6 +3,7 @@
 #include "ydb_capabilities.h"
 #include "ydb_error_classifier.h"
 #include "ydb_session.h"
+#include "ydb_tx_mode.h"
 
 #include <constants.h>
 #include <domain_util.h>
@@ -64,7 +65,8 @@ TRunOutcome RunSync(const TRunConfig& config, TTerminalStats* aggregatedStats) {
     LOG_I("Starting TPC-C benchmark: " << layout.WarehouseCount << " warehouses, " << layout.TerminalCount
           << " terminals, " << layout.ThreadCount << " threads, "
           << layout.PoolSize << " max YDB sessions, "
-          << layout.MaxInflight << " max inflight");
+          << layout.MaxInflight << " max inflight, "
+          << "tx-mode=" << YdbTxModeName(config.Isolation));
 
     TYdbConnection connection(config.Connection);
     TYdbSessionFactory sessionFactory(connection);
@@ -109,7 +111,7 @@ TRunOutcome RunSync(const TRunConfig& config, TTerminalStats* aggregatedStats) {
                     *taskQueue,
                     &sessionFactory,
                     &errorClassifier,
-                    EIsolationLevel::Serializable,
+                    config.Isolation,
                     config.NoDelays,
                     stopToken,
                     phaseController,
