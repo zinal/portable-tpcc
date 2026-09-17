@@ -4,7 +4,10 @@ namespace NTpcc {
 
 TCapabilities TYdbCapabilities::Get() const {
     TCapabilities c;
-    c.IsolationLevels = {EIsolationLevel::Serializable};
+    c.IsolationLevels = {
+        EIsolationLevel::RepeatableRead,
+        EIsolationLevel::Serializable,
+    };
     c.ExecuteBatchOptimized = true;
     c.ExecuteFinalAndCommitOptimized = true;
     c.AsyncDelivery = false;

@@ -6,6 +6,7 @@
 #include "path_checker.h"
 #include "run_config.h"
 #include "runner.h"
+#include "ydb_tx_mode.h"
 
 #include <orchestrated_roles.h>
 #include <log.h>
@@ -89,6 +90,10 @@ int RunWorkerFromRunConfig(
         runCfg.Histogram = d.Histogram;
         runCfg.ThinkTimeDistribution = d.ThinkTimeDistribution;
         runCfg.StartAt = startAt;
+        if (!ParseYdbTxMode(d.TxMode, runCfg.Isolation)) {
+            throw std::runtime_error(
+                "database.options.tx_mode must be \"snapshot-rw\" or \"serializable-rw\"");
+        }
         return RunSync(runCfg, &aggregated);
     };
     return RunOrchestratedWorker(doc, instance, startAtRfc3339, kYdbIdentity, hooks, threadOverride);

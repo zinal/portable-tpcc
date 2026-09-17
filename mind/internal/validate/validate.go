@@ -75,6 +75,9 @@ func Profile(p *profile.Profile) *Result {
 	if p.Database.DBMS == "oceanbase" {
 		validateOceanbaseOptions(p.Database.Options, res)
 	}
+	if p.Database.DBMS == "ydb" {
+		validateYdbOptions(p.Database.Options, res)
+	}
 	if p.Database.Endpoint == "" {
 		res.Add("database.endpoint is required")
 	}
@@ -272,6 +275,20 @@ func validateInstances(
 			res.Add(fmt.Sprintf("duplicate remote (host, run_dir, instance): %s", key))
 		}
 		remoteKeys[key] = true
+	}
+}
+
+func validateYdbOptions(options map[string]interface{}, res *Result) {
+	for key, value := range options {
+		switch key {
+		case "tx_mode":
+			s, ok := value.(string)
+			if !ok || (s != "snapshot-rw" && s != "serializable-rw") {
+				res.Add(`database.options.tx_mode must be "snapshot-rw" or "serializable-rw"`)
+			}
+		default:
+			res.Add(fmt.Sprintf("unknown database.options.%s for dbms=ydb", key))
+		}
 	}
 }
 

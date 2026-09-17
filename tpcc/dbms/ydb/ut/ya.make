@@ -11,6 +11,8 @@ SRCS(
     load_batch_ut.cpp
     ydb_error_classifier_ut.cpp
     ydb_batch_ut.cpp
+    ydb_tx_mode_ut.cpp
+    run_config_ut.cpp
 )
 
 PEERDIR(

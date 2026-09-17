@@ -30,6 +30,8 @@ database:
   # For service-account auth instead of login:
   # auth_scheme: sa_key
   # sa_key_file: ./secrets/sa-key.json
+  options:
+    tx_mode: snapshot-rw      # or serializable-rw
 
 scale:
   warehouses: 200

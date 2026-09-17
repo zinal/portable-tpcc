@@ -87,6 +87,7 @@ type configureOpts struct {
 	Partitions            *int
 	QueryTimeout          *int
 	IndexParallel         *int
+	TxMode                *string
 }
 
 func runConfigure(args []string) int {
@@ -637,6 +638,13 @@ func parseConfigureArgs(args []string) (*configureOpts, error) {
 			}
 			opts.IndexParallel = &n
 			i = next
+		case arg == "--tx-mode" || strings.HasPrefix(arg, "--tx-mode="):
+			val, next, err := requireFlagValue(args, i, "--tx-mode")
+			if err != nil {
+				return nil, err
+			}
+			opts.TxMode = &val
+			i = next
 		default:
 			if strings.HasPrefix(arg, "-") {
 				return nil, fmt.Errorf("error: unknown flag %s", arg)
@@ -674,6 +682,7 @@ func rejectForeignDBMSFlags(opts *configureOpts) error {
 		{opts.AuthScheme != nil, "--auth-scheme"},
 		{opts.SaKeyFile != nil, "--sa-key-file"},
 		{opts.CaFile != nil, "--ca-file"},
+		{opts.TxMode != nil, "--tx-mode"},
 	}
 	for _, f := range ydbOnly {
 		if f.set && opts.DBMS != "ydb" {
@@ -807,7 +816,8 @@ func buildConfigureProfile(opts *configureOpts) (*profile.Profile, error) {
 
 func applyDatabaseOptions(p *profile.Profile, opts *configureOpts) error {
 	if p.Database.Options == nil && (opts.Partitioning != nil || opts.PartitionCount != nil ||
-		opts.ForeignKeys != nil || opts.Partitions != nil || opts.QueryTimeout != nil || opts.IndexParallel != nil) {
+		opts.ForeignKeys != nil || opts.Partitions != nil || opts.QueryTimeout != nil ||
+		opts.IndexParallel != nil || opts.TxMode != nil) {
 		p.Database.Options = map[string]interface{}{}
 	}
 	if opts.Partitioning != nil {
@@ -830,6 +840,9 @@ func applyDatabaseOptions(p *profile.Profile, opts *configureOpts) error {
 	}
 	if opts.IndexParallel != nil {
 		p.Database.Options["index_parallel"] = *opts.IndexParallel
+	}
+	if opts.TxMode != nil {
+		p.Database.Options["tx_mode"] = *opts.TxMode
 	}
 	return nil
 }
@@ -1027,6 +1040,7 @@ Workload overrides:
 YDB:
   --auth-scheme <anonymous|login|sa_key>
   --sa-key-file <path>         --ca-file <path>
+  --tx-mode <snapshot-rw|serializable-rw>
 
 PostgreSQL:
   --partitioning <none|warehouse_hash>

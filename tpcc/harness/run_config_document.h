@@ -64,6 +64,9 @@ struct TRunConfigDocument {
     // OceanBase CREATE INDEX degree of parallelism (PARALLEL n).
     // 0 means use adapter default (OB_DEFAULT_INDEX_PARALLEL); 1 = serial.
     int IndexParallel = 0;
+    // YDB worker transaction mode: "snapshot-rw" (default) or "serializable-rw".
+    // Empty means the adapter default (snapshot-rw / Repeatable Read analogue).
+    std::string TxMode;
 
     int ScaleWarehouses = 0;
     int64_t Seed = 0;

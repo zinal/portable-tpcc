@@ -4,6 +4,7 @@
 
 #include <phase_policy.h>
 #include <run_loop.h>
+#include <session.h>
 #include <terminal.h>
 #include <warehouse_range.h>
 
@@ -34,6 +35,8 @@ struct TRunConfig {
     size_t IOThreads = DEFAULT_IO_THREADS;
     bool NoDelays = false;
     bool HighResHistogram = false;
+    // snapshot-rw (default) maps to RepeatableRead; serializable-rw to Serializable.
+    EIsolationLevel Isolation = EIsolationLevel::RepeatableRead;
 
     // Simulation mode: replaces real TPC-C transactions with a lightweight
     // SELECT 1 loop. Useful for testing the coroutine/IO stack.

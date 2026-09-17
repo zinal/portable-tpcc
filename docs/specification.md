@@ -605,6 +605,8 @@ visible in the result settings/options.
   exact values as `Double`; no hidden SDK retries; prefer
   `ExecuteFinalAndCommit` for the last statement as an async fused pipeline
   (no `GetValueSync()` on the task-queue thread; adapter-api §4.3).
+  Worker OLTP isolation is `database.options.tx_mode` (`snapshot-rw` default,
+  or `serializable-rw`).
   `history` uses technical `PRIMARY KEY (h_w_id, hist_id)` (TPC-C 1.3.1
   prescribes none); `hist_id` is client-generated.
 - **PostgreSQL:** prepared statements, `COPY`, DECIMAL, SQLSTATE mapping,

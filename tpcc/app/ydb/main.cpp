@@ -6,6 +6,7 @@
 #include "ydb_admin_adapter.h"
 #include "path_checker.h"
 #include "worker_loader.h"
+#include "ydb_tx_mode.h"
 
 #include <log.h>
 #include <domain_util.h>
@@ -31,6 +32,8 @@ DEFINE_string(token, "", "YDB auth token (prefer --token-env; auth_scheme=token)
 DEFINE_string(token_env, "", "Environment variable containing YDB auth token");
 DEFINE_string(sa_key_file, "", "YDB service account key JSON file (auth_scheme=sa_key)");
 DEFINE_string(ca_file, "", "PEM file with CA certificates for TLS (grpcs)");
+DEFINE_string(tx_mode, NTpcc::YDB_DEFAULT_TX_MODE,
+    "YDB transaction mode: snapshot-rw (default, Repeatable Read analogue) or serializable-rw");
 
 DEFINE_int32(warehouses, 1, "Number of warehouses");
 DEFINE_uint64(seed, 1, "Deterministic data generation seed");
@@ -83,6 +86,7 @@ void PrintHelp() {
         "  --token-env           Environment variable containing YDB auth token\n"
         "  --sa-key-file         Service account key JSON file (auth_scheme=sa_key)\n"
         "  --ca-file             PEM CA certificates file for TLS\n"
+        "  --tx-mode             snapshot-rw (default) or serializable-rw\n"
         "  -w, --warehouses      Number of warehouses (default: 1)\n"
         "  --warmup              Warmup duration in minutes, 0 = adaptive (default: 0)\n"
         "  --skip-warmup         Skip warmup entirely (default: false)\n"
@@ -404,6 +408,10 @@ void RunBenchmark() {
     if (!NTpcc::ParseThinkTimeDistribution(FLAGS_think_time_distribution, config.ThinkTimeDistribution)) {
         throw std::runtime_error(
             "--think-time-distribution must be \"exponential\", \"compatibility\", or \"constant\"");
+    }
+    if (!NTpcc::ParseYdbTxMode(FLAGS_tx_mode, config.Isolation)) {
+        throw std::runtime_error(
+            "--tx-mode must be \"snapshot-rw\" or \"serializable-rw\"");
     }
 
     if (!config.IsSimulationMode()) {

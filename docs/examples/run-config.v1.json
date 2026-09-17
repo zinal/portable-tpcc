@@ -12,7 +12,10 @@
     "auth_scheme": "login",
     "user": "root",
     "password_file": "db-password",
-    "ca_file": "ca.pem"
+    "ca_file": "ca.pem",
+    "options": {
+      "tx_mode": "snapshot-rw"
+    }
   },
   "scale": {
     "warehouses": 200

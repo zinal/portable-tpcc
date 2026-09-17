@@ -439,6 +439,70 @@ func TestValidate_ydbAuthSchemes(t *testing.T) {
 	})
 }
 
+func TestValidate_ydbTxModeOptions(t *testing.T) {
+	path := filepath.Join("..", "..", "testdata", "profile.valid.yaml")
+	base, err := profile.ParseFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ydbBase := func() profile.Profile {
+		p := *base
+		p.Database = profile.Database{
+			DBMS:       "ydb",
+			Endpoint:   "localhost:2136",
+			Database:   "/local",
+			Path:       "tpcc",
+			AuthScheme: "anonymous",
+		}
+		return p
+	}
+
+	t.Run("accepts_snapshot_rw", func(t *testing.T) {
+		p := ydbBase()
+		p.Database.Options = map[string]interface{}{"tx_mode": "snapshot-rw"}
+		res := validate.Profile(&p)
+		if !res.Valid {
+			t.Fatalf("expected snapshot-rw to be valid, errors: %v", res.Errors)
+		}
+	})
+
+	t.Run("accepts_serializable_rw", func(t *testing.T) {
+		p := ydbBase()
+		p.Database.Options = map[string]interface{}{"tx_mode": "serializable-rw"}
+		res := validate.Profile(&p)
+		if !res.Valid {
+			t.Fatalf("expected serializable-rw to be valid, errors: %v", res.Errors)
+		}
+	})
+
+	t.Run("accepts_omitted_options", func(t *testing.T) {
+		p := ydbBase()
+		res := validate.Profile(&p)
+		if !res.Valid {
+			t.Fatalf("expected omitted options to be valid, errors: %v", res.Errors)
+		}
+	})
+
+	t.Run("rejects_invalid_tx_mode", func(t *testing.T) {
+		p := ydbBase()
+		p.Database.Options = map[string]interface{}{"tx_mode": "serializable"}
+		res := validate.Profile(&p)
+		if res.Valid {
+			t.Fatal("expected invalid tx_mode to fail")
+		}
+	})
+
+	t.Run("rejects_unknown_option", func(t *testing.T) {
+		p := ydbBase()
+		p.Database.Options = map[string]interface{}{"partitioning": "none"}
+		res := validate.Profile(&p)
+		if res.Valid {
+			t.Fatal("expected unknown ydb option to fail")
+		}
+	})
+}
+
 func TestValidate_pgsqlUser(t *testing.T) {
 	path := filepath.Join("..", "..", "testdata", "profile.valid.yaml")
 	base, err := profile.ParseFile(path)
