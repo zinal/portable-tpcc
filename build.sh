@@ -7,6 +7,7 @@
 # The YDB adapter/binary (tpcc/app/ydb) requires CUDA to be disabled in the
 # ya make graph; this script always passes:
 #   -DHAVE_CUDA=no -DCUDA_VERSION=11.4
+# C++ targets default to a release build (-r). Pass -d for debug.
 # Equivalent standalone command:
 #   ./ya make -r -DHAVE_CUDA=no -DCUDA_VERSION=11.4 tpcc/app/ydb
 #
@@ -18,10 +19,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-RUN_TESTS=0
 BUILD_TPCC=1
 BUILD_MIND_TPCC=1
-YA_BUILD_FLAG=()
+YA_BUILD_FLAG=(-r)
+YA_TEST_FLAG=()
 YA_THREADS=()
 YA_EXTRA=()
 # Required for tpcc/app/ydb (and thus for the full tpcc/ recurse).
@@ -31,8 +32,8 @@ usage() {
   cat <<'EOF'
 Usage: ./build.sh [options] [-- ya-make-args...]
 
-Build all portable-tpcc components:
-  ./ya make -DHAVE_CUDA=no -DCUDA_VERSION=11.4 tpcc
+Build all portable-tpcc components (release by default):
+  ./ya make -r -DHAVE_CUDA=no -DCUDA_VERSION=11.4 tpcc
   go -C mind build ./cmd/mind-tpcc
 
 The CUDA defines are always passed: the YDB target (tpcc/app/ydb) must be
@@ -40,9 +41,11 @@ built without CUDA. Standalone equivalent:
   ./ya make -r -DHAVE_CUDA=no -DCUDA_VERSION=11.4 tpcc/app/ydb
 
 Options:
-  -r, --release       Release build for C++ targets (-r)
-  -d, --debug         Debug build for C++ targets (-d; ya default)
+  -r, --release       Release build for C++ targets (default)
+  -d, --debug         Debug build for C++ targets
   -t, --test          Also run tests (./ya make -t tpcc; go test ./...)
+  -tt                 Also run tests (./ya make -tt tpcc; same go test as -t)
+  -ttt                Also run tests (./ya make -ttt tpcc; same go test as -t)
   -j N, --jobs N      Parallelism for ya make
   --tpcc-only         Build only C++ targets under tpcc/
   --mind-tpcc-only    Build only the Go orchestrator
@@ -52,8 +55,9 @@ Arguments after -- are forwarded to ./ya make.
 
 Examples:
   ./build.sh
-  ./build.sh -r
+  ./build.sh -d
   ./build.sh -t -j8
+  ./build.sh -tt
   ./build.sh --tpcc-only -- -v
   ./build.sh --mind-tpcc-only
 EOF
@@ -70,7 +74,15 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     -t|--test)
-      RUN_TESTS=1
+      YA_TEST_FLAG=(-t)
+      shift
+      ;;
+    -tt)
+      YA_TEST_FLAG=(-tt)
+      shift
+      ;;
+    -ttt)
+      YA_TEST_FLAG=(-ttt)
       shift
       ;;
     -j|--jobs)
@@ -133,9 +145,7 @@ build_tpcc() {
   ya_args+=("${YA_BUILD_FLAG[@]}")
   ya_args+=("${YA_CUDA_FLAGS[@]}")
   ya_args+=("${YA_THREADS[@]}")
-  if [[ "$RUN_TESTS" -eq 1 ]]; then
-    ya_args+=(-t)
-  fi
+  ya_args+=("${YA_TEST_FLAG[@]}")
   ya_args+=("${YA_EXTRA[@]}")
 
   echo "==> Building C++ components: ./ya ${ya_args[*]}"
@@ -146,7 +156,7 @@ build_mind_tpcc() {
   echo "==> Building Go orchestrator: go -C mind build ./cmd/mind-tpcc"
   go -C mind build ./cmd/mind-tpcc
 
-  if [[ "$RUN_TESTS" -eq 1 ]]; then
+  if [[ ${#YA_TEST_FLAG[@]} -gt 0 ]]; then
     echo "==> Testing Go orchestrator: go -C mind test ./..."
     go -C mind test ./...
   fi
