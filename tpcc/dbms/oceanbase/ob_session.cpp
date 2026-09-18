@@ -249,9 +249,10 @@ TFuture<TObMultiResult> TObSession::ExecuteMulti(std::string sql, bool finishesT
             p.SetValue(std::move(result));
         } catch (const std::exception& ex) {
             MarkException(ex);
-            // COMMIT is the last statement of a finish script. Connection loss
-            // may mean the server already committed; do not ROLLBACK. Other
-            // errors happen before COMMIT and must release locks.
+            // finishesTransaction means COMMIT was the last statement of the
+            // script. Connection loss may mean the server already committed;
+            // do not ROLLBACK. Other errors happen before COMMIT and must
+            // release locks.
             if (finishesTransaction && IsBrokenConnectionException(ex)) {
                 InTxn_ = false;
             } else {

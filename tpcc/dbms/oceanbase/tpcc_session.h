@@ -43,6 +43,7 @@ private:
         const TUpdateCustomerPayment& update,
         const TInsertPaymentHistory& history);
     TFuture<TFinalCommitResult> FinishApplyDelivery(const TApplyDeliveryToCustomer& apply);
+    TFuture<TFinalCommitResult> CommitAfterOperation(TOperationResult operation);
     void ResetTxnState();
 
     TObSession& Session_;

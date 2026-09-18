@@ -60,8 +60,12 @@ std::string BuildObDeliveryCompleteSql(
 
 std::string BuildObDeliveryApplySql(size_t n);
 
+// Last Delivery customer apply. COMMIT is not included: the adapter checks
+// affected-row cardinality, then COMMIT or ROLLBACK.
 std::string BuildObDeliveryFinishSql(const TApplyDeliveryToCustomer& apply);
 
+// Deferred Payment customer update + history insert. COMMIT is not included:
+// the adapter checks affected-row cardinality, then COMMIT or ROLLBACK.
 std::string BuildObPaymentFinishSql(
     const TUpdateCustomerPayment& update,
     const TInsertPaymentHistory& history,

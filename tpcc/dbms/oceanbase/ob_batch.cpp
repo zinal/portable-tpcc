@@ -235,11 +235,14 @@ std::string BuildObDeliveryApplySql(size_t n) {
 }
 
 std::string BuildObDeliveryFinishSql(const TApplyDeliveryToCustomer& apply) {
+    // No COMMIT here: ExecuteFinalAndCommit must inspect affected-row
+    // cardinality and ROLLBACK on mismatch. A trailing COMMIT in this
+    // multi-statement would persist the write before the adapter can abort.
     return "UPDATE customer SET c_balance = c_balance + " + apply.Amount.ToString()
         + ", c_delivery_cnt = c_delivery_cnt + 1 WHERE c_w_id = "
         + std::to_string(apply.WarehouseID) + " AND c_d_id = "
         + std::to_string(apply.DistrictID) + " AND c_id = "
-        + std::to_string(apply.CustomerID) + "; COMMIT";
+        + std::to_string(apply.CustomerID);
 }
 
 std::string BuildObPaymentFinishSql(
@@ -248,6 +251,9 @@ std::string BuildObPaymentFinishSql(
     const std::string& quotedCustomerData,
     const std::string& quotedHistoryData)
 {
+    // No COMMIT here: ExecuteFinalAndCommit must inspect affected-row
+    // cardinality and ROLLBACK on mismatch. A trailing COMMIT in this
+    // multi-statement would persist the writes before the adapter can abort.
     std::string sql = "UPDATE customer SET c_balance = " + update.NewBalance.ToString()
         + ", c_ytd_payment = " + update.NewYtdPayment.ToString()
         + ", c_payment_cnt = " + std::to_string(update.NewPaymentCount);
@@ -265,7 +271,7 @@ std::string BuildObPaymentFinishSql(
         + std::to_string(history.PaymentDistrictID) + ", "
         + std::to_string(history.PaymentWarehouseID) + ", CURRENT_TIMESTAMP, "
         + history.Amount.ToString() + ", " + quotedHistoryData
-        + "); COMMIT";
+        + ")";
     return sql;
 }
 
