@@ -227,7 +227,8 @@ stays near `ThreadCount` while `max_inflight` is larger and the scheduler
 ready queue is backlogged.
 
 Normalized errors: `retryable_abort`, `not_committed`, `ambiguous_commit`
-(no blind retry), `permanent`, `integrity` (fail the run), `cancelled`.
+(no blind retry), `permanent` (count as Fail, do not stop the run),
+`integrity` (fail the run), `cancelled`.
 
 Phases: prepare → ramp-up → measurement → drain. Absolute phase instants are
 derived from a wall-clock `--start-at` plus durations in the run-config.

@@ -44,3 +44,12 @@ TEST(RetryPolicy, BlindRetryRules) {
     EXPECT_FALSE(MayBlindRetry(EErrorClass::Integrity));
     EXPECT_FALSE(MayBlindRetry(EErrorClass::Cancelled));
 }
+
+TEST(RetryPolicy, AbortsRunOnlyIntegrity) {
+    EXPECT_TRUE(AbortsRun(EErrorClass::Integrity));
+    EXPECT_FALSE(AbortsRun(EErrorClass::Permanent));
+    EXPECT_FALSE(AbortsRun(EErrorClass::RetryableAbort));
+    EXPECT_FALSE(AbortsRun(EErrorClass::NotCommitted));
+    EXPECT_FALSE(AbortsRun(EErrorClass::AmbiguousCommit));
+    EXPECT_FALSE(AbortsRun(EErrorClass::Cancelled));
+}

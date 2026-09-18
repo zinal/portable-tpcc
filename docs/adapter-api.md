@@ -317,7 +317,7 @@ Maps native errors to:
 | `retryable_abort` | Confirmed rollback; bounded retry with backoff + jitter |
 | `not_committed` | Safe retry per adapter contract |
 | `ambiguous_commit` | **MUST NOT** blind-retry; resolve or fail |
-| `permanent` | Fail the operation; run policy decides abort |
+| `permanent` | Fail the operation; count as Fail and continue |
 | `integrity` | Fail the run |
 | `cancelled` | Phase stop; not a retry |
 

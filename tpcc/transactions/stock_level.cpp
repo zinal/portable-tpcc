@@ -42,7 +42,7 @@ TFuture<bool> GetStockLevelTask(
         ThrowIfRetryable(finalResult.Operation);
         if (!finalResult.Operation.Ok) {
             co_return FailPermanent(context.TerminalID, "StockLevel count failed",
-                finalResult.Operation.Message);
+                finalResult.Operation);
         }
         ThrowIfCommitFailed(finalResult.Commit);
     }
