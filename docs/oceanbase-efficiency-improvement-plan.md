@@ -1,8 +1,8 @@
 # OceanBase TPC-C efficiency improvement plan
 
-Status: proposed  
-Scope: `tpcc/dbms/oceanbase`, shared transaction/runtime telemetry where needed  
-Reference workload: `w45k06`, 45,000 warehouses, profile `profile-21n.yaml`
+- Status: proposed
+- Scope: `tpcc/dbms/oceanbase`, shared transaction/runtime telemetry where needed
+- Reference workload: `w45k06`, 45,000 warehouses, profile `profile-21n.yaml`
 
 ## 1. Goal
 
