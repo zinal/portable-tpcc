@@ -158,6 +158,8 @@ runs can keep `--threads` / `threads_per_worker` low (including auto
 `threads=0`) and a large `--max_inflight` / `max_inflight_per_worker`; progress
 `Inflight` should exceed `ThreadCount` when the database has headroom. See
 [async-adapter-transactions.md](async-adapter-transactions.md).
+For one worker at high scale (≥ 50 000 warehouses, more worker processes):
+[worker-sizing.md](worker-sizing.md).
 
 `indexes` creates secondary indexes after load (YDB has no PostgreSQL-style
 `ANALYZE` step).
