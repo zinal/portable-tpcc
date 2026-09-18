@@ -537,6 +537,8 @@ port is the reference adapter.
 - [async-adapter-transactions.md](async-adapter-transactions.md) — worker
   `ITpccTransaction` async migration (complete for worker paths; check/admin
   sync waits remain optional).
+- [worker-sizing.md](worker-sizing.md) — per-worker `threads` / `max_inflight`
+  starting values at high warehouse scale.
 - [alignment-plan.md](alignment-plan.md) — phased implementation plan and
   accepted API decisions.
 - [dependencies.md](dependencies.md) — third-party libraries and port status.

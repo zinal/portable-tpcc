@@ -23,6 +23,8 @@ fields needed to run):
 
 Complete parameter reference (profile YAML, CLI flags, environment variables):
 [docs/parameter-reference.md](docs/parameter-reference.md).
+High-scale worker process sizing (`threads_per_worker`, `max_inflight_per_worker`):
+[docs/worker-sizing.md](docs/worker-sizing.md).
 `mind-tpcc configure --profile <path> --dbms <pgsql|ydb|oceanbase>` writes a
 complete starter profile with every field set to the built-in default.
 
