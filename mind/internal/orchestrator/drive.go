@@ -1226,6 +1226,13 @@ func (o *Orchestrator) collectArtifacts(ctx *Context, sessions map[string]remote
 				)
 				return nil
 			}
+			if role == "debug" {
+				progress.Printf(
+					"collect %s/%s: skip (no artifact-manifest; debug did not run for this run_id)",
+					role, instance,
+				)
+				return nil
+			}
 			return fmt.Errorf("missing artifact-manifest for %s/%s at %s", role, instance, manifestRemote)
 		}
 		if err := validateRemotePathUnder(sess, remoteInstance, "artifact-manifest.json"); err != nil {
@@ -1289,6 +1296,9 @@ func (o *Orchestrator) collectArtifacts(ctx *Context, sessions map[string]remote
 	if len(ctx.RunConfig.LoadAssignment) == 0 && len(ctx.RunConfig.WorkerAssignment) > 0 {
 		checkHost = ctx.RunConfig.WorkerAssignment[0].Host
 	}
+	if err := collectOne("debug", checkHost, "debug-0"); err != nil {
+		return err
+	}
 	if sess, ok := sessions[checkHost]; ok {
 		runDir, err := o.sessionRunDir(sess, ctx.RunID)
 		if err != nil {
@@ -1319,6 +1329,16 @@ func (o *Orchestrator) collectArtifacts(ctx *Context, sessions map[string]remote
 				localName = "after-test.json"
 			}
 			if err := sess.Download(remotePath, filepath.Join(localDir, localName)); err != nil {
+				return err
+			}
+		}
+		debugRemote := filepath.Join(runDir, "debug", "probe.json")
+		if exists, _ := sess.Exists(debugRemote); exists {
+			localDir := filepath.Join(o.Expanded.ResultRoot, ctx.RunID, "debug")
+			if err := os.MkdirAll(localDir, 0755); err != nil {
+				return err
+			}
+			if err := sess.Download(debugRemote, filepath.Join(localDir, "probe.json")); err != nil {
 				return err
 			}
 		}

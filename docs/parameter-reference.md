@@ -351,6 +351,7 @@ gflags accepts both `--flag-name` and `--flag_name`.
 ### Commands
 
 Normative roles: `schema`, `loader`, `indexes`, `worker`, `check`.
+Diagnostic role: `debug` (sequential transaction probe; specification §9.3).
 
 Local aliases: `init` ≡ `schema`; `import` (standalone load); `run`
 (standalone measurement); `drop` (drop TPC-C objects).
@@ -363,6 +364,7 @@ loader  --run-config <path> --instance <name> [--threads=N]
 indexes --run-config <path> --instance <name>
 worker  --run-config <path> --instance <name> --start-at=<RFC3339-UTC> [--threads=N]
 check   --run-config <path> --instance <name> --after-import|--after-test [--threads=N]
+debug   --run-config <path> --instance <name> [--repeats=N]
 drop    --run-config <path> --instance <name>
 ```
 
@@ -383,6 +385,7 @@ drop    --run-config <path> --instance <name>
 | `--simulate-select1` | `0` | If > 0, run N `SELECT 1` probes per transaction instead of TPC-C. |
 | `--log-level` | `info` | `trace` \| `debug` \| `info` \| `warn` \| `error`. |
 | `--after-import` / `--after-test` | false | `check` mode. |
+| `--repeats` | `10` | `debug`: sequential executions of each TPC-C transaction type (`> 0`). |
 | `--help` / `-h` | — | Command help. |
 
 ### PostgreSQL (`tpcc-pgsql`)

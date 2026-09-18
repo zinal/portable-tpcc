@@ -494,6 +494,7 @@ Each `tpcc-<dbms>` binary **MUST** expose:
 | `indexes` | `EnsureIndexes` then `EnsureStatistics` (idempotent; after all loaders finish) |
 | `worker` | sessions for terminals; honor `--start-at` (specification §7); write diagnostics / `result.json` |
 | `check` | `ICheckAdapter` for `--after-import` / `--after-test` (process contract: specification §9.1–§9.2) |
+| `debug` | sequential one-session probe of each TPC-C transaction type (specification §9.3) |
 
 Orchestrated remotes pass at least `--run-config`, `--instance`, and for
 workers `--start-at=<RFC3339-UTC>`.

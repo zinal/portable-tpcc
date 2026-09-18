@@ -1,5 +1,9 @@
 #pragma once
 
+#include "ydb_driver.h"
+
+#include <session.h>
+
 #include <optional>
 #include <string>
 
@@ -17,5 +21,14 @@ int RunWorkerFromRunConfig(
 int RunSchemaFromRunConfig(const std::string& runConfigPath, const std::string& instance);
 int RunIndexesFromRunConfig(const std::string& runConfigPath, const std::string& instance);
 int RunDropFromRunConfig(const std::string& runConfigPath, const std::string& instance);
+int RunDebugFromRunConfig(
+    const std::string& runConfigPath,
+    const std::string& instance,
+    int repeats);
+void DebugSync(
+    const TYdbConnectionConfig& connection,
+    int warehouseCount,
+    int repeats,
+    EIsolationLevel isolation);
 
 } // namespace NTpcc

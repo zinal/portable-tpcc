@@ -14,6 +14,7 @@ SRCS(
     run_loop.cpp
     orchestrated_roles.cpp
     password_secret.cpp
+    debug_probe.cpp
 )
 
 PEERDIR(

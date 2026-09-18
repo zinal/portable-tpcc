@@ -246,9 +246,10 @@ cp mind/mind-tpcc ./mind-tpcc
 ```
 
 Or run stages individually: `deploy`, `schema`, `load`, `indexes`,
-`check --after-import`, `test`, `check --after-test`, `collect`,
-`consolidate`. After `test`, `consolidate` is enough to produce the result:
-it runs `collect` first when `collection-manifest.json` is absent.
+`check --after-import`, `debug` (sequential transaction probe), `test`,
+`check --after-test`, `collect`, `consolidate`. After `test`, `consolidate`
+is enough to produce the result: it runs `collect` first when
+`collection-manifest.json` is absent.
 
 `mind-tpcc run` includes `check(after-import)` / `check(after-test)` only when
 `checks.after_import` / `checks.after_test` are true.
@@ -310,6 +311,7 @@ tpcc-oceanbase loader --run-config run-config.json --instance <loader> [--thread
 tpcc-oceanbase indexes --run-config run-config.json --instance indexes-0
 tpcc-oceanbase worker --run-config run-config.json --instance <worker> --start-at=<UTC> [--threads=N]
 tpcc-oceanbase check  --run-config run-config.json --instance check-0 --after-import|--after-test [--threads=N]
+tpcc-oceanbase debug  --run-config run-config.json --instance debug-0 [--repeats=N]
 tpcc-oceanbase drop   --run-config run-config.json --instance drop-0    # mind-tpcc drop
 ```
 

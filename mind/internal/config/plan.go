@@ -110,6 +110,31 @@ func CheckArgv(runConfigPath, instance, phase string, threads int) []string {
 	return argv
 }
 
+// DefaultDebugRepeats is sequential executions per TPC-C transaction type.
+const DefaultDebugRepeats = 10
+
+// DebugArgv returns argv for the diagnostic debug role.
+func DebugArgv(runConfigPath, instance string, repeats int) []string {
+	if repeats <= 0 {
+		repeats = DefaultDebugRepeats
+	}
+	return []string{
+		"debug",
+		"--run-config", runConfigPath,
+		"--instance", instance,
+		fmt.Sprintf("--repeats=%d", repeats),
+	}
+}
+
+// EffectiveDebugRepeats is the per-type execution count passed as --repeats.
+// cliRepeats, when non-nil, overrides the default 10 for this invocation.
+func EffectiveDebugRepeats(cliRepeats *int) int {
+	if cliRepeats != nil {
+		return *cliRepeats
+	}
+	return DefaultDebugRepeats
+}
+
 // PlanSnapshot describes planned operations without side effects.
 type PlanSnapshot struct {
 	RunID            string                 `json:"run_id"`
@@ -123,6 +148,7 @@ type PlanSnapshot struct {
 	IndexesArgv      []string               `json:"indexes_argv,omitempty"`
 	CheckArgvImport  []string               `json:"check_argv_after_import,omitempty"`
 	CheckArgvTest    []string               `json:"check_argv_after_test,omitempty"`
+	DebugArgv        []string               `json:"debug_argv,omitempty"`
 }
 
 // BuildPlanSnapshot creates a plan output from run config.
@@ -157,6 +183,7 @@ func BuildPlanSnapshot(rc *RunConfig, threads *int) *PlanSnapshot {
 		IndexesArgv:      IndexesArgv("run-config.json", indexesInstance),
 		CheckArgvImport:  CheckArgv("run-config.json", "check-0", "after-import", checkThreads),
 		CheckArgvTest:    CheckArgv("run-config.json", "check-0", "after-test", checkThreads),
+		DebugArgv:        DebugArgv("run-config.json", "debug-0", EffectiveDebugRepeats(nil)),
 	}
 }
 

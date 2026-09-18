@@ -5,12 +5,19 @@
 #include "import.h"
 #include "partition_config.h"
 #include "path_checker.h"
+#include "pg_connection_pool.h"
+#include "pg_error_classifier.h"
 #include "run_config.h"
 #include "runner.h"
+#include "tpcc_session.h"
 
+#include <debug_probe.h>
 #include <orchestrated_roles.h>
 #include <log.h>
 #include <warehouse_range.h>
+
+#include <iostream>
+#include <stdexcept>
 
 namespace NTpcc {
 
@@ -139,6 +146,58 @@ int RunDropFromRunConfig(const std::string& runConfigPath, const std::string& in
         admin.Clean();
         LOG_I("Drop complete (instance=" << instance << ", path=" << d.Path << ")");
     });
+}
+
+namespace {
+
+TDebugReport RunPgDebugProbe(
+    const std::string& connection,
+    const std::string& path,
+    TDebugProbeRequest req)
+{
+    PgConnectionPool pool(connection, 1, 1, path);
+    TPgSessionFactory factory(pool);
+    TPgErrorClassifier classifier;
+    req.SessionFactory = &factory;
+    req.ErrorClassifier = &classifier;
+    req.Isolation = EIsolationLevel::RepeatableRead;
+    return RunDebugProbe(req);
+}
+
+} // anonymous
+
+int RunDebugFromRunConfig(
+    const std::string& runConfigPath,
+    const std::string& instance,
+    int repeats)
+{
+    const auto doc = LoadRunConfigDocument(runConfigPath);
+    return RunOrchestratedDebug(doc, instance, repeats,
+        [](const TRunConfigDocument& d, TDebugProbeRequest req) {
+            const std::string connection = BuildPgConnectionString(d);
+            CheckDbForRun(connection, d.ScaleWarehouses, d.Path);
+            return RunPgDebugProbe(connection, d.Path, req);
+        });
+}
+
+void DebugSync(
+    const std::string& connectionString,
+    const std::string& path,
+    int warehouseCount,
+    int repeats)
+{
+    CheckDbForRun(connectionString, warehouseCount, path);
+    TDebugProbeRequest req;
+    req.WarehouseID = 1;
+    req.WarehouseCount = warehouseCount > 0 ? static_cast<size_t>(warehouseCount) : 1;
+    req.DistrictID = 1;
+    req.Repeats = repeats;
+    auto report = RunPgDebugProbe(connectionString, path, req);
+    WriteDebugReportJson("debug.json", report);
+    std::cout << "Debug report written to debug.json" << std::endl;
+    if (!report.Ok) {
+        throw std::runtime_error("debug probe recorded failed transactions");
+    }
 }
 
 } // namespace NTpcc

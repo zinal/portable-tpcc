@@ -255,9 +255,10 @@ cp mind/mind-tpcc ./mind-tpcc
 ```
 
 Or run stages individually: `deploy`, `schema`, `load`, `indexes`,
-`check --after-import`, `test`, `check --after-test`, `collect`,
-`consolidate`. After `test`, `consolidate` is enough to produce the result:
-it runs `collect` first when `collection-manifest.json` is absent.
+`check --after-import`, `debug` (sequential transaction probe), `test`,
+`check --after-test`, `collect`, `consolidate`. After `test`, `consolidate`
+is enough to produce the result: it runs `collect` first when
+`collection-manifest.json` is absent.
 
 `mind-tpcc run` includes `check(after-import)` / `check(after-test)` only when
 `checks.after_import` / `checks.after_test` are true.
@@ -276,6 +277,7 @@ tpcc-ydb loader --run-config run-config.json --instance <loader> [--threads=N]
 tpcc-ydb indexes --run-config run-config.json --instance indexes-0
 tpcc-ydb worker --run-config run-config.json --instance <worker> --start-at=<UTC> [--threads=N]
 tpcc-ydb check  --run-config run-config.json --instance check-0 --after-import|--after-test [--threads=N]
+tpcc-ydb debug  --run-config run-config.json --instance debug-0 [--repeats=N]
 tpcc-ydb drop   --run-config run-config.json --instance drop-0    # mind-tpcc drop
 ```
 
