@@ -122,6 +122,14 @@ func Profile(p *profile.Profile) *Result {
 	if p.Runtime.CheckConcurrency < 0 {
 		res.Add("runtime.check_concurrency must not be negative")
 	}
+	if p.Runtime.StatsInterval != "" {
+		ms, err := profile.ParseDurationMs(p.Runtime.StatsInterval)
+		if err != nil {
+			res.Add("runtime.stats_interval: " + err.Error())
+		} else if ms <= 0 {
+			res.Add("runtime.stats_interval must be greater than zero")
+		}
+	}
 	if p.Runtime.Retry.MaxAttempts < 0 {
 		res.Add("runtime.retry.max_attempts must not be negative")
 	}

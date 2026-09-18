@@ -86,6 +86,13 @@ EStartAtWaitResult WaitUntilStartAt(
     std::chrono::system_clock::time_point preparedAt,
     std::stop_token stopToken);
 
+// Worker progress / console-stats line. Profile runtime.stats_interval,
+// run-config runtime.stats_interval_ms, standalone --stats-interval.
+inline constexpr int kDefaultStatsIntervalSeconds = 30;
+inline constexpr auto kDefaultStatsInterval = std::chrono::seconds(kDefaultStatsIntervalSeconds);
+inline constexpr int64_t kDefaultStatsIntervalMs =
+    std::chrono::duration_cast<std::chrono::milliseconds>(kDefaultStatsInterval).count();
+
 struct TRunStatsConfig {
     size_t WarehouseCount = 0;
     size_t ThreadCount = 0;
@@ -94,13 +101,35 @@ struct TRunStatsConfig {
     std::chrono::seconds RunDuration{600};
     THistogramConfig Histogram;
     bool HighResHistogram = false;
+    std::chrono::milliseconds StatsInterval{kDefaultStatsInterval};
 };
 
-// Progress ticks every ~5s. Three glued samples ≈ 15s of Inflight staying
-// near ThreadCount while max_inflight is larger and the ready queue is
-// backlogged — the pre-async scheduler-blocking regression.
+// Progress ticks every StatsInterval (default 30s). Three glued samples of
+// Inflight staying near ThreadCount while max_inflight is larger and the
+// ready queue is backlogged — the pre-async scheduler-blocking regression.
 inline constexpr size_t kInflightStuckMinConsecutiveSamples = 3;
 inline constexpr size_t kInflightStuckMinReadyBacklog = 16;
+
+inline std::chrono::milliseconds StatsIntervalFromMs(int64_t ms) {
+    if (ms <= 0) {
+        return kDefaultStatsInterval;
+    }
+    return std::chrono::milliseconds(ms);
+}
+
+inline bool ShouldUpdateConsoleStats(
+    Clock::time_point lastUpdate,
+    Clock::time_point now,
+    std::chrono::milliseconds interval)
+{
+    if (lastUpdate.time_since_epoch().count() == 0) {
+        return true;
+    }
+    if (interval <= std::chrono::milliseconds::zero()) {
+        interval = kDefaultStatsInterval;
+    }
+    return now - lastUpdate >= interval;
+}
 
 struct TInflightStuckState {
     size_t ConsecutiveGlued = 0;

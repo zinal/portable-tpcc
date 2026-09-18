@@ -38,6 +38,7 @@ struct TRunConfig {
     size_t IOThreads = DEFAULT_IO_THREADS;
     bool NoDelays = false;
     bool HighResHistogram = false;
+    std::chrono::milliseconds StatsInterval{kDefaultStatsInterval};
 
     // Simulation mode: replaces real TPC-C transactions with a lightweight
     // SELECT 1 loop. Useful for testing the coroutine/IO stack.

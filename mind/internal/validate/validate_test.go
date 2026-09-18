@@ -299,6 +299,43 @@ func TestValidate_thinkTimeDistribution(t *testing.T) {
 	}
 }
 
+func TestValidate_statsInterval(t *testing.T) {
+	path := filepath.Join("..", "..", "testdata", "profile.valid.yaml")
+	p, err := profile.ParseFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, ok := range []string{"", "30s", "5s", "1500ms"} {
+		p.Runtime.StatsInterval = ok
+		res := validate.Profile(p)
+		if !res.Valid {
+			t.Fatalf("expected valid stats_interval %q, errors: %v", ok, res.Errors)
+		}
+	}
+
+	p.Runtime.StatsInterval = "0s"
+	res := validate.Profile(p)
+	if res.Valid {
+		t.Fatal("expected stats_interval=0s to fail structural validation")
+	}
+	if !strings.Contains(strings.Join(res.Errors, "\n"), "runtime.stats_interval") {
+		t.Fatalf("expected stats_interval error, got %v", res.Errors)
+	}
+
+	p.Runtime.StatsInterval = "-1s"
+	res = validate.Profile(p)
+	if res.Valid {
+		t.Fatal("expected negative stats_interval to fail structural validation")
+	}
+
+	p.Runtime.StatsInterval = "not-a-duration"
+	res = validate.Profile(p)
+	if res.Valid {
+		t.Fatal("expected invalid stats_interval duration to fail structural validation")
+	}
+}
+
 func TestValidate_histogramKnobs(t *testing.T) {
 	path := filepath.Join("..", "..", "testdata", "profile.valid.yaml")
 	p, err := profile.ParseFile(path)

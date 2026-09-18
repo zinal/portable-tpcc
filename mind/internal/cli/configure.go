@@ -70,6 +70,7 @@ type configureOpts struct {
 	ThreadsPerWorker      *int
 	CheckConcurrency      *int
 	MaxInflightPerWorker  *int
+	StatsInterval         *string
 	RetryMaxAttempts      *int
 	RetryInitialBackoff   *string
 	RetryMaxBackoff       *string
@@ -519,6 +520,13 @@ func parseConfigureArgs(args []string) (*configureOpts, error) {
 			}
 			opts.MaxInflightPerWorker = &n
 			i = next
+		case arg == "--stats-interval" || strings.HasPrefix(arg, "--stats-interval="):
+			val, next, err := requireFlagValue(args, i, "--stats-interval")
+			if err != nil {
+				return nil, err
+			}
+			opts.StatsInterval = &val
+			i = next
 		case arg == "--retry-max-attempts" || strings.HasPrefix(arg, "--retry-max-attempts="):
 			n, next, err := requireFlagNonNegativeInt(args, i, "--retry-max-attempts")
 			if err != nil {
@@ -793,6 +801,7 @@ func buildConfigureProfile(opts *configureOpts) (*profile.Profile, error) {
 	applyInt(&p.Runtime.ThreadsPerWorker, opts.ThreadsPerWorker)
 	applyInt(&p.Runtime.CheckConcurrency, opts.CheckConcurrency)
 	applyInt(&p.Runtime.MaxInflightPerWorker, opts.MaxInflightPerWorker)
+	applyString(&p.Runtime.StatsInterval, opts.StatsInterval)
 	applyInt(&p.Runtime.Retry.MaxAttempts, opts.RetryMaxAttempts)
 	applyString(&p.Runtime.Retry.InitialBackoff, opts.RetryInitialBackoff)
 	applyString(&p.Runtime.Retry.MaxBackoff, opts.RetryMaxBackoff)
@@ -1015,6 +1024,7 @@ Common overrides:
   --threads-per-worker <n>
   --check-concurrency <n>
   --max-inflight-per-worker <n>
+  --stats-interval <duration>  runtime.stats_interval (default 30s)
   --retry-max-attempts <n>
   --retry-initial-backoff <dur>
   --retry-max-backoff <dur>

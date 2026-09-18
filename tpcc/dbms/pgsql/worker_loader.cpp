@@ -93,6 +93,7 @@ int RunWorkerFromRunConfig(
         runCfg.RetryAmbiguousCommit = d.RetryAmbiguousCommit;
         runCfg.Workload = d.Workload;
         runCfg.Histogram = d.Histogram;
+        runCfg.StatsInterval = StatsIntervalFromMs(d.StatsIntervalMs);
         runCfg.ThinkTimeDistribution = d.ThinkTimeDistribution;
         runCfg.StartAt = startAt;
         return RunSync(runCfg, &aggregated);

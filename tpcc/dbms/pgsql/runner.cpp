@@ -38,6 +38,7 @@ TRunStatsConfig MakeRunStatsConfig(const TRunConfig& config, const TRunLayout& l
     stats.RunDuration = config.RunDuration;
     stats.Histogram = config.Histogram;
     stats.HighResHistogram = config.HighResHistogram;
+    stats.StatsInterval = config.StatsInterval;
     return stats;
 }
 

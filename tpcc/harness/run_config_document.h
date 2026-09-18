@@ -84,6 +84,8 @@ struct TRunConfigDocument {
 
     TWorkloadConfig Workload = MakeDefaultWorkloadConfig();
     THistogramConfig Histogram;
+    // Worker progress line interval. 0 / omit → 30s (kDefaultStatsIntervalMs in run_loop.h).
+    int64_t StatsIntervalMs = 0;
 
     std::vector<TLoaderAssignment> LoadAssignments;
     std::vector<TWorkerAssignment> WorkerAssignments;
