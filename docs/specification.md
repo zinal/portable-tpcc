@@ -615,9 +615,12 @@ visible in the result settings/options.
   warehouse `HASH` partitions (see
   [pgsql-partitioning-design.md](pgsql-partitioning-design.md)).
   `history` uses the same technical PK `(h_w_id, hist_id)` with `IDENTITY`.
-- **OceanBase:** warehouse partitioning, cached statements, clear error
-  classes, optional FKs as a recorded physical option, optional
-  `CREATE INDEX … PARALLEL n` (`database.options.index_parallel`, default 4),
+- **OceanBase:** warehouse partitioning (HASH + binding tablegroup), DB-wide
+  `item` as a cluster-scope duplicate table (`DUPLICATE_SCOPE = 'cluster'`,
+  replicated to every observer; not HASH-partitioned; user tenant only),
+  cached statements, clear error classes, optional FKs as a recorded physical
+  option, optional `CREATE INDEX … PARALLEL n`
+  (`database.options.index_parallel`, default 4),
   `DBMS_STATS.GATHER_TABLE_STATS` with gather DOP equal to the HASH partition
   count. Session `ob_query_timeout` (`database.options.query_timeout`, default
   600s) MUST apply to load, indexes, statistics, integrity-check, and

@@ -31,24 +31,23 @@ const char* const DROP_TABLES[] = {
     "DROP TABLE IF EXISTS warehouse",
 };
 
-struct TSchemaLayout {
-    bool UseClusterLayout = false;
-    int PartitionCount = 1;
-};
-
 void ExecAll(TObConnection& conn, const std::vector<std::string>& statements) {
     for (const auto& sql : statements) {
         conn.ExecuteSimple(sql);
     }
 }
 
-TSchemaLayout ResolveSchemaLayout(TObConnection& conn, const TObSchemaOptions& options) {
+TObSchemaLayout ResolveSchemaLayout(TObConnection& conn, const TObSchemaOptions& options) {
     const int partitions = ResolveObPartitionCount(options);
-    TSchemaLayout layout;
+    TObSchemaLayout layout;
+    const bool oceanbase = IsOceanBaseServer(conn);
+    if (oceanbase) {
+        layout.DuplicateItem = true;
+    }
     if (partitions < 0) {
         return layout;
     }
-    if (!IsOceanBaseServer(conn)) {
+    if (!oceanbase) {
         if (options.PartitionCount > 0) {
             LOG_W("Ignoring OceanBase partitions: target is not OceanBase");
         }
@@ -59,7 +58,7 @@ TSchemaLayout ResolveSchemaLayout(TObConnection& conn, const TObSchemaOptions& o
     return layout;
 }
 
-std::string ClusterTableSuffix(const TSchemaLayout& layout, const char* hashColumn) {
+std::string ClusterTableSuffix(const TObSchemaLayout& layout, const char* hashColumn) {
     if (!layout.UseClusterLayout) {
         return {};
     }
@@ -68,7 +67,19 @@ std::string ClusterTableSuffix(const TSchemaLayout& layout, const char* hashColu
         TABLEGROUP_TPCC, hashColumn, layout.PartitionCount);
 }
 
-std::vector<std::string> BuildCreateStatements(const TSchemaLayout& layout, const TObSchemaOptions& options) {
+std::string ItemTableSuffix(const TObSchemaLayout& layout) {
+    if (!layout.DuplicateItem) {
+        return {};
+    }
+    return " DUPLICATE_SCOPE = 'cluster'";
+}
+
+} // namespace
+
+std::vector<std::string> BuildObCreateStatements(
+    const TObSchemaLayout& layout,
+    const TObSchemaOptions& options)
+{
     const std::string fkStockWarehouse = options.EnableForeignKeys
         ? "    FOREIGN KEY (s_w_id) REFERENCES warehouse (w_id) ON DELETE CASCADE,\n"
         : "";
@@ -107,6 +118,7 @@ std::vector<std::string> BuildCreateStatements(const TSchemaLayout& layout, cons
     const std::string noWh = ClusterTableSuffix(layout, "no_w_id");
     const std::string oWh = ClusterTableSuffix(layout, "o_w_id");
     const std::string olWh = ClusterTableSuffix(layout, "ol_w_id");
+    const std::string item = ItemTableSuffix(layout);
     const std::string sWh = layout.UseClusterLayout
         ? fmt::format(
             " use_bloom_filter = true TABLEGROUP = {} PARTITION BY HASH(s_w_id) PARTITIONS {}",
@@ -130,14 +142,14 @@ std::vector<std::string> BuildCreateStatements(const TSchemaLayout& layout, cons
     w_zip      char(9)        NOT NULL,
     PRIMARY KEY (w_id)
 ){})", wh),
-        R"(CREATE TABLE item (
+        fmt::format(R"(CREATE TABLE item (
     i_id    int           NOT NULL,
     i_name  varchar(24)   NOT NULL,
     i_price decimal(5, 2) NOT NULL,
     i_data  varchar(50)   NOT NULL,
     i_im_id int           NOT NULL,
     PRIMARY KEY (i_id)
-))",
+){})", item),
         fmt::format(R"(CREATE TABLE stock (
     s_w_id       int           NOT NULL,
     s_i_id       int           NOT NULL,
@@ -242,7 +254,9 @@ std::vector<std::string> BuildCreateStatements(const TSchemaLayout& layout, cons
     };
 }
 
-void CreateTableGroup(TObConnection& conn, const TSchemaLayout& layout) {
+namespace {
+
+void CreateTableGroup(TObConnection& conn, const TObSchemaLayout& layout) {
     if (!layout.UseClusterLayout) {
         return;
     }
@@ -273,7 +287,7 @@ void InitSync(
         const std::string db = EffectiveDatabase(cfg);
         auto conn = ConnectToTargetDatabase(cfg);
 
-        const TSchemaLayout layout = ResolveSchemaLayout(*conn, options);
+        const TObSchemaLayout layout = ResolveSchemaLayout(*conn, options);
 
         LOG_I("Using database '" << db << "'");
         LOG_I("Foreign keys: " << ForeignKeysModeLabel(options.EnableForeignKeys));
@@ -283,10 +297,13 @@ void InitSync(
         } else {
             LOG_I("Using non-partitioned schema");
         }
+        if (layout.DuplicateItem) {
+            LOG_I("item: DUPLICATE_SCOPE=cluster (replicated to every observer)");
+        }
 
         ExecAll(*conn, std::vector<std::string>(std::begin(DROP_TABLES), std::end(DROP_TABLES)));
         CreateTableGroup(*conn, layout);
-        ExecAll(*conn, BuildCreateStatements(layout, options));
+        ExecAll(*conn, BuildObCreateStatements(layout, options));
 
         LOG_I("All TPC-C tables created successfully");
     } catch (const std::exception& e) {
