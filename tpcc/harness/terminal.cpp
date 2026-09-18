@@ -296,11 +296,18 @@ TFuture<void> TTerminal::Run() {
             bool shouldRetry = false;
             try {
                 std::unique_ptr<ITpccSession> tpccSession;
-                while (!(tpccSession = SessionFactory->TryCreateSession())) {
+                while (true) {
+                    tpccSession = co_await TSuspendWithFuture(
+                        SessionFactory->WaitCreateSession(),
+                        Context.TaskQueue, Context.TerminalID);
+                    if (tpccSession) {
+                        break;
+                    }
                     if (StopToken.stop_requested() || !PhaseController.MayAdmit()) {
                         break;
                     }
-                    // Pool empty: yield the scheduler thread instead of blocking it.
+                    // Adapter returned nullptr (no async-wait support): retry with a
+                    // short yield so the scheduler thread is not starved.
                     co_await TSuspend(TaskQueue, Context.TerminalID, std::chrono::milliseconds(1));
                 }
                 if (!tpccSession) {

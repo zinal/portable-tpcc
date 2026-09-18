@@ -3,10 +3,12 @@
 #include "ob_connection.h"
 #include "ob_session.h"
 
+#include <future.h>
 #include <thread_pool.h>
 
 #include <atomic>
 #include <condition_variable>
+#include <deque>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -36,6 +38,11 @@ public:
 
     // Non-blocking acquire. Empty optional when the pool has no free session.
     std::optional<TObSession> TryAcquireSession();
+
+    // Async acquire: returns a future that resolves with a session as soon as
+    // one becomes available.  If the pool is shutting down or cancelled the
+    // future resolves with an exception (TObDbError 1317 / Shutdown).
+    TFuture<TObSession> AcquireSessionAsync();
 
     void ReleaseSession(TObSession session);
 
@@ -103,6 +110,8 @@ private:
     std::condition_variable Cv_;
     std::queue<std::unique_ptr<TObConnection>> Connections_;
     std::vector<TObConnection*> CheckedOut_;
+    // Coroutines waiting for a free connection via AcquireSessionAsync().
+    std::deque<TPromise<TObSession>> Waiters_;
     std::shared_ptr<std::atomic<bool>> ShutdownFlag_ =
         std::make_shared<std::atomic<bool>>(false);
     bool Shutdown_ = false;

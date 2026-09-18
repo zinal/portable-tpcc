@@ -47,6 +47,7 @@ public:
 
     std::unique_ptr<ITpccSession> CreateSession() override;
     std::unique_ptr<ITpccSession> TryCreateSession() override;
+    TFuture<std::unique_ptr<ITpccSession>> WaitCreateSession() override;
 
 private:
     TObConnectionPool& Pool_;

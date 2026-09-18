@@ -56,9 +56,15 @@ TObConnectionPool::TObConnectionPool(TObConnectionConfig config, size_t poolSize
 }
 
 TObConnectionPool::~TObConnectionPool() {
+    std::deque<TPromise<TObSession>> pendingWaiters;
     {
         std::lock_guard lock(Mutex_);
         Shutdown_ = true;
+        pendingWaiters.swap(Waiters_);
+    }
+    for (auto& waiter : pendingWaiters) {
+        waiter.SetException(std::make_exception_ptr(
+            TObDbError(1317, "Connection pool is shutting down")));
     }
     Cv_.notify_all();
 
@@ -100,6 +106,36 @@ std::optional<TObSession> TObConnectionPool::TryAcquireSession() {
     return TObSession(std::move(conn), Executor_.get(), ShutdownFlag_);
 }
 
+TFuture<TObSession> TObConnectionPool::AcquireSessionAsync() {
+    TPromise<TObSession> promise;
+    auto future = promise.GetFuture();
+
+    std::unique_ptr<TObConnection> conn;
+    bool shutdown = false;
+    {
+        std::lock_guard lock(Mutex_);
+        if (Shutdown_) {
+            shutdown = true;
+        } else if (!Connections_.empty()) {
+            conn = std::move(Connections_.front());
+            Connections_.pop();
+            CheckedOut_.push_back(conn.get());
+        } else {
+            // No connection available now; park the caller.
+            Waiters_.push_back(std::move(promise));
+            return future;
+        }
+    }
+
+    if (shutdown) {
+        promise.SetException(std::make_exception_ptr(
+            TObDbError(1317, "Connection pool is shutting down")));
+    } else {
+        promise.SetValue(TObSession(std::move(conn), Executor_.get(), ShutdownFlag_));
+    }
+    return future;
+}
+
 void TObConnectionPool::ReleaseSession(TObSession session) {
     bool reusable = false;
     const int lastCode = session.LastErrorCode();
@@ -120,14 +156,30 @@ void TObConnectionPool::ReleaseSession(TObSession session) {
     }
 
     if (reusable) {
+        TPromise<TObSession> waiter;
+        bool hasWaiter = false;
         {
             std::lock_guard lock(Mutex_);
             if (Shutdown_) {
                 return;
             }
-            Connections_.push(std::move(conn));
+            if (!Waiters_.empty()) {
+                waiter = std::move(Waiters_.front());
+                Waiters_.pop_front();
+                hasWaiter = true;
+                // Keep the connection as "checked out" for the waiter.
+                CheckedOut_.push_back(released);
+            } else {
+                Connections_.push(std::move(conn));
+            }
         }
-        Cv_.notify_one();
+        if (hasWaiter) {
+            // Resolve outside the lock: the callback will call TaskReadyThreadSafe
+            // which acquires a separate task-queue lock — no re-entrant pool lock.
+            waiter.SetValue(TObSession(std::move(conn), Executor_.get(), ShutdownFlag_));
+        } else {
+            Cv_.notify_one();
+        }
         return;
     }
 
@@ -200,6 +252,8 @@ void TObConnectionPool::ReplaceBrokenConnections() {
         try {
             auto replacement = CreateConnection();
             size_t remaining = 0;
+            TPromise<TObSession> waiter;
+            bool hasWaiter = false;
             {
                 std::lock_guard lock(Mutex_);
                 if (Shutdown_) {
@@ -210,9 +264,20 @@ void TObConnectionPool::ReplaceBrokenConnections() {
                 }
                 --PendingReplacements_;
                 remaining = PendingReplacements_;
-                Connections_.push(std::move(replacement));
+                if (!Waiters_.empty()) {
+                    waiter = std::move(Waiters_.front());
+                    Waiters_.pop_front();
+                    hasWaiter = true;
+                    CheckedOut_.push_back(replacement.get());
+                } else {
+                    Connections_.push(std::move(replacement));
+                }
             }
-            Cv_.notify_one();
+            if (hasWaiter) {
+                waiter.SetValue(TObSession(std::move(replacement), Executor_.get(), ShutdownFlag_));
+            } else {
+                Cv_.notify_one();
+            }
             if (failures > 0) {
                 LOG_I("Recreated OceanBase connection after " << failures
                       << " failed attempt(s); "
@@ -279,9 +344,16 @@ void TObConnectionPool::CancelAll() {
     ShutdownFlag_->store(true, std::memory_order_release);
 
     std::vector<TObConnection*> victims;
+    std::deque<TPromise<TObSession>> pendingWaiters;
     {
         std::lock_guard lock(Mutex_);
         victims = CheckedOut_;
+        pendingWaiters.swap(Waiters_);
+    }
+    // Wake any coroutines that were parked waiting for a free connection.
+    for (auto& waiter : pendingWaiters) {
+        waiter.SetException(std::make_exception_ptr(
+            TObDbError(1317, "Connection pool cancelled")));
     }
     for (auto* conn : victims) {
         try {

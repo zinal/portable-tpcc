@@ -96,6 +96,18 @@ public:
     virtual std::unique_ptr<ITpccSession> TryCreateSession() {
         return CreateSession();
     }
+
+    // Async acquire: returns a future that resolves to a session as soon as one
+    // is available.  Adapters with a bounded connection pool SHOULD override
+    // this to park the caller without busy-waiting; the default implementation
+    // calls TryCreateSession() and resolves immediately (returning nullptr when
+    // the pool is currently empty, which causes the terminal to retry with a
+    // short sleep — the same behavior as before this interface existed).
+    virtual TFuture<std::unique_ptr<ITpccSession>> WaitCreateSession() {
+        TPromise<std::unique_ptr<ITpccSession>> p;
+        p.SetValue(TryCreateSession());
+        return p.GetFuture();
+    }
 };
 
 } // namespace NTpcc
