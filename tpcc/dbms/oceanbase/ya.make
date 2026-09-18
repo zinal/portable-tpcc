@@ -8,6 +8,7 @@ ADDINCL(
 
 SRCS(
     ob_queries.cpp
+    ob_batch.cpp
     ob_prepared_statement.cpp
     ob_connection.cpp
     ob_session.cpp

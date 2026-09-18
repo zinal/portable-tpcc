@@ -68,7 +68,8 @@ connection; replacing every session immediately retries PREPARE and makes the
 OOM worse.
 
 Size the tenant for `connections × prepared statements` (on the order of
-30 OLTP statements per session once warmed), not only for memstore of table
+30 fixed OLTP statements plus a bounded family of New-Order batch texts by
+line count, up to `MAX_ITEMS` = 15 per family), not only for memstore of table
 data. Check `GV$OB_UNITS` / `tenant_hold` vs `tenant_limit` in observer.log.
 Increase `MEMORY_SIZE` (`ALTER RESOURCE UNIT` or recreate the unit/pool) or
 reduce `runtime.max_inflight_per_worker` / connection count. `complex_oltp`

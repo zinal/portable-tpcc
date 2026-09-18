@@ -237,7 +237,10 @@ QueryResult MaterializeStmtResult(MYSQL_STMT* stmt, MYSQL* mysql, MYSQL_RES* met
 } // namespace
 
 struct TObStatementCache::TImpl {
-    static constexpr size_t MaxCachedTextStatements = 64;
+    // Worker New-Order uses a bounded family of text statements by line count
+    // (item IN, stock FOR UPDATE, stock UPDATE JOIN, order-line INSERT) ×
+    // MAX_ITEMS=15, plus load-path multi-row INSERTs on loader connections.
+    static constexpr size_t MaxCachedTextStatements = 128;
 
     struct TStmtEntry {
         MYSQL_STMT* Stmt = nullptr;

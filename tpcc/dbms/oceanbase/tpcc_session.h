@@ -25,6 +25,10 @@ public:
 
 private:
     TFuture<TOperationResult> CatchOp(TFuture<TOperationResult> future);
+    TFuture<TBatchResult> CatchBatch(TFuture<TBatchResult> future);
+    TFuture<TBatchResult> ExecuteBatchSequentially(std::vector<TSemanticOp> ops);
+    TFuture<TBatchResult> ExecuteStockBatch(const std::vector<TSemanticOp>& ops);
+    TFuture<TBatchResult> ExecuteOrderLineBatch(const std::vector<TSemanticOp>& ops);
 
     TObSession& Session_;
     TObErrorClassifier Classifier_;

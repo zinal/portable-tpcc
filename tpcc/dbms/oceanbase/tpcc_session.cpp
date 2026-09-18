@@ -1,10 +1,10 @@
 #include "tpcc_session.h"
 
+#include "ob_batch.h"
+
 #include <future_util.h>
 #include <money.h>
 
-#include <optional>
-#include <stdexcept>
 #include <utility>
 #include <variant>
 
@@ -39,6 +39,25 @@ TOperationResult CheckAffected(uint64_t actual, uint64_t expected, const std::st
                 " rows, expected " + std::to_string(expected));
     }
     return OkOp(expected, actual);
+}
+
+TBatchResult OkBatch(size_t count) {
+    TBatchResult batch;
+    batch.Ok = true;
+    batch.Results.reserve(count);
+    for (size_t i = 0; i < count; ++i) {
+        batch.Results.push_back(OkOp(1, 1));
+    }
+    return batch;
+}
+
+TBatchResult FailBatch(EErrorClass cls, std::string message, std::string code = {}) {
+    TBatchResult batch;
+    batch.Ok = false;
+    batch.ErrorClass = cls;
+    batch.Message = std::move(message);
+    batch.NativeCode = std::move(code);
+    return batch;
 }
 
 bool NextRow(QueryResult& result) {
@@ -77,17 +96,17 @@ TCustomerRow ReadCustomer(QueryResult& result) {
     return cust;
 }
 
-TStockRow ReadStock(QueryResult& result, const TStockKey& key, int districtId) {
+TStockRow ReadStockBatch(QueryResult& result, int districtId) {
     TStockRow row;
-    row.WarehouseID = key.WarehouseID;
-    row.ItemID = key.ItemID;
-    row.Quantity = result.GetInt32(0);
-    row.Ytd = result.GetMoney(1);
-    row.OrderCount = result.GetInt32(2);
-    row.RemoteCount = result.GetInt32(3);
-    row.Data = result.GetString(4);
+    row.WarehouseID = result.GetInt32(0);
+    row.ItemID = result.GetInt32(1);
+    row.Quantity = result.GetInt32(2);
+    row.Ytd = result.GetMoney(3);
+    row.OrderCount = result.GetInt32(4);
+    row.RemoteCount = result.GetInt32(5);
+    row.Data = result.GetString(6);
     if (districtId >= 1 && districtId <= 10) {
-        row.DistInfo = result.GetString(static_cast<size_t>(4 + districtId));
+        row.DistInfo = result.GetString(static_cast<size_t>(6 + districtId));
     }
     return row;
 }
@@ -124,6 +143,12 @@ TObTpccTransaction::TObTpccTransaction(TObSession& session)
 TFuture<TOperationResult> TObTpccTransaction::CatchOp(TFuture<TOperationResult> future) {
     return CatchToValue(std::move(future), [this](const std::exception& ex) {
         return FailOp(Classifier_.ClassifyException(ex), ex.what(), ObNativeCodeOf(ex));
+    });
+}
+
+TFuture<TBatchResult> TObTpccTransaction::CatchBatch(TFuture<TBatchResult> future) {
+    return CatchToValue(std::move(future), [this](const std::exception& ex) {
+        return FailBatch(Classifier_.ClassifyException(ex), ex.what(), ObNativeCodeOf(ex));
     });
 }
 
@@ -192,10 +217,28 @@ TFuture<TCommitResult> TObTpccTransaction::Cancel() {
 }
 
 TFuture<TBatchResult> TObTpccTransaction::ExecuteBatch(const std::vector<TSemanticOp>& ops) {
+    if (Terminal_) {
+        return MakeReadyFuture(FailBatch(EErrorClass::Permanent, "ExecuteBatch called in terminal state"));
+    }
+    if (ops.empty()) {
+        TBatchResult empty;
+        empty.Ok = true;
+        return MakeReadyFuture(std::move(empty));
+    }
+    if (AllSemanticOpsAre<TUpdateStock>(ops)) {
+        return ExecuteStockBatch(ops);
+    }
+    if (AllSemanticOpsAre<TInsertOrderLine>(ops)) {
+        return ExecuteOrderLineBatch(ops);
+    }
+    return ExecuteBatchSequentially(std::vector<TSemanticOp>(ops));
+}
+
+TFuture<TBatchResult> TObTpccTransaction::ExecuteBatchSequentially(std::vector<TSemanticOp> ops) {
     TBatchResult init;
     init.Ok = true;
     return ThenFold(
-        std::vector<TSemanticOp>(ops),
+        std::move(ops),
         std::move(init),
         [this](TBatchResult acc, const TSemanticOp& item) -> TFuture<TBatchResult> {
             if (!acc.Ok) {
@@ -212,6 +255,54 @@ TFuture<TBatchResult> TObTpccTransaction::ExecuteBatch(const std::vector<TSemant
                 return acc;
             });
         });
+}
+
+TFuture<TBatchResult> TObTpccTransaction::ExecuteStockBatch(const std::vector<TSemanticOp>& ops) {
+    const auto rows = AggregateObStockUpdates(ops);
+    if (rows.empty() || rows.size() > ObBatchMaxRows) {
+        return ExecuteBatchSequentially(std::vector<TSemanticOp>(ops));
+    }
+    TObParams params;
+    params.Reserve(6 * rows.size());
+    for (const auto& row : rows) {
+        params(row.WarehouseID)(row.ItemID)(row.NewQuantity)
+            (row.OrderedQuantity)(row.LineCount)(row.RemoteIncrement);
+    }
+    const size_t opCount = ops.size();
+    const size_t expected = rows.size();
+    return CatchBatch(Then(
+        Session_.ExecuteModify(BuildObStockUpdateBatchSql(rows.size()), params),
+        [opCount, expected](uint64_t affected) {
+            auto check = CheckAffected(affected, expected, "stock update batch");
+            if (!check.Ok) {
+                return FailBatch(check.ErrorClass, check.Message, check.NativeCode);
+            }
+            return OkBatch(opCount);
+        }));
+}
+
+TFuture<TBatchResult> TObTpccTransaction::ExecuteOrderLineBatch(const std::vector<TSemanticOp>& ops) {
+    if (ops.size() > ObBatchMaxRows) {
+        return ExecuteBatchSequentially(std::vector<TSemanticOp>(ops));
+    }
+    TObParams params;
+    params.Reserve(9 * ops.size());
+    for (const auto& op : ops) {
+        const auto& line = std::get<TInsertOrderLine>(op);
+        params(line.OrderID)(line.DistrictID)(line.WarehouseID)(line.LineNumber)
+            (line.ItemID)(line.SupplyWarehouseID)(line.Quantity)
+            (line.Amount.ToString())(line.DistInfo);
+    }
+    const size_t opCount = ops.size();
+    return CatchBatch(Then(
+        Session_.ExecuteModify(BuildObOrderLineInsertSql(ops.size()), params),
+        [opCount](uint64_t affected) {
+            auto check = CheckAffected(affected, opCount, "order_line insert batch");
+            if (!check.Ok) {
+                return FailBatch(check.ErrorClass, check.Message, check.NativeCode);
+            }
+            return OkBatch(opCount);
+        }));
 }
 
 TFuture<TFinalCommitResult> TObTpccTransaction::ExecuteFinalAndCommit(const TSemanticOp& op) {
@@ -289,37 +380,31 @@ TFuture<TOperationResult> TObTpccTransaction::Execute(const TSemanticOp& op) {
             }));
     }
     if (const auto* p = std::get_if<TGetItems>(&op)) {
-        struct TAcc {
-            std::vector<TItemRow> Items;
-            std::optional<TOperationResult> Failure;
-        };
-        const size_t n = p->ItemIDs.size();
-        TAcc init;
-        init.Items.reserve(n);
+        const auto ids = UniqueItemIds(p->ItemIDs);
+        if (ids.empty()) {
+            return ReadyOp(OkOp(0, 0, std::vector<TItemRow>{}));
+        }
+        if (ids.size() > ObBatchMaxRows) {
+            return ReadyOp(FailOp(EErrorClass::Permanent, "too many items in TGetItems"));
+        }
+        TObParams params;
+        params.Reserve(ids.size());
+        for (int id : ids) {
+            params(id);
+        }
+        const size_t expected = ids.size();
         return CatchOp(Then(
-            ThenFold(
-                p->ItemIDs,
-                std::move(init),
-                [this](TAcc acc, int id) -> TFuture<TAcc> {
-                    if (acc.Failure) {
-                        return MakeReadyFuture(std::move(acc));
-                    }
-                    return Then(
-                        Session_.ExecuteQuery(EObQueryId::GetItems, MakeParams(id)),
-                        [acc = std::move(acc)](QueryResult result) mutable {
-                            if (!NextRow(result)) {
-                                acc.Failure = FailOp(EErrorClass::Integrity, "item not found");
-                                return acc;
-                            }
-                            acc.Items.push_back(ReadItem(result));
-                            return acc;
-                        });
-                }),
-            [n](TAcc acc) {
-                if (acc.Failure) {
-                    return *acc.Failure;
+            Session_.ExecuteQuery(BuildObGetItemsSql(ids.size()), params),
+            [expected](QueryResult result) {
+                std::vector<TItemRow> items;
+                items.reserve(expected);
+                while (NextRow(result)) {
+                    items.push_back(ReadItem(result));
                 }
-                return OkOp(n, acc.Items.size(), std::move(acc.Items));
+                if (items.size() != expected) {
+                    return FailOp(EErrorClass::Integrity, "item not found");
+                }
+                return OkOp(expected, items.size(), std::move(items));
             }));
     }
     if (const auto* p = std::get_if<TCreateOrder>(&op)) {
@@ -481,40 +566,32 @@ TFuture<TOperationResult> TObTpccTransaction::Execute(const TSemanticOp& op) {
             }));
     }
     if (const auto* p = std::get_if<TGetStocksForUpdate>(&op)) {
-        struct TAcc {
-            std::vector<TStockRow> Rows;
-            std::optional<TOperationResult> Failure;
-        };
+        const auto keys = UniqueSortedStockKeys(p->Stocks);
         const int districtId = p->DistrictID;
-        const size_t n = p->Stocks.size();
-        TAcc init;
-        init.Rows.reserve(n);
+        if (keys.empty()) {
+            return ReadyOp(OkOp(0, 0, std::vector<TStockRow>{}));
+        }
+        if (keys.size() > ObBatchMaxRows) {
+            return ReadyOp(FailOp(EErrorClass::Permanent, "too many stock keys in TGetStocksForUpdate"));
+        }
+        TObParams params;
+        params.Reserve(2 * keys.size());
+        for (const auto& key : keys) {
+            params(key.WarehouseID)(key.ItemID);
+        }
+        const size_t expected = keys.size();
         return CatchOp(Then(
-            ThenFold(
-                p->Stocks,
-                std::move(init),
-                [this, districtId](TAcc acc, TStockKey key) -> TFuture<TAcc> {
-                    if (acc.Failure) {
-                        return MakeReadyFuture(std::move(acc));
-                    }
-                    return Then(
-                        Session_.ExecuteQuery(
-                            EObQueryId::GetStockForUpdate,
-                            MakeParams(key.WarehouseID, key.ItemID)),
-                        [acc = std::move(acc), key, districtId](QueryResult result) mutable {
-                            if (!NextRow(result)) {
-                                acc.Failure = FailOp(EErrorClass::Integrity, "stock not found");
-                                return acc;
-                            }
-                            acc.Rows.push_back(ReadStock(result, key, districtId));
-                            return acc;
-                        });
-                }),
-            [n](TAcc acc) {
-                if (acc.Failure) {
-                    return *acc.Failure;
+            Session_.ExecuteQuery(BuildObGetStocksForUpdateSql(keys.size()), params),
+            [expected, districtId](QueryResult result) {
+                std::vector<TStockRow> rows;
+                rows.reserve(expected);
+                while (NextRow(result)) {
+                    rows.push_back(ReadStockBatch(result, districtId));
                 }
-                return OkOp(n, acc.Rows.size(), std::move(acc.Rows));
+                if (rows.size() != expected) {
+                    return FailOp(EErrorClass::Integrity, "stock not found");
+                }
+                return OkOp(expected, rows.size(), std::move(rows));
             }));
     }
     if (const auto* p = std::get_if<TGetCustomerData>(&op)) {
