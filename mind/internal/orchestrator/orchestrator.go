@@ -684,7 +684,7 @@ func requireDebugPhase(rs *state.RunState) error {
 	if rs.State == state.StateFailed {
 		return fmt.Errorf("debug refused while run is failed")
 	}
-	return requireCompletedLoad(rs, "debug")
+	return nil
 }
 
 // RunDebug executes the sequential transaction probe without changing run-state.

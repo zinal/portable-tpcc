@@ -33,6 +33,7 @@ mind-tpcc configure --profile <path> --dbms <pgsql|ydb|oceanbase> [options]
 | `load` | Horizontal data load. |
 | `indexes` | Secondary indexes (and DBMS stats where the adapter supports them). |
 | `check` | Integrity checks. Requires `--after-import` or `--after-test`. Available after a completed load (indexes reached or skipped); does not wait for `test`. |
+| `debug` | Sequential transaction probe (specification §9.3). Allowed from `planned`; does not require a completed load in this `run_id`. Refused while `stopping` or `failed`. |
 | `test` | Arm workers and run ramp-up / measurement / drain. `start` is a compatibility alias. |
 | `status` | Show run state. |
 | `stop` | Stop workers gracefully. |
