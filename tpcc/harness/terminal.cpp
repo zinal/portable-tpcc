@@ -384,7 +384,7 @@ TFuture<void> TTerminal::Run() {
                     if (cls == EErrorClass::AmbiguousCommit && !RetryAmbiguousCommit) {
                         LOG_E("Terminal " << Context.TerminalID << " " << txName << " ambiguous commit (blind retry disabled): " << ex.what());
                     } else if (!attemptsRemain && ShouldRetryClass(cls, RetryAmbiguousCommit)) {
-                        LOG_D("Terminal " << Context.TerminalID << " " << txName << " retries exhausted: " << ex.what());
+                        LOG_E("Terminal " << Context.TerminalID << " " << txName << " retries exhausted: " << ex.what());
                     } else {
                         LOG_E("Terminal " << Context.TerminalID << " classified error in " << txName << ": " << ex.what());
                         if (AbortsRun(cls)) {
@@ -419,7 +419,7 @@ TFuture<void> TTerminal::Run() {
                     if (cls == EErrorClass::AmbiguousCommit && !RetryAmbiguousCommit) {
                         LOG_E("Terminal " << Context.TerminalID << " " << txName << " ambiguous commit (blind retry disabled): " << ex.what());
                     } else if (!attemptsRemain && ShouldRetryClass(cls, RetryAmbiguousCommit)) {
-                        LOG_D("Terminal " << Context.TerminalID << " " << txName << " retries exhausted: " << ex.what());
+                        LOG_E("Terminal " << Context.TerminalID << " " << txName << " retries exhausted: " << ex.what());
                     } else {
                         LOG_E("Terminal " << Context.TerminalID << " exception in " << txName << ": " << ex.what());
                         if (AbortsRun(cls)) {
