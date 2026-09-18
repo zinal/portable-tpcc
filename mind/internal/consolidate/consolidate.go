@@ -993,6 +993,30 @@ func appendTxResultLine(
 			formatLatencyMs(stats["p50"], unit),
 			formatLatencyMs(stats["p90"], unit),
 			formatLatencyMs(stats["p99"], unit))
+		if ov, ok := asFloat64(stats["overflow_count"]); ok && ov > 0 {
+			fmt.Fprintf(b, " overflow=%d", int64(ov))
+		}
+	}
+	b.WriteByte('\n')
+	if stats != nil {
+		appendComponentLine(b, unit, stats)
+	}
+}
+
+func appendComponentLine(b *strings.Builder, unit string, stats map[string]interface{}) {
+	comps, ok := stats["components"].(map[string]interface{})
+	if !ok || len(comps) == 0 {
+		return
+	}
+	b.WriteString("    components:")
+	for _, name := range []string{
+		"admission_wait", "transaction", "pure", "session_pool_wait", "retry_backoff",
+	} {
+		raw, ok := comps[name].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		fmt.Fprintf(b, " %s_p99=%s", name, formatLatencyMs(raw["p99"], unit))
 	}
 	b.WriteByte('\n')
 }

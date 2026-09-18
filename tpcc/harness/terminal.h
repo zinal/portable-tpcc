@@ -25,11 +25,23 @@ namespace NTpcc {
 
 class TTerminalStats {
 public:
+    struct TLatencySample {
+        std::chrono::microseconds Transaction{0};
+        std::chrono::microseconds Full{0};
+        std::chrono::microseconds Pure{0};
+        std::chrono::microseconds AdmissionWait{0};
+        std::chrono::microseconds SessionPoolWait{0};
+        std::chrono::microseconds RetryBackoff{0};
+    };
+
     struct TTransactionStats {
         explicit TTransactionStats(uint64_t hdrTill = 4096, uint64_t maxValue = 32768)
             : LatencyHistogramMs(hdrTill, maxValue)
             , LatencyHistogramFullMs(hdrTill, maxValue)
             , LatencyHistogramPure(hdrTill, maxValue)
+            , LatencyHistogramAdmission(hdrTill, maxValue)
+            , LatencyHistogramSessionPool(hdrTill, maxValue)
+            , LatencyHistogramRetryBackoff(hdrTill, maxValue)
         {}
 
         void ResetHistograms(uint64_t hdrTill, uint64_t maxValue) {
@@ -37,6 +49,9 @@ public:
             LatencyHistogramMs = THistogram(hdrTill, maxValue);
             LatencyHistogramFullMs = THistogram(hdrTill, maxValue);
             LatencyHistogramPure = THistogram(hdrTill, maxValue);
+            LatencyHistogramAdmission = THistogram(hdrTill, maxValue);
+            LatencyHistogramSessionPool = THistogram(hdrTill, maxValue);
+            LatencyHistogramRetryBackoff = THistogram(hdrTill, maxValue);
         }
 
         void Collect(TTransactionStats& dst) const {
@@ -50,6 +65,9 @@ public:
             dst.LatencyHistogramMs.Add(LatencyHistogramMs);
             dst.LatencyHistogramFullMs.Add(LatencyHistogramFullMs);
             dst.LatencyHistogramPure.Add(LatencyHistogramPure);
+            dst.LatencyHistogramAdmission.Add(LatencyHistogramAdmission);
+            dst.LatencyHistogramSessionPool.Add(LatencyHistogramSessionPool);
+            dst.LatencyHistogramRetryBackoff.Add(LatencyHistogramRetryBackoff);
         }
 
         void Clear() {
@@ -63,6 +81,9 @@ public:
             LatencyHistogramMs.Reset();
             LatencyHistogramFullMs.Reset();
             LatencyHistogramPure.Reset();
+            LatencyHistogramAdmission.Reset();
+            LatencyHistogramSessionPool.Reset();
+            LatencyHistogramRetryBackoff.Reset();
         }
 
         void ClearProgress() {
@@ -85,6 +106,9 @@ public:
         THistogram LatencyHistogramMs;
         THistogram LatencyHistogramFullMs;
         THistogram LatencyHistogramPure;
+        THistogram LatencyHistogramAdmission;
+        THistogram LatencyHistogramSessionPool;
+        THistogram LatencyHistogramRetryBackoff;
     };
 
 public:
@@ -109,15 +133,11 @@ public:
         return PerTransactionTypeStats[static_cast<size_t>(type)];
     }
 
-    void AddOK(
-        ETransactionType type,
-        std::chrono::microseconds latency,
-        std::chrono::microseconds latencyFull,
-        std::chrono::microseconds latencyPure)
+    void AddOK(ETransactionType type, const TLatencySample& sample)
     {
         auto& stats = PerTransactionTypeStats[static_cast<size_t>(type)];
         stats.OK.fetch_add(1, std::memory_order_relaxed);
-        RecordLatency(stats, latency, latencyFull, latencyPure);
+        RecordLatency(stats, sample);
     }
 
     void IncFailed(ETransactionType type) {
@@ -126,15 +146,11 @@ public:
 
     // Intentional profile rollback (unused New-Order item). Counts toward MQTh/tpmC
     // and New-Order response-time statistics (TPC-C §5.1.2, §5.4.2).
-    void AddUserAborted(
-        ETransactionType type,
-        std::chrono::microseconds latency,
-        std::chrono::microseconds latencyFull,
-        std::chrono::microseconds latencyPure)
+    void AddUserAborted(ETransactionType type, const TLatencySample& sample)
     {
         auto& stats = PerTransactionTypeStats[static_cast<size_t>(type)];
         stats.UserAborted.fetch_add(1, std::memory_order_relaxed);
-        RecordLatency(stats, latency, latencyFull, latencyPure);
+        RecordLatency(stats, sample);
     }
 
     void IncRetried(ETransactionType type) {
@@ -183,33 +199,33 @@ public:
     }
 
 private:
-    void RecordLatency(
-        TTransactionStats& stats,
-        std::chrono::microseconds latency,
-        std::chrono::microseconds latencyFull,
-        std::chrono::microseconds latencyPure)
-    {
-        uint64_t vTxn = 0;
-        uint64_t vFull = 0;
-        uint64_t vPure = 0;
-        if (RecordMicroseconds) {
-            // Keep full microsecond resolution; do not round-trip through ms.
-            vTxn = static_cast<uint64_t>(latency.count());
-            vFull = static_cast<uint64_t>(latencyFull.count());
-            vPure = static_cast<uint64_t>(latencyPure.count());
-        } else {
-            vTxn = static_cast<uint64_t>(
-                std::chrono::duration_cast<std::chrono::milliseconds>(latency).count());
-            vFull = static_cast<uint64_t>(
-                std::chrono::duration_cast<std::chrono::milliseconds>(latencyFull).count());
-            vPure = static_cast<uint64_t>(
-                std::chrono::duration_cast<std::chrono::milliseconds>(latencyPure).count());
+    uint64_t ToRecorded(std::chrono::microseconds value) const {
+        int64_t n = value.count();
+        if (n < 0) {
+            n = 0;
         }
+        if (RecordMicroseconds) {
+            return static_cast<uint64_t>(n);
+        }
+        return static_cast<uint64_t>(n / 1000);
+    }
+
+    void RecordLatency(TTransactionStats& stats, const TLatencySample& sample)
+    {
+        const uint64_t vTxn = ToRecorded(sample.Transaction);
+        const uint64_t vFull = ToRecorded(sample.Full);
+        const uint64_t vPure = ToRecorded(sample.Pure);
+        const uint64_t vAdmission = ToRecorded(sample.AdmissionWait);
+        const uint64_t vPool = ToRecorded(sample.SessionPoolWait);
+        const uint64_t vBackoff = ToRecorded(sample.RetryBackoff);
         {
             std::lock_guard guard(stats.HistLock);
             stats.LatencyHistogramMs.RecordValue(vTxn);
             stats.LatencyHistogramFullMs.RecordValue(vFull);
             stats.LatencyHistogramPure.RecordValue(vPure);
+            stats.LatencyHistogramAdmission.RecordValue(vAdmission);
+            stats.LatencyHistogramSessionPool.RecordValue(vPool);
+            stats.LatencyHistogramRetryBackoff.RecordValue(vBackoff);
         }
     }
 

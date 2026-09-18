@@ -145,8 +145,9 @@ type RetryJSON struct {
 }
 
 // HistogramJSON is the materialized runtime.histogram block.
-// Matches THistogram linear_exp: unit + highest (max_value); hdr_till is
-// derived by the worker and published in result artifacts.
+// Matches THistogram linear_exp: unit + highest (max_value); hdr_till and
+// sub_buckets_per_octave are derived by the worker and published in result
+// artifacts. Overflow samples are counted separately from in-range buckets.
 type HistogramJSON struct {
 	Unit    string `json:"unit"`
 	Highest int64  `json:"highest"`

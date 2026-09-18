@@ -10,6 +10,7 @@ import (
 	"portable-tpcc/mind/internal/canonical"
 	"portable-tpcc/mind/internal/config"
 	"portable-tpcc/mind/internal/consolidate"
+	"portable-tpcc/mind/internal/histogram"
 	"portable-tpcc/mind/internal/state"
 )
 
@@ -88,21 +89,33 @@ func writeWorkerArtifacts(t *testing.T, root, runID, workerName, sha string, rc 
 	}
 }
 
+func paddedBuckets(prefix []uint64) []uint64 {
+	n, err := histogram.ExpectedBucketCount(4, 64)
+	if err != nil {
+		panic(err)
+	}
+	buckets := make([]uint64, n)
+	copy(buckets, prefix)
+	return buckets
+}
+
 func measurementHistogram(count uint64) map[string]interface{} {
-	buckets := make([]uint64, 9)
+	buckets := paddedBuckets(nil)
 	if count > 0 {
 		buckets[0] = count
 	}
 	return map[string]interface{}{
-		"layout":       "linear_exp",
-		"unit":         "ms",
-		"hdr_till":     4,
-		"max_value":    64,
-		"total_count":  count,
-		"min_recorded": uint64(0),
-		"max_recorded": uint64(0),
-		"sum_values":   uint64(0),
-		"buckets":      buckets,
+		"layout":                 "linear_exp",
+		"unit":                   "ms",
+		"hdr_till":               4,
+		"max_value":              64,
+		"sub_buckets_per_octave": 64,
+		"total_count":            count,
+		"overflow_count":         uint64(0),
+		"min_recorded":           uint64(0),
+		"max_recorded":           uint64(0),
+		"sum_values":             uint64(0),
+		"buckets":                buckets,
 	}
 }
 
@@ -242,15 +255,17 @@ func TestConsolidate_mergesHistograms(t *testing.T) {
 		},
 		"histograms": map[string]interface{}{
 			"new_order": map[string]interface{}{
-				"layout":       "linear_exp",
-				"unit":         "ms",
-				"hdr_till":     4,
-				"max_value":    64,
-				"total_count":  4,
-				"min_recorded": 0,
-				"max_recorded": 3,
-				"sum_values":   6,
-				"buckets":      []uint64{1, 1, 1, 1, 0, 0, 0, 0, 0},
+				"layout":                 "linear_exp",
+				"unit":                   "ms",
+				"hdr_till":               4,
+				"max_value":              64,
+				"sub_buckets_per_octave": 64,
+				"total_count":            4,
+				"overflow_count":         0,
+				"min_recorded":           0,
+				"max_recorded":           3,
+				"sum_values":             6,
+				"buckets":                paddedBuckets([]uint64{1, 1, 1, 1}),
 			},
 		},
 	})

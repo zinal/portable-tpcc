@@ -32,9 +32,10 @@ struct TWorkloadConfig {
 };
 
 // Histogram settings from runtime.histogram. Mapped onto THistogram linear_exp:
-// linear buckets [0, HdrTill), then exponential up to MaxValue (= Highest).
-// HdrTill is an implementation constant (4096, capped by Highest); it is not
-// a separate profile knob.
+// linear buckets [0, HdrTill), then at most 64 equal-width sub-buckets per
+// doubling octave up to MaxValue (= Highest). Overflow samples (>= Highest)
+// are counted separately. HdrTill is an implementation constant (4096, capped
+// by Highest); it is not a separate profile knob.
 struct THistogramConfig {
     bool Configured = false;
     std::string Unit = "ms"; // "ms" or "us"

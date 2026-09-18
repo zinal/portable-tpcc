@@ -173,7 +173,8 @@ type RetryPolicy struct {
 
 // Histogram configures the worker linear_exp latency histogram.
 // Only unit and highest affect layout; buckets are [0, hdr_till) linear
-// then exponential up to highest (hdr_till is an implementation default).
+// then 64 sub-buckets per doubling octave up to highest (hdr_till is an
+// implementation default). Overflow samples are counted separately.
 // Highest is a pointer so omitted (use default) is distinct from an explicit
 // non-positive value, which is a structural error.
 type Histogram struct {
