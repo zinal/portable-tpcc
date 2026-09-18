@@ -16,8 +16,8 @@ TCapabilities TObCapabilities::Get() const {
     c.IsolationLevels = {
         EIsolationLevel::RepeatableRead,
     };
-    c.ExecuteBatchOptimized = false;
-    c.ExecuteFinalAndCommitOptimized = false;
+    c.ExecuteBatchOptimized = true;
+    c.ExecuteFinalAndCommitOptimized = true;
     c.AsyncDelivery = false;
     c.CancelSupported = true;
     c.MaxRecommendedInflight = 256;

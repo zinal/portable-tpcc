@@ -68,8 +68,12 @@ connection; replacing every session immediately retries PREPARE and makes the
 OOM worse.
 
 Size the tenant for `connections × prepared statements` (on the order of
-30 OLTP statements per session once warmed), not only for memstore of table
-data. Check `GV$OB_UNITS` / `tenant_hold` vs `tenant_limit` in observer.log.
+32 fixed OLTP statements, including Payment locking customer reads, plus a
+bounded family of New-Order batch texts by line count, up to `MAX_ITEMS` = 15
+per family, and Delivery customer-apply texts for 1..10 districts), not only
+for memstore of table data. Payment location, Delivery oldest-order prefetch,
+complete, and finish scripts use `CLIENT_MULTI_STATEMENTS` text (not extra
+prepared handles). Check `GV$OB_UNITS` / `tenant_hold` vs `tenant_limit` in observer.log.
 Increase `MEMORY_SIZE` (`ALTER RESOURCE UNIT` or recreate the unit/pool) or
 reduce `runtime.max_inflight_per_worker` / connection count. `complex_oltp`
 is a workload type, not a guarantee that tenant memory is large enough.

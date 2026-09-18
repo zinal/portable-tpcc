@@ -445,6 +445,21 @@ Adapters MUST:
   not HASH-partitioned. Duplicate tables require a user tenant (not `sys`).
   Non-OceanBase MySQL targets keep an ordinary `item` table.
 - Cached prepared statements with bound parameters.
+- Homogeneous New-Order `ExecuteBatch` of `TUpdateStock` / `TInsertOrderLine`
+  is fused to one multi-row prepared statement (bounded by `MAX_ITEMS` = 15).
+  `TGetItems` and `TGetStocksForUpdate` use one `IN`-list statement per call,
+  with stock keys sorted by `(s_w_id, s_i_id)` before `SELECT … FOR UPDATE`.
+  Unused-item New-Order still runs every valid line’s ITEM/STOCK/ORDER-LINE
+  work before the ITEM not-found lookup and confirmed rollback (TPC-C §2.4.2.3).
+- Payment location is one multi-statement JOIN `UPDATE` plus JOIN `SELECT`.
+  After that op, customer reads use `SELECT … FOR UPDATE` (by id or last
+  name). `TUpdateCustomerPayment` is deferred and fused with history insert
+  and `COMMIT` in `ExecuteFinalAndCommit` (≤3 server exchanges).
+- Delivery prefetches the oldest `new_order` per district with ten independent
+  `SELECT … LIMIT 1 FOR UPDATE` statements in district order (no `SKIP LOCKED`),
+  then one order-info `IN`-list. Homogeneous `TCompleteOrderDelivery` /
+  `TApplyDeliveryToCustomer` batches are one multi-statement / JOIN `UPDATE`.
+  The last customer apply is fused with `COMMIT` (≤5 server exchanges).
 - Blocking MariaDB C API: IO MUST run on a bounded `IExecutor` **in
   `TObSession`**. `TObTpccTransaction` MUST chain those incomplete
   futures (§4.3); it MUST NOT `.Get()` on the scheduler thread.

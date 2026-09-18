@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ob_connection.h"
 #include "ob_params.h"
 #include "ob_queries.h"
 #include "ob_errors.h"
@@ -44,6 +45,7 @@ public:
 
     TFuture<QueryResult> ExecuteQuery(std::string_view sql, const TObParams& params = {});
     TFuture<uint64_t> ExecuteModify(std::string_view sql, const TObParams& params = {});
+    TFuture<TObMultiResult> ExecuteMulti(std::string sql, bool finishesTransaction = false);
     TFuture<void> Commit();
     TFuture<void> Rollback();
 

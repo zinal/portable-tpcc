@@ -233,6 +233,44 @@ TFuture<uint64_t> TObSession::ExecuteModify(std::string_view sql, const TObParam
     return future;
 }
 
+TFuture<TObMultiResult> TObSession::ExecuteMulti(std::string sql, bool finishesTransaction) {
+    TPromise<TObMultiResult> promise;
+    auto future = promise.GetFuture();
+
+    Executor_->Submit([this, sql = std::move(sql), finishesTransaction,
+                       p = std::move(promise)]() mutable {
+        try {
+            CheckShutdown();
+            EnsureTxn(*Conn_, InTxn_);
+            auto result = Conn_->ExecuteMulti(sql);
+            if (finishesTransaction) {
+                InTxn_ = false;
+            }
+            p.SetValue(std::move(result));
+        } catch (const std::exception& ex) {
+            MarkException(ex);
+            // COMMIT is the last statement of a finish script. Connection loss
+            // may mean the server already committed; do not ROLLBACK. Other
+            // errors happen before COMMIT and must release locks.
+            if (finishesTransaction && IsBrokenConnectionException(ex)) {
+                InTxn_ = false;
+            } else {
+                ResetTxnOnError(Conn_.get(), InTxn_);
+            }
+            p.SetException(std::current_exception());
+        } catch (...) {
+            if (finishesTransaction) {
+                InTxn_ = false;
+            } else {
+                ResetTxnOnError(Conn_.get(), InTxn_);
+            }
+            p.SetException(std::current_exception());
+        }
+    });
+
+    return future;
+}
+
 TFuture<void> TObSession::Commit() {
     TPromise<void> promise;
     auto future = promise.GetFuture();

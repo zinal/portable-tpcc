@@ -6,6 +6,7 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace NTpcc {
 
@@ -30,6 +31,11 @@ std::string EffectiveDatabase(const TObConnectionConfig& config);
 std::string QuoteIdent(const std::string& ident);
 std::string QuoteSqlString(const std::string& value);
 std::string ObClientVersion();
+
+struct TObMultiResult {
+    std::vector<QueryResult> Selects;
+    std::vector<uint64_t> Affected;
+};
 
 struct TObConnection {
     TObConnection() = default;
@@ -58,6 +64,12 @@ struct TObConnection {
 
     QueryResult Query(const std::string& sql, const TObParams& params = {});
     uint64_t Execute(const std::string& sql, const TObParams& params = {});
+
+    // CLIENT_MULTI_STATEMENTS script (DML + SELECTs). Used to collapse Payment
+    // location / Delivery prefetch into one client/server exchange.
+    TObMultiResult ExecuteMulti(const std::string& sql);
+
+    std::string EscapeLiteral(const std::string& value);
 
     void Reconnect(const TObConnectionConfig& config, bool selectDatabase = true);
 
