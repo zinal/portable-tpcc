@@ -235,6 +235,19 @@ void TObConnection::EstablishConnection(const TObConnectionConfig& config, bool 
     }
 
     SetSessionRepeatableRead(Impl_->Mysql);
+
+    // Prevent OBProxy / OceanBase from closing idle connections during the
+    // pre-ramp wait period.  Non-fatal: some stand-in servers may not
+    // support these variables.
+    if (mysql_query(Impl_->Mysql,
+            "SET SESSION wait_timeout = 86400, "
+            "interactive_timeout = 86400") != 0)
+    {
+        LOG_W("Could not set wait_timeout / interactive_timeout ("
+              << (Impl_->Mysql ? mysql_error(Impl_->Mysql) : "null handle")
+              << "); server may close idle connections");
+    }
+
     Impl_->Config = config;
     Impl_->SelectDatabase = selectDatabase;
     Impl_->InitStatementCache();
