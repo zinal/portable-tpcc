@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <chrono>
 #include <stdexcept>
+#include <thread>
 
 namespace NTpcc {
 namespace {
@@ -49,7 +50,23 @@ TObConnectionPool::TObConnectionPool(TObConnectionConfig config, size_t poolSize
           << ioThreads << " IO threads");
 
     for (size_t i = 0; i < PoolSize_; ++i) {
-        Connections_.push(CreateConnection());
+        auto backoff = ReconnectInitialBackoff;
+        size_t attempt = 0;
+        for (;;) {
+            try {
+                Connections_.push(CreateConnection());
+                break;
+            } catch (const std::exception& ex) {
+                ++attempt;
+                LOG_W("Pool init: connection " << (i + 1) << "/" << PoolSize_
+                      << " failed (attempt " << attempt << "): " << ex.what()
+                      << " — retrying in " << backoff.count() << "ms");
+                std::this_thread::sleep_for(backoff);
+                if (backoff < ReconnectMaxBackoff) {
+                    backoff = std::min(backoff * 2, ReconnectMaxBackoff);
+                }
+            }
+        }
     }
 
     LOG_I("Connection pool ready");
