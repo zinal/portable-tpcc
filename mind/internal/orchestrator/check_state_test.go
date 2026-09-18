@@ -88,11 +88,13 @@ func TestRequireDebugPhase(t *testing.T) {
 		skipped []string
 		wantErr string
 	}{
+		{name: "planned", state: state.StatePlanned},
+		{name: "schema", state: state.StateSchema},
+		{name: "loading", state: state.StateLoading},
 		{name: "indexing", state: state.StateIndexing},
 		{name: "measuring", state: state.StateMeasuring},
 		{name: "completed", state: state.StateCompleted},
 		{name: "skipped_indexes", state: state.StateLoading, skipped: []string{"indexes"}},
-		{name: "needs_load", state: state.StateLoading, wantErr: "debug requires a completed load"},
 		{name: "refuses_failed", state: state.StateFailed, wantErr: "refused while run is failed"},
 		{name: "refuses_stopping", state: state.StateStopping, wantErr: "refused while run is stopping"},
 	}

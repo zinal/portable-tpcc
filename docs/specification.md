@@ -585,9 +585,10 @@ is required unless explicitly disabled in the profile
 
 `debug` is a diagnostic role for finding slow or unstable transaction
 execution plans. It is **not** part of `mind-tpcc run` and MUST NOT change
-run-state. It MAY run once load is complete (same prerequisite as `check`:
-the run has reached `indexing`, or `indexes` was skipped) and MUST be refused
-while the run is `stopping` or `failed`.
+run-state. It MUST NOT require a completed load in this `run_id`: TPC-C
+tables MAY already exist from another run (or a standalone load). It MAY
+run from the initial `planned` state. It MUST be refused while the run is
+`stopping` or `failed`.
 
 `mind-tpcc debug` launches instance `debug-0` on the first loader host.
 `--repeats` (default 10) is a launch-time override and MUST NOT rewrite
