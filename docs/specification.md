@@ -309,6 +309,20 @@ Each worker writes `result.json` with:
 - counters, retries, histograms, async-queue telemetry;
 - adapter/server version and fatal errors if any.
 
+The official per-transaction histogram is the queue-inclusive response time
+(admission wait through commit). Workers MUST also emit, under
+`histograms.<type>.components`, the already-collected component distributions
+with the same layout: `admission_wait`, `transaction` (after admission),
+`pure` (workflow), `session_pool_wait`, and `retry_backoff`. Acquire-time
+reconnect / connection initialization is included in `session_pool_wait`; it
+is not a separate histogram unless an adapter later publishes one.
+
+Each histogram payload includes `overflow_count` for samples at or above
+`max_value`. Overflow samples remain in `total_count` and extrema/`sum_values`
+but are not stored in `buckets`. Percentiles that land in overflow MUST use
+`max_value` as a censored upper bound and MUST NOT substitute
+`max_recorded`.
+
 Workers do not compute final percentiles.
 
 ### 8.2. Aggregate
@@ -329,7 +343,8 @@ Consolidation:
    histogram, missing histogram `min_recorded` / `max_recorded` /
    `sum_values`, and `histogram.total_count` that does not equal that
    completed count are errors, not zeros;
-4. merge counters and histogram buckets (including min/max/sum);
+4. merge counters and histogram buckets (including min/max/sum,
+   `overflow_count`, and component histograms);
 5. compute min/max/avg, percentiles and throughput only after the merge;
 6. attach check results and a short infrastructure status
    (workers present, assignment OK, clocks OK, no integrity errors,
@@ -741,8 +756,13 @@ Build with existing `ya make` (C++). Use Go-native tools for Golang. No alternat
 2. ~~Histogram bucket layout and max latency.~~ **Resolved for engineering
    artifacts:** `linear_exp` with profile knobs `unit` + `highest`; worker
    derives `hdr_till` (default 4096, capped by `highest`) and publishes
-   effective `{unit, highest, layout, hdr_till, max_value}`. HDR-style
-   `lowest` / `significant_figures` are rejected.
+   effective `{unit, highest, layout, hdr_till, max_value,
+   sub_buckets_per_octave}`. Linear buckets cover `[0, hdr_till)`; each
+   subsequent doubling octave is split into 64 equal-width sub-buckets so
+   relative quantization error stays within 2% up to `highest`. Samples at
+   or above `highest` increment a separate `overflow_count` and do not
+   replace p99 with `max_recorded`. HDR-style profile knobs `lowest` /
+   `significant_figures` are rejected.
 3. Per-DBMS ambiguous-commit handling.
 4. Canonical row bytes for cross-DB sample checks.
 5. Minimum supported YDB / PostgreSQL / OceanBase versions.

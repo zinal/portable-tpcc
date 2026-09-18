@@ -257,6 +257,8 @@ TFuture<void> TTerminal::Run() {
 
         auto startTimeTransaction = std::chrono::steady_clock::now();
         std::chrono::microseconds latencyPure{0};
+        std::chrono::microseconds sessionPoolWait{0};
+        std::chrono::microseconds retryBackoff{0};
         bool fatal = false;
 
         // Reset so each business transaction gets fresh inputs; retries reuse FixedInputs.
@@ -268,10 +270,22 @@ TFuture<void> TTerminal::Run() {
         auto shouldRecordMetrics = [&](std::chrono::system_clock::time_point endWall) {
             return PhaseController.CompletelyWithinMeasurement(startWall, endWall);
         };
+        auto makeSample = [&](std::chrono::microseconds latencyTransaction,
+                              std::chrono::microseconds latencyFull) {
+            TTerminalStats::TLatencySample sample;
+            sample.Transaction = latencyTransaction;
+            sample.Full = latencyFull;
+            sample.Pure = latencyPure;
+            sample.AdmissionWait = std::chrono::duration_cast<std::chrono::microseconds>(
+                startTimeTransaction - startTime);
+            sample.SessionPoolWait = sessionPoolWait;
+            sample.RetryBackoff = retryBackoff;
+            return sample;
+        };
         auto recordOk = [&](auto latencyTransaction, auto latencyFull, auto endWall) {
             Stats->AddProgressOK(txType);
             if (shouldRecordMetrics(endWall)) {
-                Stats->AddOK(txType, latencyTransaction, latencyFull, latencyPure);
+                Stats->AddOK(txType, makeSample(latencyTransaction, latencyFull));
             }
         };
         auto recordFailed = [&](auto endWall) {
@@ -283,7 +297,7 @@ TFuture<void> TTerminal::Run() {
         auto recordUserAborted = [&](auto latencyTransaction, auto latencyFull, auto endWall) {
             Stats->AddProgressUserAborted(txType);
             if (shouldRecordMetrics(endWall)) {
-                Stats->AddUserAborted(txType, latencyTransaction, latencyFull, latencyPure);
+                Stats->AddUserAborted(txType, makeSample(latencyTransaction, latencyFull));
             }
         };
         auto recordRetried = [&](auto endWall) {
@@ -297,9 +311,12 @@ TFuture<void> TTerminal::Run() {
             try {
                 std::unique_ptr<ITpccSession> tpccSession;
                 while (true) {
+                    const auto poolStart = std::chrono::steady_clock::now();
                     tpccSession = co_await TSuspendWithFuture(
                         SessionFactory->WaitCreateSession(),
                         Context.TaskQueue, Context.TerminalID);
+                    sessionPoolWait += std::chrono::duration_cast<std::chrono::microseconds>(
+                        std::chrono::steady_clock::now() - poolStart);
                     if (tpccSession) {
                         break;
                     }
@@ -434,6 +451,7 @@ TFuture<void> TTerminal::Run() {
                 attempt, RetryInitialBackoffMs, RetryMaxBackoffMs, RetryJitter);
             if (delay.count() > 0) {
                 LOG_D("Terminal " << Context.TerminalID << " " << txName << " retry backoff " << delay.count() << "ms");
+                retryBackoff += std::chrono::duration_cast<std::chrono::microseconds>(delay);
                 co_await TSuspend(TaskQueue, Context.TerminalID, delay);
                 if (StopToken.stop_requested()) {
                     break;

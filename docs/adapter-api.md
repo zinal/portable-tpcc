@@ -115,9 +115,13 @@ chunks finish. Set `TCheckReport.ProgressTotal` to
 
 ### 3.7. `tpcc/metrics`
 
-Mergeable counters and latency histograms. Workers emit raw histograms;
+Mergeable counters and latency histograms. Workers emit raw histograms,
+including `overflow_count` and component distributions nested under
+`histograms.<type>.components`;
 `mind-tpcc consolidate` merges buckets and only then computes percentiles.
 Adapters MUST NOT emit final p99 as the authoritative result.
+A percentile that lands in overflow MUST be reported as the configured
+`max_value`, not as the exact recorded maximum.
 
 ## 4. Adapter Interfaces
 

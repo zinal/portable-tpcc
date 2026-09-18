@@ -75,7 +75,7 @@ Architecture / product (see [alignment-plan.md](alignment-plan.md) Phase 6):
    serialized rows are not yet consumed.
 2. Open decisions from specification §14 (ambiguous-commit policy, canonical
    row bytes, minimum PG version). Histogram layout resolved as `linear_exp`
-   (`unit` + `highest`).
+   (`unit` + `highest`, 64 sub-buckets per octave, separate overflow_count).
 3. Broader unit/integration test coverage.
 4. OceanBase integration validation against real multi-node deployments.
 

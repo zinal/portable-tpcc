@@ -13,6 +13,7 @@ import (
 	"portable-tpcc/mind/internal/canonical"
 	"portable-tpcc/mind/internal/collect"
 	"portable-tpcc/mind/internal/config"
+	"portable-tpcc/mind/internal/histogram"
 	"portable-tpcc/mind/internal/orchestrator"
 	"portable-tpcc/mind/internal/state"
 )
@@ -701,6 +702,12 @@ func writeWorkerPayloads(t *testing.T, dir string, w config.WorkerAssignmentJSON
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		t.Fatal(err)
 	}
+	n, err := histogram.ExpectedBucketCount(4, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	buckets := make([]uint64, n)
+	buckets[0] = 10
 	files := map[string]interface{}{
 		"result.json": map[string]interface{}{
 			"run_id":            runID,
@@ -718,15 +725,17 @@ func writeWorkerPayloads(t *testing.T, dir string, w config.WorkerAssignmentJSON
 			"counters":    map[string]interface{}{"new_order_ok": 10},
 			"histograms": map[string]interface{}{
 				"new_order": map[string]interface{}{
-					"layout":       "linear_exp",
-					"unit":         "ms",
-					"hdr_till":     4,
-					"max_value":    64,
-					"total_count":  10,
-					"min_recorded": 0,
-					"max_recorded": 0,
-					"sum_values":   0,
-					"buckets":      []uint64{10, 0, 0, 0, 0, 0, 0, 0, 0},
+					"layout":                 "linear_exp",
+					"unit":                   "ms",
+					"hdr_till":               4,
+					"max_value":              64,
+					"sub_buckets_per_octave": 64,
+					"total_count":            10,
+					"overflow_count":         0,
+					"min_recorded":           0,
+					"max_recorded":           0,
+					"sum_values":             0,
+					"buckets":                buckets,
 				},
 			},
 		},

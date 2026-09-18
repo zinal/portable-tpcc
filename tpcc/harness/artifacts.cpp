@@ -85,7 +85,9 @@ Json HistogramRaw(const THistogram& hist, const std::string& unit) {
     h["unit"] = unit;
     h["hdr_till"] = hist.HdrTill();
     h["max_value"] = hist.MaxValue();
+    h["sub_buckets_per_octave"] = THistogram::kSubBucketsPerOctave;
     h["total_count"] = hist.TotalCount();
+    h["overflow_count"] = hist.OverflowCount();
     h["min_recorded"] = hist.MinRecordedValue();
     h["max_recorded"] = hist.MaxRecordedValue();
     h["sum_values"] = hist.SumValues();
@@ -94,7 +96,15 @@ Json HistogramRaw(const THistogram& hist, const std::string& unit) {
 }
 
 Json HistogramPayload(const TTerminalStats::TTransactionStats& stats, const std::string& unit) {
-    return HistogramRaw(stats.LatencyHistogramFullMs, unit);
+    Json h = HistogramRaw(stats.LatencyHistogramFullMs, unit);
+    h["components"] = {
+        {"admission_wait", HistogramRaw(stats.LatencyHistogramAdmission, unit)},
+        {"transaction", HistogramRaw(stats.LatencyHistogramMs, unit)},
+        {"pure", HistogramRaw(stats.LatencyHistogramPure, unit)},
+        {"session_pool_wait", HistogramRaw(stats.LatencyHistogramSessionPool, unit)},
+        {"retry_backoff", HistogramRaw(stats.LatencyHistogramRetryBackoff, unit)},
+    };
+    return h;
 }
 
 } // anonymous
@@ -267,6 +277,7 @@ void WriteWorkerResultJson(const TArtifactPaths& paths, const TRunConfigDocument
                 {"layout", "linear_exp"},
                 {"hdr_till", stats.HdrTill()},
                 {"max_value", stats.MaxValue()},
+                {"sub_buckets_per_octave", THistogram::kSubBucketsPerOctave},
             }},
         }},
         {"counters", counters},

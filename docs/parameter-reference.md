@@ -305,13 +305,15 @@ All listed fields except `async_work_drain` are required.
 | `retry.max_backoff` | `500ms` | Max backoff (≥ initial). |
 | `retry.jitter` | `full` | `full` \| `none`. |
 | `histogram.unit` | `us` | Latency unit for `linear_exp` histograms. If set, MUST be `ms` or `us`. |
-| `histogram.highest` | `120000000` | Histogram max value. If set, MUST be greater than zero; omitted uses the default. Worker derives `hdr_till` (default 4096, capped by `highest`). |
+| `histogram.highest` | `120000000` | Histogram max value. If set, MUST be greater than zero; omitted uses the default. Worker derives `hdr_till` (default 4096, capped by `highest`) and splits each doubling octave into 64 sub-buckets. Samples ≥ `highest` are counted in `overflow_count`, not as p99=`max_recorded`. |
 
 `retry_ambiguous_commit` is **not** a profile field. Run-config always
 materializes `false` (no retry after an ambiguous commit). Do not add it to
 YAML (`KnownFields` will reject it).
 
-HDR-style `lowest` / `significant_figures` are rejected.
+HDR-style `lowest` / `significant_figures` are rejected. Relative accuracy
+is an implementation property of `linear_exp` (`sub_buckets_per_octave=64`),
+not a profile knob.
 
 ### `checks`
 
