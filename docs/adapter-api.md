@@ -454,12 +454,15 @@ Adapters MUST:
 - Payment location is one multi-statement JOIN `UPDATE` plus JOIN `SELECT`.
   After that op, customer reads use `SELECT … FOR UPDATE` (by id or last
   name). `TUpdateCustomerPayment` is deferred and fused with history insert
-  and `COMMIT` in `ExecuteFinalAndCommit` (≤3 server exchanges).
+  in `ExecuteFinalAndCommit`. Affected-row cardinality is checked **before**
+  `COMMIT`; a mismatch rolls back and is reported as integrity. `COMMIT` is a
+  separate statement after the check, not part of the finish multi-statement.
 - Delivery prefetches the oldest `new_order` per district with ten independent
   `SELECT … LIMIT 1 FOR UPDATE` statements in district order (no `SKIP LOCKED`),
   then one order-info `IN`-list. Homogeneous `TCompleteOrderDelivery` /
   `TApplyDeliveryToCustomer` batches are one multi-statement / JOIN `UPDATE`.
-  The last customer apply is fused with `COMMIT` (≤5 server exchanges).
+  The last customer apply is fused in `ExecuteFinalAndCommit` the same way:
+  DML, then affected-row check, then `COMMIT` or `ROLLBACK`.
 - Blocking MariaDB C API: IO MUST run on a bounded `IExecutor` **in
   `TObSession`**. `TObTpccTransaction` MUST chain those incomplete
   futures (§4.3); it MUST NOT `.Get()` on the scheduler thread.

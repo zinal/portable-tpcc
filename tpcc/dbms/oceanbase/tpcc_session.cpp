@@ -443,19 +443,23 @@ TFuture<TFinalCommitResult> TObTpccTransaction::ExecuteFinalAndCommit(const TSem
     if (const auto* apply = std::get_if<TApplyDeliveryToCustomer>(&op)) {
         return FinishApplyDelivery(*apply);
     }
-    return Then(Execute(op), [this](TOperationResult operation) -> TFuture<TFinalCommitResult> {
-        TFinalCommitResult out;
-        out.Operation = std::move(operation);
-        if (!out.Operation.Ok) {
-            return Then(Rollback(), [out = std::move(out)](TCommitResult commit) mutable {
-                out.Commit = std::move(commit);
-                return out;
-            });
-        }
-        return Then(Commit(), [out = std::move(out)](TCommitResult commit) mutable {
+    return Then(Execute(op), [this](TOperationResult operation) {
+        return CommitAfterOperation(std::move(operation));
+    });
+}
+
+TFuture<TFinalCommitResult> TObTpccTransaction::CommitAfterOperation(TOperationResult operation) {
+    TFinalCommitResult out;
+    out.Operation = std::move(operation);
+    if (!out.Operation.Ok) {
+        return Then(Rollback(), [out = std::move(out)](TCommitResult commit) mutable {
             out.Commit = std::move(commit);
             return out;
         });
+    }
+    return Then(Commit(), [out = std::move(out)](TCommitResult commit) mutable {
+        out.Commit = std::move(commit);
+        return out;
     });
 }
 
@@ -471,56 +475,45 @@ TFuture<TFinalCommitResult> TObTpccTransaction::FinishPayment(
         }
         quotedHistory = QuoteSqlString(history.Data);
     } catch (const std::exception& ex) {
-        return MakeReadyFuture(FailFinal(EErrorClass::Permanent, ex.what()));
+        return CommitAfterOperation(FailOp(EErrorClass::Permanent, ex.what()));
     }
+    // DML and COMMIT are separate: mysql_real_query of a multi-statement
+    // runs COMMIT before the client can inspect earlier affected-row counts.
     return CatchFinal(
         Then(
             Session_.ExecuteMulti(
-                BuildObPaymentFinishSql(update, history, quotedData, quotedHistory),
-                true),
-            [this](TObMultiResult result) {
-                Terminal_ = true;
-                ResetTxnState();
+                BuildObPaymentFinishSql(update, history, quotedData, quotedHistory)),
+            [this](TObMultiResult result) -> TFuture<TFinalCommitResult> {
                 if (result.Affected.size() < 2) {
-                    return FailFinal(EErrorClass::Integrity, "payment finish: missing affected counts");
+                    return CommitAfterOperation(FailOp(
+                        EErrorClass::Integrity, "payment finish: missing affected counts"));
                 }
                 auto customer = CheckAffected(result.Affected[0], 1, "customer payment update");
                 if (!customer.Ok) {
-                    return FailFinal(customer.ErrorClass, customer.Message, customer.NativeCode);
+                    return CommitAfterOperation(std::move(customer));
                 }
                 auto hist = CheckAffected(result.Affected[1], 1, "history insert");
                 if (!hist.Ok) {
-                    return FailFinal(hist.ErrorClass, hist.Message, hist.NativeCode);
+                    return CommitAfterOperation(std::move(hist));
                 }
-                TFinalCommitResult out;
-                out.Operation = OkOp(1, 1);
-                out.Commit = {ECommitOutcome::Committed, EErrorClass::Permanent, {}, {}};
-                return out;
+                return CommitAfterOperation(OkOp(1, 1));
             }),
-        true);
+        false);
 }
 
 TFuture<TFinalCommitResult> TObTpccTransaction::FinishApplyDelivery(const TApplyDeliveryToCustomer& apply) {
     return CatchFinal(
         Then(
-            Session_.ExecuteMulti(BuildObDeliveryFinishSql(apply), true),
-            [this](TObMultiResult result) {
-                Terminal_ = true;
-                ResetTxnState();
+            Session_.ExecuteMulti(BuildObDeliveryFinishSql(apply)),
+            [this](TObMultiResult result) -> TFuture<TFinalCommitResult> {
                 if (result.Affected.empty()) {
-                    return FailFinal(EErrorClass::Integrity, "customer delivery update: missing affected count");
+                    return CommitAfterOperation(FailOp(
+                        EErrorClass::Integrity, "customer delivery update: missing affected count"));
                 }
-                auto check = CheckAffected(result.Affected[0], 1, "customer delivery update");
-                TFinalCommitResult out;
-                out.Operation = std::move(check);
-                if (!out.Operation.Ok) {
-                    out.Commit = {ECommitOutcome::RolledBack, out.Operation.ErrorClass, {}, out.Operation.Message};
-                    return out;
-                }
-                out.Commit = {ECommitOutcome::Committed, EErrorClass::Permanent, {}, {}};
-                return out;
+                return CommitAfterOperation(
+                    CheckAffected(result.Affected[0], 1, "customer delivery update"));
             }),
-        true);
+        false);
 }
 
 TOperationResult TObTpccTransaction::OldestFromCache(int districtId) const {

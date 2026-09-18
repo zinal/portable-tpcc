@@ -256,7 +256,7 @@ TEST(BuildObDeliveryApplySql, JoinUnionAll) {
     EXPECT_THROW(BuildObDeliveryApplySql(11), std::invalid_argument);
 }
 
-TEST(BuildObDeliveryFinishSql, UpdateAndCommit) {
+TEST(BuildObDeliveryFinishSql, UpdateWithoutCommit) {
     const auto sql = BuildObDeliveryFinishSql(TApplyDeliveryToCustomer{
         .WarehouseID = 5,
         .DistrictID = 2,
@@ -265,10 +265,11 @@ TEST(BuildObDeliveryFinishSql, UpdateAndCommit) {
     EXPECT_EQ(
         sql,
         "UPDATE customer SET c_balance = c_balance + 123.45, c_delivery_cnt = c_delivery_cnt + 1 "
-        "WHERE c_w_id = 5 AND c_d_id = 2 AND c_id = 17; COMMIT");
+        "WHERE c_w_id = 5 AND c_d_id = 2 AND c_id = 17");
+    EXPECT_EQ(sql.find("COMMIT"), std::string::npos);
 }
 
-TEST(BuildObPaymentFinishSql, CustomerHistoryCommit) {
+TEST(BuildObPaymentFinishSql, CustomerHistoryWithoutCommit) {
     TUpdateCustomerPayment update;
     update.WarehouseID = 1;
     update.DistrictID = 2;
@@ -295,13 +296,15 @@ TEST(BuildObPaymentFinishSql, CustomerHistoryCommit) {
     EXPECT_EQ(sql.find("c_data ="), std::string::npos);
     EXPECT_NE(sql.find("INSERT INTO history"), std::string::npos);
     EXPECT_NE(sql.find(quotedHistory), std::string::npos);
-    EXPECT_NE(sql.find("; COMMIT"), std::string::npos);
+    EXPECT_EQ(sql.find("COMMIT"), std::string::npos);
+    EXPECT_EQ(CountToken(sql, ";"), 1u);
 
     update.UpdateData = true;
     update.NewData = "3 2 1 2 1 5.00 | old";
     const auto withData = BuildObPaymentFinishSql(
         update, history, QuoteSqlString(update.NewData), quotedHistory);
     EXPECT_NE(withData.find("c_data = '3 2 1 2 1 5.00 | old'"), std::string::npos);
+    EXPECT_EQ(withData.find("COMMIT"), std::string::npos);
 }
 
 TEST(ObPaymentCustomerForUpdateSql, LockingClause) {
