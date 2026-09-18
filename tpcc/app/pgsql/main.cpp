@@ -11,6 +11,7 @@
 #include <log.h>
 #include <domain_util.h>
 #include <think_time.h>
+#include <debug_probe.h>
 
 #include <library/cpp/logger/priority.h>
 
@@ -49,6 +50,8 @@ DEFINE_string(log_level, "info", "Log level: trace, debug, info, warn, error");
 DEFINE_bool(after_import, false, "Check mode: verify freshly loaded data (stricter invariants)");
 DEFINE_bool(after_test, false, "Check mode: verify data after the measurement test");
 DEFINE_bool(after_run, false, "Deprecated alias for --after-test");
+DEFINE_int32(repeats, NTpcc::kDefaultDebugRepeats,
+    "Debug: sequential executions of each TPC-C transaction type");
 
 namespace {
 
@@ -64,6 +67,7 @@ void PrintHelp() {
         "  indexes   Create secondary indexes and ANALYZE (after load)\n"
         "  worker    Run orchestrated worker from run-config.json\n"
         "  check     Run TPC-C consistency checks\n"
+        "  debug     Sequential probe: each transaction type 10 times (plan timings)\n"
         "\n"
         "Legacy / local aliases:\n"
         "  init      ≡ schema\n"
@@ -94,6 +98,7 @@ void PrintHelp() {
         "  --after-import        check: verify freshly loaded data\n"
         "  --after-test          check: verify data after the measurement test\n"
         "  --after-run           deprecated alias for --after-test\n"
+        "  --repeats             debug: executions per transaction type (default: 10)\n"
         "\n"
         "Orchestrated mode (mind-tpcc):\n"
         "  schema  --run-config <path> --instance <name>\n"
@@ -101,6 +106,7 @@ void PrintHelp() {
         "  indexes --run-config <path> --instance <name>\n"
         "  worker  --run-config <path> --instance <name> --start-at=<RFC3339-UTC> [--threads=N]\n"
         "  check   --run-config <path> --instance <name> --after-import|--after-test [--threads=N]\n"
+        "  debug   --run-config <path> --instance <name> [--repeats=N]\n"
         "  drop    --run-config <path> --instance <name>\n"
         "\n"
         "Simulation (for testing without real TPC-C transactions):\n"
@@ -115,7 +121,8 @@ void PrintHelp() {
         "  tpcc run -w 10 --duration=5 -t 4\n"
         "  tpcc check -w 10 --after-test\n"
         "  tpcc check -w 10 --after-import\n"
-        "  tpcc check -w 100 --after-import -t 8\n";
+        "  tpcc check -w 100 --after-import -t 8\n"
+        "  tpcc debug -w 10\n";
 }
 
 ELogPriority ParseLogLevel(const std::string& level) {
@@ -129,12 +136,13 @@ ELogPriority ParseLogLevel(const std::string& level) {
 
 bool IsValidCommand(const std::string& cmd) {
     return cmd == "schema" || cmd == "init" || cmd == "import" || cmd == "indexes" ||
-           cmd == "run" || cmd == "worker" || cmd == "loader" || cmd == "drop" || cmd == "check";
+           cmd == "run" || cmd == "worker" || cmd == "loader" || cmd == "drop" || cmd == "check" ||
+           cmd == "debug";
 }
 
 bool IsOrchestratedRole(const std::string& cmd) {
     return cmd == "worker" || cmd == "loader" || cmd == "schema" || cmd == "indexes" ||
-           cmd == "check" || cmd == "drop";
+           cmd == "check" || cmd == "drop" || cmd == "debug";
 }
 
 void ValidateWarehouseFlag() {
@@ -174,11 +182,13 @@ bool ParseOrchestratedArgs(
     std::optional<std::string>& startAt,
     bool& afterImport,
     bool& afterRun,
-    std::optional<int>& threads)
+    std::optional<int>& threads,
+    std::optional<int>& repeats)
 {
     afterImport = false;
     afterRun = false;
     threads.reset();
+    repeats.reset();
     for (int i = 2; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "--run-config" && i + 1 < argc) {
@@ -198,6 +208,10 @@ bool ParseOrchestratedArgs(
             threads = std::stoi(arg.substr(std::string("--threads=").size()));
         } else if ((arg == "--threads" || arg == "-t") && i + 1 < argc) {
             threads = std::stoi(argv[++i]);
+        } else if (arg.rfind("--repeats=", 0) == 0) {
+            repeats = std::stoi(arg.substr(std::string("--repeats=").size()));
+        } else if (arg == "--repeats" && i + 1 < argc) {
+            repeats = std::stoi(argv[++i]);
         }
     }
     return !runConfig.empty() && !instance.empty();
@@ -214,10 +228,14 @@ int RunOrchestrated(
     const std::optional<std::string>& startAt,
     bool afterImport,
     bool afterRun,
-    const std::optional<int>& threads)
+    const std::optional<int>& threads,
+    const std::optional<int>& repeats)
 {
     if (threads.has_value() && *threads < 0) {
         throw std::runtime_error("--threads must not be negative");
+    }
+    if (repeats.has_value() && *repeats <= 0) {
+        throw std::runtime_error("--repeats must be greater than zero");
     }
     if (command == "worker") {
         LOG_I("Starting orchestrated worker " << instance << "...");
@@ -241,6 +259,11 @@ int RunOrchestrated(
               << " (concurrency=" << checkConcurrency << ")...");
         return NTpcc::RunCheckFromRunConfig(
             runConfig, instance, afterImport, afterRun, checkConcurrency);
+    }
+    if (command == "debug") {
+        const int n = repeats.value_or(NTpcc::kDefaultDebugRepeats);
+        LOG_I("Starting orchestrated debug " << instance << " (repeats=" << n << ")...");
+        return NTpcc::RunDebugFromRunConfig(runConfig, instance, n);
     }
     if (command == "drop") {
         LOG_I("Starting orchestrated drop " << instance << "...");
@@ -410,6 +433,14 @@ void RunCheck() {
     NTpcc::CheckSync(FLAGS_connection, FLAGS_warehouses, afterImport, FLAGS_path, checkConcurrency);
 }
 
+void RunDebug() {
+    ValidateWarehouseFlag();
+    if (FLAGS_repeats <= 0) {
+        throw std::runtime_error("--repeats must be greater than zero");
+    }
+    NTpcc::DebugSync(FLAGS_connection, FLAGS_path, FLAGS_warehouses, FLAGS_repeats);
+}
+
 } // anonymous
 
 int main(int argc, char* argv[]) {
@@ -430,8 +461,9 @@ int main(int argc, char* argv[]) {
             bool afterImport = false;
             bool afterRun = false;
             std::optional<int> threads;
+            std::optional<int> repeats;
             const bool hasOrchestrated = ParseOrchestratedArgs(
-                argc, argv, runConfig, instance, startAt, afterImport, afterRun, threads);
+                argc, argv, runConfig, instance, startAt, afterImport, afterRun, threads, repeats);
             // schema/check/loader/worker with --run-config take the orchestrated path.
             // schema/check without run-config fall through to standalone gflags parsing.
             if (hasOrchestrated) {
@@ -446,7 +478,7 @@ int main(int argc, char* argv[]) {
                 NTpcc::InitLogging(TLOG_INFO);
                 try {
                     return RunOrchestrated(
-                        earlyCommand, runConfig, instance, startAt, afterImport, afterRun, threads);
+                        earlyCommand, runConfig, instance, startAt, afterImport, afterRun, threads, repeats);
                 } catch (const std::exception& ex) {
                     LOG_E("Fatal error: " << ex.what());
                     return 1;
@@ -471,7 +503,7 @@ int main(int argc, char* argv[]) {
 
     if (!IsValidCommand(command)) {
         std::cerr << "Unknown command: " << command << "\n";
-        std::cerr << "Valid commands: schema, init, import, indexes, run, worker, loader, drop, check\n";
+        std::cerr << "Valid commands: schema, init, import, indexes, run, worker, loader, drop, check, debug\n";
         return 1;
     }
 
@@ -504,6 +536,10 @@ int main(int argc, char* argv[]) {
             LOG_I("Running TPC-C consistency checks...");
             RunCheck();
             LOG_I("Consistency checks complete");
+        } else if (command == "debug") {
+            LOG_I("Running sequential transaction debug probe...");
+            RunDebug();
+            LOG_I("Debug probe complete");
         } else if (command == "worker" || command == "loader") {
             std::string runConfig;
             std::string instance;
@@ -511,8 +547,9 @@ int main(int argc, char* argv[]) {
             bool afterImport = false;
             bool afterRun = false;
             std::optional<int> threads;
+            std::optional<int> repeats;
             if (!ParseOrchestratedArgs(
-                    argc, argv, runConfig, instance, startAt, afterImport, afterRun, threads)) {
+                    argc, argv, runConfig, instance, startAt, afterImport, afterRun, threads, repeats)) {
                 std::cerr << "Error: worker/loader require --run-config and --instance\n";
                 return 1;
             }
@@ -521,7 +558,7 @@ int main(int argc, char* argv[]) {
                 return 1;
             }
             return RunOrchestrated(
-                command, runConfig, instance, startAt, afterImport, afterRun, threads);
+                command, runConfig, instance, startAt, afterImport, afterRun, threads, repeats);
         }
     } catch (const std::exception& ex) {
         LOG_E("Fatal error: " << ex.what());

@@ -6,11 +6,17 @@
 #include "path_checker.h"
 #include "run_config.h"
 #include "runner.h"
+#include "ydb_error_classifier.h"
+#include "ydb_session.h"
 #include "ydb_tx_mode.h"
 
+#include <debug_probe.h>
 #include <orchestrated_roles.h>
 #include <log.h>
 #include <warehouse_range.h>
+
+#include <iostream>
+#include <stdexcept>
 
 namespace NTpcc {
 
@@ -133,6 +139,63 @@ int RunDropFromRunConfig(const std::string& runConfigPath, const std::string& in
         admin.Clean();
         LOG_I("Drop complete (instance=" << instance << ")");
     });
+}
+
+namespace {
+
+TDebugReport RunYdbDebugProbe(
+    const TYdbConnectionConfig& connection,
+    EIsolationLevel isolation,
+    TDebugProbeRequest req)
+{
+    TYdbConnection conn(connection);
+    TYdbSessionFactory factory(conn);
+    TYdbErrorClassifier classifier;
+    req.SessionFactory = &factory;
+    req.ErrorClassifier = &classifier;
+    req.Isolation = isolation;
+    return RunDebugProbe(req);
+}
+
+} // anonymous
+
+int RunDebugFromRunConfig(
+    const std::string& runConfigPath,
+    const std::string& instance,
+    int repeats)
+{
+    const auto doc = LoadRunConfigDocument(runConfigPath);
+    return RunOrchestratedDebug(doc, instance, repeats,
+        [](const TRunConfigDocument& d, TDebugProbeRequest req) {
+            const auto connection = BuildYdbConnectionConfig(d);
+            CheckDbForRun(connection, d.ScaleWarehouses);
+            EIsolationLevel isolation = EIsolationLevel::RepeatableRead;
+            if (!ParseYdbTxMode(d.TxMode, isolation)) {
+                throw std::runtime_error(
+                    "database.options.tx_mode must be \"snapshot-rw\" or \"serializable-rw\"");
+            }
+            return RunYdbDebugProbe(connection, isolation, req);
+        });
+}
+
+void DebugSync(
+    const TYdbConnectionConfig& connection,
+    int warehouseCount,
+    int repeats,
+    EIsolationLevel isolation)
+{
+    CheckDbForRun(connection, warehouseCount);
+    TDebugProbeRequest req;
+    req.WarehouseID = 1;
+    req.WarehouseCount = warehouseCount > 0 ? static_cast<size_t>(warehouseCount) : 1;
+    req.DistrictID = 1;
+    req.Repeats = repeats;
+    auto report = RunYdbDebugProbe(connection, isolation, req);
+    WriteDebugReportJson("debug.json", report);
+    std::cout << "Debug report written to debug.json" << std::endl;
+    if (!report.Ok) {
+        throw std::runtime_error("debug probe recorded failed transactions");
+    }
 }
 
 } // namespace NTpcc

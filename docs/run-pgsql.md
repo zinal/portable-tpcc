@@ -206,9 +206,10 @@ cp mind/mind-tpcc ./mind-tpcc
 ```
 
 Or run stages individually: `deploy`, `schema`, `load`, `indexes`,
-`check --after-import`, `test`, `check --after-test`, `collect`,
-`consolidate`. After `test`, `consolidate` is enough to produce the result:
-it runs `collect` first when `collection-manifest.json` is absent.
+`check --after-import`, `debug` (sequential transaction probe), `test`,
+`check --after-test`, `collect`, `consolidate`. After `test`, `consolidate`
+is enough to produce the result: it runs `collect` first when
+`collection-manifest.json` is absent.
 
 On a single host, list `127.0.0.1` for every loader/worker (local
 sessions, no SSH). Multi-host runs need SSH access and tightly synchronized

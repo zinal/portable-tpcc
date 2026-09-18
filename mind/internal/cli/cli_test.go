@@ -89,6 +89,12 @@ func TestRun_helpMentionsLeaveProcesses(t *testing.T) {
 	if !strings.Contains(string(out), "test        Arm workers") {
 		t.Fatalf("help missing test command:\n%s", out)
 	}
+	if !strings.Contains(string(out), "debug       Sequential probe") {
+		t.Fatalf("help missing debug command:\n%s", out)
+	}
+	if !strings.Contains(string(out), "--repeats <n>") {
+		t.Fatalf("help missing --repeats:\n%s", out)
+	}
 	if !strings.Contains(string(out), "start       Alias for test") {
 		t.Fatalf("help missing start alias:\n%s", out)
 	}
@@ -179,6 +185,20 @@ func TestRun_insecureIgnoreAllowsMissingKnownHosts(t *testing.T) {
 	}
 	if code := Run([]string{"validate", "--profile", profilePath, "--insecure-ignore-host-key"}); code != 0 {
 		t.Fatalf("expected validate to pass with --insecure-ignore-host-key, got %d", code)
+	}
+}
+
+func TestRun_repeatsNonPositiveRejected(t *testing.T) {
+	dir := t.TempDir()
+	profilePath := writeCLITestProfile(t, dir)
+	stderr := captureStderr(t, func() {
+		code := Run([]string{"validate", "--profile", profilePath, "--repeats", "0"})
+		if code != 2 {
+			t.Fatalf("zero --repeats exit=%d, want 2", code)
+		}
+	})
+	if !strings.Contains(stderr, "--repeats must be greater than zero") {
+		t.Fatalf("stderr=%q", stderr)
 	}
 }
 

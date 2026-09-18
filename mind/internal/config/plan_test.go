@@ -133,3 +133,28 @@ func TestCheckArgvIncludesThreads(t *testing.T) {
 		t.Fatalf("serial CheckArgv=%v, want %v", serial, wantSerial)
 	}
 }
+
+func TestDebugArgvIncludesRepeats(t *testing.T) {
+	t.Parallel()
+	got := DebugArgv("run-config.json", "debug-0", 0)
+	want := []string{
+		"debug",
+		"--run-config", "run-config.json",
+		"--instance", "debug-0",
+		"--repeats=10",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("DebugArgv default=%v, want %v", got, want)
+	}
+	got = DebugArgv("run-config.json", "debug-0", 3)
+	if got[len(got)-1] != "--repeats=3" {
+		t.Fatalf("DebugArgv override=%v, want --repeats=3", got)
+	}
+	if EffectiveDebugRepeats(nil) != DefaultDebugRepeats {
+		t.Fatalf("EffectiveDebugRepeats(nil)=%d", EffectiveDebugRepeats(nil))
+	}
+	n := 4
+	if got := EffectiveDebugRepeats(&n); got != 4 {
+		t.Fatalf("EffectiveDebugRepeats=&4 = %d", got)
+	}
+}

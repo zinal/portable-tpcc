@@ -127,6 +127,7 @@ the spec as the requirement (see the introduction).
 | --- | --- |
 | Remote `process.json` / nonce / `artifact-manifest.json`, launch-time `--threads` | [specification.md](docs/specification.md) §9.1 |
 | Integrity checks (JSON reports, query timeout, check `--threads`, session concurrency, warehouse-range size, catalog scheduling, stdout vs JSON) | [specification.md](docs/specification.md) §9.2 |
+| Debug sequential transaction probe (10× each type, duration JSON) | [specification.md](docs/specification.md) §9.3 |
 | Adapter check/session API | [adapter-api.md](docs/adapter-api.md) §3.6, §4.4, §7 |
 | Adapter async `ITpccTransaction` (no scheduler `.Get()` / `GetValueSync`) | [adapter-api.md](docs/adapter-api.md) §4.3, [specification.md](docs/specification.md) §4.2 / §7 |
 | OceanBase `query_timeout` / physical options | [specification.md](docs/specification.md) §11, [run-oceanbase.md](docs/run-oceanbase.md) |
@@ -135,6 +136,9 @@ the spec as the requirement (see the introduction).
 Check role **implementation** (not the protocol source of truth):
 `tpcc/checks/`, `tpcc/dbms/{pgsql,ydb,oceanbase}/check.cpp`,
 `mind/internal/config/plan.go`, `mind/internal/orchestrator/`.
+
+Debug probe **implementation**: `tpcc/harness/debug_probe.*`,
+`tpcc/dbms/{pgsql,ydb,oceanbase}/worker_loader.cpp`, `tpcc/app/*/main.cpp`.
 
 ## 7. YDB AI skills
 

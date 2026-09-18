@@ -26,6 +26,7 @@ type Config struct {
 	CheckPhase     string
 	LeaveProcesses bool
 	Threads        *int
+	Repeats        *int
 }
 
 // Run dispatches mind-tpcc subcommands (specification §9).
@@ -127,6 +128,18 @@ func run(args []string, interrupt context.Context) int {
 			}
 			cfg.Threads = &n
 			i = next
+		case arg == "--repeats" || strings.HasPrefix(arg, "--repeats="):
+			n, next, err := requireFlagInt(rest, i, "--repeats")
+			if err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 2
+			}
+			if n <= 0 {
+				fmt.Fprintln(os.Stderr, "--repeats must be greater than zero")
+				return 2
+			}
+			cfg.Repeats = &n
+			i = next
 		case arg == "--yes":
 			cfg.Yes = true
 		case arg == "--insecure-ignore-host-key" || strings.HasPrefix(arg, "--insecure-ignore-host-key="):
@@ -167,6 +180,7 @@ func run(args []string, interrupt context.Context) int {
 		Interrupt:      interrupt,
 		LeaveProcesses: cfg.LeaveProcesses,
 		Threads:        cfg.Threads,
+		Repeats:        cfg.Repeats,
 	}
 
 	switch cmd {
@@ -186,6 +200,8 @@ func run(args []string, interrupt context.Context) int {
 		return runStage(opts, "indexes")
 	case "check":
 		return runCheck(opts, cfg.CheckPhase)
+	case "debug":
+		return runDebug(opts)
 	case "test", "start":
 		return runStage(opts, "test")
 	case "status":
@@ -338,6 +354,17 @@ func runCheck(opts orchestrator.Options, phase string) int {
 		return exitErr(err)
 	}
 	if err := withMaterializedProfileLock(o, func(ctx *orchestrator.Context) error { return o.RunCheck(ctx, phase) }); err != nil {
+		return exitErr(err)
+	}
+	return 0
+}
+
+func runDebug(opts orchestrator.Options) int {
+	o, err := orch(opts)
+	if err != nil {
+		return exitErr(err)
+	}
+	if err := withMaterializedProfileLock(o, func(ctx *orchestrator.Context) error { return o.RunDebug(ctx) }); err != nil {
 		return exitErr(err)
 	}
 	return 0
@@ -515,6 +542,7 @@ Commands:
   load        Run horizontal data load
   indexes     Create secondary indexes and gather statistics
   check       Run checks (--after-import or --after-test)
+  debug       Sequential probe: each TPC-C transaction 10 times (plan timings)
   test        Arm workers and run ramp-up / measurement / drain
   start       Alias for test
   status      Show run state
@@ -534,6 +562,7 @@ Options:
   --ramp-up <duration>     Override phases.ramp_up (warmup), e.g. 30s, 5m
   --measurement <duration> Override phases.measurement, e.g. 2m, 120m
   --threads <n>            Override worker/loader threads and check sessions (0 = auto)
+  --repeats <n>            Override debug executions per transaction type (default: 10)
   --insecure-ignore-host-key  Skip SSH host-key checking (lab / reimaged hosts)
   --skip <step>            Skip pipeline step
   --yes                    Non-interactive confirmation (drop, cleanup, undeploy, configure overwrite)

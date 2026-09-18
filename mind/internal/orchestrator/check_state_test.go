@@ -80,3 +80,35 @@ func TestRequireCheckPhase(t *testing.T) {
 		})
 	}
 }
+
+func TestRequireDebugPhase(t *testing.T) {
+	cases := []struct {
+		name    string
+		state   string
+		skipped []string
+		wantErr string
+	}{
+		{name: "indexing", state: state.StateIndexing},
+		{name: "measuring", state: state.StateMeasuring},
+		{name: "completed", state: state.StateCompleted},
+		{name: "skipped_indexes", state: state.StateLoading, skipped: []string{"indexes"}},
+		{name: "needs_load", state: state.StateLoading, wantErr: "debug requires a completed load"},
+		{name: "refuses_failed", state: state.StateFailed, wantErr: "refused while run is failed"},
+		{name: "refuses_stopping", state: state.StateStopping, wantErr: "refused while run is stopping"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rs := &state.RunState{State: tc.state, SkippedSteps: tc.skipped}
+			err := requireDebugPhase(rs)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("expected error containing %q, got %v", tc.wantErr, err)
+			}
+		})
+	}
+}

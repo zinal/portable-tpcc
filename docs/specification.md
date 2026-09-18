@@ -140,7 +140,8 @@ guidance (YDB fused commit, DDL/query differences, OceanBase notes) are in
 ### 4.3. Binaries
 
 `mind-tpcc` orchestrates. Each `tpcc-<dbms>` binary **MUST** expose the
-normative roles `schema`, `loader`, `indexes`, `worker`, and `check`.
+normative roles `schema`, `loader`, `indexes`, `worker`, and `check`, and
+the diagnostic role `debug`.
 Non-DBMS logic comes from shared libraries; only the adapter/driver is
 DBMS-specific.
 
@@ -150,6 +151,8 @@ Orchestrated workload remotes use the five normative role names
 (`schema`, `loader`, `indexes`, `worker`, `check`). `mind-tpcc drop`
 **MAY** also launch `drop --run-config --instance` as an admin helper to
 drop TPC-C objects with the same secret handling as other roles.
+`mind-tpcc debug` launches `debug --run-config --instance [--repeats=N]`
+to time each TPC-C transaction type sequentially (see §9.3).
 
 ## 5. Configuration Model
 
@@ -291,7 +294,7 @@ There is no DB-scoped control fence. Operators MUST NOT run two control
 processes against the same database path concurrently. Loss of a worker
 during measurement fails the run; terminals are not reassigned.
 
-Orchestrated remotes (schema, loader, indexes, worker, check, and
+Orchestrated remotes (schema, loader, indexes, worker, check, `debug`, and
 `drop`) follow the process contract in §9.1.
 
 ## 8. Results
@@ -349,8 +352,11 @@ results/<run_id>/
 ├── aggregate.json          # settings + merged metrics + status
 ├── summary.txt             # human view of aggregate.json
 ├── checks/
+├── debug/                  # optional; mind-tpcc debug
+│   └── probe.json
 ├── raw/loader/<instance>/
 ├── raw/worker/<instance>/
+├── raw/debug/<instance>/   # optional; mind-tpcc debug
 └── orchestrator/
     ├── profile.redacted.yaml
     ├── run-config.json
@@ -369,6 +375,7 @@ aggregate carries the settings themselves.
 mind-tpcc configure --profile <path> --dbms <pgsql|ydb|oceanbase> [options]
 mind-tpcc validate | plan | deploy | undeploy --yes | schema | load | indexes
 mind-tpcc check [--after-import|--after-test]
+mind-tpcc debug [--repeats=N]
 mind-tpcc test | status | stop | collect | consolidate
 mind-tpcc run | drop --yes | cleanup --yes
 ```
@@ -441,8 +448,8 @@ same `run_id` reuses that instance directory.
 Before a new launch, `mind-tpcc` MUST discard leftover `process.json`,
 `ready.json`, `result.json`, and `artifact-manifest.json` from that directory
 so a previous attempt cannot be adopted as this process. A leftover
-`checks/{phase}.json` MUST NOT be treated as this launch unless `process.json`
-for the new nonce was observed.
+`checks/{phase}.json` or `debug/probe.json` MUST NOT be treated as this launch
+unless `process.json` for the new nonce was observed.
 
 Each launched binary MUST write `process.json` in the instance directory
 **immediately after start**, before connecting to the database or doing other
@@ -454,7 +461,7 @@ role work. The file MUST include at least:
 
 The orchestrator uses `process.json` to bind supervision (stop/signal) to this
 launch and to reject stale artifacts. It waits only briefly for the file.
-Any role that can run longer than that wait (load, indexes, check, workers)
+Any role that can run longer than that wait (load, indexes, check, debug, workers)
 MUST still emit `process.json` first; otherwise the launch is reported as a
 metadata timeout while the process is still running.
 
@@ -578,6 +585,58 @@ argv, SSH/nohup command lines, profile artifacts, or logs. Host-key checking
 is required unless explicitly disabled in the profile
 (`ssh.insecure_ignore_host_key`) or via `--insecure-ignore-host-key`
 (recorded in run-state).
+
+### 9.3. Debug probe
+
+`debug` is a diagnostic role for finding slow or unstable transaction
+execution plans. It is **not** part of `mind-tpcc run` and MUST NOT change
+run-state. It MAY run once load is complete (same prerequisite as `check`:
+the run has reached `indexing`, or `indexes` was skipped) and MUST be refused
+while the run is `stopping` or `failed`.
+
+`mind-tpcc debug` launches instance `debug-0` on the first loader host.
+`--repeats` (default 10) is a launch-time override and MUST NOT rewrite
+`run-config.json`. Every `tpcc-<dbms>` binary MUST accept `debug` with
+`--run-config`, `--instance`, and optional `--repeats=N` (`N > 0`).
+Standalone `tpcc-<dbms> debug` uses local connection flags and writes
+`debug.json` in the working directory.
+
+The probe MUST:
+
+1. Open a single worker session (one terminal, `max_inflight = 1`).
+2. Execute the five TPC-C transaction types **sequentially**, in order
+   New-Order, Payment, Order-Status, Delivery, Stock-Level.
+3. For each type, run `repeats` attempts one after another (no keying/think
+   delay, no retry). Fresh inputs are generated for each attempt using the
+   shared workflows.
+4. For every attempt record wall-clock `duration_us` (session acquire +
+   begin + workflow) and workflow `latency_pure_us`, plus `status`
+   (`ok`, `user_aborted`, or `failed`).
+5. Print a stdout progress line per attempt as soon as it finishes:
+   `Debug [i/n] <type> a/repeats <duration_us> us (pure <latency_pure_us> us) [OK]|[Failed]|[UserAborted]`.
+   After each type, print a summary line with `first`, `min`, `max`, `avg`,
+   and `rest_avg` (mean of attempts 2..N) in microseconds. `mind-tpcc` tails
+   `stdout.log` and relays those lines.
+6. Write `{run_dir}/debug/probe.json` and instance `result.json` before the
+   artifact manifest. `collect` copies `probe.json` to
+   `results/<run_id>/debug/probe.json` and the instance directory to
+   `results/<run_id>/raw/debug/debug-0/` when present. Missing debug
+   artifacts MUST NOT fail `collect` when the role was not launched.
+
+The JSON report MUST include at least:
+
+| Field | Meaning |
+| --- | --- |
+| `ok` | `true` iff no attempt has `status=failed` (`user_aborted` is not a failure) |
+| `repeats` | executions per transaction type |
+| `warehouse_id`, `district_id`, `warehouse_count` | home warehouse used for the probe |
+| `transactions[]` | one object per type with `ok` / `failed` / `user_aborted` counts, `attempts[]`, and `duration_us` / `latency_pure_us` summaries (`first`, `min`, `max`, `avg`, optional `rest_avg`) |
+| `transactions[].attempts[]` | `n`, `status`, `duration_us`, `latency_pure_us`, optional `error` |
+
+A non-zero process `exit_status` fails the `debug` stage. Intentional
+New-Order unused-item rollbacks (`user_aborted`) MUST NOT fail the stage.
+The probe uses the same isolation as that adapter's worker path (PostgreSQL
+and OceanBase Repeatable Read; YDB `database.options.tx_mode`).
 
 ## 10. Validation
 

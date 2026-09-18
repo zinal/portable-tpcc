@@ -48,6 +48,9 @@ type Options struct {
 	// invocation's worker, loader, and check argv. It does not rewrite
 	// run-config.json.
 	Threads *int
+	// Repeats, when non-nil, is a launch-time --repeats override for the
+	// diagnostic debug role. It does not rewrite run-config.json.
+	Repeats *int
 }
 
 // Orchestrator coordinates mind-tpcc stages.
@@ -619,13 +622,13 @@ func requireCheckPhase(rs *state.RunState, phase string) error {
 	}
 	switch phase {
 	case "after-import", "after-test":
-		return requireCompletedLoad(rs, phase)
+		return requireCompletedLoad(rs, "check --"+phase)
 	default:
 		return fmt.Errorf("unknown check phase %q", phase)
 	}
 }
 
-func requireCompletedLoad(rs *state.RunState, phase string) error {
+func requireCompletedLoad(rs *state.RunState, what string) error {
 	for _, step := range rs.SkippedSteps {
 		if step == "indexes" {
 			return nil
@@ -634,12 +637,59 @@ func requireCompletedLoad(rs *state.RunState, phase string) error {
 	if state.Reached(rs.State, state.StateIndexing) {
 		return nil
 	}
-	return fmt.Errorf("check --%s requires a completed load (current state is %s); run 'mind-tpcc indexes' first", phase, rs.State)
+	return fmt.Errorf("%s requires a completed load (current state is %s); run 'mind-tpcc indexes' first", what, rs.State)
 }
 
 // RunCheck executes the check role without changing run-state.
 func (o *Orchestrator) RunCheck(ctx *Context, phase string) error {
 	return o.check(ctx, phase)
+}
+
+func (o *Orchestrator) debug(ctx *Context) error {
+	progress.Printf("stage debug: start (run_id=%s)", ctx.RunID)
+	rs, err := o.StateStore.Load(ctx.RunID)
+	if err != nil {
+		return err
+	}
+	if err := requireDebugPhase(rs); err != nil {
+		return err
+	}
+
+	sessions, err := o.openSessions()
+	if err != nil {
+		return err
+	}
+	defer o.finishRemote(ctx, sessions)
+
+	hostKey := ctx.RunConfig.LoadAssignment[0].Host
+	instance := "debug-0"
+	repeats := config.EffectiveDebugRepeats(o.Opts.Repeats)
+	argv := config.DebugArgv("run-config.json", instance, repeats)
+	proc, err := o.launchRole(ctx, sessions, "debug", hostKey, instance, argv)
+	if err != nil {
+		return err
+	}
+	if err := o.waitProcesses(ctx, []*launchedProc{proc}, 2*time.Hour, true); err != nil {
+		_ = o.stopPeers(ctx, sessions)
+		return err
+	}
+	progress.Printf("stage debug: complete")
+	return nil
+}
+
+func requireDebugPhase(rs *state.RunState) error {
+	if rs.State == state.StateStopping {
+		return fmt.Errorf("debug refused while run is stopping")
+	}
+	if rs.State == state.StateFailed {
+		return fmt.Errorf("debug refused while run is failed")
+	}
+	return requireCompletedLoad(rs, "debug")
+}
+
+// RunDebug executes the sequential transaction probe without changing run-state.
+func (o *Orchestrator) RunDebug(ctx *Context) error {
+	return o.debug(ctx)
 }
 
 func (o *Orchestrator) test(ctx *Context) error {

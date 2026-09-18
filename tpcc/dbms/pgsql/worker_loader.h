@@ -17,5 +17,14 @@ int RunWorkerFromRunConfig(
 int RunSchemaFromRunConfig(const std::string& runConfigPath, const std::string& instance);
 int RunIndexesFromRunConfig(const std::string& runConfigPath, const std::string& instance);
 int RunDropFromRunConfig(const std::string& runConfigPath, const std::string& instance);
+int RunDebugFromRunConfig(
+    const std::string& runConfigPath,
+    const std::string& instance,
+    int repeats);
+void DebugSync(
+    const std::string& connectionString,
+    const std::string& path,
+    int warehouseCount,
+    int repeats);
 
 } // namespace NTpcc
