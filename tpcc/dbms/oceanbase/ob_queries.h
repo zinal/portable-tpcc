@@ -37,6 +37,8 @@ enum class EObQueryId : uint16_t {
     UpdateOrderLineDelivery,
     ApplyDeliveryToCustomer,
     SimulationSelectCastInt,
+    GetCustomerByIdForUpdate,
+    GetCustomersByLastNameForUpdate,
     Count
 };
 

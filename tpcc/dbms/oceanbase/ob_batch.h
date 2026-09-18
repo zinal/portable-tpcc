@@ -5,6 +5,7 @@
 
 #include <cstddef>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace NTpcc {
@@ -36,6 +37,36 @@ std::string BuildObGetItemsSql(size_t n);
 std::string BuildObGetStocksForUpdateSql(size_t n);
 std::string BuildObStockUpdateBatchSql(size_t n);
 std::string BuildObOrderLineInsertSql(size_t n);
+
+struct TObDeliveryOrderKey {
+    int DistrictID = 0;
+    int OrderID = 0;
+};
+
+// Phase 3: Payment location (JOIN UPDATE + JOIN SELECT) in one multi-statement.
+std::string BuildObPaymentLocationSql(int warehouseId, int districtId, std::string_view amount);
+
+// Independent oldest new_order lock per district, district order, no SKIP LOCKED.
+std::string BuildObOldestNewOrdersSql(int warehouseId);
+
+std::string BuildObDeliveryOrderInfoSql(
+    int warehouseId,
+    const std::vector<TObDeliveryOrderKey>& orders);
+
+std::string BuildObDeliveryCompleteSql(
+    int warehouseId,
+    int carrierId,
+    const std::vector<TObDeliveryOrderKey>& orders);
+
+std::string BuildObDeliveryApplySql(size_t n);
+
+std::string BuildObDeliveryFinishSql(const TApplyDeliveryToCustomer& apply);
+
+std::string BuildObPaymentFinishSql(
+    const TUpdateCustomerPayment& update,
+    const TInsertPaymentHistory& history,
+    const std::string& quotedCustomerData,
+    const std::string& quotedHistoryData);
 
 template <typename T>
 bool AllSemanticOpsAre(const std::vector<TSemanticOp>& ops) {

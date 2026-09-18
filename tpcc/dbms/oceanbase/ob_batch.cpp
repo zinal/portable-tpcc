@@ -140,4 +140,133 @@ std::string BuildObOrderLineInsertSql(size_t n) {
         + RepeatJoined("(?,?,?,?,?,?,?,?,?)", n, ",");
 }
 
+void RequireDeliverySize(size_t n, const char* what) {
+    if (n == 0 || n > static_cast<size_t>(DISTRICT_COUNT)) {
+        throw std::invalid_argument(
+            std::string(what) + ": n must be in 1.." + std::to_string(DISTRICT_COUNT));
+    }
+}
+
+std::string IntPairList(const std::vector<TObDeliveryOrderKey>& orders) {
+    std::string out;
+    out.reserve(orders.size() * 12);
+    for (size_t i = 0; i < orders.size(); ++i) {
+        if (i) {
+            out += ',';
+        }
+        out += '(';
+        out += std::to_string(orders[i].DistrictID);
+        out += ',';
+        out += std::to_string(orders[i].OrderID);
+        out += ')';
+    }
+    return out;
+}
+
+std::string BuildObPaymentLocationSql(int warehouseId, int districtId, std::string_view amount) {
+    const auto w = std::to_string(warehouseId);
+    const auto d = std::to_string(districtId);
+    std::string amt(amount);
+    return "UPDATE warehouse w INNER JOIN district d ON d.d_w_id = w.w_id AND d.d_id = " + d
+        + " SET w.w_ytd = w.w_ytd + " + amt + ", d.d_ytd = d.d_ytd + " + amt
+        + " WHERE w.w_id = " + w
+        + "; SELECT w.w_name, w.w_street_1, w.w_street_2, w.w_city, w.w_state, w.w_zip,"
+          " d.d_name, d.d_street_1, d.d_street_2, d.d_city, d.d_state, d.d_zip"
+          " FROM warehouse w INNER JOIN district d ON d.d_w_id = w.w_id AND d.d_id = "
+        + d + " WHERE w.w_id = " + w;
+}
+
+std::string BuildObOldestNewOrdersSql(int warehouseId) {
+    const auto w = std::to_string(warehouseId);
+    std::string sql;
+    sql.reserve(static_cast<size_t>(DISTRICT_COUNT) * 120);
+    for (int d = DISTRICT_LOW_ID; d <= DISTRICT_HIGH_ID; ++d) {
+        if (d != DISTRICT_LOW_ID) {
+            sql += ';';
+        }
+        sql += "SELECT no_o_id FROM new_order WHERE no_w_id = " + w + " AND no_d_id = "
+            + std::to_string(d) + " ORDER BY no_o_id ASC LIMIT 1 FOR UPDATE";
+    }
+    return sql;
+}
+
+std::string BuildObDeliveryOrderInfoSql(
+    int warehouseId,
+    const std::vector<TObDeliveryOrderKey>& orders)
+{
+    RequireDeliverySize(orders.size(), "BuildObDeliveryOrderInfoSql");
+    const auto w = std::to_string(warehouseId);
+    const auto keys = IntPairList(orders);
+    return "SELECT o_d_id, o_id, o_c_id FROM oorder WHERE o_w_id = " + w
+        + " AND (o_d_id, o_id) IN (" + keys + ")"
+        + "; SELECT ol_d_id, ol_o_id, ol_amount FROM order_line WHERE ol_w_id = " + w
+        + " AND (ol_d_id, ol_o_id) IN (" + keys + ")";
+}
+
+std::string BuildObDeliveryCompleteSql(
+    int warehouseId,
+    int carrierId,
+    const std::vector<TObDeliveryOrderKey>& orders)
+{
+    RequireDeliverySize(orders.size(), "BuildObDeliveryCompleteSql");
+    const auto w = std::to_string(warehouseId);
+    const auto keys = IntPairList(orders);
+    return "DELETE FROM new_order WHERE no_w_id = " + w + " AND (no_d_id, no_o_id) IN (" + keys
+        + "); UPDATE oorder SET o_carrier_id = " + std::to_string(carrierId)
+        + " WHERE o_w_id = " + w + " AND (o_d_id, o_id) IN (" + keys
+        + "); UPDATE order_line SET ol_delivery_d = CURRENT_TIMESTAMP WHERE ol_w_id = " + w
+        + " AND (ol_d_id, ol_o_id) IN (" + keys + ")";
+}
+
+std::string BuildObDeliveryApplySql(size_t n) {
+    RequireDeliverySize(n, "BuildObDeliveryApplySql");
+    std::string sql = "UPDATE customer c INNER JOIN (";
+    for (size_t i = 0; i < n; ++i) {
+        if (i == 0) {
+            sql += "SELECT ? AS w_id, ? AS d_id, ? AS c_id, ? AS amount";
+        } else {
+            sql += " UNION ALL SELECT ?,?,?,?";
+        }
+    }
+    sql += ") u ON c.c_w_id = u.w_id AND c.c_d_id = u.d_id AND c.c_id = u.c_id"
+           " SET c.c_balance = c.c_balance + u.amount,"
+           " c.c_delivery_cnt = c.c_delivery_cnt + 1";
+    return sql;
+}
+
+std::string BuildObDeliveryFinishSql(const TApplyDeliveryToCustomer& apply) {
+    return "UPDATE customer SET c_balance = c_balance + " + apply.Amount.ToString()
+        + ", c_delivery_cnt = c_delivery_cnt + 1 WHERE c_w_id = "
+        + std::to_string(apply.WarehouseID) + " AND c_d_id = "
+        + std::to_string(apply.DistrictID) + " AND c_id = "
+        + std::to_string(apply.CustomerID) + "; COMMIT";
+}
+
+std::string BuildObPaymentFinishSql(
+    const TUpdateCustomerPayment& update,
+    const TInsertPaymentHistory& history,
+    const std::string& quotedCustomerData,
+    const std::string& quotedHistoryData)
+{
+    std::string sql = "UPDATE customer SET c_balance = " + update.NewBalance.ToString()
+        + ", c_ytd_payment = " + update.NewYtdPayment.ToString()
+        + ", c_payment_cnt = " + std::to_string(update.NewPaymentCount);
+    if (update.UpdateData) {
+        sql += ", c_data = " + quotedCustomerData;
+    }
+    sql += " WHERE c_w_id = " + std::to_string(update.WarehouseID)
+        + " AND c_d_id = " + std::to_string(update.DistrictID)
+        + " AND c_id = " + std::to_string(update.CustomerID)
+        + "; INSERT INTO history (h_c_id, h_c_d_id, h_c_w_id, h_d_id, h_w_id, h_date, h_amount, h_data)"
+          " VALUES ("
+        + std::to_string(history.CustomerID) + ", "
+        + std::to_string(history.CustomerDistrictID) + ", "
+        + std::to_string(history.CustomerWarehouseID) + ", "
+        + std::to_string(history.PaymentDistrictID) + ", "
+        + std::to_string(history.PaymentWarehouseID) + ", CURRENT_TIMESTAMP, "
+        + history.Amount.ToString() + ", " + quotedHistoryData
+        + "); COMMIT";
+    return sql;
+}
+
 } // namespace NTpcc

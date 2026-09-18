@@ -387,6 +387,53 @@ uint64_t TObConnection::Execute(const std::string& sql, const TObParams& params)
     return static_cast<uint64_t>(mysql_affected_rows(Impl_->Mysql));
 }
 
+TObMultiResult TObConnection::ExecuteMulti(const std::string& sql) {
+    if (mysql_real_query(Impl_->Mysql, sql.data(), static_cast<unsigned long>(sql.size())) != 0) {
+        ThrowMysqlError(Impl_->Mysql, "ExecuteMulti failed");
+    }
+
+    TObMultiResult out;
+    while (true) {
+        MYSQL_RES* res = mysql_store_result(Impl_->Mysql);
+        if (res) {
+            out.Selects.push_back(MaterializeResult(res));
+        } else if (mysql_field_count(Impl_->Mysql) != 0) {
+            ThrowMysqlError(Impl_->Mysql, "mysql_store_result failed");
+        } else {
+            out.Affected.push_back(static_cast<uint64_t>(mysql_affected_rows(Impl_->Mysql)));
+        }
+        const int more = mysql_next_result(Impl_->Mysql);
+        if (more == 0) {
+            continue;
+        }
+        if (more > 0) {
+            ThrowMysqlError(Impl_->Mysql, "mysql_next_result failed");
+        }
+        break;
+    }
+    return out;
+}
+
+std::string TObConnection::EscapeLiteral(const std::string& value) {
+    if (!Impl_ || !Impl_->Mysql) {
+        throw std::runtime_error("EscapeLiteral: no connection");
+    }
+    std::string escaped;
+    escaped.resize(value.size() * 2 + 1);
+    const unsigned long n = mysql_real_escape_string(
+        Impl_->Mysql,
+        escaped.data(),
+        value.data(),
+        static_cast<unsigned long>(value.size()));
+    escaped.resize(n);
+    std::string quoted;
+    quoted.reserve(escaped.size() + 2);
+    quoted.push_back('\'');
+    quoted += escaped;
+    quoted.push_back('\'');
+    return quoted;
+}
+
 QueryResult TObConnection::QuerySimple(const std::string& sql) {
     return Query(sql, TObParams{});
 }
