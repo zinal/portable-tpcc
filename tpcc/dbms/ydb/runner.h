@@ -35,6 +35,7 @@ struct TRunConfig {
     size_t IOThreads = DEFAULT_IO_THREADS;
     bool NoDelays = false;
     bool HighResHistogram = false;
+    std::chrono::milliseconds StatsInterval{kDefaultStatsInterval};
     // snapshot-rw (default) maps to RepeatableRead; serializable-rw to Serializable.
     EIsolationLevel Isolation = EIsolationLevel::RepeatableRead;
 

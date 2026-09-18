@@ -303,8 +303,7 @@ void MaybeUpdateConsoleStats(
     }
 
     auto now = Clock::now();
-    auto sinceLast = std::chrono::duration_cast<std::chrono::seconds>(now - state.LastUpdate);
-    if (state.LastUpdate.time_since_epoch().count() != 0 && sinceLast < std::chrono::seconds(5)) {
+    if (!ShouldUpdateConsoleStats(state.LastUpdate, now, config.StatsInterval)) {
         return;
     }
 
@@ -420,9 +419,12 @@ void MaybeUpdateConsoleStats(
         if (ObserveSchedulerInflightStuck(
                 state.InflightStuck, inflight, ready, config.ThreadCount, config.MaxInflight))
         {
+            const auto stuckWindow = config.StatsInterval * kInflightStuckMinConsecutiveSamples;
+            const auto stuckSeconds =
+                std::chrono::duration_cast<std::chrono::seconds>(stuckWindow).count();
             LOG_W("Inflight=" << inflight
                   << " stayed near ThreadCount=" << config.ThreadCount
-                  << " for ~" << (kInflightStuckMinConsecutiveSamples * 5) << "s while max_inflight="
+                  << " for ~" << stuckSeconds << "s while max_inflight="
                   << config.MaxInflight << " (ready=" << ready
                   << "). ITpccTransaction may be blocking the scheduler; see "
                   << "docs/async-adapter-transactions.md");

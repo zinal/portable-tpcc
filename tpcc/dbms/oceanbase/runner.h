@@ -34,6 +34,7 @@ struct TRunConfig {
     size_t IOThreads = DEFAULT_IO_THREADS;
     bool NoDelays = false;
     bool HighResHistogram = false;
+    std::chrono::milliseconds StatsInterval{kDefaultStatsInterval};
     int SimulateTransactionSelect1 = 0;
     bool Orchestrated = false;
     std::vector<TWarehouseRange> WarehouseRanges;

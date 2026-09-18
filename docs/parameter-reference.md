@@ -298,6 +298,7 @@ All listed fields except `async_work_drain` are required.
 | `threads_per_worker` | `0` | Worker coroutine threads. `0` / omit keeps `threads: 0` in the assignment so each worker applies the same CPU + warehouse auto as standalone `--threads=0` / tpcc-postgres-cpp (see `ComputeRunLayout`, ≈ `ceil(warehouses / 1000)`). Explicit `N > 0` pins that many threads per worker. Auto sizing is useful when `ITpccTransaction` does not block the scheduler (PostgreSQL, OceanBase, and YDB worker paths). See [async-adapter-transactions.md](async-adapter-transactions.md). |
 | `check_concurrency` | `0` | Parallel DBMS sessions for integrity checks. `0` / omit = auto (`min(scale.warehouses, 32)`). `1` = serial. Passed to `tpcc-<dbms> check` as `--threads=N`. `mind-tpcc --threads` overrides check concurrency, and also worker/loader threads, for the current invocation without rewriting run-config. |
 | `max_inflight_per_worker` | `100` if ≤ 0 | Max in-flight transactions per worker. Matches standalone `tpcc-* --max_inflight` / tpcc-postgres-cpp default. Override when a shard needs a higher cap (also bounded by adapter `MaxRecommendedInflight`). |
+| `stats_interval` | `30s` | How often each worker prints a progress statistics line (phase, tpmC, counts, inflight). Go duration (`30s`, `5s`, …) or a bare integer (milliseconds). Omitted uses 30s. Must be greater than zero. Materialized as `runtime.stats_interval_ms`. Matches standalone `tpcc-* --stats-interval`. |
 | `retry.max_attempts` | `4` | Retry attempts. |
 | `retry.initial_backoff` | `10ms` | Initial backoff. |
 | `retry.max_backoff` | `500ms` | Max backoff (≥ initial). |
@@ -377,6 +378,7 @@ drop    --run-config <path> --instance <name>
 | `--duration` | `10` | Measurement minutes (> 0). |
 | `-t` / `--threads` | `0` | Run/import: `0` = auto. Check: parallel DBMS sessions (`<=0` = 1 session). Orchestrated worker/loader: `mind-tpcc --threads` when set, otherwise assignment `threads` from run-config. Orchestrated check: `mind-tpcc --threads` when set, otherwise `runtime.check_concurrency`. |
 | `-m` / `--max-inflight` | `100` | Max in-flight transactions (> 0). |
+| `--stats-interval` | `30` | Seconds between worker progress statistics lines (> 0). Orchestrated workers use `runtime.stats_interval_ms` from run-config instead. |
 | `--no-delays` | `false` | Disable keying and think time (engineering). |
 | `--think-time-distribution` | `exponential` | `exponential` \| `compatibility` \| `constant`. |
 | `--high-res-histogram` | `false` | High-resolution histograms. |

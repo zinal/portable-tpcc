@@ -155,9 +155,13 @@ type Runtime struct {
 	MaxInflightPerWorker int `yaml:"max_inflight_per_worker"`
 	// CheckConcurrency is parallel DBMS sessions for integrity checks.
 	// 0 / omit = auto (min(scale.warehouses, 32)).
-	CheckConcurrency int         `yaml:"check_concurrency"`
-	Retry            RetryPolicy `yaml:"retry"`
-	Histogram        Histogram   `yaml:"histogram"`
+	CheckConcurrency int `yaml:"check_concurrency"`
+	// StatsInterval is how often workers print a progress statistics line.
+	// Go duration (30s, 5s, …) or a bare integer (milliseconds). Empty / omit
+	// materializes as config.DefaultStatsIntervalMs (30000).
+	StatsInterval string      `yaml:"stats_interval"`
+	Retry         RetryPolicy `yaml:"retry"`
+	Histogram     Histogram   `yaml:"histogram"`
 }
 
 type RetryPolicy struct {

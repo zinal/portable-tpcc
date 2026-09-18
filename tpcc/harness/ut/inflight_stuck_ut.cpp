@@ -79,3 +79,33 @@ TEST(InflightStuck, OceanbaseConfirmedShapeDoesNotWarn) {
     }
     EXPECT_FALSE(state.Warned);
 }
+
+TEST(ConsoleStatsInterval, FirstSampleAlwaysDue) {
+    Clock::time_point last{};
+    auto now = Clock::now();
+    EXPECT_TRUE(ShouldUpdateConsoleStats(last, now, kDefaultStatsInterval));
+    EXPECT_TRUE(ShouldUpdateConsoleStats(last, now, std::chrono::milliseconds(1)));
+}
+
+TEST(ConsoleStatsInterval, ThrottlesUntilIntervalElapsed) {
+    auto last = Clock::now();
+    EXPECT_FALSE(ShouldUpdateConsoleStats(
+        last, last + std::chrono::seconds(29), kDefaultStatsInterval));
+    EXPECT_TRUE(ShouldUpdateConsoleStats(
+        last, last + std::chrono::seconds(30), kDefaultStatsInterval));
+}
+
+TEST(ConsoleStatsInterval, ZeroIntervalFallsBackToDefault) {
+    auto last = Clock::now();
+    EXPECT_FALSE(ShouldUpdateConsoleStats(
+        last, last + std::chrono::seconds(29), std::chrono::milliseconds::zero()));
+    EXPECT_TRUE(ShouldUpdateConsoleStats(
+        last, last + std::chrono::seconds(30), std::chrono::milliseconds::zero()));
+}
+
+TEST(ConsoleStatsInterval, CustomInterval) {
+    auto last = Clock::now();
+    const auto interval = std::chrono::milliseconds(1500);
+    EXPECT_FALSE(ShouldUpdateConsoleStats(last, last + std::chrono::milliseconds(1499), interval));
+    EXPECT_TRUE(ShouldUpdateConsoleStats(last, last + std::chrono::milliseconds(1500), interval));
+}

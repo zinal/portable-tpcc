@@ -39,6 +39,7 @@ const (
 	DefaultHistogramUnit               = "us"
 	DefaultHistogramHighest      int64 = 120000000
 	DefaultMaxInflight                 = 100
+	DefaultStatsInterval               = "30s"
 	DefaultPasswordEnv                 = "TPCC_PASSWORD"
 	DefaultYDBPasswordEnv              = "YDB_PASSWORD"
 	DefaultPgUser                      = "postgres"
@@ -202,6 +203,7 @@ func ExampleWithName(dbms, name, sshUser string) (*Profile, error) {
 			ThreadsPerWorker:      0,
 			MaxInflightPerWorker:  DefaultMaxInflight,
 			CheckConcurrency:      0,
+			StatsInterval:         DefaultStatsInterval,
 			Retry: RetryPolicy{
 				MaxAttempts:    DefaultRetryMaxAttempts,
 				InitialBackoff: DefaultRetryInitialBackoff,
@@ -323,6 +325,7 @@ type exampleRuntime struct {
 	ThreadsPerWorker      int              `yaml:"threads_per_worker"`
 	CheckConcurrency      int              `yaml:"check_concurrency"`
 	MaxInflightPerWorker  int              `yaml:"max_inflight_per_worker"`
+	StatsInterval         string           `yaml:"stats_interval"`
 	Retry                 RetryPolicy      `yaml:"retry"`
 	Histogram             exampleHistogram `yaml:"histogram"`
 }
@@ -350,6 +353,10 @@ func EncodeExample(p *Profile) ([]byte, error) {
 	highest := DefaultHistogramHighest
 	if p.Runtime.Histogram.Highest != nil {
 		highest = *p.Runtime.Histogram.Highest
+	}
+	statsInterval := p.Runtime.StatsInterval
+	if statsInterval == "" {
+		statsInterval = DefaultStatsInterval
 	}
 	doc := exampleDoc{
 		APIVersion: p.APIVersion,
@@ -385,6 +392,7 @@ func EncodeExample(p *Profile) ([]byte, error) {
 			ThreadsPerWorker:      p.Runtime.ThreadsPerWorker,
 			CheckConcurrency:      p.Runtime.CheckConcurrency,
 			MaxInflightPerWorker:  p.Runtime.MaxInflightPerWorker,
+			StatsInterval:         statsInterval,
 			Retry:                 p.Runtime.Retry,
 			Histogram: exampleHistogram{
 				Unit:    p.Runtime.Histogram.Unit,

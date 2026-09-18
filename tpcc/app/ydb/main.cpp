@@ -44,6 +44,8 @@ DEFINE_int32(threads, 0,
     "Number of threads (coroutines for run, importers for import, parallel query chunks for check); "
     "0 = auto");
 DEFINE_int32(max_inflight, NTpcc::DEFAULT_MAX_INFLIGHT, "Max inflight transactions");
+DEFINE_int32(stats_interval, NTpcc::kDefaultStatsIntervalSeconds,
+    "Seconds between worker progress statistics lines");
 DEFINE_bool(no_delays, false, "Disable keying and think time delays");
 DEFINE_string(think_time_distribution, "exponential",
     "Think time distribution: exponential (TPC-C default) or compatibility/constant");
@@ -94,6 +96,7 @@ void PrintHelp() {
         "  -t, --threads         Number of threads (coroutines for run, importers for import,\n"
         "                        parallel warehouse-range chunks for check); 0 = auto (default: 0)\n"
         "  -m, --max-inflight    Max inflight transactions (default: 100)\n"
+        "  --stats-interval      Seconds between progress statistics lines (default: 30)\n"
         "  --no-delays           Disable keying and think time delays (default: false)\n"
         "  --think-time-distribution  exponential (TPC-C default) or compatibility/constant\n"
         "  --high-res-histogram  Use high resolution histograms (default: false)\n"
@@ -158,6 +161,9 @@ void ValidateRunFlags() {
     ValidateThreadsFlag();
     if (FLAGS_max_inflight <= 0) {
         throw std::runtime_error("--max-inflight must be greater than zero");
+    }
+    if (FLAGS_stats_interval <= 0) {
+        throw std::runtime_error("--stats-interval must be greater than zero");
     }
     if (FLAGS_duration <= 0) {
         throw std::runtime_error("--duration must be greater than zero");
@@ -402,6 +408,7 @@ void RunBenchmark() {
     config.SkipWarmup = FLAGS_skip_warmup;
     config.ThreadCount = FLAGS_threads;
     config.MaxInflight = FLAGS_max_inflight;
+    config.StatsInterval = std::chrono::seconds(FLAGS_stats_interval);
     config.NoDelays = FLAGS_no_delays;
     config.HighResHistogram = FLAGS_high_res_histogram;
     config.SimulateTransactionSelect1 = FLAGS_simulate_select1;

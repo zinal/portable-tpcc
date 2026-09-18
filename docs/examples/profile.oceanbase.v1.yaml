@@ -93,6 +93,7 @@ runtime:
   # 0 / omitted = auto (min of scale.warehouses and 32)
   check_concurrency: 0
   max_inflight_per_worker: 64
+  stats_interval: 30s
   retry:
     max_attempts: 4
     initial_backoff: 10ms

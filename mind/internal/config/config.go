@@ -113,6 +113,10 @@ type WorkerAssignmentJSON struct {
 // tpcc-postgres-cpp DEFAULT_MAX_INFLIGHT when the profile omits the field.
 const DefaultMaxInflightPerWorker = 100
 
+// DefaultStatsIntervalMs matches standalone tpcc-* --stats-interval (30s)
+// and the C++ kDefaultStatsInterval when the profile omits the field.
+const DefaultStatsIntervalMs int64 = 30000
+
 type PhasesJSON struct {
 	StartLeadMs        int64 `json:"start_lead_ms"`
 	RampUpMs           int64 `json:"ramp_up_ms"`
@@ -129,6 +133,7 @@ type RunRuntime struct {
 	Retry                 RetryJSON     `json:"retry"`
 	Histogram             HistogramJSON `json:"histogram"`
 	CheckConcurrency      int           `json:"check_concurrency,omitempty"`
+	StatsIntervalMs       int64         `json:"stats_interval_ms"`
 }
 
 type RetryJSON struct {
@@ -284,6 +289,17 @@ func BuildRunConfig(in BuildInput) (*RunConfig, error) {
 		hist.Highest = *p.Runtime.Histogram.Highest
 	}
 
+	statsIntervalMs := DefaultStatsIntervalMs
+	if p.Runtime.StatsInterval != "" {
+		statsIntervalMs, err = profile.ParseDurationMs(p.Runtime.StatsInterval)
+		if err != nil {
+			return nil, fmt.Errorf("runtime.stats_interval: %w", err)
+		}
+		if statsIntervalMs <= 0 {
+			return nil, fmt.Errorf("runtime.stats_interval must be greater than zero")
+		}
+	}
+
 	pacing := p.Runtime.Pacing
 	if pacing == "" {
 		pacing = "enabled"
@@ -362,6 +378,7 @@ func BuildRunConfig(in BuildInput) (*RunConfig, error) {
 			Retry:                 retry,
 			Histogram:             hist,
 			CheckConcurrency:      ResolveCheckConcurrency(p.Scale.Warehouses, p.Runtime.CheckConcurrency),
+			StatsIntervalMs:       statsIntervalMs,
 		},
 	}, nil
 }

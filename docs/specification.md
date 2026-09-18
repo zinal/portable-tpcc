@@ -224,7 +224,10 @@ incomplete futures, many transactions MAY be in flight per scheduler thread
 (`ComputeRunLayout`, ≈ `ceil(warehouses / 1000)` plus CPU caps) assumes
 that model. Workers MAY log a one-shot warning when progress `Inflight`
 stays near `ThreadCount` while `max_inflight` is larger and the scheduler
-ready queue is backlogged.
+ready queue is backlogged. Workers print a throttled progress line (phase,
+live tpmC, counts, inflight). The interval is profile `runtime.stats_interval`
+(run-config `runtime.stats_interval_ms`, standalone `--stats-interval`);
+omitted uses **30 seconds**.
 
 Normalized errors: `retryable_abort`, `not_committed`, `ambiguous_commit`
 (no blind retry), `permanent` (count as Fail, do not stop the run),

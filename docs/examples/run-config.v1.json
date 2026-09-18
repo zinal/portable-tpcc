@@ -102,6 +102,7 @@
     "histogram": {
       "unit": "us",
       "highest": 120000000
-    }
+    },
+    "stats_interval_ms": 30000
   }
 }

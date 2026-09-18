@@ -55,6 +55,9 @@ func TestBuildRunConfig_omittedWorkerThreadsStayAuto(t *testing.T) {
 			t.Fatalf("%s max_inflight=%d, want %d", w.Instance, w.MaxInflight, config.DefaultMaxInflightPerWorker)
 		}
 	}
+	if rc.Runtime.StatsIntervalMs != config.DefaultStatsIntervalMs {
+		t.Fatalf("stats_interval_ms=%d, want %d", rc.Runtime.StatsIntervalMs, config.DefaultStatsIntervalMs)
+	}
 }
 
 func TestBuildRunConfig_explicitWorkerParallelismPinned(t *testing.T) {
@@ -73,5 +76,22 @@ func TestBuildRunConfig_explicitWorkerParallelismPinned(t *testing.T) {
 		if w.MaxInflight != 256 {
 			t.Fatalf("%s max_inflight=%d, want 256", w.Instance, w.MaxInflight)
 		}
+	}
+}
+
+func TestBuildRunConfig_statsInterval(t *testing.T) {
+	p := minimalProfileForWorkerDefaults(t, profile.Runtime{StatsInterval: "5s"})
+	rc, err := config.BuildRunConfig(config.BuildInput{Profile: p, RunID: "run-stats"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rc.Runtime.StatsIntervalMs != 5000 {
+		t.Fatalf("stats_interval_ms=%d, want 5000", rc.Runtime.StatsIntervalMs)
+	}
+
+	p = minimalProfileForWorkerDefaults(t, profile.Runtime{StatsInterval: "0s"})
+	_, err = config.BuildRunConfig(config.BuildInput{Profile: p, RunID: "run-stats-zero"})
+	if err == nil || err.Error() != "runtime.stats_interval must be greater than zero" {
+		t.Fatalf("expected zero interval error, got %v", err)
 	}
 }

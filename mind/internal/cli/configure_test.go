@@ -56,6 +56,7 @@ func TestRun_configurePositionalPathAndOverrides(t *testing.T) {
 		"--partition-count", "8",
 		"--foreign-keys", "off",
 		"--measurement", "30m",
+		"--stats-interval", "5s",
 	})
 	if code != 0 {
 		t.Fatalf("configure exit=%d", code)
@@ -93,6 +94,9 @@ func TestRun_configurePositionalPathAndOverrides(t *testing.T) {
 	}
 	if p.Phases.Measurement != "30m" {
 		t.Fatalf("measurement=%q", p.Phases.Measurement)
+	}
+	if p.Runtime.StatsInterval != "5s" {
+		t.Fatalf("stats_interval=%q", p.Runtime.StatsInterval)
 	}
 }
 

@@ -36,6 +36,8 @@ DEFINE_bool(skip_warmup, false, "Skip warmup entirely and start measurement imme
 DEFINE_int32(duration, 10, "Benchmark run duration in minutes");
 DEFINE_int32(threads, 0, "Number of threads (coroutines for run, importers for import, parallel DB sessions for check); 0 = auto for run/import, serial for check");
 DEFINE_int32(max_inflight, NTpcc::DEFAULT_MAX_INFLIGHT, "Max inflight transactions");
+DEFINE_int32(stats_interval, NTpcc::kDefaultStatsIntervalSeconds,
+    "Seconds between worker progress statistics lines");
 DEFINE_bool(no_delays, false, "Disable keying and think time delays");
 DEFINE_string(think_time_distribution, "exponential",
     "Think time distribution: exponential (TPC-C default) or compatibility/constant");
@@ -81,6 +83,7 @@ void PrintHelp() {
         "                        parallel DB sessions for check); 0 = auto for run/import,\n"
         "                        serial (1 session) for check (default: 0)\n"
         "  -m, --max-inflight    Max inflight transactions (default: 100)\n"
+        "  --stats-interval      Seconds between progress statistics lines (default: 30)\n"
         "  --no-delays           Disable keying and think time delays (default: false)\n"
         "  --think-time-distribution  exponential, compatibility, or constant\n"
         "  --high-res-histogram  Use high resolution histograms (default: false)\n"
@@ -134,6 +137,9 @@ void ValidateRunFlags() {
     ValidateThreadsFlag();
     if (FLAGS_max_inflight <= 0) {
         throw std::runtime_error("--max-inflight must be greater than zero");
+    }
+    if (FLAGS_stats_interval <= 0) {
+        throw std::runtime_error("--stats-interval must be greater than zero");
     }
     if (FLAGS_duration <= 0) {
         throw std::runtime_error("--duration must be greater than zero");
@@ -319,6 +325,7 @@ void RunBenchmark() {
     config.SkipWarmup = FLAGS_skip_warmup;
     config.ThreadCount = FLAGS_threads;
     config.MaxInflight = FLAGS_max_inflight;
+    config.StatsInterval = std::chrono::seconds(FLAGS_stats_interval);
     config.NoDelays = FLAGS_no_delays;
     config.HighResHistogram = FLAGS_high_res_histogram;
     config.SimulateTransactionSelect1 = FLAGS_simulate_select1;

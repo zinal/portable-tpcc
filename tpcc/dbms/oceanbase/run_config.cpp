@@ -352,6 +352,14 @@ TRunConfigDocument LoadRunConfigDocument(const std::string& path) {
                     "\"compatibility\", or \"constant\"");
             }
         }
+        {
+            const int64_t statsIntervalMs = ReadInt64(
+                rt, "stats_interval_ms", 30000, "runtime.stats_interval_ms");
+            if (statsIntervalMs < 0) {
+                throw std::runtime_error("runtime.stats_interval_ms must not be negative");
+            }
+            doc.StatsIntervalMs = statsIntervalMs;
+        }
         if (rt.contains("retry") && rt["retry"].is_object()) {
             const auto& retry = rt["retry"];
             doc.RetryMaxAttempts = ReadSizeTNonNegative(retry, "max_attempts", 0, "runtime.retry.max_attempts");

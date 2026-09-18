@@ -82,3 +82,43 @@ TEST(YdbRunConfig, RejectsUnknownTxModeAndUnknownOptions) {
     EXPECT_THROW(LoadRunConfigDocument(unknown), std::runtime_error);
     std::remove(unknown.c_str());
 }
+
+TEST(YdbRunConfig, ParsesStatsIntervalMs) {
+    const std::string path = "ydb_run_config_ut_stats_interval.json";
+    {
+        std::ofstream out(path, std::ios::trunc);
+        out << R"({
+  "run_id": "run-1",
+  "database": {
+    "dbms": "ydb",
+    "endpoint": "localhost:2136",
+    "database": "/local",
+    "path": "tpcc"
+  },
+  "scale": { "warehouses": 1 },
+  "phases": { "measurement_ms": 1000 },
+  "runtime": { "stats_interval_ms": 5000 },
+  "worker_assignment": [
+    {
+      "instance": "worker-a",
+      "host": "localhost",
+      "warehouse_ranges": [[1, 2]],
+      "threads": 1,
+      "max_inflight": 8
+    }
+  ]
+}
+)";
+    }
+    const auto doc = LoadRunConfigDocument(path);
+    EXPECT_EQ(doc.StatsIntervalMs, 5000);
+    std::remove(path.c_str());
+}
+
+TEST(YdbRunConfig, DefaultsStatsIntervalWhenRuntimeOmitted) {
+    const std::string path = "ydb_run_config_ut_stats_default.json";
+    WriteRunConfig(path, "");
+    const auto doc = LoadRunConfigDocument(path);
+    EXPECT_EQ(doc.StatsIntervalMs, 0);
+    std::remove(path.c_str());
+}
