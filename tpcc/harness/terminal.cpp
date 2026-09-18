@@ -387,7 +387,7 @@ TFuture<void> TTerminal::Run() {
                         LOG_D("Terminal " << Context.TerminalID << " " << txName << " retries exhausted: " << ex.what());
                     } else {
                         LOG_E("Terminal " << Context.TerminalID << " classified error in " << txName << ": " << ex.what());
-                        if (cls == EErrorClass::Permanent) {
+                        if (AbortsRun(cls)) {
                             fatal = true;
                         }
                     }
@@ -422,7 +422,7 @@ TFuture<void> TTerminal::Run() {
                         LOG_D("Terminal " << Context.TerminalID << " " << txName << " retries exhausted: " << ex.what());
                     } else {
                         LOG_E("Terminal " << Context.TerminalID << " exception in " << txName << ": " << ex.what());
-                        if (cls == EErrorClass::Permanent) {
+                        if (AbortsRun(cls)) {
                             fatal = true;
                         }
                     }

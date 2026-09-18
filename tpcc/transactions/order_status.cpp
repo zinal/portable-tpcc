@@ -47,8 +47,7 @@ TFuture<bool> GetOrderStatusTask(
             in.WarehouseID, in.DistrictID, in.LastName});
         ThrowIfRetryable(r);
         if (!r.Ok) {
-            co_return FailPermanent(context.TerminalID, "OrderStatus customer by name failed",
-                r.Message);
+            co_return FailPermanent(context.TerminalID, "OrderStatus customer by name failed", r);
         }
         auto selected = SelectCustomerByLastNameMedian(
             std::get<std::vector<TCustomerRow>>(r.Payload));
@@ -61,8 +60,7 @@ TFuture<bool> GetOrderStatusTask(
             in.WarehouseID, in.DistrictID, in.CustomerID});
         ThrowIfRetryable(r);
         if (!r.Ok) {
-            co_return FailPermanent(context.TerminalID, "OrderStatus customer not found",
-                r.Message);
+            co_return FailPermanent(context.TerminalID, "OrderStatus customer not found", r);
         }
         customer = std::get<TCustomerRow>(r.Payload);
     }
@@ -73,8 +71,7 @@ TFuture<bool> GetOrderStatusTask(
             in.WarehouseID, in.DistrictID, customer.CustomerID});
         ThrowIfRetryable(r);
         if (!r.Ok) {
-            co_return FailPermanent(context.TerminalID, "OrderStatus latest order failed",
-                r.Message);
+            co_return FailPermanent(context.TerminalID, "OrderStatus latest order failed", r);
         }
         if (r.ActualRows == 0) {
             LOG_T("Terminal " << context.TerminalID << " customer has no orders");
@@ -94,7 +91,7 @@ TFuture<bool> GetOrderStatusTask(
         ThrowIfRetryable(finalResult.Operation);
         if (!finalResult.Operation.Ok) {
             co_return FailPermanent(context.TerminalID, "OrderStatus lines failed",
-                finalResult.Operation.Message);
+                finalResult.Operation);
         }
         ThrowIfCommitFailed(finalResult.Commit);
     }

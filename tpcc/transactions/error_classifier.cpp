@@ -48,4 +48,10 @@ bool MayBlindRetry(EErrorClass c) {
     return IsRetryable(c);
 }
 
+bool AbortsRun(EErrorClass c) {
+    // adapter-api §4.5: integrity fails the run. Permanent execution errors
+    // count as Fail and the terminals continue.
+    return c == EErrorClass::Integrity;
+}
+
 } // namespace NTpcc

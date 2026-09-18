@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <context.h>
+#include <domain_util.h>
 #include <ops.h>
 #include <workflow_util.h>
 
@@ -128,4 +129,33 @@ TEST(ThrowIfBatchRetryable, PermanentDoesNotThrow) {
     permanent.ErrorClass = EErrorClass::Permanent;
     permanent.Message = "syntax error";
     EXPECT_NO_THROW(ThrowIfBatchRetryable(permanent));
+}
+
+TEST(FailPermanent, PermanentDoesNotStopTheRun) {
+    GetGlobalErrorVariable().store(false);
+    ASSERT_FALSE(GetGlobalInterruptSource().stop_requested());
+
+    TOperationResult timeout;
+    timeout.Ok = false;
+    timeout.ErrorClass = EErrorClass::Permanent;
+    timeout.NativeCode = "4012";
+    timeout.Message = "mysql_stmt_execute failed: [4012] Timeout";
+
+    EXPECT_FALSE(FailPermanent(4561, "Payment location update failed", timeout));
+    EXPECT_FALSE(GetGlobalErrorVariable().load());
+    EXPECT_FALSE(GetGlobalInterruptSource().stop_requested());
+}
+
+TEST(FailPermanent, CancelledDoesNotStopTheRun) {
+    GetGlobalErrorVariable().store(false);
+    ASSERT_FALSE(GetGlobalInterruptSource().stop_requested());
+
+    TBatchResult shutdown;
+    shutdown.Ok = false;
+    shutdown.ErrorClass = EErrorClass::Cancelled;
+    shutdown.Message = "session shutdown";
+
+    EXPECT_FALSE(FailPermanent(5080, "NewOrder insert order line failed", shutdown));
+    EXPECT_FALSE(GetGlobalErrorVariable().load());
+    EXPECT_FALSE(GetGlobalInterruptSource().stop_requested());
 }

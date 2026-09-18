@@ -104,14 +104,36 @@ inline void ThrowIfFinalCommitFailed(const TFinalCommitResult& r) {
     ThrowIfCommitFailed(r.Commit);
 }
 
-inline bool FailPermanent(size_t terminalId, const char* msg, std::string_view detail = {}) {
+// Logs a failed operation. Stops the run only for Integrity (adapter-api §4.5).
+// Permanent / cancelled / other classes return false so the terminal counts
+// Fail and continues.
+inline bool FailPermanent(
+    size_t terminalId,
+    const char* msg,
+    std::string_view detail,
+    EErrorClass errorClass)
+{
     if (detail.empty()) {
         LOG_E("Terminal " << terminalId << " " << msg);
     } else {
         LOG_E("Terminal " << terminalId << " " << msg << ": " << detail);
     }
-    RequestStopWithError();
+    if (AbortsRun(errorClass)) {
+        RequestStopWithError();
+    }
     return false;
+}
+
+inline bool FailPermanent(size_t terminalId, const char* msg) {
+    return FailPermanent(terminalId, msg, {}, EErrorClass::Integrity);
+}
+
+inline bool FailPermanent(size_t terminalId, const char* msg, const TOperationResult& r) {
+    return FailPermanent(terminalId, msg, r.Message, r.ErrorClass);
+}
+
+inline bool FailPermanent(size_t terminalId, const char* msg, const TBatchResult& r) {
+    return FailPermanent(terminalId, msg, r.Message, r.ErrorClass);
 }
 
 } // namespace NTpcc

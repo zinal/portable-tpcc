@@ -85,8 +85,7 @@ TFuture<bool> GetNewOrderTask(
             in.WarehouseID, in.DistrictID, in.CustomerID});
         ThrowIfRetryable(r);
         if (!r.Ok) {
-            co_return FailPermanent(context.TerminalID, "NewOrder customer not found",
-                r.Message);
+            co_return FailPermanent(context.TerminalID, "NewOrder customer not found", r);
         }
     }
 
@@ -94,8 +93,7 @@ TFuture<bool> GetNewOrderTask(
         auto r = co_await SuspendExecute(tx, context, TGetWarehouseTax{in.WarehouseID});
         ThrowIfRetryable(r);
         if (!r.Ok) {
-            co_return FailPermanent(context.TerminalID, "NewOrder warehouse not found",
-                r.Message);
+            co_return FailPermanent(context.TerminalID, "NewOrder warehouse not found", r);
         }
     }
 
@@ -105,8 +103,7 @@ TFuture<bool> GetNewOrderTask(
             in.WarehouseID, in.DistrictID});
         ThrowIfRetryable(r);
         if (!r.Ok) {
-            co_return FailPermanent(context.TerminalID, "NewOrder district not found",
-                r.Message);
+            co_return FailPermanent(context.TerminalID, "NewOrder district not found", r);
         }
         nextOrderID = std::get<TDistrictOrderReservation>(r.Payload).NextOrderID;
     }
@@ -117,8 +114,7 @@ TFuture<bool> GetNewOrderTask(
             in.NumItems, in.AllLocal});
         ThrowIfRetryable(r);
         if (!r.Ok) {
-            co_return FailPermanent(context.TerminalID, "NewOrder create order failed",
-                r.Message);
+            co_return FailPermanent(context.TerminalID, "NewOrder create order failed", r);
         }
     }
 
@@ -139,8 +135,7 @@ TFuture<bool> GetNewOrderTask(
         auto r = co_await SuspendExecute(tx, context, TGetItems{validItemIds});
         ThrowIfRetryable(r);
         if (!r.Ok) {
-            co_return FailPermanent(context.TerminalID, "NewOrder item not found",
-                r.Message);
+            co_return FailPermanent(context.TerminalID, "NewOrder item not found", r);
         }
         for (const auto& item : std::get<std::vector<TItemRow>>(r.Payload)) {
             itemPrices[item.ItemID] = item.Price;
@@ -166,8 +161,7 @@ TFuture<bool> GetNewOrderTask(
         auto r = co_await SuspendExecute(tx, context, TGetStocksForUpdate{in.DistrictID, stockKeys});
         ThrowIfRetryable(r);
         if (!r.Ok) {
-            co_return FailPermanent(context.TerminalID, "NewOrder stock not found",
-                r.Message);
+            co_return FailPermanent(context.TerminalID, "NewOrder stock not found", r);
         }
         for (auto& row : std::get<std::vector<TStockRow>>(r.Payload)) {
             stocks[{row.WarehouseID, row.ItemID}] = std::move(row);
@@ -235,8 +229,7 @@ TFuture<bool> GetNewOrderTask(
         auto batch = co_await SuspendExecuteBatch(tx, context, stockOps);
         ThrowIfBatchRetryable(batch);
         if (!batch.Ok) {
-            co_return FailPermanent(context.TerminalID, "NewOrder update stock failed",
-                batch.Message);
+            co_return FailPermanent(context.TerminalID, "NewOrder update stock failed", batch);
         }
     }
 
@@ -244,8 +237,7 @@ TFuture<bool> GetNewOrderTask(
         auto batch = co_await SuspendExecuteBatch(tx, context, lineOps);
         ThrowIfBatchRetryable(batch);
         if (!batch.Ok) {
-            co_return FailPermanent(context.TerminalID, "NewOrder insert order line failed",
-                batch.Message);
+            co_return FailPermanent(context.TerminalID, "NewOrder insert order line failed", batch);
         }
     }
 

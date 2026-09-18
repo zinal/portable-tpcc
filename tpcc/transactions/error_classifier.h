@@ -28,5 +28,6 @@ EErrorClass ClassifySqlState(std::string_view sqlState);
 
 bool IsRetryable(EErrorClass c);
 bool MayBlindRetry(EErrorClass c); // false for AmbiguousCommit / Integrity / Cancelled
+bool AbortsRun(EErrorClass c);     // true only for Integrity (fail the run)
 
 } // namespace NTpcc
