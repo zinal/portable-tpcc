@@ -238,7 +238,7 @@ terminals are never split across workers.
 | Field | Default | Meaning |
 | --- | --- | --- |
 | `seed` | omitted → loader default **1** | Deterministic generator seed. Set explicitly for cross-DBMS comparison. |
-| `batch_rows` | `2000` if ≤ 0 | Bulk-load batch size. Must not be negative. `mind-tpcc` and every adapter (`tpcc/loader` `DEFAULT_LOAD_BATCH_ROWS`) apply this fallback. |
+| `batch_rows` | `2000` if ≤ 0 | Bulk-load batch size. Must not be negative. `mind-tpcc` and every adapter (`tpcc/loader` `DEFAULT_LOAD_BATCH_ROWS`) apply this fallback. Larger batches can improve throughput, but increase each loader thread's row, parameter-binding, prepared-statement, and client-library buffers. The exact cost is adapter-specific; for OceanBase, see [Loader memory sizing](run-oceanbase.md#loader-memory-sizing). |
 
 ### `workload`
 
@@ -301,7 +301,7 @@ All listed fields except `async_work_drain` are required.
 | --- | --- | --- |
 | `pacing` | `enabled` | `enabled` \| `disabled`. TPC-C requires enabled (keying + think time). |
 | `think_time_distribution` | `exponential` | `exponential` (TPC-C §5.2.5.4) \| `compatibility` \| `constant` (`constant` is an alias of `compatibility`: fixed mean think time). |
-| `threads_per_loader` | `0` | Import concurrency. `0` = auto (min of assigned warehouses, host CPUs, adapter max). |
+| `threads_per_loader` | `0` | Import concurrency. `0` = auto (min of assigned warehouses, host CPUs, adapter max). Each thread has an independent DBMS connection and load buffers, so loader memory is approximately proportional to this value. Auto sizing is per process: co-located loader instances can each select the host CPU count and multiply both concurrency and memory use. |
 | `threads_per_worker` | `0` | Worker coroutine threads. `0` / omit keeps `threads: 0` in the assignment so each worker applies the same CPU + warehouse auto as standalone `--threads=0` / tpcc-postgres-cpp (see `ComputeRunLayout`, ≈ `ceil(warehouses / 1000)`). Explicit `N > 0` pins that many threads per worker. Auto sizing is useful when `ITpccTransaction` does not block the scheduler (PostgreSQL, OceanBase, and YDB worker paths). See [async-adapter-transactions.md](async-adapter-transactions.md). High-scale starting values: [worker-sizing.md](worker-sizing.md). |
 | `check_concurrency` | `0` | Parallel DBMS sessions for integrity checks. `0` / omit = auto (`min(scale.warehouses, 32)`). `1` = serial. Passed to `tpcc-<dbms> check` as `--threads=N`. `mind-tpcc --threads` overrides check concurrency, and also worker/loader threads, for the current invocation without rewriting run-config. |
 | `max_inflight_per_worker` | `100` if ≤ 0 | Max in-flight transactions per worker. Matches standalone `tpcc-* --max_inflight` / tpcc-postgres-cpp default. Override when a shard needs a higher cap (also bounded by adapter `MaxRecommendedInflight`). High-scale starting values per DBMS: [worker-sizing.md](worker-sizing.md). |
@@ -312,6 +312,21 @@ All listed fields except `async_work_drain` are required.
 | `retry.jitter` | `full` | `full` \| `none`. |
 | `histogram.unit` | `us` | Latency unit for `linear_exp` histograms. If set, MUST be `ms` or `us`. |
 | `histogram.highest` | `120000000` | Histogram max value. If set, MUST be greater than zero; omitted uses the default. Worker derives `hdr_till` (default 4096, capped by `highest`) and splits each doubling octave into 64 sub-buckets. Samples ≥ `highest` are counted in `overflow_count`, not as p99=`max_recorded`. |
+
+`batch_rows`, `threads_per_loader`, and the number of loader instances
+co-located on a host compound each other. As a first approximation, size
+loader client memory as:
+
+```text
+co-located loaders × threads_per_loader × per-connection batch/cache memory
+```
+
+The relationship is not a strict bound because DBMS client libraries,
+prepared-statement caches, and the process allocator can retain their
+high-water mark. `threads_per_worker` and `max_inflight_per_worker` control
+the worker phase and do not limit loader memory. Use an explicit
+`threads_per_loader` when several loaders share a host, lower `batch_rows`
+when RSS is high, and monitor every loader process separately.
 
 `retry_ambiguous_commit` is **not** a profile field. Run-config always
 materializes `false` (no retry after an ambiguous commit). Do not add it to

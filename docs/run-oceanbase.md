@@ -151,6 +151,52 @@ database:
     partitions: 64   # or 0 to derive from scale.warehouses, or -1 to disable
 ```
 
+### Loader memory sizing
+
+OceanBase bulk load prepares multi-row `INSERT` statements on every loader
+connection. A connection holds the generated rows, parameter values, connector
+bind arrays, and a bounded prepared-statement cache. The MySQL/OceanBase limit
+of 65,535 placeholders caps a single statement, but it is not a process memory
+limit: a connection can cache multiple statement shapes, and the allocator or
+connector can retain freed buffers at their high-water mark.
+
+The main client-memory multipliers are:
+
+- `data.batch_rows`: increases rows and bind parameters in each statement;
+- `runtime.threads_per_loader`: creates that many concurrent connections and
+  independent load buffers in each loader process;
+- repeated `loaders` hosts: co-located loader processes multiply both factors.
+
+Consequently, `batch_rows=5000`, eight threads, and two loaders on one host
+can use much more memory than one loader with the example defaults. The
+placeholder cap does not make that combination safe. `threads_per_worker` and
+`max_inflight_per_worker` apply to workers and do not constrain the load
+phase.
+
+For memory-constrained or co-located OceanBase loader hosts, start with an
+explicit configuration such as:
+
+```yaml
+data:
+  batch_rows: 1000
+
+runtime:
+  threads_per_loader: 2  # or 4 after measuring peak RSS
+```
+
+Reduce `batch_rows` to 500 or loader threads further if RSS keeps growing.
+Increasing either setting should be based on measured peak RSS as well as load
+throughput. Watch all co-located processes, for example:
+
+```bash
+watch -n 5 'ps -C tpcc-oceanbase -o pid,rss,vsz,nlwp,etime,cmd'
+```
+
+The kernel can enforce an external cgroup/systemd `MemoryHigh`/`MemoryMax`,
+but reaching `MemoryMax` kills the loader and fails the load stage; it protects
+the host rather than making the import complete within that budget. Swap can
+delay a host-wide OOM, but swapping also distorts load performance.
+
 ## Standalone local run
 
 ```bash
