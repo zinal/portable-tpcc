@@ -184,6 +184,10 @@ func ExampleWithName(dbms, name, sshUser string) (*Profile, error) {
 				Delivery:    5000,
 				StockLevel:  5000,
 			},
+			RemoteWarehousePercent: RemoteWarehousePercent{
+				NewOrder: intPtr(1),
+				Payment:  intPtr(15),
+			},
 		},
 		Loaders: []NamedHost{{Host: DefaultHost}},
 		Workers: []NamedHost{{Host: DefaultHost}},
@@ -270,6 +274,10 @@ func ExampleWithName(dbms, name, sshUser string) (*Profile, error) {
 }
 
 // HostsFromStrings builds loader/worker entries from address strings.
+func intPtr(v int) *int {
+	return &v
+}
+
 func HostsFromStrings(addrs []string) []NamedHost {
 	out := make([]NamedHost, 0, len(addrs))
 	for _, a := range addrs {

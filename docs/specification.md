@@ -169,7 +169,8 @@ documents:
 - `run_id`, DBMS settings (no passwords or tokens — only worker-local paths
   such as `password_file` / `sa_key_file` / `ca_file`, or a `password_env`
   name for standalone);
-- scale, seed, workload (mix, think/keying times, terminals per warehouse);
+- scale, seed, workload (mix, think/keying times, terminals per warehouse,
+  remote-warehouse percents);
 - loader/worker instance lists and computed warehouse ranges;
 - phase durations and runtime/retry/histogram settings;
 - binary name used for the run (for example `tpcc-ydb`).
@@ -666,10 +667,11 @@ uses the built-in default rather than silently substituting it for `<= 0`).
 Additionally, compare effective (default-merged) launch parameters against the
 fixed TPC-C 5.11 requirements used by built-in defaults: terminals per
 warehouse = 10; Clause 5.2.3 mix minima (Payment ≥ 43%, Order-Status /
-Delivery / Stock-Level ≥ 4%; New-Order has no mix minimum); pacing enabled;
-exponential think time; keying times and mean think times at least the
-Clause 5.2.5.7 minima (larger values remain conformant); and measurement
-interval ≥ 120 minutes. Report deviations in `mind-tpcc validate`, warn at
+Delivery / Stock-Level ≥ 4%; New-Order has no mix minimum); remote-warehouse
+percents New-Order 1% of order lines and Payment 15% of inputs
+(Clause 2.4.1.5 / 2.5.1.2); pacing enabled; exponential think time; keying
+times and mean think times at least the Clause 5.2.5.7 minima (larger values
+remain conformant); and measurement interval ≥ 120 minutes. Report deviations in `mind-tpcc validate`, warn at
 `test`, and persist `tpcc_settings_conformant` plus
 `tpcc_settings_deviations` in the aggregate. These deviations MUST NOT fail
 structural validation or change `result_class`. Phase durations MUST NOT be

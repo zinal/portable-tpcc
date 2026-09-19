@@ -49,6 +49,10 @@ workload:
     order_status: 4
     delivery: 4
     stock_level: 4
+  # TPC-C defaults: 1% remote New-Order lines, 15% remote Payment.
+  # remote_warehouse_percent:
+  #   new_order: 1
+  #   payment: 15
 
 # Connection addresses. Repeats mean co-location (one SSH/local session).
 # Instance names are generated from each host plus a 1-based index.

@@ -268,6 +268,10 @@ void WriteWorkerResultJson(const TArtifactPaths& paths, const TRunConfigDocument
                 {"transaction_mix", mix},
                 {"keying_time_ms", keying},
                 {"think_time_ms", think},
+                {"remote_warehouse_percent", {
+                    {"new_order", doc.Workload.NewOrderRemoteWarehousePercent},
+                    {"payment", doc.Workload.PaymentRemoteWarehousePercent},
+                }},
                 {"pacing", doc.PacingEnabled ? "enabled" : "disabled"},
                 {"think_time_distribution", ThinkTimeDistributionToString(doc.ThinkTimeDistribution)},
             }},

@@ -3,6 +3,7 @@
 #include "error_classifier.h"
 #include "session.h"
 
+#include <constants.h>
 #include <task_queue.h>
 
 #include <atomic>
@@ -38,6 +39,9 @@ struct TTransactionContext {
     ITaskQueue& TaskQueue;
 
     int SimulateTransactionSelect1 = 0;
+
+    int NewOrderRemoteWarehousePercent = NEW_ORDER_REMOTE_WAREHOUSE_PERCENT;
+    int PaymentRemoteWarehousePercent = PAYMENT_REMOTE_WAREHOUSE_PERCENT;
 
     // Generated once per business transaction; reused across retry attempts.
     std::shared_ptr<void> FixedInputs;

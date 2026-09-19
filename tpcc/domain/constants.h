@@ -38,6 +38,10 @@ constexpr int INVALID_ITEM_ID = -12345;
 constexpr int MIN_ITEMS = 5;
 constexpr int MAX_ITEMS = 15;
 
+// TPC-C §2.4.1.5 / §2.5.1.2 remote-warehouse input shares (percent, scale > 1).
+constexpr int NEW_ORDER_REMOTE_WAREHOUSE_PERCENT = 1;
+constexpr int PAYMENT_REMOTE_WAREHOUSE_PERCENT = 15;
+
 constexpr int C_LAST_LOAD_C = 157; // in range [0, 255]
 constexpr int C_LAST_RUN_C = 223; // in range [0, 255]
 

@@ -178,7 +178,10 @@ TTerminal::TTerminal(size_t terminalID,
     , ErrorClassifier(errorClassifier)
     , Isolation(isolation)
     , Context{terminalID, warehouseID, districtID, warehouseCount, taskQueue,
-              simulateTransactionSelect1, {}}
+              simulateTransactionSelect1,
+              workload.NewOrderRemoteWarehousePercent,
+              workload.PaymentRemoteWarehousePercent,
+              {}}
     , NoDelays(noDelays)
     , StopToken(stopToken)
     , PhaseController(phaseController)

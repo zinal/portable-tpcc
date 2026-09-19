@@ -67,10 +67,16 @@ type DataBlock struct {
 }
 
 type WorkloadBlock struct {
-	TerminalsPerWarehouse int                `json:"terminals_per_warehouse"`
-	TransactionMix        TransactionMixJSON `json:"transaction_mix"`
-	KeyingTimeMs          TxTimingJSON       `json:"keying_time_ms"`
-	ThinkTimeMs           TxTimingJSON       `json:"think_time_ms"`
+	TerminalsPerWarehouse  int                        `json:"terminals_per_warehouse"`
+	TransactionMix         TransactionMixJSON         `json:"transaction_mix"`
+	KeyingTimeMs           TxTimingJSON               `json:"keying_time_ms"`
+	ThinkTimeMs            TxTimingJSON               `json:"think_time_ms"`
+	RemoteWarehousePercent RemoteWarehousePercentJSON `json:"remote_warehouse_percent"`
+}
+
+type RemoteWarehousePercentJSON struct {
+	NewOrder int `json:"new_order"`
+	Payment  int `json:"payment"`
 }
 
 type TransactionMixJSON struct {

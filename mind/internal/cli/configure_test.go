@@ -57,6 +57,8 @@ func TestRun_configurePositionalPathAndOverrides(t *testing.T) {
 		"--foreign-keys", "off",
 		"--measurement", "30m",
 		"--stats-interval", "5s",
+		"--remote-warehouse-new-order", "0",
+		"--remote-warehouse-payment", "50",
 	})
 	if code != 0 {
 		t.Fatalf("configure exit=%d", code)
@@ -97,6 +99,12 @@ func TestRun_configurePositionalPathAndOverrides(t *testing.T) {
 	}
 	if p.Runtime.StatsInterval != "5s" {
 		t.Fatalf("stats_interval=%q", p.Runtime.StatsInterval)
+	}
+	if p.Workload.RemoteWarehousePercent.NewOrder == nil || *p.Workload.RemoteWarehousePercent.NewOrder != 0 {
+		t.Fatalf("remote new_order=%v", p.Workload.RemoteWarehousePercent.NewOrder)
+	}
+	if p.Workload.RemoteWarehousePercent.Payment == nil || *p.Workload.RemoteWarehousePercent.Payment != 50 {
+		t.Fatalf("remote payment=%v", p.Workload.RemoteWarehousePercent.Payment)
 	}
 }
 

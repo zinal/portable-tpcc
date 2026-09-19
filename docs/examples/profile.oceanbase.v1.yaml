@@ -61,6 +61,10 @@ workload:
     order_status: 4
     delivery: 4
     stock_level: 4
+  # TPC-C defaults: 1% remote New-Order lines, 15% remote Payment.
+  # remote_warehouse_percent:
+  #   new_order: 1
+  #   payment: 15
 
 # Connection addresses. Repeats mean co-located instances (one SSH/local session).
 # Mind assigns balanced contiguous warehouse ranges across loaders/workers.

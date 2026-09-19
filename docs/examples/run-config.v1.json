@@ -46,6 +46,10 @@
       "order_status": 10000,
       "delivery": 5000,
       "stock_level": 5000
+    },
+    "remote_warehouse_percent": {
+      "new_order": 1,
+      "payment": 15
     }
   },
   "load_assignment": [

@@ -27,6 +27,10 @@ func DefaultWorkload() WorkloadBlock {
 			Delivery:    5000,
 			StockLevel:  5000,
 		},
+		RemoteWarehousePercent: RemoteWarehousePercentJSON{
+			NewOrder: 1,
+			Payment:  15,
+		},
 	}
 }
 
@@ -94,6 +98,12 @@ func ResolveWorkload(w profile.Workload) WorkloadBlock {
 	applyMixOverride(&out.TransactionMix, w.TransactionMix)
 	applyTimingOverride(&out.KeyingTimeMs, w.KeyingTimeMs)
 	applyTimingOverride(&out.ThinkTimeMs, w.ThinkTimeMs)
+	if w.RemoteWarehousePercent.NewOrder != nil {
+		out.RemoteWarehousePercent.NewOrder = *w.RemoteWarehousePercent.NewOrder
+	}
+	if w.RemoteWarehousePercent.Payment != nil {
+		out.RemoteWarehousePercent.Payment = *w.RemoteWarehousePercent.Payment
+	}
 	return out
 }
 

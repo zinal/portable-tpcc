@@ -118,6 +118,41 @@ func TestValidate_tpccSettingsAllowNewOrderRemainderAndLongerWaits(t *testing.T)
 	}
 }
 
+func TestValidate_rejectsRemoteWarehousePercentOutOfRange(t *testing.T) {
+	path := filepath.Join("..", "..", "testdata", "profile.valid.yaml")
+	p, err := profile.ParseFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	over := 101
+	p.Workload.RemoteWarehousePercent.NewOrder = &over
+	res := validate.Profile(p)
+	if res.Valid {
+		t.Fatal("expected remote_warehouse_percent.new_order=101 to fail")
+	}
+	if !strings.Contains(strings.Join(res.Errors, "\n"), "remote_warehouse_percent.new_order") {
+		t.Fatalf("expected new_order range error, got %v", res.Errors)
+	}
+
+	neg := -1
+	p.Workload.RemoteWarehousePercent.NewOrder = nil
+	p.Workload.RemoteWarehousePercent.Payment = &neg
+	res = validate.Profile(p)
+	if res.Valid {
+		t.Fatal("expected remote_warehouse_percent.payment=-1 to fail")
+	}
+	if !strings.Contains(strings.Join(res.Errors, "\n"), "remote_warehouse_percent.payment") {
+		t.Fatalf("expected payment range error, got %v", res.Errors)
+	}
+
+	zero := 0
+	p.Workload.RemoteWarehousePercent.Payment = &zero
+	res = validate.Profile(p)
+	if !res.Valid {
+		t.Fatalf("explicit 0 must be structurally valid, errors: %v", res.Errors)
+	}
+}
+
 func TestValidate_rejectsNonPositiveMeasurement(t *testing.T) {
 	path := filepath.Join("..", "..", "testdata", "profile.valid.yaml")
 	p, err := profile.ParseFile(path)

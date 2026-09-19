@@ -84,10 +84,19 @@ type Data struct {
 
 // Workload holds optional overrides; omitted fields use mind-tpcc defaults.
 type Workload struct {
-	TerminalsPerWarehouse int            `yaml:"terminals_per_warehouse"`
-	TransactionMix        TransactionMix `yaml:"transaction_mix"`
-	KeyingTimeMs          TxTiming       `yaml:"keying_time_ms"`
-	ThinkTimeMs           TxTiming       `yaml:"think_time_ms"`
+	TerminalsPerWarehouse  int                    `yaml:"terminals_per_warehouse"`
+	TransactionMix         TransactionMix         `yaml:"transaction_mix"`
+	KeyingTimeMs           TxTiming               `yaml:"keying_time_ms"`
+	ThinkTimeMs            TxTiming               `yaml:"think_time_ms"`
+	RemoteWarehousePercent RemoteWarehousePercent `yaml:"remote_warehouse_percent"`
+}
+
+// RemoteWarehousePercent is the share of New-Order lines / Payment inputs
+// that use a foreign warehouse when scale > 1. Pointers distinguish omit
+// (keep TPC-C default) from an explicit 0 (all home-warehouse).
+type RemoteWarehousePercent struct {
+	NewOrder *int `yaml:"new_order,omitempty"`
+	Payment  *int `yaml:"payment,omitempty"`
 }
 
 type TransactionMix struct {

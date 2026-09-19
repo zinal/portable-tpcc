@@ -25,6 +25,10 @@
         "order_status": 4,
         "delivery": 4,
         "stock_level": 4
+      },
+      "remote_warehouse_percent": {
+        "new_order": 1,
+        "payment": 15
       }
     },
     "worker_assignment": [

@@ -147,6 +147,9 @@ func Profile(p *profile.Profile) *Result {
 	if wl.TerminalsPerWarehouse <= 0 {
 		res.Add("workload.terminals_per_warehouse must be positive")
 	}
+	if err := validateRemoteWarehousePercent(wl.RemoteWarehousePercent); err != nil {
+		res.Add(err.Error())
+	}
 
 	seenNames := map[string]bool{}
 	remoteKeys := map[string]bool{}
@@ -241,6 +244,16 @@ func attachTPCSettingsConformance(p *profile.Profile, res *Result) {
 	})
 	res.TPCCSettingsDeviations = devs
 	res.TPCCSettingsConformant = len(devs) == 0
+}
+
+func validateRemoteWarehousePercent(p config.RemoteWarehousePercentJSON) error {
+	if p.NewOrder < 0 || p.NewOrder > 100 {
+		return fmt.Errorf("workload.remote_warehouse_percent.new_order must be in [0, 100]")
+	}
+	if p.Payment < 0 || p.Payment > 100 {
+		return fmt.Errorf("workload.remote_warehouse_percent.payment must be in [0, 100]")
+	}
+	return nil
 }
 
 func validateMix(m config.TransactionMixJSON) error {
