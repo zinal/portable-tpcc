@@ -58,7 +58,7 @@ TFuture<bool> GetNewOrderTask(
         for (int i = 0; i < generated.NumItems; ++i) {
             generated.ItemIDs.push_back(GetRandomItemID());
             if (context.WarehouseCount == 1 ||
-                RandomNumber(1, 100) > context.NewOrderRemoteWarehousePercent)
+                static_cast<int>(RandomNumber(1, 100)) > context.NewOrderRemoteWarehousePercent)
             {
                 generated.SupplierWarehouseIDs.push_back(generated.WarehouseID);
             } else {
