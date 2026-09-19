@@ -1,6 +1,6 @@
 # Анализ соответствия реализации требованиям TPC-C 5.11
 
-Статус: обновлённый анализ реализации на commit `1aac6c4a`.
+Статус: обновлённый анализ реализации на commit `b5b83006`.
 
 Основа сравнения: [TPC Benchmark C Standard Specification, Revision
 5.11](https://www.tpc.org/TPC_Documents_Current_Versions/pdf/tpc-c_v5.11.0.pdf).
@@ -31,6 +31,7 @@ SQL/YQL adapters, physical schema, affected-row checks и preflight.
 | Post-import catalog | Полный | Полный | Полный |
 | Exact money/rate domain path | Да | Да, `Decimal(22,9)` | Да |
 | Delivery fail-closed affected rows | Да | Неполно | Да |
+| Worker isolation по умолчанию | Repeatable Read | SnapshotRW, опционально SerializableRW | Repeatable Read |
 | Physical schema близка к TPC-C | Да, с отдельными type deviations | Существенно более permissive | Да, с отдельными type deviations |
 
 Ни один вариант не является полным официальным TPC-C 5.11 benchmark из-за
@@ -47,7 +48,9 @@ reporting, deferred Delivery и certification procedures.
 - terminals, mix, keying/think time, pacing, retries и phase controller;
 - worker artifacts, histograms, collect и consolidate;
 - consistency/post-import checks и их orchestration;
-- git history прежних исправлений и изменения после commit `19df199`.
+- git history прежних исправлений и изменения после commit `1aac6c4a`,
+  включая новый YDB `snapshot-rw`, обработку permanent errors, debug probe,
+  component histograms и batching/connection-pool оптимизации OceanBase.
 
 Выполнены:
 
@@ -60,13 +63,28 @@ reporting, deferred Delivery и certification procedures.
 go -C mind test ./...
 ```
 
-Результат: 11 C++ suites / 145 tests и все Go tests прошли. Эти тесты не
+Результат: 11 C++ suites / 202 tests и все Go tests прошли. Эти тесты не
 исполняют весь SQL/YQL consistency catalog на намеренно повреждённых данных и
 не заменяют integration runs на живых СУБД, длительный measurement interval
 или failure/recovery tests.
 
 Критичность ниже относится к достоверности engineering-результата. Некоторые
 пункты отдельно помечены как высокие только для официального TPC-C.
+
+### Результат проверки последних оптимизаций
+
+Batching New-Order, Payment и Delivery в OceanBase сохраняет порядок
+логических операций и атомарность штатного пути. Уникальные ITEM/STOCK keys
+обрабатываются детерминированно, итоговые STOCK increments для повторяющихся
+товаров суммируются, а missing rows и affected cardinalities проверяются до
+COMMIT. Сокращение critical sections Payment/Delivery также не вынесло
+бизнес-операции за границы транзакции. Статически доказанной регрессии
+успешного TPC-C workflow в этих оптимизациях не найдено.
+
+Однако сопутствующие изменения обнаружили новые gaps на error/startup paths:
+OceanBase бесконечно повторяет initial connect до проверки `--start-at`, а
+ошибка `ROLLBACK` игнорируется. Новые component histograms также валидируются
+слабее основного response-time histogram. Эти пункты описаны ниже.
 
 ## Активные замечания
 
@@ -91,9 +109,9 @@ counters отсутствуют, поэтому фактическую выбо�
 
 **Критичность: высокая для официального TPC-C; средняя для engineering.**
 
-Worker и consolidator корректно сохраняют full response-time histogram,
-`min`/`max`/`avg` и p50/p90/p95/p99. Microsecond mode больше не проходит через
-предварительное округление до milliseconds.
+Worker и consolidator корректно сохраняют основной full response-time
+histogram, `min`/`max`/`avg` и p50/p90/p95/p99. Microsecond mode больше не
+проходит через предварительное округление до milliseconds.
 
 По-прежнему отсутствуют:
 
@@ -187,13 +205,13 @@ YDB adapter часто возвращает ожидаемое число affect
 - carrier обновляется частичным `UPSERT`, способным скрыть отсутствующий
   parent row.
 
-Это ослабляет обнаружение corruption и reservation bugs. При этом вывод о
-гарантированном concurrent double-delivery был бы неверен: все операции одной
-бизнес-транзакции выполняются в `SerializableRW` transaction
-(`tpcc/dbms/ydb/ydb_session.cpp`), а YDB `ABORTED` классифицируется как
-retryable. Отсутствие `FOR UPDATE` само по себе не доказывает double commit;
-активный дефект — именно отсутствие fail-closed affected-row/cardinality
-checks.
+Это ослабляет обнаружение corruption и reservation bugs. YDB теперь по
+умолчанию использует `SnapshotRW`, а `SerializableRW` доступен через
+`database.options.tx_mode`. Отсутствие `FOR UPDATE` само по себе не
+доказывает concurrent double commit, и статический аудит не установил
+конкретную isolation anomaly для штатных данных. Но прежнее объяснение через
+обязательный `SerializableRW` больше неприменимо; активный доказанный дефект —
+отсутствие fail-closed affected-row/cardinality checks.
 
 ### 9. Payment при одном warehouse нарушает local input rule
 
@@ -247,12 +265,94 @@ progress format. SQL/YQL predicates трёх adapters не выполняютс�
 с NULL, orphan rows, mixed delivery dates и неверными aggregates. Нужны
 DB-backed integration tests либо dialect-specific query fixtures.
 
+### 14. OceanBase не гарантирует подтверждённый ROLLBACK
+
+**Критичность: высокая для error path и intentional rollback.**
+
+`TObConnection::Rollback()` игнорирует ошибку `mysql_query("ROLLBACK")`.
+Следующие уровни очищают `InTxn_` и возвращают `RolledBack`, поэтому shared
+workflow может принять не подтверждённый сервером rollback за успешный.
+
+Это затрагивает intentional New-Order rollback и новые Payment/Delivery
+cardinality guards: guards выполняются до COMMIT, но при mismatch фактический
+rollback не гарантирован. PostgreSQL и YDB возвращают ошибку rollback; это
+существенное отличие OceanBase на failure path.
+
+### 15. OceanBase может пропустить `--start-at` при инициализации pool
+
+**Критичность: высокая operational.**
+
+Конструктор `TObConnectionPool` повторяет создание каждого initial connection
+без ограничения числа попыток, stop token и deadline, включая permanent
+authentication/configuration errors. Проверка missed start deadline
+выполняется только после полного создания pool.
+
+В результате процесс может не выполнить требование завершиться fatal, если
+не готов к `--start-at`, а orchestrator увидит зависший startup. Это
+регрессия, внесённая retry-оптимизацией initial pool; рабочие PostgreSQL/YDB
+не имеют этого конкретного бесконечного pre-deadline loop.
+
+### 16. Component histograms объединяются fail-open
+
+**Критичность: средняя для диагностики; основной response time не затронут.**
+
+Worker публикует пять components (`admission_wait`, `transaction`, `pure`,
+`session_pool_wait`, `retry_backoff`), но consolidator не требует одинаковый
+полный набор у всех workers и не сверяет component layout/unit/count с
+parent histogram. Если component отсутствует у части workers, merge молча
+строит percentile по неполному подмножеству.
+
+Основной queue-inclusive histogram и его связь с completed counters
+валидируются строго, поэтому throughput и основные response-time percentiles
+от этого дефекта не меняются.
+
+### 17. `pure` latency неполна для rollback и retries
+
+**Критичность: средняя для новых diagnostic metrics.**
+
+Shared terminal обнуляет `latencyPure` перед каждой попыткой, поэтому component
+описывает только последнюю попытку, а не полный response. Intentional
+New-Order бросает `TUserAbortedException` до записи `latencyPure`, и такая
+транзакция публикует нулевой `pure`. Основной queue-inclusive latency
+записывается корректно.
+
+### 18. PostgreSQL занижает `session_pool_wait`
+
+**Критичность: средняя для cross-DBMS component comparison.**
+
+Измерение охватывает вызов `WaitCreateSession()`, но не следующий 1 ms yield
+при возврате `nullptr`. PostgreSQL использует именно этот polling fallback;
+OceanBase предоставляет ожидающий future. Поэтому при pool contention
+одноимённый component имеет различную границу измерения для двух СУБД и не
+подходит для прямого сравнения.
+
+### 19. Debug probe не удерживает одну session
+
+**Критичность: средняя для диагностики планов; measurement run не затронут.**
+
+Probe получает и уничтожает session на каждой попытке вместо одной session на
+все последовательные запуски. Особенно для YDB это может менять SDK
+session и plan-cache context между попытками, делая `first`/`rest_avg`
+adapter-dependent. Это расходится с внутренним контрактом §9.3, хотя сами
+транзакции остаются последовательными.
+
+### 20. `cancelled` не приводит к phase stop
+
+**Критичность: средняя operational.**
+
+Shared workflows не выбрасывают `TClassifiedError` для operation result с
+классом `cancelled`; `FailPermanent` считает его обычным Fail и продолжает
+работу. Это расходится с adapter API, где `cancelled` означает phase stop без
+retry. Unit test сейчас закрепляет именно текущее, противоречащее контракту
+поведение.
+
 ## Подтверждённые исправления без регрессии
 
 На текущем HEAD подтверждены:
 
-- intentional rollback New-Order выполняет DB profile всех валидных lines,
-  принимает только ожидаемый ITEM not-found и подтверждённый rollback;
+- intentional rollback New-Order выполняет DB profile всех валидных lines и
+  принимает только ожидаемый ITEM not-found; подтверждение rollback корректно
+  в PostgreSQL/YDB, но не гарантировано OceanBase (активный пункт 14);
 - intentional rollback входит в New-Order throughput и response-time
   histogram;
 - default think time экспоненциальный;
@@ -273,13 +373,18 @@ DB-backed integration tests либо dialect-specific query fixtures.
 - warehouse check ranges параметризованы и одинаковы во всех adapters;
 - YDB Optional<Bool>, absolute path prefix и Decimal aggregate casts сохранены;
 - OceanBase exact money comparisons, query timeout и FULL JOIN emulation
-  сохранены.
+  сохранены;
+- OceanBase batching сохраняет ITEM/STOCK/order-line cardinalities и
+  pre-COMMIT Payment/Delivery guards на успешном пути;
+- histogram bucket accuracy, overflow censoring и checked merge arithmetic
+  сохранены после изменения layout.
 
-Таким образом, прежние defects 5.1-5.14 и 5.17-5.19 не вернулись, кроме
-того, что Delivery concurrency fix был реализован как explicit row guard
-только в PostgreSQL/OceanBase. Для YDB эквивалентная защита от concurrent
-commit обеспечивается serializable conflict detection, но defensive
-affected-row validation остаётся неполной.
+Таким образом, прежние defects 5.1-5.14 и 5.17-5.19 не вернулись на штатном
+пути, кроме DBMS-specific оговорки о неподтверждённом OceanBase rollback.
+Delivery explicit row guards реализованы только в PostgreSQL/OceanBase.
+Для YDB defensive affected-row validation остаётся неполной; default
+`SnapshotRW` не позволяет больше обосновывать это обязательной serializable
+conflict detection.
 
 ## Принятые ограничения продукта
 
@@ -298,13 +403,13 @@ affected-row validation остаётся неполной.
 
 | Область | Оценка |
 | --- | --- |
-| Shared transaction core | Основные пять workflows реализованы; active gap — single-Warehouse Payment district |
+| Shared transaction core | Основные пять workflows реализованы; active gaps — single-Warehouse Payment district и обработка `cancelled` |
 | Initial population | Cardinalities и delivered split корректны; a-string и per-run C values не соответствуют |
-| PostgreSQL adapter | Consistency suite корректен; Delivery guards есть; Order-Status ordering и check status classification остаются |
-| YDB adapter | Serializable workload и полный catalog; NULL fail-open checks и неполные affected-row guards |
-| OceanBase adapter | Consistency suite корректен; Delivery guards и timeout есть; отдельные DDL type deviations |
-| Runtime | Think time, pacing, rollback accounting и measurement boundaries исправлены |
-| Reporting | Histogram integrity исправлена; official variability и RT reporting неполны |
+| PostgreSQL adapter | Consistency suite и Delivery guards корректны; Order-Status ordering, check status classification и component pool-wait boundary остаются |
+| YDB adapter | SnapshotRW default / опциональный SerializableRW и полный catalog; NULL fail-open checks и неполные affected-row guards |
+| OceanBase adapter | Успешный batching path и Delivery guards корректны; rollback и initial pool deadline error paths дефектны |
+| Runtime | Think time, pacing, rollback accounting и measurement boundaries исправлены; debug session reuse и cancellation расходятся с контрактом |
+| Reporting | Основной histogram строгий; component merge/pure latency, official variability и RT reporting неполны |
 | Orchestration | Nonce/identity checks усилены; stale local collection и custom binary gate остаются |
 
 Документ ниже сохраняет предыдущий аудит commit `19df199` как исторический
