@@ -63,7 +63,7 @@ reporting, deferred Delivery и certification procedures.
 go -C mind test ./...
 ```
 
-Результат: все перечисленные C++ suites и все Go tests прошли. Эти тесты не
+Результат: 11 C++ suites / 202 tests и все Go tests прошли. Эти тесты не
 исполняют весь SQL/YQL consistency catalog на намеренно повреждённых данных и
 не заменяют integration runs на живых СУБД, длительный measurement interval
 или failure/recovery tests.
