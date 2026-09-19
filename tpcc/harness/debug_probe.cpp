@@ -140,6 +140,8 @@ TFuture<TDebugReport> RunDebugLoop(const TDebugProbeRequest request, ITaskQueue&
         request.WarehouseCount,
         taskQueue,
         0,
+        request.NewOrderRemoteWarehousePercent,
+        request.PaymentRemoteWarehousePercent,
         {}};
 
     auto stopToken = GetGlobalInterruptSource().get_token();
@@ -397,6 +399,8 @@ int RunOrchestratedDebug(
     req.WarehouseID = 1;
     req.WarehouseCount = doc.ScaleWarehouses > 0 ? static_cast<size_t>(doc.ScaleWarehouses) : 1;
     req.DistrictID = 1;
+    req.NewOrderRemoteWarehousePercent = doc.Workload.NewOrderRemoteWarehousePercent;
+    req.PaymentRemoteWarehousePercent = doc.Workload.PaymentRemoteWarehousePercent;
     req.Repeats = repeats;
     req.RunId = doc.RunId;
     req.Instance = instance;

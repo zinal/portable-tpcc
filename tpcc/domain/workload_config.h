@@ -4,6 +4,7 @@
 
 #include <array>
 #include <cstdint>
+#include <stdexcept>
 #include <string>
 
 namespace NTpcc {
@@ -29,7 +30,17 @@ struct TWorkloadConfig {
     bool HasCustomKeying = false;
     bool HasCustomThink = false;
     std::array<TTxWorkload, TRANSACTION_TYPE_COUNT> PerTx{};
+    // Percent of New-Order lines with a remote supply warehouse (TPC-C §2.4.1.5).
+    int NewOrderRemoteWarehousePercent = NEW_ORDER_REMOTE_WAREHOUSE_PERCENT;
+    // Percent of Payment inputs with a remote customer warehouse (TPC-C §2.5.1.2).
+    int PaymentRemoteWarehousePercent = PAYMENT_REMOTE_WAREHOUSE_PERCENT;
 };
+
+inline void ValidateRemoteWarehousePercent(int value, const char* field) {
+    if (value < 0 || value > 100) {
+        throw std::runtime_error(std::string(field) + " must be in [0, 100]");
+    }
+}
 
 // Histogram settings from runtime.histogram. Mapped onto THistogram linear_exp:
 // linear buckets [0, HdrTill), then at most 64 equal-width sub-buckets per

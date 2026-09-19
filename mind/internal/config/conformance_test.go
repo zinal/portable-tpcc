@@ -34,6 +34,8 @@ func TestTPCSettingsDeviations_reportsAllClasses(t *testing.T) {
 	rc.Workload.TransactionMix.Payment = 30
 	rc.Workload.KeyingTimeMs.NewOrder = 1000
 	rc.Workload.ThinkTimeMs.Delivery = 1000
+	rc.Workload.RemoteWarehousePercent.NewOrder = 0
+	rc.Workload.RemoteWarehousePercent.Payment = 50
 	rc.Runtime.Pacing = "disabled"
 	rc.Runtime.ThinkTimeDistribution = "compatibility"
 	rc.Phases.MeasurementMs = 30 * 60 * 1000
@@ -45,6 +47,8 @@ func TestTPCSettingsDeviations_reportsAllClasses(t *testing.T) {
 		"transaction_mix.payment",
 		"keying_time_ms.new_order=1000",
 		"think_time_ms.delivery=1000",
+		"remote_warehouse_percent.new_order=0",
+		"remote_warehouse_percent.payment=50",
 		`pacing="disabled"`,
 		`think_time_distribution="compatibility"`,
 		"phases.measurement=",

@@ -228,6 +228,12 @@ void ValidateRunConfigDocument(const TRunConfigDocument& doc) {
     if (totalWeight <= 0.0) {
         throw std::runtime_error("workload.transaction_mix must have positive total weight");
     }
+    ValidateRemoteWarehousePercent(
+        doc.Workload.NewOrderRemoteWarehousePercent,
+        "workload.remote_warehouse_percent.new_order");
+    ValidateRemoteWarehousePercent(
+        doc.Workload.PaymentRemoteWarehousePercent,
+        "workload.remote_warehouse_percent.payment");
     if (doc.Histogram.Configured && doc.Histogram.Highest == 0) {
         throw std::runtime_error("runtime.histogram.highest must be greater than zero");
     }
@@ -412,6 +418,15 @@ TRunConfigDocument LoadRunConfigDocument(const std::string& path) {
             doc.Workload.PerTx[static_cast<size_t>(ETransactionType::OrderStatus)].ThinkTimeMs = t.value("order_status", ORDER_STATUS_THINK_TIME.count() * 1000);
             doc.Workload.PerTx[static_cast<size_t>(ETransactionType::Delivery)].ThinkTimeMs = t.value("delivery", DELIVERY_THINK_TIME.count() * 1000);
             doc.Workload.PerTx[static_cast<size_t>(ETransactionType::StockLevel)].ThinkTimeMs = t.value("stock_level", STOCK_LEVEL_THINK_TIME.count() * 1000);
+        }
+        if (wl.contains("remote_warehouse_percent") && wl["remote_warehouse_percent"].is_object()) {
+            const auto& remote = wl["remote_warehouse_percent"];
+            doc.Workload.NewOrderRemoteWarehousePercent = ReadIntNonNegative(
+                remote, "new_order", NEW_ORDER_REMOTE_WAREHOUSE_PERCENT,
+                "workload.remote_warehouse_percent.new_order");
+            doc.Workload.PaymentRemoteWarehousePercent = ReadIntNonNegative(
+                remote, "payment", PAYMENT_REMOTE_WAREHOUSE_PERCENT,
+                "workload.remote_warehouse_percent.payment");
         }
     }
     if (root.contains("load_assignment") && root["load_assignment"].is_array()) {

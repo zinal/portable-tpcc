@@ -37,7 +37,7 @@ TFuture<bool> GetPaymentTask(
         generated.DistrictID = RandomNumber(DISTRICT_LOW_ID, DISTRICT_HIGH_ID);
         generated.PaymentAmount = TMoney::FromCents(RandomNumber(100, 500000));
 
-        if (RandomNumber(1, 100) <= 85) {
+        if (RandomNumber(1, 100) <= (100 - context.PaymentRemoteWarehousePercent)) {
             generated.CustomerDistrictID = generated.DistrictID;
             generated.CustomerWarehouseID = generated.WarehouseID;
         } else {

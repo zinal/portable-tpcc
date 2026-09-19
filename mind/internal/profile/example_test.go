@@ -70,6 +70,7 @@ func TestExample_pgsqlIncludesOptions(t *testing.T) {
 		"seed: 1",
 		"batch_rows: 2000",
 		"terminals_per_warehouse: 10",
+		"remote_warehouse_percent:",
 		"max_inflight_per_worker: 100",
 		"stats_interval: 30s",
 		"local_artifacts: .",

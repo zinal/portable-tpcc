@@ -57,6 +57,19 @@ func tpcSettingsDeviations(
 	out = append(out, timingDeviations("keying_time_ms", wl.KeyingTimeMs, defaults.KeyingTimeMs)...)
 	out = append(out, timingDeviations("think_time_ms", wl.ThinkTimeMs, defaults.ThinkTimeMs)...)
 
+	if wl.RemoteWarehousePercent.NewOrder != defaults.RemoteWarehousePercent.NewOrder {
+		out = append(out, fmt.Sprintf(
+			"workload.remote_warehouse_percent.new_order=%d; TPC-C requires %d",
+			wl.RemoteWarehousePercent.NewOrder, defaults.RemoteWarehousePercent.NewOrder,
+		))
+	}
+	if wl.RemoteWarehousePercent.Payment != defaults.RemoteWarehousePercent.Payment {
+		out = append(out, fmt.Sprintf(
+			"workload.remote_warehouse_percent.payment=%d; TPC-C requires %d",
+			wl.RemoteWarehousePercent.Payment, defaults.RemoteWarehousePercent.Payment,
+		))
+	}
+
 	if pacing == "" {
 		pacing = "enabled"
 	}

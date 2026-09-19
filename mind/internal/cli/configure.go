@@ -55,6 +55,8 @@ type configureOpts struct {
 	ThinkOrderStatus      *int
 	ThinkDelivery         *int
 	ThinkStockLevel       *int
+	RemoteNewOrder        *int
+	RemotePayment         *int
 	Loaders               []string
 	Workers               []string
 	StartLead             *string
@@ -406,6 +408,20 @@ func parseConfigureArgs(args []string) (*configureOpts, error) {
 				return nil, err
 			}
 			opts.ThinkStockLevel = &n
+			i = next
+		case arg == "--remote-warehouse-new-order" || strings.HasPrefix(arg, "--remote-warehouse-new-order="):
+			n, next, err := requireFlagInt(args, i, "--remote-warehouse-new-order")
+			if err != nil {
+				return nil, err
+			}
+			opts.RemoteNewOrder = &n
+			i = next
+		case arg == "--remote-warehouse-payment" || strings.HasPrefix(arg, "--remote-warehouse-payment="):
+			n, next, err := requireFlagInt(args, i, "--remote-warehouse-payment")
+			if err != nil {
+				return nil, err
+			}
+			opts.RemotePayment = &n
 			i = next
 		case arg == "--loaders" || strings.HasPrefix(arg, "--loaders="):
 			val, next, err := requireFlagValue(args, i, "--loaders")
@@ -782,6 +798,14 @@ func buildConfigureProfile(opts *configureOpts) (*profile.Profile, error) {
 	applyInt(&p.Workload.ThinkTimeMs.OrderStatus, opts.ThinkOrderStatus)
 	applyInt(&p.Workload.ThinkTimeMs.Delivery, opts.ThinkDelivery)
 	applyInt(&p.Workload.ThinkTimeMs.StockLevel, opts.ThinkStockLevel)
+	if opts.RemoteNewOrder != nil {
+		v := *opts.RemoteNewOrder
+		p.Workload.RemoteWarehousePercent.NewOrder = &v
+	}
+	if opts.RemotePayment != nil {
+		v := *opts.RemotePayment
+		p.Workload.RemoteWarehousePercent.Payment = &v
+	}
 	if len(opts.Loaders) > 0 {
 		p.Loaders = profile.HostsFromStrings(opts.Loaders)
 	}
@@ -1046,6 +1070,8 @@ Workload overrides:
   --keying-delivery <n>        --keying-stock-level <n>
   --think-new-order <n>        --think-payment <n> --think-order-status <n>
   --think-delivery <n>         --think-stock-level <n>
+  --remote-warehouse-new-order <n>
+  --remote-warehouse-payment <n>
 
 YDB:
   --auth-scheme <anonymous|login|sa_key>

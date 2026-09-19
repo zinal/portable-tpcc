@@ -242,7 +242,10 @@ terminals are never split across workers.
 
 ### `workload`
 
-All fields optional; zeros/omissions keep the built-in default.
+All fields optional. For mix, keying/think times, and
+`terminals_per_warehouse`, zeros/omissions keep the built-in default. For
+`remote_warehouse_percent`, omission keeps the TPC-C default; explicit `0`
+means no remote warehouses (allowed; reported as a TPC-C settings deviation).
 
 | Field | Default | TPC-C 5.11 |
 | --- | --- | --- |
@@ -254,8 +257,11 @@ All fields optional; zeros/omissions keep the built-in default.
 | `transaction_mix.stock_level` | `4` | ≥ 4% |
 | `keying_time_ms.*` | 18000 / 3000 / 2000 / 2000 / 2000 | minima (ms); larger values remain TPC-C conformant |
 | `think_time_ms.*` | 12000 / 12000 / 10000 / 5000 / 5000 | minimum means (ms); larger values remain TPC-C conformant |
+| `remote_warehouse_percent.new_order` | `1` | 1% of New-Order lines use a remote supply warehouse when scale > 1 (Clause 2.4.1.5) |
+| `remote_warehouse_percent.payment` | `15` | 15% of Payment inputs use a remote customer warehouse when scale > 1 (Clause 2.5.1.2) |
 
-Mix weights must all be positive. Percentages are weight/sum. Deviations from
+Mix weights must all be positive. Percentages are weight/sum.
+`remote_warehouse_percent.*` must be integers in `[0, 100]`. Deviations from
 TPC-C 5.11 are reported by `validate` / `test` / `aggregate` and do **not**
 fail structural validation.
 
@@ -437,6 +443,8 @@ drop    --run-config <path> --instance <name>
 - `terminals_per_warehouse = 10`
 - mix minima Payment 43% / Order-Status 4% / Delivery 4% / Stock-Level 4%
   (New-Order has no Clause 5.2.3 minimum)
+- `remote_warehouse_percent.new_order = 1` and
+  `remote_warehouse_percent.payment = 15`
 - `runtime.pacing = enabled`
 - `think_time_distribution = exponential`
 - keying times and mean think times ≥ Clause 5.2.5.7 minima (see `workload`
