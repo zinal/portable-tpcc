@@ -60,3 +60,6 @@ decisions and phase checklist):
 [docs/alignment-plan.md](docs/alignment-plan.md). Engineering vs TPC-C 5.11
 conformance notes:
 [docs/tpcc-5.11-conformance-analysis.md](docs/tpcc-5.11-conformance-analysis.md).
+Recommended transaction/query corrections, split into shared, PostgreSQL,
+YDB, and OceanBase backlogs:
+[docs/transaction-query-improvement-plan.md](docs/transaction-query-improvement-plan.md).
