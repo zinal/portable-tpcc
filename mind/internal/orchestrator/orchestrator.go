@@ -61,6 +61,10 @@ type Orchestrator struct {
 	StateStore *state.Store
 	// launched is the remote processes started by this mind-tpcc invocation.
 	launched []*launchedProc
+	// remoteRunFiles records host+runDir pairs already pushed this invocation.
+	// Co-located roles share run-config/credentials; re-uploading while a
+	// sibling is reading (cat > truncates) can make ca.pem appear empty.
+	remoteRunFiles map[string]struct{}
 }
 
 // Context holds materialized configuration for a run.

@@ -46,22 +46,40 @@ func (l *Local) Upload(localPath, remotePath string) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
 		return err
 	}
-	// Unlink first so a running executable can be replaced (ETXTBSY).
-	if err := os.Remove(dst); err != nil && !os.IsNotExist(err) {
-		return err
-	}
 	in, err := os.Open(localPath)
 	if err != nil {
 		return err
 	}
 	defer in.Close()
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0755)
+	// Write a sibling inode then rename so dest is never truncated in place.
+	// Rename also replaces a running executable without ETXTBSY (Linux keeps
+	// the old inode open).
+	tmp := dst + ".tmp"
+	if err := os.Remove(tmp); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	out, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0755)
 	if err != nil {
 		return err
 	}
-	defer out.Close()
-	_, err = io.Copy(out, in)
-	return err
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := out.Close(); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := os.Chmod(tmp, 0755); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := os.Rename(tmp, dst); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
 }
 
 func (l *Local) Download(remotePath, localPath string) error {

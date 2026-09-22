@@ -277,12 +277,26 @@ func (o *Orchestrator) workerBinaryMissingHosts(sessions map[string]remote.Sessi
 	return binName, missing, nil
 }
 
+func remoteRunFilesKey(sess remote.Session, runDir string) string {
+	if sess == nil {
+		return runDir
+	}
+	return sess.Key() + "\x00" + runDir
+}
+
 // ensureRemoteRunFiles uploads run-config.json and DB credential files into the
 // per-run working directory on a runtime host. Called before every role launch
-// so stages work without a preceding deploy of run-scoped artifacts.
+// so stages work without a preceding deploy of run-scoped artifacts. The same
+// host+runDir is pushed only once per mind-tpcc invocation so a later sibling
+// launch cannot truncate ca.pem / sa-key / password while an already started
+// process is reading them.
 func (o *Orchestrator) ensureRemoteRunFiles(ctx *Context, sess remote.Session, runDir string) error {
 	if ctx == nil || ctx.RunDir == "" {
 		return fmt.Errorf("run directory is not set")
+	}
+	key := remoteRunFilesKey(sess, runDir)
+	if _, ok := o.remoteRunFiles[key]; ok {
+		return nil
 	}
 	if err := sess.MkdirAll(runDir); err != nil {
 		return fmt.Errorf("mkdir %s: %w", runDir, err)
@@ -310,6 +324,10 @@ func (o *Orchestrator) ensureRemoteRunFiles(ctx *Context, sess remote.Session, r
 	if err := o.ensureRemotePasswordFile(sess, runDir); err != nil {
 		return err
 	}
+	if o.remoteRunFiles == nil {
+		o.remoteRunFiles = map[string]struct{}{}
+	}
+	o.remoteRunFiles[key] = struct{}{}
 	return nil
 }
 
@@ -488,9 +506,10 @@ func (o *Orchestrator) launchRole(
 	if !exists {
 		return nil, fmt.Errorf("worker binary %s not found on %s; run `mind-tpcc deploy --profile ...` first", remoteBin, hostKey)
 	}
-	// Push per-run run-config + credentials on every launch so a new run_id
-	// does not require redeploy. Password is written to a mode-0600 file and
-	// never injected into argv/env of the remote shell command (visible in ps).
+	// Push per-run run-config + credentials once per host+runDir so a new
+	// run_id does not require redeploy. Password is written to a mode-0600
+	// file and never injected into argv/env of the remote shell command
+	// (visible in ps).
 	if err := o.ensureRemoteRunFiles(ctx, sess, runDir); err != nil {
 		return nil, fmt.Errorf("host %s: %w", hostKey, err)
 	}
