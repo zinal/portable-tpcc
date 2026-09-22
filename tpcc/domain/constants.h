@@ -43,6 +43,10 @@ constexpr int MAX_ITEMS = 15;
 constexpr int NEW_ORDER_REMOTE_WAREHOUSE_PERCENT = 1;
 constexpr int PAYMENT_REMOTE_WAREHOUSE_PERCENT = 15;
 
+// Maximum New-Order lines in one transaction whose supply warehouse is remote.
+// 0 means no cap: each line is chosen independently (TPC-C §2.4.1.5).
+constexpr int NEW_ORDER_MAX_REMOTE_WAREHOUSES = 0;
+
 constexpr int C_LAST_LOAD_C = 157; // in range [0, 255]
 constexpr int C_LAST_RUN_C = 223; // in range [0, 255]
 

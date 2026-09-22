@@ -42,6 +42,8 @@ struct TTransactionContext {
 
     int NewOrderRemoteWarehousePercent = NEW_ORDER_REMOTE_WAREHOUSE_PERCENT;
     int PaymentRemoteWarehousePercent = PAYMENT_REMOTE_WAREHOUSE_PERCENT;
+    // 0 = no cap on remote supply warehouses in one New-Order.
+    int NewOrderMaxRemoteWarehouses = NEW_ORDER_MAX_REMOTE_WAREHOUSES;
 
     // Generated once per business transaction; reused across retry attempts.
     std::shared_ptr<void> FixedInputs;

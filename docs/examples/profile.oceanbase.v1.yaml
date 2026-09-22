@@ -65,6 +65,8 @@ workload:
   # remote_warehouse_percent:
   #   new_order: 1
   #   payment: 15
+  # Max remote supply warehouses in one New-Order. 0 = no limit (TPC-C).
+  # new_order_max_remote_warehouses: 0
 
 # Connection addresses. Repeats mean co-located instances (one SSH/local session).
 # Mind assigns balanced contiguous warehouse ranges across loaders/workers.

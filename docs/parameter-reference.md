@@ -246,6 +246,11 @@ All fields optional. For mix, keying/think times, and
 `terminals_per_warehouse`, zeros/omissions keep the built-in default. For
 `remote_warehouse_percent`, omission keeps the TPC-C default; explicit `0`
 means no remote warehouses (allowed; reported as a TPC-C settings deviation).
+`new_order_max_remote_warehouses` limits how many New-Order lines in one
+transaction use a remote supply warehouse. Omission and explicit `0` mean no
+cap (each line is chosen independently). A positive value is allowed and
+reported as a TPC-C settings deviation: after that many remote lines have
+been chosen, every remaining line uses the home warehouse.
 
 | Field | Default | TPC-C 5.11 |
 | --- | --- | --- |
@@ -259,11 +264,13 @@ means no remote warehouses (allowed; reported as a TPC-C settings deviation).
 | `think_time_ms.*` | 12000 / 12000 / 10000 / 5000 / 5000 | minimum means (ms); larger values remain TPC-C conformant |
 | `remote_warehouse_percent.new_order` | `1` | 1% of New-Order lines use a remote supply warehouse when scale > 1 (Clause 2.4.1.5) |
 | `remote_warehouse_percent.payment` | `15` | 15% of Payment inputs use a remote customer warehouse when scale > 1 (Clause 2.5.1.2) |
+| `new_order_max_remote_warehouses` | `0` | no cap. A positive integer is the maximum number of New-Order lines in one transaction with a remote supply warehouse; later lines use the home warehouse |
 
 Mix weights must all be positive. Percentages are weight/sum.
-`remote_warehouse_percent.*` must be integers in `[0, 100]`. Deviations from
-TPC-C 5.11 are reported by `validate` / `test` / `aggregate` and do **not**
-fail structural validation.
+`remote_warehouse_percent.*` must be integers in `[0, 100]`.
+`new_order_max_remote_warehouses` must be an integer ≥ 0 (`0` = no cap).
+Deviations from TPC-C 5.11 are reported by `validate` / `test` / `aggregate`
+and do **not** fail structural validation.
 
 ### `loaders` / `workers`
 
@@ -460,6 +467,8 @@ drop    --run-config <path> --instance <name>
   (New-Order has no Clause 5.2.3 minimum)
 - `remote_warehouse_percent.new_order = 1` and
   `remote_warehouse_percent.payment = 15`
+- `new_order_max_remote_warehouses = 0` (no per-transaction cap on remote
+  New-Order supply warehouses)
 - `runtime.pacing = enabled`
 - `think_time_distribution = exponential`
 - keying times and mean think times ≥ Clause 5.2.5.7 minima (see `workload`

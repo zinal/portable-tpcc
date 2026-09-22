@@ -541,6 +541,9 @@ TRunConfigDocument LoadRunConfigDocument(const std::string& path) {
                 remote, "payment", PAYMENT_REMOTE_WAREHOUSE_PERCENT,
                 "workload.remote_warehouse_percent.payment");
         }
+        doc.Workload.NewOrderMaxRemoteWarehouses = ReadIntNonNegative(
+            wl, "new_order_max_remote_warehouses", NEW_ORDER_MAX_REMOTE_WAREHOUSES,
+            "workload.new_order_max_remote_warehouses");
     }
     if (root.contains("load_assignment") && root["load_assignment"].is_array()) {
         for (const auto& item : root["load_assignment"]) {

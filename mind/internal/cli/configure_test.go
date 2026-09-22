@@ -59,6 +59,7 @@ func TestRun_configurePositionalPathAndOverrides(t *testing.T) {
 		"--stats-interval", "5s",
 		"--remote-warehouse-new-order", "0",
 		"--remote-warehouse-payment", "50",
+		"--new-order-max-remote-warehouses", "2",
 	})
 	if code != 0 {
 		t.Fatalf("configure exit=%d", code)
@@ -105,6 +106,9 @@ func TestRun_configurePositionalPathAndOverrides(t *testing.T) {
 	}
 	if p.Workload.RemoteWarehousePercent.Payment == nil || *p.Workload.RemoteWarehousePercent.Payment != 50 {
 		t.Fatalf("remote payment=%v", p.Workload.RemoteWarehousePercent.Payment)
+	}
+	if p.Workload.NewOrderMaxRemoteWarehouses != 2 {
+		t.Fatalf("max remote warehouses=%d", p.Workload.NewOrderMaxRemoteWarehouses)
 	}
 }
 

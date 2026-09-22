@@ -47,3 +47,22 @@ func TestResolveWorkload_remoteWarehousePartialOverride(t *testing.T) {
 		t.Fatalf("payment=%d, want 100", got.RemoteWarehousePercent.Payment)
 	}
 }
+
+func TestResolveWorkload_maxRemoteWarehousesDefaultIsUnlimited(t *testing.T) {
+	got := config.ResolveWorkload(profile.Workload{})
+	if got.NewOrderMaxRemoteWarehouses != 0 {
+		t.Fatalf("omitted cap=%d, want 0", got.NewOrderMaxRemoteWarehouses)
+	}
+}
+
+func TestResolveWorkload_maxRemoteWarehousesOverride(t *testing.T) {
+	got := config.ResolveWorkload(profile.Workload{
+		NewOrderMaxRemoteWarehouses: 2,
+	})
+	if got.NewOrderMaxRemoteWarehouses != 2 {
+		t.Fatalf("cap=%d, want 2", got.NewOrderMaxRemoteWarehouses)
+	}
+	if got.RemoteWarehousePercent.NewOrder != 1 || got.RemoteWarehousePercent.Payment != 15 {
+		t.Fatalf("remote percents changed: %+v", got.RemoteWarehousePercent)
+	}
+}

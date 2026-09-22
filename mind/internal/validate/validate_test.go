@@ -153,6 +153,31 @@ func TestValidate_rejectsRemoteWarehousePercentOutOfRange(t *testing.T) {
 	}
 }
 
+func TestValidate_rejectsNegativeNewOrderMaxRemoteWarehouses(t *testing.T) {
+	path := filepath.Join("..", "..", "testdata", "profile.valid.yaml")
+	p, err := profile.ParseFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Workload.NewOrderMaxRemoteWarehouses = -1
+	res := validate.Profile(p)
+	if res.Valid {
+		t.Fatal("expected negative new_order_max_remote_warehouses to fail")
+	}
+	if !strings.Contains(strings.Join(res.Errors, "\n"), "new_order_max_remote_warehouses") {
+		t.Fatalf("expected cap error, got %v", res.Errors)
+	}
+
+	p.Workload.NewOrderMaxRemoteWarehouses = 2
+	res = validate.Profile(p)
+	if !res.Valid {
+		t.Fatalf("positive cap must be structurally valid, errors: %v", res.Errors)
+	}
+	if res.TPCCSettingsConformant {
+		t.Fatal("expected non-zero cap to be a TPC-C settings deviation")
+	}
+}
+
 func TestValidate_rejectsNonPositiveMeasurement(t *testing.T) {
 	path := filepath.Join("..", "..", "testdata", "profile.valid.yaml")
 	p, err := profile.ParseFile(path)

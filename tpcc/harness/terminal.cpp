@@ -181,6 +181,7 @@ TTerminal::TTerminal(size_t terminalID,
               simulateTransactionSelect1,
               workload.NewOrderRemoteWarehousePercent,
               workload.PaymentRemoteWarehousePercent,
+              workload.NewOrderMaxRemoteWarehouses,
               {}}
     , NoDelays(noDelays)
     , StopToken(stopToken)

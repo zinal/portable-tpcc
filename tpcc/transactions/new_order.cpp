@@ -1,5 +1,6 @@
 #include "workflows.h"
 #include "workflow_util.h"
+#include "new_order_supply.h"
 
 #include <constants.h>
 #include <log.h>
@@ -55,19 +56,20 @@ TFuture<bool> GetNewOrderTask(
         generated.OrderQuantities.reserve(generated.NumItems);
         generated.AllLocal = 1;
 
+        int remoteWarehousesChosen = 0;
         for (int i = 0; i < generated.NumItems; ++i) {
             generated.ItemIDs.push_back(GetRandomItemID());
-            if (context.WarehouseCount == 1 ||
-                static_cast<int>(RandomNumber(1, 100)) > context.NewOrderRemoteWarehousePercent)
-            {
-                generated.SupplierWarehouseIDs.push_back(generated.WarehouseID);
-            } else {
-                int supplierID;
-                do {
-                    supplierID = RandomNumber(1, context.WarehouseCount);
-                } while (supplierID == generated.WarehouseID);
-                generated.SupplierWarehouseIDs.push_back(supplierID);
+            const int supplierID = ChooseNewOrderSupplyWarehouse(
+                NDetail::ThreadLocalFastRng(),
+                generated.WarehouseID,
+                context.WarehouseCount,
+                context.NewOrderRemoteWarehousePercent,
+                context.NewOrderMaxRemoteWarehouses,
+                remoteWarehousesChosen);
+            generated.SupplierWarehouseIDs.push_back(supplierID);
+            if (supplierID != generated.WarehouseID) {
                 generated.AllLocal = 0;
+                ++remoteWarehousesChosen;
             }
             generated.OrderQuantities.push_back(RandomNumber(1, 10));
         }

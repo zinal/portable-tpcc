@@ -150,6 +150,9 @@ func Profile(p *profile.Profile) *Result {
 	if err := validateRemoteWarehousePercent(wl.RemoteWarehousePercent); err != nil {
 		res.Add(err.Error())
 	}
+	if wl.NewOrderMaxRemoteWarehouses < 0 {
+		res.Add("workload.new_order_max_remote_warehouses must not be negative")
+	}
 
 	seenNames := map[string]bool{}
 	remoteKeys := map[string]bool{}

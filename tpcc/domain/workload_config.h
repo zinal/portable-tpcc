@@ -34,6 +34,8 @@ struct TWorkloadConfig {
     int NewOrderRemoteWarehousePercent = NEW_ORDER_REMOTE_WAREHOUSE_PERCENT;
     // Percent of Payment inputs with a remote customer warehouse (TPC-C §2.5.1.2).
     int PaymentRemoteWarehousePercent = PAYMENT_REMOTE_WAREHOUSE_PERCENT;
+    // Max remote supply warehouses (order lines) in one New-Order. 0 = no cap.
+    int NewOrderMaxRemoteWarehouses = NEW_ORDER_MAX_REMOTE_WAREHOUSES;
 };
 
 inline void ValidateRemoteWarehousePercent(int value, const char* field) {
