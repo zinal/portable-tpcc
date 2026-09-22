@@ -55,7 +55,11 @@ Do not put passwords, tokens, or key material in profile YAML/JSON.
 YDB has no other `database.options` keys besides `tx_mode`. Unknown options
 are rejected at worker startup. Warehouse-leading keys and range partitions
 (`warehouse_range`) are chosen automatically from the warehouse scale at
-schema time.
+schema time. `customer.c_data` is created in a separate column group
+(`FAMILY cdata`, compression off) so point lookups that omit the column
+do not read that family. PostgreSQL and OceanBase have no equivalent
+row-oriented column group; they only drop `c_data` from the shared
+SELECT lists.
 
 | Standalone | Profile | Meaning |
 | --- | --- | --- |

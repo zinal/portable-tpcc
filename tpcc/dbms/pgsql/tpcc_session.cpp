@@ -75,8 +75,7 @@ TCustomerRow ReadCustomer(QueryResult& result) {
     cust.YtdPayment = result.GetMoney(14);
     cust.PaymentCount = result.GetInt32(15);
     cust.DeliveryCount = result.GetInt32(16);
-    cust.Data = result.GetString(17);
-    cust.Since = result.GetString(18);
+    cust.Since = result.GetString(17);
     return cust;
 }
 
@@ -289,7 +288,7 @@ TFuture<TOperationResult> TPgTpccTransaction::Execute(const TSemanticOp& op) {
             Session_.ExecuteQuery(
                 "SELECT c_id, c_first, c_middle, c_last, c_street_1, c_street_2, c_city, c_state, "
                 "c_zip, c_phone, c_credit, c_credit_lim, c_discount, c_balance, c_ytd_payment, "
-                "c_payment_cnt, c_delivery_cnt, c_data, c_since "
+                "c_payment_cnt, c_delivery_cnt, c_since "
                 "FROM customer WHERE c_w_id = $1 AND c_d_id = $2 AND c_id = $3",
                 p->WarehouseID, p->DistrictID, p->CustomerID),
             [](QueryResult result) {
@@ -492,7 +491,7 @@ TFuture<TOperationResult> TPgTpccTransaction::Execute(const TSemanticOp& op) {
             Session_.ExecuteQuery(
                 "SELECT c_id, c_first, c_middle, c_last, c_street_1, c_street_2, c_city, c_state, "
                 "c_zip, c_phone, c_credit, c_credit_lim, c_discount, c_balance, c_ytd_payment, "
-                "c_payment_cnt, c_delivery_cnt, c_data, c_since "
+                "c_payment_cnt, c_delivery_cnt, c_since "
                 "FROM customer WHERE c_w_id = $1 AND c_d_id = $2 AND c_last = $3 "
                 "ORDER BY c_first",
                 p->WarehouseID, p->DistrictID, p->LastName),

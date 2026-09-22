@@ -317,3 +317,16 @@ TEST(ObPaymentCustomerForUpdateSql, LockingClause) {
     EXPECT_EQ(std::string(QuerySql(EObQueryId::GetCustomersByLastName)).find("FOR UPDATE"),
               std::string::npos);
 }
+
+TEST(ObCustomerLookupSql, OmitsCDataExceptDedicatedOp) {
+    for (auto id : {
+             EObQueryId::GetCustomerById,
+             EObQueryId::GetCustomerByIdForUpdate,
+             EObQueryId::GetCustomersByLastName,
+             EObQueryId::GetCustomersByLastNameForUpdate})
+    {
+        EXPECT_EQ(std::string(QuerySql(id)).find("c_data"), std::string::npos);
+    }
+    EXPECT_NE(std::string(QuerySql(EObQueryId::GetCustomerData)).find("c_data"),
+              std::string::npos);
+}

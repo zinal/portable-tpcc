@@ -104,6 +104,9 @@ struct TDistrictOrderReservation {
 // Semantic operations (closed set)
 // ---------------------------------------------------------------------------
 
+// TPC-C 2.4.2.2 / 2.5.2.2 / 2.6.2.2: C_DATA is not among the required
+// columns. Adapters MUST NOT project c_data here; Payment BC uses
+// TGetCustomerData (2.5.2.2).
 struct TGetCustomerById {
     int WarehouseID = 0;
     int DistrictID = 0;
@@ -174,6 +177,7 @@ struct TApplyPaymentToLocation {
     TMoney Amount;
 };
 
+// TPC-C 2.5.2.2: retrieve C_DATA only when the selected customer is BC.
 struct TGetCustomerData {
     int WarehouseID = 0;
     int DistrictID = 0;

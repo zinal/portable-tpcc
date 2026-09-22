@@ -416,6 +416,13 @@ Adapters MUST:
 
 - Warehouse-leading keys and range partitions for warehouse-local tables;
   document split policy in `options` / settings.
+- `customer.c_data` is stored in column group `cdata` (`FAMILY cdata`).
+  Shared lookups (`TGetCustomerById`, `TGetCustomersByLastName`) MUST NOT
+  project `c_data`; Payment BC uses `TGetCustomerData` (TPC-C 2.5.2.2).
+  PostgreSQL and OceanBase keep `c_data` in the same rowstore table: they
+  have no YDB-style named column group for a row-oriented subset. OceanBase
+  `WITH COLUMN GROUP` is columnar/hybrid OLAP storage and MUST NOT be used
+  for this OLTP table.
 - Worker OLTP `tx_mode`: `snapshot-rw` (default, snapshot isolation /
   Repeatable Read analogue) or `serializable-rw`. See
   [run-ydb.md](run-ydb.md).
@@ -488,7 +495,7 @@ Examples:
 
 | Semantic op | PostgreSQL sketch | YDB sketch |
 | --- | --- | --- |
-| Get customer by id | `SELECT … FROM schema.customer WHERE c_w_id=$1 AND c_d_id=$2 AND c_id=$3` | YQL `SELECT … WHERE …` with typed params |
+| Get customer by id | `SELECT … FROM schema.customer WHERE …` without `c_data` | same YQL projection; `c_data` only via `TGetCustomerData` |
 | Update stock | single-row `UPDATE … RETURNING` or separate read/write | upsert / YQL update; MAY batch line items via `ExecuteBatch` |
 | Insert order lines | per-line `INSERT` or multi-row `INSERT` | `BulkUpsert` / multi-row upsert inside one tx |
 | Final New-Order step | last `INSERT` then `COMMIT` | `ExecuteFinalAndCommit(last_op)` |

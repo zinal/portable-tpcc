@@ -690,6 +690,10 @@ visible in the result settings/options.
   (no `GetValueSync()` on the task-queue thread; adapter-api §4.3).
   Worker OLTP isolation is `database.options.tx_mode` (`snapshot-rw` default,
   or `serializable-rw`).
+  `customer.c_data` lives in a separate row-oriented column group (`FAMILY
+  cdata`) so New-Order / Order-Status / GC Payment and Delivery do not
+  touch that LSM part (TPC-C 2.3.2 / 2.5.2.2). Payment BC reads it via
+  `TGetCustomerData`.
   `history` uses technical `PRIMARY KEY (h_w_id, hist_id)` (TPC-C 1.3.1
   prescribes none); `hist_id` is client-generated.
 - **PostgreSQL:** prepared statements, `COPY`, DECIMAL, SQLSTATE mapping,
