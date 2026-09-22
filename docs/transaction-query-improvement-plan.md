@@ -6,7 +6,7 @@
 
 - [TPC-C 5.11](https://www.tpc.org/TPC_Documents_Current_Versions/pdf/tpc-c_v5.11.0.pdf),
   прежде всего §§2.3–2.8 и §3.4;
-- [Ant Financial OceanBase 2.2 FDR](https://tpc.org/results/fdr/tpcc/ant_financial~tpcc~alibaba_cloud_elastic_compute_service_cluster~fdr~2020-05-17~v01.pdf),
+- [Ant Financial OceanBase 2.2 FDR](https://tpc.org/results/fdr/tpcc/ant_financial~tpcc~alibaba_cloud_compute_service_cluster~fdr~2020-05-17~v01.pdf),
   Appendix B, стр. 45–52;
 - текущие shared workflows и адаптеры PostgreSQL, YDB и OceanBase.
 
@@ -15,30 +15,34 @@
 проблем initial population, orchestration, artifacts и официальной TPC-C
 отчётности остаётся в
 [tpcc-5.11-conformance-analysis.md](tpcc-5.11-conformance-analysis.md).
+Разделы 1–4 ниже являются четырьмя списками доработок: общим, OceanBase,
+PostgreSQL и YDB. Остальные разделы задают инварианты и порядок применения,
+но не добавляют отдельный backlog.
 
 Приоритеты:
 
-- **P0** — атомарность, целостность или достоверность результата;
-- **P1** — обязательная логическая семантика transaction profile;
+- **P0** — атомарность, целостность или возможность безопасно выполнить run;
+- **P1** — обязательная семантика transaction profile, adapter contract или
+  диагностика integrity verdict;
 - **P2** — ожидаемый существенный выигрыш по latency/throughput;
 - **P3** — дополнительная оптимизация либо работа только для официального
   TPC-C scope.
 
-## Общие ограничения решения
+## Инварианты решения
 
-1. Оптимизация числа SQL/YQL statements допустима, но не должна уменьшать
-   число обязательных логических операций из TPC-C §2.3.3.
-2. Повторные ITEM/STOCK keys внутри одного New-Order должны сохранять
-   line-level семантику. Set-oriented statement допустим, если вход и результат
-   по-прежнему содержат отдельную позицию для каждой order line.
-3. `customer.c_data` должен читаться и изменяться только для Payment BC.
-   Отдельная прикладная таблица `customer_data` не требуется. Физическое
-   размещение может отличаться только через прозрачный механизм СУБД.
-4. Ошибки cardinality и rollback должны обнаруживаться до подтверждения
-   успешного исхода транзакции.
-5. Stored procedures не являются общей целью. Их можно добавлять только как
-   измеренный DBMS-specific режим, сохраняя тот же semantic contract и
-   обычный SQL/YQL fallback.
+- Оптимизация числа SQL/YQL statements допустима, но не должна уменьшать
+  число обязательных логических операций из TPC-C §2.3.3.
+- Повторные ITEM/STOCK keys внутри одного New-Order должны сохранять
+  line-level семантику. Set-oriented statement допустим, если вход и результат
+  по-прежнему содержат отдельную позицию для каждой order line.
+- `customer.c_data` должен читаться и изменяться только для Payment BC.
+  Отдельная прикладная таблица `customer_data` не требуется. Физическое
+  размещение может отличаться только через прозрачный механизм СУБД.
+- Ошибки cardinality и rollback должны обнаруживаться до подтверждения
+  успешного исхода транзакции.
+- Stored procedures не являются общей целью. Их можно добавлять только как
+  измеренный DBMS-specific режим, сохраняя тот же semantic contract и
+  обычный SQL/YQL fallback.
 
 ## 1. Общие доработки
 
@@ -76,23 +80,36 @@ Order-Status — `C_ID`, `C_FIRST`, `C_MIDDLE`, `C_LAST`, `C_BALANCE`; Payment �
 Критерий готовности: каждая транзакция проецирует только поля TPC-C profile и
 технические поля, необходимость которых объяснена в adapter documentation.
 
-### G3. Перенести агрегирование Delivery в контракт адаптера
+### G3. Проецировать только нужный `S_DIST_xx`
 
 **Приоритет: P2.**
 
-Сейчас часть адаптеров получает каждое `OL_AMOUNT` и суммирует значения на
-клиенте. Semantic operation `TGetDeliveryOrderInfo` должна позволять СУБД
-вернуть `O_C_ID`, `SUM(OL_AMOUNT)` и `COUNT(*)` на один order. Это уменьшает
-result traffic, но сохраняет требуемое чтение ORDER_LINE и точную проверку
-line count.
+PostgreSQL и OceanBase передают все десять 24-символьных `S_DIST_xx`, хотя
+New-Order нужен только district-specific столбец. Все адаптеры должны
+возвращать единое поле `s_dist_info`, используя `CASE` либо ограниченное
+семейство кэшируемых statement shapes.
+
+Критерий готовности: result содержит один `s_dist_info`, statement/query cache
+остаётся ограниченным, а line-level ITEM/STOCK cardinality сохраняется.
+
+### G4. Перенести агрегирование Delivery в контракт адаптера
+
+**Приоритет: P2.**
+
+Сейчас PostgreSQL, OceanBase и YDB получают каждое `OL_AMOUNT` и суммируют
+значения на клиенте. Semantic operation `TGetDeliveryOrderInfo` должна
+позволять СУБД вернуть `O_C_ID`, `O_OL_CNT`, `SUM(OL_AMOUNT)` и фактический
+`COUNT(*)` на один order. Это уменьшает result traffic, но сохраняет
+требуемое чтение ORDER_LINE и точную проверку line count.
 
 Критерий готовности: сумма вычисляется exact numeric арифметикой СУБД,
-пустой набор lines является integrity error, а `LineCount` используется при
-последующем Delivery update.
+`COUNT(*)` равен `O_OL_CNT`, пустой/неполный набор lines является integrity
+error, а подтверждённый `LineCount` используется при последующем Delivery
+update.
 
-### G4. Выполнять обязательные вычисления New-Order
+### G5. Выполнять обязательные вычисления New-Order
 
-**Приоритет: P1 для строгого TPC-C profile, P3 для engineering workload.**
+**Приоритет: P1.**
 
 Текущий workflow получает `I_DATA`, `S_DATA`, taxes и discount, но не вычисляет
 brand/generic и итог:
@@ -101,14 +118,15 @@ brand/generic и итог:
 SUM(OL_AMOUNT) * (1 - C_DISCOUNT) * (1 + W_TAX + D_TAX)
 ```
 
-Нужно либо вычислять и сохранять эти значения в transaction result, либо явно
-исключить ненужные projections только в режиме, который не претендует на
-полный transaction profile. Вычисление должно использовать exact decimal.
+Fixed workload должен всегда выполнять эти вычисления exact decimal
+арифметикой. Значения можно передавать в typed transaction trace/result,
+который не участвует в основном measurement output; отдельный runtime mode
+для сокращённого профиля не вводится.
 
 Критерий готовности: unit tests покрывают `ORIGINAL` в обоих полях, mixed
 brand/generic и округление итоговой суммы.
 
-### G5. Исправить Payment при одном warehouse
+### G6. Исправить Payment при одном warehouse
 
 **Приоритет: P1.**
 
@@ -120,7 +138,7 @@ warehouse Payment обязан быть полностью local, включая
 `C_W_ID = W_ID` и `C_D_ID = D_ID`; для нескольких warehouses сохраняется
 заданная доля remote inputs.
 
-### G6. Добавить общие semantic trace tests
+### G7. Добавить общие semantic trace tests
 
 **Приоритет: P1.**
 
@@ -131,26 +149,41 @@ cardinality операций:
 - последний несуществующий ITEM и подтверждённый rollback;
 - конкурентные Payment/Delivery одного customer;
 - конкурентные Delivery одного district;
-- missing ITEM, STOCK, ORDER и ORDER_LINE;
+- missing ITEM, STOCK, ORDER и ORDER_LINE, включая несовпадение
+  `COUNT(ORDER_LINE)` с `O_OL_CNT`;
 - Payment BC/GC и customer-by-last-name с чётным/нечётным числом строк.
 
 Критерий готовности: один набор сценариев запускается для fake session и для
 integration adapters; расхождение в количестве логических операций ломает
 тест.
 
-### G7. Измерять стоимость query plan, а не только transaction latency
+### G8. Соблюдать контракт `cancelled`
+
+**Приоритет: P1.**
+
+`cancelled` сейчас может пройти через shared workflow как обычный transaction
+failure, хотя adapter API требует остановить phase без retry. Shared helpers
+должны преобразовывать этот класс в управляемую отмену, не записывать её как
+permanent failure и не запускать следующую попытку.
+
+Критерий готовности: semantic test инжектирует `cancelled` в каждый workflow,
+после чего phase прекращает admission, commit не вызывается, retry отсутствует.
+
+### G9. Измерять стоимость query plan, а не только transaction latency
 
 **Приоритет: P2.**
 
-Для оценки оптимизаций следует публиковать диагностические counters:
-количество DB requests, rows read/returned, retryable aborts и объём result
-data по типу транзакции. DBMS-specific benchmark должен сравнивать одинаковые
-inputs до и после изменения и проверять отсутствие регрессии p90/p99.
+Portable counters могут безопасно включать количество DB requests,
+возвращённых rows, retryable aborts и объём result data по типу транзакции.
+Физические rows read, buffer/cache statistics и планы собираются только
+опциональными DBMS tools вне authoritative measurement, чтобы instrumentation
+не менял optimizer plan и latency.
 
-Эти counters диагностические и не должны менять основной response-time
-histogram.
+DBMS-specific benchmark сравнивает одинаковые inputs до и после изменения и
+проверяет отсутствие регрессии p90/p99. Диагностические counters не меняют
+основной response-time histogram.
 
-### G8. Не смешивать query fixes с официальным RTE/Delivery scope
+### G10. Не смешивать query fixes с официальным RTE/Delivery scope
 
 **Приоритет: P3.**
 
@@ -187,26 +220,16 @@ Order-Status должен остаться неблокирующим.
 же фамилией не ждёт завершения текущего Payment; медиана соответствует
 TPC-C §2.5.2.2.
 
-### OB3. Проецировать один `S_DIST_xx`
-
-**Приоритет: P2.**
-
-Текущий STOCK query передаёт все десять 24-символьных `S_DIST_xx`. Нужно
-выбирать поле заданного district через `CASE` либо семейство из десяти
-кэшируемых statement shapes.
-
-Критерий готовности: result содержит один `s_dist_info`, statement cache
-остаётся ограниченным, а ITEM/STOCK cardinality checks сохраняются.
-
-### OB4. Агрегировать Delivery order lines на сервере
+### OB3. Агрегировать Delivery order lines на сервере
 
 **Приоритет: P2.**
 
 Сохранить существующий prefetch десяти districts, но заменить передачу всех
-`OL_AMOUNT` на `GROUP BY ol_d_id, ol_o_id` с `SUM` и `COUNT`. Missing order
-или нулевой line count должны оставаться integrity errors.
+`OL_AMOUNT` на `GROUP BY ol_d_id, ol_o_id` с `SUM` и `COUNT`; одновременно
+получить `O_OL_CNT` и потребовать его равенство фактическому count. Missing
+order и неполный набор lines должны оставаться integrity errors.
 
-### OB5. Объединить Stock-Level в один statement
+### OB4. Объединить Stock-Level в один statement
 
 **Приоритет: P2.**
 
@@ -217,7 +240,7 @@ FDR получает `D_NEXT_O_ID` и считает distinct low-stock items о
 Критерий готовности: один statement использует interval
 `[D_NEXT_O_ID - 20, D_NEXT_O_ID - 1]` и возвращает ровно одну count row.
 
-### OB6. Сократить reservation district до атомарного DML
+### OB5. Сократить reservation district до атомарного DML
 
 **Приоритет: P2.**
 
@@ -226,7 +249,7 @@ FDR получает `D_NEXT_O_ID` и считает distinct low-stock items о
 `UPDATE` одним atomic statement. Текущая форма остаётся fallback; перенос
 Oracle-mode syntax из FDR без проверки версии запрещён.
 
-### OB7. Снизить parse/round-trip overhead без обязательных procedures
+### OB6. Снизить parse/round-trip overhead без обязательных procedures
 
 **Приоритет: P3.**
 
@@ -240,18 +263,9 @@ Payment/Delivery multi-statements содержат динамические lite
 Режим принимается только при одинаковой семантике affected-row checks,
 commit outcome и retries. Oracle-mode `FORALL` из FDR напрямую не переносится.
 
-### OB8. Ограничить initial pool retry дедлайном
+### OB7. Различать check failure и execution error
 
-**Приоритет: P0 operational.**
-
-Создание initial pool не должно бесконечно повторять permanent
-authentication/configuration errors и пропускать `--start-at`. Retry loop
-должен учитывать stop token, классификацию ошибки и абсолютный startup
-deadline.
-
-### OB9. Различать check failure и execution error
-
-**Приоритет: P1 diagnostics.**
+**Приоритет: P1.**
 
 Найденное consistency violation должно иметь status `failed`, а timeout,
 connection loss и SQL error — `error`. Итог остаётся fail-closed в обоих
@@ -285,7 +299,7 @@ cardinality result.
 
 ### PG3. Стабилизировать порядок STOCK locks
 
-**Приоритет: P1 reliability.**
+**Приоритет: P2.**
 
 До пакетного `FOR UPDATE` keys следует сортировать по `(s_w_id, s_i_id,
 line_ordinal)`. Это уменьшает взаимные deadlocks New-Order без изменения
@@ -312,6 +326,8 @@ aborts ожиданием; решение принимается по измер
 или несколькими bounded statements, затем пакетно выполнить delete/order/
 order_line/customer updates. `DELETE ... RETURNING` должен отличать
 конкурентный claim (`retryable_abort`) от повреждения cardinality.
+Order info обязан вернуть `O_OL_CNT` и проверить его против фактического
+`COUNT(ORDER_LINE)`.
 
 ### PG6. Объединить Stock-Level в один query
 
@@ -323,7 +339,7 @@ JOIN к DISTRICT устраняет отдельное чтение `D_NEXT_O_ID
 
 ### PG7. Различать check failure и execution error
 
-**Приоритет: P1 diagnostics.**
+**Приоритет: P1.**
 
 Как и для OceanBase, SQLSTATE timeout/connection/syntax errors должны
 формировать `ECheckStatus::Error`, а найденные bad rows —
@@ -375,7 +391,7 @@ semantics, а изменение существующих STOCK/OORDER — updat
 
 ### YDB4. Исправить NULL semantics integrity checks
 
-**Приоритет: P0 для достоверности checks.**
+**Приоритет: P0.**
 
 YQL `NULL != value` даёт `UNKNOWN` и может пропустить повреждение. Все
 predicates consistency conditions должны явно проверять NULL. В 3.3.2.4
@@ -391,8 +407,8 @@ orphan rows и неверными aggregates завершаются failed verdi
 
 Сейчас shared loop вызывает oldest-order и order-info по каждому district.
 Нужно одним bounded YQL flow получить oldest IDs, `O_C_ID`,
-`SUM(OL_AMOUNT)` и `COUNT(*)`, сохранив transaction snapshot и проверку
-cardinality.
+`O_OL_CNT`, `SUM(OL_AMOUNT)` и `COUNT(*)`, потребовать
+`COUNT(*) = O_OL_CNT` и сохранить transaction snapshot.
 
 ### YDB6. Объединить Payment finish с commit
 
@@ -413,24 +429,24 @@ JOIN. Переход к одному statement допустим только е�
 
 ### YDB8. Сохранить и проверить `cdata` column group
 
-**Приоритет: P1 regression protection.**
+**Приоритет: P1.**
 
 `c_data` уже размещён в `FAMILY cdata`; generic customer projections не
 должны его читать. Нужны schema/query regression tests, подтверждающие, что
 только Payment BC обращается к полю. Дополнительная таблица не создаётся.
 
-## Рекомендуемый порядок реализации
+## Последовательность применения списков
 
-1. **Correctness:** OB1, YDB1–YDB4, G1, G5.
-2. **Общий API и тесты:** G2, G3, G6.
-3. **Основные performance changes:** PG1–PG6, OB2–OB5, YDB5–YDB6.
-4. **Operational/diagnostic:** OB8–OB9, PG7, G7.
-5. **Опциональные режимы:** G4, G8, OB6–OB7, YDB7.
+| Этап | Пункты |
+| --- | --- |
+| Correctness | OB1, YDB1–YDB4, G1, G6, G8 |
+| Общий API и тесты | G2–G5, G7 |
+| Основные performance changes | PG1–PG6, OB2–OB4, YDB5–YDB6 |
+| Diagnostics | OB7, PG7, G9 |
+| Дополнительные улучшения | G10, OB5–OB6, YDB7 |
 
-Каждый performance пункт должен приниматься только вместе с:
-
-- одинаковыми deterministic inputs до и после изменения;
-- проверкой transaction state и affected cardinality;
-- отсутствием новых permanent/integrity errors;
-- сравнением DB requests, retries, throughput и p90/p99;
-- integration run на соответствующей СУБД.
+Каждый performance пункт принимается только при одинаковых deterministic
+inputs до и после изменения, проверенной transaction state и affected
+cardinality, отсутствии новых permanent/integrity errors, сравнении DB
+requests/retries/throughput/p90/p99 и integration run на соответствующей
+СУБД.
