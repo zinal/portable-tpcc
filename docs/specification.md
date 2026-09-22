@@ -349,7 +349,8 @@ Consolidation:
 5. compute min/max/avg, percentiles and throughput only after the merge;
 6. attach check results and a short infrastructure status
    (workers present, assignment OK, clocks OK, no integrity errors,
-   TPC-C settings conformant flag and deviation list, …);
+   TPC-C settings conformant flag and deviation list, latency
+   constraint flag and violation list, …);
 7. keep raw per-worker files beside the aggregate for detail.
 
 `mind-tpcc consolidate` MUST also print a brief human summary of the
@@ -357,9 +358,20 @@ aggregate (status flags, New-Order throughput, and response-time min/max/avg
 and percentiles) to the progress log. The same text is written to
 `summary.txt`.
 
+When the merged 90th-percentile Transaction RT does not meet TPC-C 5.11
+Clause 5.2.5.3 / 5.2.5.7 (New-Order, Payment, Order-Status, and Delivery
+p90 **< 5 seconds**; Stock-Level p90 **< 20 seconds**), the summary MUST
+print a prominent `INVALID RUN` banner listing each violation, set
+`latency_constraints_ok` to false, and persist `latency_constraint_violations`.
+Standalone `tpcc-*` final results MUST print the same banner. This is a
+soft engineering indicator, not an official TPC-C conformance verdict, and
+MUST NOT change `result_class`. Completed New-Order transactions that miss
+the p90 bound remain in tpmC (Clause 5.4.2); the banner marks the run as
+unqualified.
+
 Do not average p99s, scale partial runs, invent zero samples, or emit an
 official TPC-C conformance verdict. Soft launch-parameter deviation reporting
-is not such a verdict.
+and the latency `INVALID RUN` banner are not such a verdict.
 
 Layout:
 

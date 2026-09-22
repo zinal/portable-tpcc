@@ -1417,6 +1417,12 @@ func TestLogAggregateSummaryPrintsBriefStats(t *testing.T) {
 	if !strings.Contains(got, "NewOrder:") || !strings.Contains(got, "min=1ms max=9ms avg=2.5ms") {
 		t.Fatalf("missing response-time stats:\n%s", got)
 	}
+	if !strings.Contains(got, "latency_constraints_ok=true") {
+		t.Fatalf("missing latency_constraints_ok:\n%s", got)
+	}
+	if strings.Contains(got, "INVALID RUN") {
+		t.Fatalf("fast p90 must not flag INVALID RUN:\n%s", got)
+	}
 }
 
 func TestRuntimeRootKeepsRelativeRemoteRoot(t *testing.T) {

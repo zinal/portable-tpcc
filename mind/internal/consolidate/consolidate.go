@@ -18,13 +18,15 @@ import (
 
 // Status flags for the consolidated result (specification §8.2).
 type Status struct {
-	WorkersComplete        bool     `json:"workers_complete"`
-	AssignmentValid        bool     `json:"assignment_valid"`
-	ClockSkewOK            bool     `json:"clock_skew_ok"`
-	IntegrityOK            bool     `json:"integrity_ok"`
-	IntegrityErrors        []string `json:"integrity_errors,omitempty"`
-	TPCCSettingsConformant bool     `json:"tpcc_settings_conformant"`
-	TPCCSettingsDeviations []string `json:"tpcc_settings_deviations,omitempty"`
+	WorkersComplete             bool     `json:"workers_complete"`
+	AssignmentValid             bool     `json:"assignment_valid"`
+	ClockSkewOK                 bool     `json:"clock_skew_ok"`
+	IntegrityOK                 bool     `json:"integrity_ok"`
+	IntegrityErrors             []string `json:"integrity_errors,omitempty"`
+	TPCCSettingsConformant      bool     `json:"tpcc_settings_conformant"`
+	TPCCSettingsDeviations      []string `json:"tpcc_settings_deviations,omitempty"`
+	LatencyConstraintsOK        bool     `json:"latency_constraints_ok"`
+	LatencyConstraintViolations []string `json:"latency_constraint_violations,omitempty"`
 }
 
 // Aggregate is the canonical consolidated result.
@@ -196,6 +198,16 @@ func (c *Consolidator) ConsolidateWithOptions(runID string, rc *config.RunConfig
 	clientParallelism := resolveClientParallelism(c.ResultRoot, runID, workerAssignments, rc)
 	settings := config.SettingsForAggregate(rc)
 	settings["client_parallelism"] = clientParallelism.ToMap()
+	measurement := map[string]interface{}{
+		"new_order_count":              newOrder,
+		"new_order_ok":                 newOrderOk,
+		"new_order_user_aborted":       newOrderUserAborted,
+		"throughput_new_order_per_min": throughput,
+		"warehouses":                   totalWarehouses,
+		"counters":                     counters,
+		"response_time_" + unit:        responseTimes,
+	}
+	latencyViolations := latencyConstraintViolations(measurement)
 
 	agg := &Aggregate{
 		SchemaVersion: 1,
@@ -203,24 +215,18 @@ func (c *Consolidator) ConsolidateWithOptions(runID string, rc *config.RunConfig
 		ResultClass:   "engineering",
 		Settings:      settings,
 		Status: Status{
-			WorkersComplete:        workersComplete,
-			AssignmentValid:        assignmentErr == nil,
-			ClockSkewOK:            clockSkewOK,
-			IntegrityOK:            integrity.ok,
-			IntegrityErrors:        integrity.errors,
-			TPCCSettingsConformant: len(tpccDevs) == 0,
-			TPCCSettingsDeviations: tpccDevs,
+			WorkersComplete:             workersComplete,
+			AssignmentValid:             assignmentErr == nil,
+			ClockSkewOK:                 clockSkewOK,
+			IntegrityOK:                 integrity.ok,
+			IntegrityErrors:             integrity.errors,
+			TPCCSettingsConformant:      len(tpccDevs) == 0,
+			TPCCSettingsDeviations:      tpccDevs,
+			LatencyConstraintsOK:        len(latencyViolations) == 0,
+			LatencyConstraintViolations: latencyViolations,
 		},
 		Metrics: map[string]interface{}{
-			"measurement": map[string]interface{}{
-				"new_order_count":              newOrder,
-				"new_order_ok":                 newOrderOk,
-				"new_order_user_aborted":       newOrderUserAborted,
-				"throughput_new_order_per_min": throughput,
-				"warehouses":                   totalWarehouses,
-				"counters":                     counters,
-				"response_time_" + unit:        responseTimes,
-			},
+			"measurement":        measurement,
 			"client_parallelism": clientParallelism.ToMap(),
 		},
 		Workers:      expected,
@@ -755,11 +761,14 @@ var summaryTxOrder = []struct {
 // "=== TPC-C Results ===" layout from tpcc-postgres-cpp PrintFinalResults
 // (with UserAborted and min/max/avg retained for portable-tpcc consolidate).
 func FormatSummary(agg *Aggregate) string {
+	violations := latencyConstraintViolations(measurementFromAggregate(agg))
+	latencyOK := len(violations) == 0
 	var b strings.Builder
 	fmt.Fprintf(&b,
-		"run_id=%s result_class=%s workers_complete=%v assignment_valid=%v clock_skew_ok=%v integrity_ok=%v tpcc_settings_conformant=%v\n",
+		"run_id=%s result_class=%s workers_complete=%v assignment_valid=%v clock_skew_ok=%v integrity_ok=%v tpcc_settings_conformant=%v latency_constraints_ok=%v\n",
 		agg.RunID, agg.ResultClass, agg.Status.WorkersComplete, agg.Status.AssignmentValid,
 		agg.Status.ClockSkewOK, agg.Status.IntegrityOK, agg.Status.TPCCSettingsConformant,
+		latencyOK,
 	)
 	if !agg.Status.IntegrityOK && len(agg.Status.IntegrityErrors) > 0 {
 		for _, errMsg := range agg.Status.IntegrityErrors {
@@ -771,11 +780,17 @@ func FormatSummary(agg *Aggregate) string {
 			fmt.Fprintf(&b, "tpcc_settings_deviation=%s\n", d)
 		}
 	}
-	appendTPCCResultsSummary(&b, agg)
+	if !latencyOK {
+		for _, v := range violations {
+			fmt.Fprintf(&b, "latency_constraint_violation=%s\n", v)
+		}
+	}
+	appendLatencyInvalidBanner(&b, violations)
+	appendTPCCResultsSummary(&b, agg, violations)
 	return b.String()
 }
 
-func appendTPCCResultsSummary(b *strings.Builder, agg *Aggregate) {
+func appendTPCCResultsSummary(b *strings.Builder, agg *Aggregate, violations []string) {
 	meas, ok := agg.Metrics["measurement"].(map[string]interface{})
 	if !ok {
 		return
@@ -812,6 +827,10 @@ func appendTPCCResultsSummary(b *strings.Builder, agg *Aggregate) {
 			efficiency := v / (maxTPMCPerWarehouse * float64(warehouses)) * 100.0
 			fmt.Fprintf(b, "  Efficiency: %.1f%%\n", efficiency)
 		}
+	}
+	if len(violations) > 0 {
+		b.WriteString(invalidRunMarkerLine)
+		b.WriteByte('\n')
 	}
 
 	counters := counterMap(meas["counters"])

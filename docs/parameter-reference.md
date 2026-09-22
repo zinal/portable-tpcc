@@ -470,8 +470,17 @@ Deviations set `tpcc_settings_conformant: false` and populate
 `tpcc_settings_deviations`. They do not reject the profile or change
 `result_class` (default `engineering`).
 
+After merge, `mind-tpcc consolidate` also checks Clause 5.2.5.3 / 5.2.5.7
+90th-percentile Transaction RT (New-Order / Payment / Order-Status /
+Delivery p90 < 5s; Stock-Level p90 < 20s). Failures set
+`latency_constraints_ok: false`, populate `latency_constraint_violations`,
+and print a prominent `INVALID RUN` banner in `summary.txt` and on the
+console. That banner is an engineering indicator, not an official TPC-C
+verdict, and does not change `result_class`. Slow completed New-Order
+transactions still count toward tpmC.
+
 Details: [tpcc-5.11-conformance-analysis.md](tpcc-5.11-conformance-analysis.md),
-[specification.md](specification.md) §10.
+[specification.md](specification.md) §8.2, §10.
 
 ## Result layout
 

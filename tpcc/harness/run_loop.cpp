@@ -16,9 +16,7 @@
 
 namespace NTpcc {
 
-namespace {
-
-const char* TransactionTypeName(ETransactionType type) {
+static const char* TransactionTypeName(ETransactionType type) {
     switch (type) {
         case ETransactionType::NewOrder: return "NewOrder";
         case ETransactionType::Delivery: return "Delivery";
@@ -28,6 +26,8 @@ const char* TransactionTypeName(ETransactionType type) {
         default: return "Unknown";
     }
 }
+
+namespace {
 
 void ResolveHistogramParams(
     const THistogramConfig& histogram,
@@ -126,6 +126,75 @@ bool ObserveSchedulerInflightStuck(
     }
     state.Warned = true;
     return true;
+}
+
+uint64_t PercentileToMilliseconds(uint64_t value, const char* unit) {
+    if (unit != nullptr && std::strcmp(unit, "us") == 0) {
+        return value / 1000;
+    }
+    return value;
+}
+
+void CollectLatencyConstraintViolations(
+    const TTerminalStats& aggregated,
+    const char* unit,
+    std::vector<TLatencyConstraintViolation>& out)
+{
+    out.clear();
+    for (size_t i = 0; i < TRANSACTION_TYPE_COUNT; ++i) {
+        const auto type = static_cast<ETransactionType>(i);
+        const auto& s = aggregated.GetStats(type);
+        const auto completed = s.OK.load(std::memory_order_relaxed)
+            + s.UserAborted.load(std::memory_order_relaxed);
+        if (completed == 0) {
+            continue;
+        }
+        const uint64_t p90Ms = PercentileToMilliseconds(
+            s.LatencyHistogramFullMs.GetValueAtPercentile(90), unit);
+        const uint64_t limitMs = TpccP90LimitMs(type);
+        if (p90Ms >= limitMs) {
+            out.push_back(TLatencyConstraintViolation{
+                TransactionTypeName(type), p90Ms, limitMs});
+        }
+    }
+}
+
+std::string FormatInvalidRunLatencyBanner(
+    const std::vector<TLatencyConstraintViolation>& violations)
+{
+    if (violations.empty()) {
+        return {};
+    }
+    std::string out;
+    out += "************************************************************************\n";
+    out += "*** INVALID RUN: TPC-C 5.11 response-time constraints not met\n";
+    for (const auto& v : violations) {
+        out += fmt::format("***   {} p90={}ms exceeds {}ms (Clause 5.2.5.3)\n",
+            v.TypeName, v.P90Ms, v.LimitMs);
+    }
+    out += "************************************************************************\n";
+    return out;
+}
+
+static void LogInvalidRunLatencyBanner(const std::vector<TLatencyConstraintViolation>& violations) {
+    const auto banner = FormatInvalidRunLatencyBanner(violations);
+    if (banner.empty()) {
+        return;
+    }
+    size_t begin = 0;
+    while (begin < banner.size()) {
+        const auto end = banner.find('\n', begin);
+        const auto line = end == std::string::npos
+            ? banner.substr(begin)
+            : banner.substr(begin, end - begin);
+        if (!line.empty()) {
+            LOG_I(line);
+        }
+        if (end == std::string::npos) {
+            break;
+        }
+        begin = end + 1;
+    }
 }
 
 TRunLayout ComputeRunLayout(const TRunSizingInput& input) {
@@ -463,11 +532,18 @@ void PrintFinalResults(
         ? (tpmc / (MAX_TPMC_PER_WAREHOUSE * config.WarehouseCount) * 100.0) : 0.0;
 
     LOG_I("=== TPC-C Results ===");
+    const char* unit = HistogramUnitLabel(config);
+    std::vector<TLatencyConstraintViolation> latencyViolations;
+    CollectLatencyConstraintViolations(aggregated, unit, latencyViolations);
+    LogInvalidRunLatencyBanner(latencyViolations);
     LOG_I(fmt::format("  Measured Duration: {:.1f}s (configured: {}s)",
           measureDuration, config.RunDuration.count()));
     LOG_I(fmt::format("  New-Order Throughput: {:.2f} tpmC", tpmc));
     if (!config.NoDelays) {
         LOG_I(fmt::format("  Efficiency: {:.1f}%", efficiency));
+    }
+    if (!latencyViolations.empty()) {
+        LOG_I("  *** INVALID RUN (latency constraints not met)");
     }
     LOG_I("  Total Failed: " << totalFailed);
     if (taskQueue) {
@@ -477,7 +553,6 @@ void PrintFinalResults(
         }
     }
 
-    const char* unit = HistogramUnitLabel(config);
     for (size_t i = 0; i < TRANSACTION_TYPE_COUNT; ++i) {
         auto type = static_cast<ETransactionType>(i);
         const auto& s = aggregated.GetStats(type);

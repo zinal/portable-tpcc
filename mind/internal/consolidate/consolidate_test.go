@@ -119,6 +119,26 @@ func measurementHistogram(count uint64) map[string]interface{} {
 	}
 }
 
+func overflowHistogram(count, maxValue uint64) map[string]interface{} {
+	n, err := histogram.ExpectedBucketCount(4096, maxValue)
+	if err != nil {
+		panic(err)
+	}
+	return map[string]interface{}{
+		"layout":                 "linear_exp",
+		"unit":                   "ms",
+		"hdr_till":               uint64(4096),
+		"max_value":              maxValue,
+		"sub_buckets_per_octave": uint64(64),
+		"total_count":            count,
+		"overflow_count":         count,
+		"min_recorded":           maxValue,
+		"max_recorded":           maxValue,
+		"sum_values":             maxValue * count,
+		"buckets":                make([]uint64, n),
+	}
+}
+
 func patchWorkerResult(t *testing.T, root, runID, worker string, patch func(map[string]interface{})) {
 	t.Helper()
 	path := filepath.Join(root, runID, "raw", "worker", worker, "result.json")
@@ -279,6 +299,9 @@ func TestConsolidate_mergesHistograms(t *testing.T) {
 	if !agg.Status.WorkersComplete || !agg.Status.IntegrityOK {
 		t.Fatalf("status %+v", agg.Status)
 	}
+	if !agg.Status.LatencyConstraintsOK {
+		t.Fatalf("fast histogram must pass latency constraints, status=%+v", agg.Status)
+	}
 	meas := agg.Metrics["measurement"].(map[string]interface{})
 	switch wh := meas["warehouses"].(type) {
 	case int:
@@ -384,6 +407,7 @@ func TestFormatSummary_matchesTPCCResultsLayout(t *testing.T) {
 	text := consolidate.FormatSummary(agg)
 	wantLines := []string{
 		"run_id=run-demo result_class=engineering",
+		"latency_constraints_ok=true",
 		"=== TPC-C Results ===",
 		"  Scale: 10 warehouses",
 		"  Measured Duration: 60.0s (configured: 60s)",
@@ -444,6 +468,124 @@ func TestFormatSummary_latencyUnitsNormalizedToMs(t *testing.T) {
 	}
 	if !strings.Contains(text, "  Scale: 4 warehouses") {
 		t.Fatalf("summary missing scale from consolidated warehouses:\n%s", text)
+	}
+	if strings.Contains(text, "INVALID RUN") {
+		t.Fatalf("fast p90 must not flag INVALID RUN:\n%s", text)
+	}
+}
+
+func TestFormatSummary_invalidRunWhenP90ExceedsLimit(t *testing.T) {
+	agg := &consolidate.Aggregate{
+		RunID:       "run-slow",
+		ResultClass: "engineering",
+		Settings: config.SettingsForAggregate(&config.RunConfig{
+			WorkerAssignment: []config.WorkerAssignmentJSON{
+				{Instance: "worker-a", WarehouseRanges: [][]int{{1, 11}}, Threads: 1, MaxInflight: 64},
+			},
+			Phases:  config.PhasesJSON{MeasurementMs: 60000},
+			Runtime: config.RunRuntime{Pacing: "enabled"},
+		}),
+		Status: consolidate.Status{
+			WorkersComplete: true, AssignmentValid: true, ClockSkewOK: true,
+			IntegrityOK: true, TPCCSettingsConformant: true,
+		},
+		Metrics: map[string]interface{}{
+			"measurement": map[string]interface{}{
+				"new_order_count":              int64(100),
+				"throughput_new_order_per_min": 100.0,
+				"warehouses":                   10,
+				"counters": map[string]int64{
+					"new_order_ok": 100,
+					"payment_ok":   100,
+				},
+				"response_time_ms": map[string]interface{}{
+					"new_order": map[string]interface{}{
+						"min": uint64(1), "max": uint64(20000), "avg": 800.0,
+						"p50": uint64(10), "p90": uint64(12000), "p99": uint64(18000),
+					},
+					"payment": map[string]interface{}{
+						"min": uint64(1), "max": uint64(6000), "avg": 200.0,
+						"p50": uint64(8), "p90": uint64(5000), "p99": uint64(5500),
+					},
+				},
+			},
+		},
+	}
+	text := consolidate.FormatSummary(agg)
+	wants := []string{
+		"latency_constraints_ok=false",
+		"*** INVALID RUN: TPC-C 5.11 response-time constraints not met",
+		"***   NewOrder p90=12000ms exceeds 5000ms (Clause 5.2.5.3)",
+		"***   Payment p90=5000ms exceeds 5000ms (Clause 5.2.5.3)",
+		"latency_constraint_violation=NewOrder p90=12000ms exceeds 5000ms (Clause 5.2.5.3)",
+		"  New-Order Throughput: 100.00 tpmC",
+		"  Efficiency: 77.8%",
+		"  *** INVALID RUN (latency constraints not met)",
+	}
+	for _, want := range wants {
+		if !strings.Contains(text, want) {
+			t.Fatalf("summary missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestFormatSummary_stockLevelLimitIs20s(t *testing.T) {
+	base := func(p90 uint64) *consolidate.Aggregate {
+		return &consolidate.Aggregate{
+			RunID:       "run-sl",
+			ResultClass: "engineering",
+			Metrics: map[string]interface{}{
+				"measurement": map[string]interface{}{
+					"counters": map[string]int64{"stock_level_ok": 10},
+					"response_time_ms": map[string]interface{}{
+						"stock_level": map[string]interface{}{"p90": p90},
+					},
+				},
+			},
+		}
+	}
+	pass := consolidate.FormatSummary(base(19999))
+	if strings.Contains(pass, "INVALID RUN") {
+		t.Fatalf("stock-level p90=19999ms must pass:\n%s", pass)
+	}
+	fail := consolidate.FormatSummary(base(20000))
+	if !strings.Contains(fail, "StockLevel p90=20000ms exceeds 20000ms") {
+		t.Fatalf("stock-level p90=20000ms must fail:\n%s", fail)
+	}
+}
+
+func TestFormatSummary_usP90ConvertedToMs(t *testing.T) {
+	agg := &consolidate.Aggregate{
+		RunID:       "run-us-slow",
+		ResultClass: "engineering",
+		Metrics: map[string]interface{}{
+			"measurement": map[string]interface{}{
+				"counters": map[string]int64{"new_order_ok": 10},
+				"response_time_us": map[string]interface{}{
+					"new_order": map[string]interface{}{"p90": uint64(6_000_000)},
+				},
+			},
+		},
+	}
+	text := consolidate.FormatSummary(agg)
+	if !strings.Contains(text, "NewOrder p90=6000ms exceeds 5000ms") {
+		t.Fatalf("us p90 must convert to ms for the limit check:\n%s", text)
+	}
+}
+
+func TestFormatSummary_missingP90IsViolation(t *testing.T) {
+	agg := &consolidate.Aggregate{
+		RunID:       "run-no-p90",
+		ResultClass: "engineering",
+		Metrics: map[string]interface{}{
+			"measurement": map[string]interface{}{
+				"counters": map[string]int64{"new_order_ok": 10},
+			},
+		},
+	}
+	text := consolidate.FormatSummary(agg)
+	if !strings.Contains(text, "NewOrder completed=10 without p90") {
+		t.Fatalf("completed New-Order without p90 must be a violation:\n%s", text)
 	}
 }
 
@@ -678,6 +820,53 @@ func TestConsolidate_tpccSettingsDeviationsInAggregate(t *testing.T) {
 	}
 	if !strings.Contains(text, "tpcc_settings_deviation=") {
 		t.Fatalf("summary missing deviation lines:\n%s", text)
+	}
+}
+
+func TestConsolidate_latencyConstraintsInAggregate(t *testing.T) {
+	root := t.TempDir()
+	runID := "run-slow-p90"
+	rc := minimalRunConfig(runID)
+	sha := writeRunConfig(t, root, runID, rc)
+	writeWorkerArtifacts(t, root, runID, "worker-a", sha, rc, map[string]interface{}{
+		"counters": map[string]interface{}{
+			"new_order_ok": 10,
+		},
+		"histograms": map[string]interface{}{
+			"new_order": overflowHistogram(10, 32768),
+		},
+	})
+	writePassingChecks(t, root, runID)
+
+	cons := &consolidate.Consolidator{ResultRoot: root}
+	agg, err := cons.Consolidate(runID, rc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agg.Status.LatencyConstraintsOK {
+		t.Fatalf("expected latency_constraints_ok=false, status=%+v", agg.Status)
+	}
+	joined := strings.Join(agg.Status.LatencyConstraintViolations, "\n")
+	if !strings.Contains(joined, "NewOrder p90=") || !strings.Contains(joined, "exceeds 5000ms") {
+		t.Fatalf("unexpected latency violations: %#v", agg.Status.LatencyConstraintViolations)
+	}
+
+	if err := consolidate.WriteAggregate(root, runID, agg); err != nil {
+		t.Fatal(err)
+	}
+	summary, err := os.ReadFile(filepath.Join(root, runID, "summary.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(summary)
+	if !strings.Contains(text, "latency_constraints_ok=false") {
+		t.Fatalf("summary missing latency flag:\n%s", text)
+	}
+	if !strings.Contains(text, "*** INVALID RUN: TPC-C 5.11 response-time constraints not met") {
+		t.Fatalf("summary missing INVALID RUN banner:\n%s", text)
+	}
+	if !strings.Contains(text, "  *** INVALID RUN (latency constraints not met)") {
+		t.Fatalf("summary missing INVALID RUN marker next to results:\n%s", text)
 	}
 }
 

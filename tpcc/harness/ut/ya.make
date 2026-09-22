@@ -8,6 +8,7 @@ SRCS(
     inflight_stuck_ut.cpp
     artifact_manifest_stdio_ut.cpp
     debug_probe_ut.cpp
+    latency_constraints_ut.cpp
 )
 
 PEERDIR(
