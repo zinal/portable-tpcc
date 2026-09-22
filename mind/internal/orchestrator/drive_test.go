@@ -1058,6 +1058,72 @@ func TestLaunchRoleUploadsRunConfigAndCredentials(t *testing.T) {
 	}
 }
 
+func TestLaunchRoleUploadsRunFilesOncePerHost(t *testing.T) {
+	root := t.TempDir()
+	caPath := filepath.Join(root, "root.pem")
+	if err := os.WriteFile(caPath, []byte("CA"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	store := &state.Store{StateDir: t.TempDir()}
+	o := &Orchestrator{
+		Profile: &profile.Profile{
+			Database: profile.Database{
+				DBMS:   "ydb",
+				CaFile: caPath,
+			},
+		},
+		Expanded:   config.ExpandedPaths{RemoteRoot: filepath.Join(root, "remote")},
+		StateStore: store,
+	}
+	ctx := &Context{
+		RunID:  "run-1",
+		RunDir: writeLaunchRunDir(t),
+		RunConfig: &config.RunConfig{
+			Binary: "tpcc-ydb",
+		},
+	}
+	process := map[string]interface{}{
+		"pid":            456,
+		"instance_nonce": "nonce-1",
+	}
+	data, _ := json.Marshal(process)
+	sess := &fakeSession{
+		files: map[string][]byte{
+			"tpcc-ydb": []byte("binary"),
+		},
+		startFiles: map[string][]byte{
+			"process.json": data,
+		},
+		alive: true,
+	}
+	sessions := map[string]remote.Session{"host-a": sess}
+	if _, err := o.launchRole(ctx, sessions, "worker", "host-a", "w-1", []string{"worker"}); err != nil {
+		t.Fatal(err)
+	}
+	first := append([]string(nil), sess.uploads...)
+	if len(first) == 0 {
+		t.Fatal("expected first launch to upload run files")
+	}
+	if _, err := o.launchRole(ctx, sessions, "worker", "host-a", "w-2", []string{"worker"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(sess.uploads) != len(first) {
+		t.Fatalf("co-located launch re-uploaded run files: first=%v now=%v", first, sess.uploads)
+	}
+	ctx2 := *ctx
+	ctx2.RunID = "run-2"
+	if _, err := o.launchRole(&ctx2, sessions, "worker", "host-a", "w-1", []string{"worker"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(sess.uploads) == len(first) {
+		t.Fatal("new run_id should upload run files again")
+	}
+	joined := strings.Join(sess.uploads[len(first):], "\n")
+	if !strings.Contains(joined, "run-2") {
+		t.Fatalf("new run_id uploads=%v", sess.uploads[len(first):])
+	}
+}
+
 func TestLaunchRoleDoesNotPassPasswordEnv(t *testing.T) {
 	store := &state.Store{StateDir: t.TempDir()}
 	t.Setenv("TPCC_PASSWORD", "s3cret")

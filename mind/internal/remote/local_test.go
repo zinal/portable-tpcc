@@ -1,6 +1,8 @@
 package remote_test
 
 import (
+	"bytes"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -127,6 +129,68 @@ func TestLocalSession_uploadReplacesBusyExecutable(t *testing.T) {
 	}
 	if string(got) != "#!/bin/sh\necho replaced\n" {
 		t.Fatalf("replaced content = %q", got)
+	}
+}
+
+func TestLocalSession_uploadDoesNotExposeEmptyDest(t *testing.T) {
+	root := t.TempDir()
+	sess, err := remote.NewLocal("local", "127.0.0.1", root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sess.Close()
+
+	dstRel := "ca.pem"
+	dst := filepath.Join(root, dstRel)
+	old := []byte("-----BEGIN OLD CERT-----\n")
+	if err := os.WriteFile(dst, old, 0644); err != nil {
+		t.Fatal(err)
+	}
+	src := filepath.Join(root, "new.pem")
+	newContent := bytes.Repeat([]byte("N"), 1<<20)
+	if err := os.WriteFile(src, newContent, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan struct{})
+	errCh := make(chan error, 1)
+	started := make(chan struct{})
+	go func() {
+		close(started)
+		for {
+			select {
+			case <-done:
+				errCh <- nil
+				return
+			default:
+				data, err := os.ReadFile(dst)
+				if err != nil {
+					continue
+				}
+				if len(data) == 0 {
+					errCh <- errors.New("reader observed empty dest during upload")
+					return
+				}
+			}
+		}
+	}()
+	<-started
+	if err := sess.Upload(src, dstRel); err != nil {
+		t.Fatal(err)
+	}
+	close(done)
+	if err := <-errCh; err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, newContent) {
+		t.Fatalf("dest len=%d, want %d", len(got), len(newContent))
+	}
+	if _, err := os.Stat(dst + ".tmp"); !os.IsNotExist(err) {
+		t.Fatalf("leftover tmp: %v", err)
 	}
 }
 

@@ -53,14 +53,16 @@ func TestStartDetachedShellCmdRejectsInvalidEnvKey(t *testing.T) {
 	}
 }
 
-func TestWriteFileCmdUnlinksFirst(t *testing.T) {
+func TestWriteFileCmdReplacesAtomically(t *testing.T) {
 	cmd := writeFileCmd("ob-work/tpcc-oceanbase")
-	want := "rm -f -- 'ob-work/tpcc-oceanbase' && cat > 'ob-work/tpcc-oceanbase'"
+	want := "rm -f -- 'ob-work/tpcc-oceanbase.tmp' && cat > 'ob-work/tpcc-oceanbase.tmp' && mv -f -- 'ob-work/tpcc-oceanbase.tmp' 'ob-work/tpcc-oceanbase'"
 	if cmd != want {
 		t.Fatalf("cmd=%q, want %q", cmd, want)
 	}
 	home := writeFileCmd("~/tpcc-oceanbase")
-	if !strings.Contains(home, `rm -f -- "$HOME"/'tpcc-oceanbase'`) || !strings.Contains(home, `cat > "$HOME"/'tpcc-oceanbase'`) {
+	if !strings.Contains(home, `rm -f -- "$HOME"/'tpcc-oceanbase.tmp'`) ||
+		!strings.Contains(home, `cat > "$HOME"/'tpcc-oceanbase.tmp'`) ||
+		!strings.Contains(home, `mv -f -- "$HOME"/'tpcc-oceanbase.tmp' "$HOME"/'tpcc-oceanbase'`) {
 		t.Fatalf("home cmd=%q", home)
 	}
 }
