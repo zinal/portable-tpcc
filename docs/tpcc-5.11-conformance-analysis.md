@@ -117,9 +117,13 @@ histogram, `min`/`max`/`avg` и p50/p90/p95/p99. Microsecond mode больше �
 
 - Remote Terminal Emulator и menu response time;
 - отдельные interactive/deferred Delivery metrics;
-- проверка допустимых p90;
 - обязательные frequency distributions и графики §5.6;
 - truncation reported throughput до нуля знаков после запятой.
+
+`summary.txt` и финальный вывод `tpcc-*` помечают прогон `INVALID RUN`, если
+слитый p90 не укладывается в Clause 5.2.5.3 / 5.2.5.7 (New-Order, Payment,
+Order-Status, Delivery < 5 с; Stock-Level < 20 с). Это engineering-индикатор,
+не официальный TPC-C verdict.
 
 Синхронная Delivery и отсутствие RTE являются принятыми product deviations,
 но не соответствуют полному официальному тесту.
@@ -518,8 +522,10 @@ business-input counters для проверки фактической выбо�
 
 - menu response time;
 - отдельные interactive/deferred Delivery metrics;
-- проверка допустимых p90;
 - required frequency distributions и графики §5.6.
+
+`summary.txt` / консоль помечают `INVALID RUN` при нарушении Clause 5.2.5.3
+p90 (engineering-индикатор, не официальный verdict).
 
 Reported throughput также не truncates до нуля decimal places, как требует
 TPC-C §5.4.4; для engineering metric сохранение дробной части допустимо.

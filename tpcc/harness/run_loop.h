@@ -144,6 +144,24 @@ bool ObserveSchedulerInflightStuck(
     size_t threadCount,
     size_t maxInflight);
 
+struct TLatencyConstraintViolation {
+    const char* TypeName = "";
+    uint64_t P90Ms = 0;
+    uint64_t LimitMs = 0;
+};
+
+// Histogram bucket values are milliseconds unless unit is "us".
+uint64_t PercentileToMilliseconds(uint64_t value, const char* unit);
+
+// TPC-C 5.11 Clause 5.2.5.3 / 5.2.5.7: p90 must be strictly less than the limit.
+void CollectLatencyConstraintViolations(
+    const TTerminalStats& aggregated,
+    const char* unit,
+    std::vector<TLatencyConstraintViolation>& out);
+
+std::string FormatInvalidRunLatencyBanner(
+    const std::vector<TLatencyConstraintViolation>& violations);
+
 struct TProgressDisplayState {
     Clock::time_point LastUpdate{};
     TInflightStuckState InflightStuck;

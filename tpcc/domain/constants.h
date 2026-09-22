@@ -5,6 +5,7 @@
 #include <array>
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 
 namespace NTpcc {
 
@@ -77,6 +78,11 @@ constexpr std::chrono::seconds STOCK_LEVEL_THINK_TIME{5};
 // from TPC-C standard (#4.1), calculated based on thinking/keying times and terminals per warehouse
 constexpr double MAX_TPMC_PER_WAREHOUSE = 12.86;
 
+// TPC-C 5.11 Clause 5.2.5.3 / 5.2.5.7: 90th percentile Transaction RT must be
+// strictly less than these limits. Stock-Level is the 20s exception.
+constexpr uint64_t TPCC_P90_LIMIT_MS = 5000;
+constexpr uint64_t TPCC_STOCK_LEVEL_P90_LIMIT_MS = 20000;
+
 // Table names
 constexpr const char* TABLE_CUSTOMER = "customer";
 constexpr const char* TABLE_WAREHOUSE = "warehouse";
@@ -116,6 +122,13 @@ enum class ETransactionType {
 };
 
 constexpr size_t TRANSACTION_TYPE_COUNT = static_cast<size_t>(ETransactionType::COUNT);
+
+inline uint64_t TpccP90LimitMs(ETransactionType type) {
+    if (type == ETransactionType::StockLevel) {
+        return TPCC_STOCK_LEVEL_P90_LIMIT_MS;
+    }
+    return TPCC_P90_LIMIT_MS;
+}
 
 constexpr size_t TUI_LOG_LINES = 1000;
 

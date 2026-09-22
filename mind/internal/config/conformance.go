@@ -16,6 +16,14 @@ const (
 // TPC-C 5.11 minimum measurement interval (§5.5): 120 minutes.
 const TPCCMinMeasurementMs = int64(120 * 60 * 1000)
 
+// TPC-C 5.11 Clause 5.2.5.3 / 5.2.5.7: 90th percentile Transaction RT must be
+// strictly less than these limits. Stock-Level is the 20s exception; the other
+// four types share the 5s interactive bound.
+const (
+	TPCCP90LimitMs           = 5000
+	TPCCStockLevelP90LimitMs = 20000
+)
+
 // TPCSettingsDeviations compares effective run settings against the fixed
 // TPC-C 5.11 launch-parameter requirements used by portable-tpcc defaults.
 // Deviations are informational: they do not reject engineering profiles.
