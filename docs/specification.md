@@ -170,7 +170,7 @@ documents:
   such as `password_file` / `sa_key_file` / `ca_file`, or a `password_env`
   name for standalone);
 - scale, seed, workload (mix, think/keying times, terminals per warehouse,
-  remote-warehouse percents);
+  remote-warehouse percents, New-Order remote-warehouse cap);
 - loader/worker instance lists and computed warehouse ranges;
 - phase durations and runtime/retry/histogram settings;
 - binary name used for the run (for example `tpcc-ydb`).
@@ -185,6 +185,15 @@ instance names are generated from those hosts (see
 
 Mix weights MUST be positive and form a complete distribution. Values that
 differ from any TPC-C edition are still accepted.
+
+New-Order supply warehouses follow Clause 2.4.1.5 using
+`workload.remote_warehouse_percent.new_order`, then
+`workload.new_order_max_remote_warehouses`. That cap is the maximum number of
+order lines in one New-Order whose supply warehouse is remote. `0` (the
+default, also used when the field is omitted) means no cap. Once that many
+remote lines have been chosen, every remaining line uses the home warehouse.
+A non-zero cap is a TPC-C settings deviation and MUST NOT fail structural
+validation.
 
 Examples: [profile.ydb.v1.yaml](examples/profile.ydb.v1.yaml),
 [run-config.v1.json](examples/run-config.v1.json).
@@ -675,13 +684,15 @@ mix, non-positive sizes/timeouts, secret literals, and retry-after-ambiguous
 commit. `runtime.histogram.unit`, if present, MUST be `ms` or `us`.
 `runtime.histogram.highest`, if present, MUST be greater than zero (omitted
 uses the built-in default rather than silently substituting it for `<= 0`).
+`workload.new_order_max_remote_warehouses`, if present, MUST NOT be negative.
 
 Additionally, compare effective (default-merged) launch parameters against the
 fixed TPC-C 5.11 requirements used by built-in defaults: terminals per
 warehouse = 10; Clause 5.2.3 mix minima (Payment ≥ 43%, Order-Status /
 Delivery / Stock-Level ≥ 4%; New-Order has no mix minimum); remote-warehouse
 percents New-Order 1% of order lines and Payment 15% of inputs
-(Clause 2.4.1.5 / 2.5.1.2); pacing enabled; exponential think time; keying
+(Clause 2.4.1.5 / 2.5.1.2); `new_order_max_remote_warehouses` = 0 (no cap on
+remote New-Order supply warehouses); pacing enabled; exponential think time; keying
 times and mean think times at least the Clause 5.2.5.7 minima (larger values
 remain conformant); and measurement interval ≥ 120 minutes. Report deviations in `mind-tpcc validate`, warn at
 `test`, and persist `tpcc_settings_conformant` plus

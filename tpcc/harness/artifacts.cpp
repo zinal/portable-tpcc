@@ -272,6 +272,7 @@ void WriteWorkerResultJson(const TArtifactPaths& paths, const TRunConfigDocument
                     {"new_order", doc.Workload.NewOrderRemoteWarehousePercent},
                     {"payment", doc.Workload.PaymentRemoteWarehousePercent},
                 }},
+                {"new_order_max_remote_warehouses", doc.Workload.NewOrderMaxRemoteWarehouses},
                 {"pacing", doc.PacingEnabled ? "enabled" : "disabled"},
                 {"think_time_distribution", ThinkTimeDistributionToString(doc.ThinkTimeDistribution)},
             }},

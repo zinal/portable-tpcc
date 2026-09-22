@@ -77,6 +77,12 @@ func tpcSettingsDeviations(
 			wl.RemoteWarehousePercent.Payment, defaults.RemoteWarehousePercent.Payment,
 		))
 	}
+	if wl.NewOrderMaxRemoteWarehouses != defaults.NewOrderMaxRemoteWarehouses {
+		out = append(out, fmt.Sprintf(
+			"workload.new_order_max_remote_warehouses=%d; TPC-C requires %d (no per-transaction cap)",
+			wl.NewOrderMaxRemoteWarehouses, defaults.NewOrderMaxRemoteWarehouses,
+		))
+	}
 
 	if pacing == "" {
 		pacing = "enabled"

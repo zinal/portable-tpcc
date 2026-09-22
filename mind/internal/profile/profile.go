@@ -89,6 +89,9 @@ type Workload struct {
 	KeyingTimeMs           TxTiming               `yaml:"keying_time_ms"`
 	ThinkTimeMs            TxTiming               `yaml:"think_time_ms"`
 	RemoteWarehousePercent RemoteWarehousePercent `yaml:"remote_warehouse_percent"`
+	// NewOrderMaxRemoteWarehouses caps how many New-Order lines in one
+	// transaction use a remote supply warehouse. 0 (omit) means no limit.
+	NewOrderMaxRemoteWarehouses int `yaml:"new_order_max_remote_warehouses"`
 }
 
 // RemoteWarehousePercent is the share of New-Order lines / Payment inputs

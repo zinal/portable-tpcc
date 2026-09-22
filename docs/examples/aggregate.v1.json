@@ -29,7 +29,8 @@
       "remote_warehouse_percent": {
         "new_order": 1,
         "payment": 15
-      }
+      },
+      "new_order_max_remote_warehouses": 0
     },
     "worker_assignment": [
       {

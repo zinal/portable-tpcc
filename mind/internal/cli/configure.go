@@ -18,79 +18,80 @@ type configureOpts struct {
 	DBMS        string
 	Yes         bool
 
-	Name                  *string
-	SSHUser               *string
-	UseAgent              *bool
-	KnownHosts            *string
-	ConnectTimeout        *string
-	InsecureIgnore        *bool
-	LocalArtifacts        *string
-	RemoteRoot            *string
-	ResultRoot            *string
-	StateDir              *string
-	Endpoint              *string
-	Database              *string
-	Path                  *string
-	User                  *string
-	PasswordEnv           *string
-	AuthScheme            *string
-	SaKeyFile             *string
-	CaFile                *string
-	Warehouses            *int
-	Seed                  *int64
-	BatchRows             *int
-	TerminalsPerWarehouse *int
-	MixNewOrder           *int
-	MixPayment            *int
-	MixOrderStatus        *int
-	MixDelivery           *int
-	MixStockLevel         *int
-	KeyingNewOrder        *int
-	KeyingPayment         *int
-	KeyingOrderStatus     *int
-	KeyingDelivery        *int
-	KeyingStockLevel      *int
-	ThinkNewOrder         *int
-	ThinkPayment          *int
-	ThinkOrderStatus      *int
-	ThinkDelivery         *int
-	ThinkStockLevel       *int
-	RemoteNewOrder        *int
-	RemotePayment         *int
-	Loaders               []string
-	Workers               []string
-	StartLead             *string
-	RampUp                *string
-	Measurement           *string
-	TransactionDrain      *string
-	AsyncWorkDrain        *string
-	StopGrace             *string
-	MaxClockSkew          *string
-	Pacing                *string
-	ThinkTimeDistribution *string
-	ThreadsPerLoader      *int
-	ThreadsPerWorker      *int
-	CheckConcurrency      *int
-	MaxInflightPerWorker  *int
-	StatsInterval         *string
-	RetryMaxAttempts      *int
-	RetryInitialBackoff   *string
-	RetryMaxBackoff       *string
-	RetryJitter           *string
-	HistogramUnit         *string
-	HistogramHighest      *int64
-	AfterImport           *bool
-	AfterTest             *bool
-	FailFast              *bool
-	IncludeEvents         *bool
-	IncludeLogs           *bool
-	Partitioning          *string
-	PartitionCount        *int
-	ForeignKeys           *string
-	Partitions            *int
-	QueryTimeout          *int
-	IndexParallel         *int
-	TxMode                *string
+	Name                        *string
+	SSHUser                     *string
+	UseAgent                    *bool
+	KnownHosts                  *string
+	ConnectTimeout              *string
+	InsecureIgnore              *bool
+	LocalArtifacts              *string
+	RemoteRoot                  *string
+	ResultRoot                  *string
+	StateDir                    *string
+	Endpoint                    *string
+	Database                    *string
+	Path                        *string
+	User                        *string
+	PasswordEnv                 *string
+	AuthScheme                  *string
+	SaKeyFile                   *string
+	CaFile                      *string
+	Warehouses                  *int
+	Seed                        *int64
+	BatchRows                   *int
+	TerminalsPerWarehouse       *int
+	MixNewOrder                 *int
+	MixPayment                  *int
+	MixOrderStatus              *int
+	MixDelivery                 *int
+	MixStockLevel               *int
+	KeyingNewOrder              *int
+	KeyingPayment               *int
+	KeyingOrderStatus           *int
+	KeyingDelivery              *int
+	KeyingStockLevel            *int
+	ThinkNewOrder               *int
+	ThinkPayment                *int
+	ThinkOrderStatus            *int
+	ThinkDelivery               *int
+	ThinkStockLevel             *int
+	RemoteNewOrder              *int
+	RemotePayment               *int
+	NewOrderMaxRemoteWarehouses *int
+	Loaders                     []string
+	Workers                     []string
+	StartLead                   *string
+	RampUp                      *string
+	Measurement                 *string
+	TransactionDrain            *string
+	AsyncWorkDrain              *string
+	StopGrace                   *string
+	MaxClockSkew                *string
+	Pacing                      *string
+	ThinkTimeDistribution       *string
+	ThreadsPerLoader            *int
+	ThreadsPerWorker            *int
+	CheckConcurrency            *int
+	MaxInflightPerWorker        *int
+	StatsInterval               *string
+	RetryMaxAttempts            *int
+	RetryInitialBackoff         *string
+	RetryMaxBackoff             *string
+	RetryJitter                 *string
+	HistogramUnit               *string
+	HistogramHighest            *int64
+	AfterImport                 *bool
+	AfterTest                   *bool
+	FailFast                    *bool
+	IncludeEvents               *bool
+	IncludeLogs                 *bool
+	Partitioning                *string
+	PartitionCount              *int
+	ForeignKeys                 *string
+	Partitions                  *int
+	QueryTimeout                *int
+	IndexParallel               *int
+	TxMode                      *string
 }
 
 func runConfigure(args []string) int {
@@ -422,6 +423,13 @@ func parseConfigureArgs(args []string) (*configureOpts, error) {
 				return nil, err
 			}
 			opts.RemotePayment = &n
+			i = next
+		case arg == "--new-order-max-remote-warehouses" || strings.HasPrefix(arg, "--new-order-max-remote-warehouses="):
+			n, next, err := requireFlagInt(args, i, "--new-order-max-remote-warehouses")
+			if err != nil {
+				return nil, err
+			}
+			opts.NewOrderMaxRemoteWarehouses = &n
 			i = next
 		case arg == "--loaders" || strings.HasPrefix(arg, "--loaders="):
 			val, next, err := requireFlagValue(args, i, "--loaders")
@@ -806,6 +814,9 @@ func buildConfigureProfile(opts *configureOpts) (*profile.Profile, error) {
 		v := *opts.RemotePayment
 		p.Workload.RemoteWarehousePercent.Payment = &v
 	}
+	if opts.NewOrderMaxRemoteWarehouses != nil {
+		p.Workload.NewOrderMaxRemoteWarehouses = *opts.NewOrderMaxRemoteWarehouses
+	}
 	if len(opts.Loaders) > 0 {
 		p.Loaders = profile.HostsFromStrings(opts.Loaders)
 	}
@@ -1072,6 +1083,8 @@ Workload overrides:
   --think-delivery <n>         --think-stock-level <n>
   --remote-warehouse-new-order <n>
   --remote-warehouse-payment <n>
+  --new-order-max-remote-warehouses <n>
+                               New-Order remote-warehouse cap (0 = no limit)
 
 YDB:
   --auth-scheme <anonymous|login|sa_key>

@@ -31,6 +31,7 @@ func DefaultWorkload() WorkloadBlock {
 			NewOrder: 1,
 			Payment:  15,
 		},
+		NewOrderMaxRemoteWarehouses: 0,
 	}
 }
 
@@ -104,6 +105,8 @@ func ResolveWorkload(w profile.Workload) WorkloadBlock {
 	if w.RemoteWarehousePercent.Payment != nil {
 		out.RemoteWarehousePercent.Payment = *w.RemoteWarehousePercent.Payment
 	}
+	// 0 is both the omit default and the explicit "no cap" value.
+	out.NewOrderMaxRemoteWarehouses = w.NewOrderMaxRemoteWarehouses
 	return out
 }
 

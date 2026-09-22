@@ -71,6 +71,7 @@ struct TDebugProbeRequest {
     size_t DistrictID = 1;
     int NewOrderRemoteWarehousePercent = NEW_ORDER_REMOTE_WAREHOUSE_PERCENT;
     int PaymentRemoteWarehousePercent = PAYMENT_REMOTE_WAREHOUSE_PERCENT;
+    int NewOrderMaxRemoteWarehouses = NEW_ORDER_MAX_REMOTE_WAREHOUSES;
     int Repeats = kDefaultDebugRepeats;
     std::string RunId;
     std::string Instance;

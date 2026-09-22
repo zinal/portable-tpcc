@@ -67,6 +67,22 @@ func TestTPCSettingsDeviations_reportsAllClasses(t *testing.T) {
 	}
 }
 
+func TestTPCSettingsDeviations_maxRemoteWarehouses(t *testing.T) {
+	rc := conformingRunConfig()
+	rc.Workload.NewOrderMaxRemoteWarehouses = 1
+	devs := config.TPCSettingsDeviations(rc)
+	found := false
+	for _, d := range devs {
+		if strings.Contains(d, "new_order_max_remote_warehouses=1") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("missing cap deviation in %#v", devs)
+	}
+}
+
 func TestTPCSettingsDeviations_emptyPacingIsEnabled(t *testing.T) {
 	rc := conformingRunConfig()
 	rc.Runtime.Pacing = ""

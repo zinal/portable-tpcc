@@ -19,6 +19,7 @@ TEST(WorkloadConfig, DefaultsMatchConstants) {
         PAYMENT_THINK_TIME.count() * 1000);
     EXPECT_EQ(w.NewOrderRemoteWarehousePercent, NEW_ORDER_REMOTE_WAREHOUSE_PERCENT);
     EXPECT_EQ(w.PaymentRemoteWarehousePercent, PAYMENT_REMOTE_WAREHOUSE_PERCENT);
+    EXPECT_EQ(w.NewOrderMaxRemoteWarehouses, NEW_ORDER_MAX_REMOTE_WAREHOUSES);
 }
 
 TEST(WorkloadConfig, RemoteWarehousePercentRange) {
