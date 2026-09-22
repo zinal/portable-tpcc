@@ -161,6 +161,8 @@ void InitSync(const TYdbConnectionConfig& connectionConfig, int warehouseCount) 
         ) {};
     )", districtPath, small), "create district");
 
+    // C_DATA is cold except Payment BC (TPC-C 2.5.2.2). A separate column
+    // group lets lookups that omit it skip that LSM part.
     Exec(client, fmt::format(R"(
         CREATE TABLE `{}` (
             c_w_id Int32 NOT NULL,
@@ -183,8 +185,11 @@ void InitSync(const TYdbConnectionConfig& connectionConfig, int warehouseCount) 
             c_phone Utf8,
             c_since Timestamp,
             c_middle Utf8,
-            c_data Utf8,
-            PRIMARY KEY (c_w_id, c_d_id, c_id)
+            c_data Utf8 FAMILY cdata,
+            PRIMARY KEY (c_w_id, c_d_id, c_id),
+            FAMILY cdata (
+                COMPRESSION = "off"
+            )
         ) {};
     )", customerPath, customer), "create customer");
 

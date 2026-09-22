@@ -144,7 +144,6 @@ TCustomerRow ParseCustomer(NYdb::TResultSetParser& parser) {
     cust.YtdPayment = ParseMoney(parser, "c_ytd_payment");
     cust.PaymentCount = ParseInt32(parser, "c_payment_cnt");
     cust.DeliveryCount = ParseInt32(parser, "c_delivery_cnt");
-    cust.Data = ParseUtf8(parser, "c_data");
     if (auto ts = ParseOptionalTimestamp(parser, "c_since")) {
         cust.Since = TimestampToString(*ts);
     }
@@ -602,7 +601,7 @@ TFuture<TOperationResult> TYdbTpccTransaction::Execute(const TSemanticOp& op) {
                 DECLARE $c_id AS Int32;
                 SELECT c_id, c_first, c_middle, c_last, c_street_1, c_street_2, c_city, c_state,
                        c_zip, c_phone, c_credit, c_credit_lim, c_discount, c_balance, c_ytd_payment,
-                       c_payment_cnt, c_delivery_cnt, c_data, c_since
+                       c_payment_cnt, c_delivery_cnt, c_since
                   FROM `customer`
                  WHERE c_w_id = $w_id AND c_d_id = $d_id AND c_id = $c_id;
             )", std::move(params)),
@@ -628,7 +627,7 @@ TFuture<TOperationResult> TYdbTpccTransaction::Execute(const TSemanticOp& op) {
                 DECLARE $c_last AS Utf8;
                 SELECT c_id, c_first, c_middle, c_last, c_street_1, c_street_2, c_city, c_state,
                        c_zip, c_phone, c_credit, c_credit_lim, c_discount, c_balance, c_ytd_payment,
-                       c_payment_cnt, c_delivery_cnt, c_data, c_since
+                       c_payment_cnt, c_delivery_cnt, c_since
                   FROM `customer` VIEW `idx_customer_name` AS idx
                  WHERE idx.c_w_id = $w_id AND idx.c_d_id = $d_id AND idx.c_last = $c_last
                  ORDER BY idx.c_first;

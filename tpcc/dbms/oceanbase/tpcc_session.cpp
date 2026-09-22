@@ -110,8 +110,7 @@ TCustomerRow ReadCustomer(QueryResult& result) {
     cust.YtdPayment = result.GetMoney(14);
     cust.PaymentCount = result.GetInt32(15);
     cust.DeliveryCount = result.GetInt32(16);
-    cust.Data = result.GetString(17);
-    cust.Since = result.GetString(18);
+    cust.Since = result.GetString(17);
     return cust;
 }
 
