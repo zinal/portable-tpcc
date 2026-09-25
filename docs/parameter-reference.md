@@ -38,7 +38,7 @@ mind-tpcc configure --profile <path> --dbms <pgsql|ydb|oceanbase> [options]
 | `status` | Show run state. |
 | `stop` | Stop workers gracefully. |
 | `collect` | Copy artifacts from runtime hosts. |
-| `consolidate` | Merge worker results into `aggregate.json` and print a brief stats summary. Runs `collect` first when `collection-manifest.json` is absent. |
+| `consolidate` | Merge worker results into `aggregate.json` and print a brief stats summary. Runs `collect` first when `collection-manifest.json` is absent. Does not allocate a run id. An omitted `--run-id` with no active run is left empty and does not write run-state. A run that has not finished `test` is left unchanged. |
 | `run` | Full pipeline. Requires a prior explicit `deploy`. |
 | `drop` | Drop TPC-C objects for the profile's database path. Requires `--yes`. |
 | `cleanup` | Teardown: stop, remote + local run artifacts (including the control host). Does not drop database objects. Requires `--yes`. |
@@ -65,7 +65,7 @@ drop database objects; use `drop` for that.
 | Flag | Default | Meaning |
 | --- | --- | --- |
 | `--profile <path>` | required | Profile YAML. |
-| `--run-id <id>` | latest active run for this profile, else allocate | Run identifier. |
+| `--run-id <id>` | latest active run for this profile, else allocate | Run identifier. `consolidate` does not allocate: with no active run the id stays empty and run-state is not written. |
 | `--worker-binary <path>` | `tpcc-<dbms>` from `paths.local_artifacts` | Worker binary to deploy. Basename is stored in run-config. |
 | `--warehouses <n>` | profile `scale.warehouses` | Override; must be positive and **≤** profile value. Cannot disagree with an already materialized run-config. |
 | `--ramp-up <duration>` | profile `phases.ramp_up` | Warmup override (`30s`, `5m`, …). |

@@ -730,6 +730,137 @@ func TestRunConsolidateSkipsCollectWhenManifestPresent(t *testing.T) {
 	}
 }
 
+func TestResolveConsolidateRunIDDoesNotAllocate(t *testing.T) {
+	dir := t.TempDir()
+	profilePath := writeTestProfile(t, dir, "")
+	o, err := orchestrator.New(orchestrator.Options{ProfilePath: profilePath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := o.ResolveConsolidateRunID()
+	if err == nil || id != "" {
+		t.Fatalf("id=%q err=%v, want empty id and error", id, err)
+	}
+	if !strings.Contains(err.Error(), "refusing to allocate") {
+		t.Fatalf("err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "state", "runs")); !os.IsNotExist(err) {
+		t.Fatalf("consolidate allocated run state: %v", err)
+	}
+
+	ctx, err := o.Materialize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := o.StateStore.Fail(ctx.RunID, fmt.Errorf("boom")); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadDir(filepath.Join(dir, "state", "runs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	o, err = orchestrator.New(orchestrator.Options{ProfilePath: profilePath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err = o.ResolveConsolidateRunID()
+	if err == nil || id != "" {
+		t.Fatalf("after terminal run id=%q err=%v, want empty id", id, err)
+	}
+	after, err := os.ReadDir(filepath.Join(dir, "state", "runs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != len(before) {
+		t.Fatalf("run dirs %d -> %d", len(before), len(after))
+	}
+}
+
+func TestConsolidateBeforeTestLeavesStateAndAllowsTest(t *testing.T) {
+	dir := t.TempDir()
+	profilePath := writeTestProfile(t, dir, "")
+	o, err := orchestrator.New(orchestrator.Options{ProfilePath: profilePath, RunID: "run-before-test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, err := o.Materialize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(o.StateStore.StatePath(ctx.RunID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = o.RunConsolidate(ctx)
+	if err == nil || !strings.Contains(err.Error(), "has not finished test") {
+		t.Fatalf("expected refuse before test, got %v", err)
+	}
+	after, err := os.ReadFile(o.StateStore.StatePath(ctx.RunID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("state rewritten:\n%s", after)
+	}
+	if err := o.StateStore.Transition(ctx.RunID, state.StatePreparing); err != nil {
+		t.Fatalf("test transition after premature consolidate: %v", err)
+	}
+
+	o, err = orchestrator.New(orchestrator.Options{ProfilePath: profilePath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := o.ResolveConsolidateRunID()
+	if err == nil || id != "" {
+		t.Fatalf("id=%q err=%v, want refusal without a new id", id, err)
+	}
+	got, err := o.StateStore.Load("run-before-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != state.StatePreparing {
+		t.Fatalf("state=%q, want preparing", got.State)
+	}
+	if got.RunID != "run-before-test" {
+		t.Fatalf("run_id=%q, want run-before-test", got.RunID)
+	}
+}
+
+func TestRunConsolidateEmptyRunIDDoesNotWriteState(t *testing.T) {
+	dir := t.TempDir()
+	profilePath := writeTestProfile(t, dir, "")
+	o, err := orchestrator.New(orchestrator.Options{ProfilePath: profilePath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = o.RunConsolidate(&orchestrator.Context{})
+	if err == nil || !strings.Contains(err.Error(), "empty run_id") {
+		t.Fatalf("got %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(o.StateStore.StateDir, "runs", "run-state.json")); !os.IsNotExist(statErr) {
+		t.Fatalf("empty run_id wrote state: %v", statErr)
+	}
+}
+
+func TestResolveConsolidateMissingExplicitRunID(t *testing.T) {
+	dir := t.TempDir()
+	profilePath := writeTestProfile(t, dir, "")
+	o, err := orchestrator.New(orchestrator.Options{ProfilePath: profilePath, RunID: "missing-run"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := o.ResolveConsolidateRunID()
+	if err == nil || id != "" {
+		t.Fatalf("id=%q err=%v", id, err)
+	}
+	if !strings.Contains(err.Error(), "does not create a run") {
+		t.Fatalf("err=%v", err)
+	}
+	if _, statErr := os.Stat(o.StateStore.RunDir("missing-run")); !os.IsNotExist(statErr) {
+		t.Fatalf("missing run was created: %v", statErr)
+	}
+}
+
 func writeWorkerPayloads(t *testing.T, dir string, w config.WorkerAssignmentJSON, runID, sha, nonce string) {
 	t.Helper()
 	if err := os.MkdirAll(dir, 0755); err != nil {
