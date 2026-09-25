@@ -58,6 +58,25 @@ std::string FormatPercentile(uint64_t value, const char* unit) {
     return fmt::format("{}ms", value);
 }
 
+// `ready` is the sum over scheduler threads of InternalTasksReady.
+//
+// It is not a count of tasks that became ready during the stats interval.
+// Each scheduler turn (TTaskQueue::RunThread in task_queue.cpp) moves due
+// sleeps and inflight promotions onto ReadyTasksInternal, resumes up to
+// MaxInternalResumesPerIteration (64) of them, and only then stores the
+// residual depth. This line samples that residual.
+//
+// On the async worker path that residual stays 0:
+// * DBMS completions are cross-thread. They enter ReadyTasksExternal, which
+//   the same turn drains completely, and they are not included in `ready`.
+// * co_await TTaskReady on the scheduler thread does not enqueue
+//   (await_ready is true when CheckCurrentThread()).
+// * The internal queue then only receives same-thread wakeups. Those are
+//   pushed and consumed before the counter is published, and a normal turn
+//   wakes far fewer than 64 of them.
+// A non-zero value means one turn left more than 64 internal tasks queued
+// (a timer wave, or the thread was stuck inside resume while timers piled
+// up). Left unchanged for now.
 std::string FormatSchedulerStats(ITaskQueue* taskQueue) {
     if (!taskQueue) {
         return {};
@@ -352,6 +371,35 @@ EStartAtWaitResult WaitUntilStartAt(
     return EStartAtWaitResult::Ok;
 }
 
+std::string FormatProgressTransactionFields(
+    const TTerminalStats& aggregated,
+    const std::array<size_t, TRANSACTION_TYPE_COUNT>& cumulativeCompleted,
+    std::array<size_t, TRANSACTION_TYPE_COUNT>& lastCompleted,
+    const char* unit)
+{
+    std::string latencies;
+    for (size_t i = 0; i < TRANSACTION_TYPE_COUNT; ++i) {
+        const size_t cumulative = cumulativeCompleted[i];
+        const size_t previous = lastCompleted[i];
+        const size_t delta = cumulative >= previous ? cumulative - previous : cumulative;
+        lastCompleted[i] = cumulative;
+        if (cumulative == 0) {
+            continue;
+        }
+
+        const auto type = static_cast<ETransactionType>(i);
+        const auto& s = aggregated.GetStats(type);
+        // Phase p90, not the last interval: TPC-C 5.2.5.3 is defined on the
+        // measurement window. Warmup samples stay in ProgressLatencyFullMs.
+        const uint64_t p90 = s.LatencyHistogramFullMs.TotalCount() > 0
+            ? s.LatencyHistogramFullMs.GetValueAtPercentile(90)
+            : s.ProgressLatencyFullMs.GetValueAtPercentile(90);
+        latencies += fmt::format("  {}:{}(p90={})",
+            TransactionTypeName(type), delta, FormatPercentile(p90, unit));
+    }
+    return latencies;
+}
+
 void MaybeUpdateConsoleStats(
     TProgressDisplayState& state,
     const TRunStatsConfig& config,
@@ -366,8 +414,13 @@ void MaybeUpdateConsoleStats(
     using SysClock = std::chrono::system_clock;
 
     if (phase == ERunPhase::Measure || phase == ERunPhase::Drain) {
+        bool progressReset = false;
         for (auto& stats : perThreadStats) {
-            stats->ClearProgressOnce();
+            // Call every thread: `||` must not skip the rest once one clears.
+            progressReset = stats->ClearProgressOnce() || progressReset;
+        }
+        if (progressReset) {
+            state.LastProgressCompleted.fill(0);
         }
     }
 
@@ -415,9 +468,9 @@ void MaybeUpdateConsoleStats(
         phaseTotal = 0.0;
     }
 
-    size_t totalOK = 0;
     size_t totalFailed = 0;
     size_t totalNewOrderCompleted = 0;
+    std::array<size_t, TRANSACTION_TYPE_COUNT> cumulativeCompleted{};
     uint64_t aggHdr = 0;
     uint64_t aggMax = 0;
     bool aggUs = false;
@@ -426,9 +479,11 @@ void MaybeUpdateConsoleStats(
 
     for (auto& stats : perThreadStats) {
         stats->Collect(aggregated);
+        stats->CollectProgressLatency(aggregated);
         for (size_t i = 0; i < TRANSACTION_TYPE_COUNT; ++i) {
             const auto& s = stats->GetStats(static_cast<ETransactionType>(i));
-            totalOK += s.ProgressOK.load(std::memory_order_relaxed);
+            cumulativeCompleted[i] += s.ProgressOK.load(std::memory_order_relaxed)
+                + s.ProgressUserAborted.load(std::memory_order_relaxed);
             totalFailed += s.ProgressFailed.load(std::memory_order_relaxed);
         }
         const auto& no = stats->GetStats(ETransactionType::NewOrder);
@@ -442,43 +497,20 @@ void MaybeUpdateConsoleStats(
         ? (tpmc / (MAX_TPMC_PER_WAREHOUSE * config.WarehouseCount) * 100.0) : 0.0;
 
     const char* unit = HistogramUnitLabel(config);
-    std::string latencies;
-    for (size_t i = 0; i < TRANSACTION_TYPE_COUNT; ++i) {
-        auto type = static_cast<ETransactionType>(i);
-        const auto& s = aggregated.GetStats(type);
-        auto p50 = s.LatencyHistogramFullMs.GetValueAtPercentile(50);
-        auto p99 = s.LatencyHistogramFullMs.GetValueAtPercentile(99);
-        // Latencies are measurement-window only; during ramp show progress counts.
-        auto completed = s.OK.load(std::memory_order_relaxed)
-            + s.UserAborted.load(std::memory_order_relaxed);
-        size_t progressCompleted = 0;
-        for (auto& stats : perThreadStats) {
-            const auto& ps = stats->GetStats(type);
-            progressCompleted += ps.ProgressOK.load(std::memory_order_relaxed)
-                + ps.ProgressUserAborted.load(std::memory_order_relaxed);
-        }
-        if (progressCompleted > 0) {
-            if (completed > 0) {
-                latencies += fmt::format("  {}:{}(p50={} p99={})",
-                    TransactionTypeName(type), progressCompleted,
-                    FormatPercentile(p50, unit), FormatPercentile(p99, unit));
-            } else {
-                latencies += fmt::format("  {}:{}", TransactionTypeName(type), progressCompleted);
-            }
-        }
-    }
+    const std::string latencies = FormatProgressTransactionFields(
+        aggregated, cumulativeCompleted, state.LastProgressCompleted, unit);
 
     const size_t inflight = TransactionsInflight.load(std::memory_order_relaxed);
     if (config.NoDelays) {
-        LOG_I(fmt::format("{} {:.0f}s/{:.0f}s ({:.0f}s left) | tpmC:{:.0f} | OK:{} Fail:{} Inflight:{} |{}{}",
-              RunPhaseName(phase), elapsed, phaseTotal, remaining, tpmc,
-              totalOK, totalFailed,
+        LOG_I(fmt::format("{} {:.0f}s/{:.0f}s left | tpmC:{:.0f} | Fail:{} Inflight:{} |{}{}",
+              RunPhaseName(phase), remaining, phaseTotal, tpmc,
+              totalFailed,
               inflight,
               latencies, FormatSchedulerStats(taskQueue)));
     } else {
-        LOG_I(fmt::format("{} {:.0f}s/{:.0f}s ({:.0f}s left) | tpmC:{:.0f} eff:{:.1f}% | OK:{} Fail:{} Inflight:{} |{}{}",
-              RunPhaseName(phase), elapsed, phaseTotal, remaining, tpmc, efficiency,
-              totalOK, totalFailed,
+        LOG_I(fmt::format("{} {:.0f}s/{:.0f}s left | tpmC:{:.0f} eff:{:.1f}% | Fail:{} Inflight:{} |{}{}",
+              RunPhaseName(phase), remaining, phaseTotal, tpmc, efficiency,
+              totalFailed,
               inflight,
               latencies, FormatSchedulerStats(taskQueue)));
     }

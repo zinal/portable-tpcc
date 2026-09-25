@@ -287,7 +287,7 @@ TFuture<void> TTerminal::Run() {
             return sample;
         };
         auto recordOk = [&](auto latencyTransaction, auto latencyFull, auto endWall) {
-            Stats->AddProgressOK(txType);
+            Stats->AddProgressOK(txType, latencyFull);
             if (shouldRecordMetrics(endWall)) {
                 Stats->AddOK(txType, makeSample(latencyTransaction, latencyFull));
             }
@@ -299,7 +299,7 @@ TFuture<void> TTerminal::Run() {
             }
         };
         auto recordUserAborted = [&](auto latencyTransaction, auto latencyFull, auto endWall) {
-            Stats->AddProgressUserAborted(txType);
+            Stats->AddProgressUserAborted(txType, latencyFull);
             if (shouldRecordMetrics(endWall)) {
                 Stats->AddUserAborted(txType, makeSample(latencyTransaction, latencyFull));
             }
