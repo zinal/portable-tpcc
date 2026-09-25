@@ -106,10 +106,10 @@ size_t CountRows(const NYdb::TResultSet& resultSet) {
 }
 
 std::optional<std::pair<EErrorClass, const char*>> DeliveryCardinalityError(
-    size_t newOrders,
-    size_t orders,
+    uint64_t newOrders,
+    uint64_t orders,
     uint64_t lines,
-    size_t n,
+    uint64_t n,
     uint64_t expectedLines)
 {
     if (newOrders < n) {
@@ -171,6 +171,14 @@ int32_t ParseInt32(NYdb::TResultSetParser& parser, const char* column) {
 
 uint64_t ParseCount(NYdb::TResultSetParser& parser, const char* column) {
     return CountFromValue(parser.ColumnParser(column));
+}
+
+uint64_t CountColumn(const NYdb::TResultSet& resultSet) {
+    NYdb::TResultSetParser parser(resultSet);
+    if (!parser.TryNextRow()) {
+        return 0;
+    }
+    return ParseCount(parser, "n");
 }
 
 std::optional<int32_t> ParseOptionalInt32(NYdb::TResultSetParser& parser, const char* column) {
@@ -475,10 +483,10 @@ TFuture<TBatchResult> TYdbTpccTransaction::ExecuteStockBatch(const std::vector<T
                 FROM AS_TABLE($values) AS u
                 INNER JOIN `stock` AS s
                     ON s.s_w_id = u.w_id AND s.s_i_id = u.i_id;
-                SELECT s_w_id, s_i_id FROM `stock` WHERE (s_w_id, s_i_id) IN $keys;
+                SELECT COUNT(*) AS n FROM `stock` WHERE (s_w_id, s_i_id) IN $keys;
             )", std::move(built)),
         [this, opCount, expected](TExecuteQueryResult result) -> TFuture<TBatchResult> {
-            if (CountRows(result.GetResultSet(0)) != expected) {
+            if (CountColumn(result.GetResultSet(0)) != expected) {
                 return RollbackThenFailBatch(EErrorClass::Integrity, "stock update batch");
             }
             return MakeReadyFuture(OkBatch(opCount));
@@ -553,9 +561,9 @@ TFuture<TBatchResult> TYdbTpccTransaction::ExecuteCompleteDeliveryBatch(const st
                 DECLARE $values AS List<Struct<w_id:Int32, d_id:Int32, o_id:Int32>>;
                 DECLARE $carrier_id AS Int32;
                 $keys = ListMap($values, ($row) -> (AsTuple($row.w_id, $row.d_id, $row.o_id)));
-                SELECT no_d_id, no_o_id FROM `new_order`
+                SELECT COUNT(*) AS n FROM `new_order`
                  WHERE (no_w_id, no_d_id, no_o_id) IN $keys;
-                SELECT o_d_id, o_id FROM `oorder`
+                SELECT COUNT(*) AS n FROM `oorder`
                  WHERE (o_w_id, o_d_id, o_id) IN $keys;
                 SELECT COUNT(*) AS n FROM `order_line`
                  WHERE (ol_w_id, ol_d_id, ol_o_id) IN $keys;
@@ -569,15 +577,10 @@ TFuture<TBatchResult> TYdbTpccTransaction::ExecuteCompleteDeliveryBatch(const st
                  WHERE (ol_w_id, ol_d_id, ol_o_id) IN $keys;
             )", std::move(built)),
         [this, opCount, expectedLines](TExecuteQueryResult result) -> TFuture<TBatchResult> {
-            NYdb::TResultSetParser lines(result.GetResultSet(2));
-            uint64_t lineCount = 0;
-            if (lines.TryNextRow()) {
-                lineCount = ParseCount(lines, "n");
-            }
             if (auto error = DeliveryCardinalityError(
-                    CountRows(result.GetResultSet(0)),
-                    CountRows(result.GetResultSet(1)),
-                    lineCount,
+                    CountColumn(result.GetResultSet(0)),
+                    CountColumn(result.GetResultSet(1)),
+                    CountColumn(result.GetResultSet(2)),
                     opCount,
                     expectedLines))
             {
@@ -617,11 +620,11 @@ TFuture<TBatchResult> TYdbTpccTransaction::ExecuteApplyDeliveryBatch(const std::
                 FROM AS_TABLE($values) AS u
                 INNER JOIN `customer` AS c
                     ON c.c_w_id = u.w_id AND c.c_d_id = u.d_id AND c.c_id = u.c_id;
-                SELECT c_w_id, c_d_id, c_id FROM `customer`
+                SELECT COUNT(*) AS n FROM `customer`
                  WHERE (c_w_id, c_d_id, c_id) IN $keys;
             )", std::move(built)),
         [this, opCount](TExecuteQueryResult result) -> TFuture<TBatchResult> {
-            if (CountRows(result.GetResultSet(0)) != opCount) {
+            if (CountColumn(result.GetResultSet(0)) != opCount) {
                 return RollbackThenFailBatch(EErrorClass::Integrity, "customer delivery update");
             }
             return MakeReadyFuture(OkBatch(opCount));
