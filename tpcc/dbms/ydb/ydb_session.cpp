@@ -15,9 +15,11 @@
 #include <ydb/public/sdk/cpp/include/ydb-cpp-sdk/client/types/status/status.h>
 #include <ydb/public/sdk/cpp/include/ydb-cpp-sdk/client/value/value.h>
 
+#include <constants.h>
+
 #include <atomic>
-#include <chrono>
 #include <optional>
+#include <random>
 #include <set>
 #include <stdexcept>
 #include <utility>
@@ -85,6 +87,63 @@ TBatchResult FailBatch(EErrorClass cls, std::string message, std::string code = 
     return batch;
 }
 
+TFinalCommitResult FailFinal(EErrorClass cls, std::string message, std::string code = {}) {
+    TFinalCommitResult out;
+    out.Operation = FailOp(cls, std::move(message), code);
+    out.Commit = {
+        cls == EErrorClass::AmbiguousCommit ? ECommitOutcome::OutcomeUnknown
+                                            : ECommitOutcome::RolledBack,
+        cls,
+        std::move(code),
+        out.Operation.Message};
+    return out;
+}
+
+size_t CountRows(const NYdb::TResultSet& resultSet) {
+    NYdb::TResultSetParser parser(resultSet);
+    size_t n = 0;
+    while (parser.TryNextRow()) {
+        ++n;
+    }
+    return n;
+}
+
+std::optional<std::pair<EErrorClass, const char*>> DeliveryCardinalityError(
+    size_t newOrders,
+    size_t orders,
+    uint64_t lines,
+    size_t n,
+    uint64_t expectedLines)
+{
+    if (newOrders < n) {
+        return std::make_pair(
+            EErrorClass::RetryableAbort,
+            "new_order row already claimed by concurrent delivery");
+    }
+    if (newOrders != n) {
+        return std::make_pair(EErrorClass::Integrity, "new_order delivery delete");
+    }
+    if (orders != n) {
+        return std::make_pair(EErrorClass::Integrity, "order carrier update");
+    }
+    if (lines != expectedLines) {
+        return std::make_pair(EErrorClass::Integrity, "order_line delivery update");
+    }
+    return std::nullopt;
+}
+
+std::string OldestNewOrdersSql() {
+    std::string sql = "DECLARE $w_id AS Int32;\n";
+    for (int districtId = DISTRICT_LOW_ID; districtId <= DISTRICT_HIGH_ID; ++districtId) {
+        sql += fmt::format(
+            "SELECT no_o_id FROM `new_order` "
+            "WHERE no_w_id = $w_id AND no_d_id = {} "
+            "ORDER BY no_o_id ASC LIMIT 1;\n",
+            districtId);
+    }
+    return sql;
+}
+
 std::string TimestampToString(const TInstant& ts) {
     return std::string(ts.ToString());
 }
@@ -150,22 +209,23 @@ TCustomerRow ParseCustomer(NYdb::TResultSetParser& parser) {
     return cust;
 }
 
-int64_t HistoryNanoTs() {
-    return std::chrono::duration_cast<std::chrono::nanoseconds>(
-        std::chrono::system_clock::now().time_since_epoch()).count();
-}
-
-// Technical history key (TPC-C 1.3.1 has no PK). Unique per process even when
-// two Payment inserts share a nanosecond. Load uses small per-warehouse ids.
+// Technical history key (TPC-C 1.3.1 has no PK). 22-bit process salt in bits
+// 41..62, bit 63 clear, 41-bit counter. Load hist_id stays below bit 41, and a
+// zero salt is rejected so payment inserts do not reuse that range. Two
+// workers therefore cannot overwrite each other's history row.
 int64_t NextHistoryId() {
-    static std::atomic<int64_t> last{0};
-    const int64_t candidate = HistoryNanoTs();
-    int64_t prev = last.load(std::memory_order_relaxed);
-    int64_t next = 0;
-    do {
-        next = candidate > prev ? candidate : prev + 1;
-    } while (!last.compare_exchange_weak(prev, next, std::memory_order_relaxed));
-    return next;
+    static const uint64_t salt = [] {
+        std::random_device device;
+        uint64_t value = 0;
+        do {
+            value = static_cast<uint64_t>(device()) & 0x3FFFFFull;
+        } while (value == 0);
+        return value << 41;
+    }();
+    static std::atomic<uint64_t> seq{0};
+    constexpr uint64_t counterMask = (uint64_t{1} << 41) - 1;
+    const uint64_t counter = seq.fetch_add(1, std::memory_order_relaxed) & counterMask;
+    return static_cast<int64_t>(salt | counter);
 }
 
 } // anonymous
@@ -226,6 +286,7 @@ TFuture<TExecuteQueryResult> TYdbTpccTransaction::ExecQuery(
         if (commit) {
             Terminal_ = true;
             Tx_.reset();
+            ResetTxnState();
         } else if (auto tx = result.GetTransaction()) {
             Tx_ = std::move(*tx);
         }
@@ -239,12 +300,14 @@ TFuture<TCommitResult> TYdbTpccTransaction::Commit() {
     }
     if (!Tx_) {
         Terminal_ = true;
+        ResetTxnState();
         return ReadyCommit({ECommitOutcome::Committed, EErrorClass::Permanent, {}, {}});
     }
     return CatchToValue(
         Then(BridgeYdbFuture(Tx_->Commit()), [this](NYdb::NQuery::TCommitTransactionResult status) {
             Terminal_ = true;
             Tx_.reset();
+            ResetTxnState();
             if (status.IsSuccess()) {
                 return TCommitResult{ECommitOutcome::Committed, EErrorClass::Permanent, {}, {}};
             }
@@ -258,6 +321,7 @@ TFuture<TCommitResult> TYdbTpccTransaction::Commit() {
         [this](const std::exception& ex) {
             Terminal_ = true;
             Tx_.reset();
+            ResetTxnState();
             const auto cls = Classifier_.ClassifyException(ex, true);
             return TCommitResult{
                 cls == EErrorClass::AmbiguousCommit ? ECommitOutcome::OutcomeUnknown : ECommitOutcome::RolledBack,
@@ -273,12 +337,14 @@ TFuture<TCommitResult> TYdbTpccTransaction::Rollback() {
     }
     if (!Tx_) {
         Terminal_ = true;
+        ResetTxnState();
         return ReadyCommit({ECommitOutcome::RolledBack, EErrorClass::Permanent, {}, {}});
     }
     return CatchToValue(
         Then(BridgeYdbFuture(Tx_->Rollback()), [this](NYdb::TStatus status) {
             Terminal_ = true;
             Tx_.reset();
+            ResetTxnState();
             if (status.IsSuccess()) {
                 return TCommitResult{ECommitOutcome::RolledBack, EErrorClass::Permanent, {}, {}};
             }
@@ -291,8 +357,32 @@ TFuture<TCommitResult> TYdbTpccTransaction::Rollback() {
         [this](const std::exception& ex) {
             Terminal_ = true;
             Tx_.reset();
+            ResetTxnState();
             return TCommitResult{ECommitOutcome::OutcomeUnknown, Classifier_.ClassifyException(ex), {}, ex.what()};
         });
+}
+
+void TYdbTpccTransaction::ResetTxnState() {
+    PendingPaymentUpdate_.reset();
+    DeliveryPrefetch_ = {};
+}
+
+TFuture<TOperationResult> TYdbTpccTransaction::RollbackThenFailOp(
+    EErrorClass cls,
+    std::string message)
+{
+    return Then(Rollback(), [cls, message = std::move(message)](TCommitResult) {
+        return FailOp(cls, message);
+    });
+}
+
+TFuture<TBatchResult> TYdbTpccTransaction::RollbackThenFailBatch(
+    EErrorClass cls,
+    std::string message)
+{
+    return Then(Rollback(), [cls, message = std::move(message)](TCommitResult) {
+        return FailBatch(cls, message);
+    });
 }
 
 TFuture<TCommitResult> TYdbTpccTransaction::Cancel() {
@@ -359,31 +449,42 @@ TFuture<TBatchResult> TYdbTpccTransaction::ExecuteStockBatch(const std::vector<T
             .AddMember("w_id").Int32(row.WarehouseID)
             .AddMember("i_id").Int32(row.ItemID)
             .AddMember("quantity").Int32(row.NewQuantity)
-            .AddMember("ytd").Decimal(Decimal(row.NewYtd))
-            .AddMember("order_cnt").Int32(row.NewOrderCount)
-            .AddMember("remote_cnt").Int32(row.NewRemoteCount)
+            .AddMember("ytd_inc").Decimal(TDecimalValue(
+                std::to_string(row.OrderedQuantity), MONEY_PRECISION, MONEY_SCALE))
+            .AddMember("line_cnt").Int32(row.LineCount)
+            .AddMember("remote_inc").Int32(row.RemoteIncrement)
             .EndStruct();
     }
     auto built = params.EndList().Build().Build();
     const size_t opCount = ops.size();
-    // Same AS_TABLE(ListMap) UPSERT as ydb workload tpcc UpdateStocks; money
-    // stays Decimal(22,9) instead of Double.
+    const size_t expected = rows.size();
+    // Incremental UPDATE, same as the single-row statement. A missing stock
+    // row is not inserted. The following SELECT is the postcondition: Query
+    // Service does not report affected rows.
     return CatchBatch(Then(
         ExecQuery(Prefix(Path_) + R"(
                 DECLARE $values AS List<Struct<
                     w_id:Int32, i_id:Int32, quantity:Int32,
-                    ytd:Decimal(22,9), order_cnt:Int32, remote_cnt:Int32>>;
-                $mapper = ($row) -> (AsStruct(
-                    $row.w_id AS s_w_id,
-                    $row.i_id AS s_i_id,
-                    $row.quantity AS s_quantity,
-                    $row.ytd AS s_ytd,
-                    $row.order_cnt AS s_order_cnt,
-                    $row.remote_cnt AS s_remote_cnt));
-                UPSERT INTO `stock` SELECT * FROM AS_TABLE(ListMap($values, $mapper));
+                    ytd_inc:Decimal(22,9), line_cnt:Int32, remote_inc:Int32>>;
+                $keys = ListMap($values, ($row) -> (AsTuple($row.w_id, $row.i_id)));
+                UPDATE `stock` ON
+                SELECT
+                    u.w_id AS s_w_id,
+                    u.i_id AS s_i_id,
+                    u.quantity AS s_quantity,
+                    s.s_ytd + u.ytd_inc AS s_ytd,
+                    s.s_order_cnt + u.line_cnt AS s_order_cnt,
+                    s.s_remote_cnt + u.remote_inc AS s_remote_cnt
+                FROM AS_TABLE($values) AS u
+                INNER JOIN `stock` AS s
+                    ON s.s_w_id = u.w_id AND s.s_i_id = u.i_id;
+                SELECT s_w_id, s_i_id FROM `stock` WHERE (s_w_id, s_i_id) IN $keys;
             )", std::move(built)),
-        [opCount](TExecuteQueryResult) {
-            return OkBatch(opCount);
+        [this, opCount, expected](TExecuteQueryResult result) -> TFuture<TBatchResult> {
+            if (CountRows(result.GetResultSet(0)) != expected) {
+                return RollbackThenFailBatch(EErrorClass::Integrity, "stock update batch");
+            }
+            return MakeReadyFuture(OkBatch(opCount));
         }));
 }
 
@@ -407,25 +508,20 @@ TFuture<TBatchResult> TYdbTpccTransaction::ExecuteOrderLineBatch(const std::vect
     }
     auto built = params.EndList().Build().Build();
     const size_t opCount = ops.size();
+    // Named projection, not SELECT *: a column list plus SELECT * fails YQL
+    // type annotation. ol_delivery_d is omitted so it stays NULL.
     return CatchBatch(Then(
         ExecQuery(Prefix(Path_) + R"(
                 DECLARE $values AS List<Struct<
                     w_id:Int32, d_id:Int32, o_id:Int32, number:Int32, i_id:Int32,
                     amount:Decimal(22,9), supply_w_id:Int32, quantity:Int32, dist_info:Utf8>>;
-                $mapper = ($row) -> (AsStruct(
-                    $row.w_id AS ol_w_id,
-                    $row.d_id AS ol_d_id,
-                    $row.o_id AS ol_o_id,
-                    $row.number AS ol_number,
-                    $row.i_id AS ol_i_id,
-                    $row.amount AS ol_amount,
-                    $row.supply_w_id AS ol_supply_w_id,
-                    $row.quantity AS ol_quantity,
-                    $row.dist_info AS ol_dist_info));
-                -- Same as ydb workload tpcc InsertOrderLines: UPSERT SELECT *
-                -- with no column list. A column list plus SELECT * fails YQL
-                -- type annotation (star / qualified star in projection).
-                UPSERT INTO `order_line` SELECT * FROM AS_TABLE(ListMap($values, $mapper));
+                INSERT INTO `order_line` (
+                    ol_w_id, ol_d_id, ol_o_id, ol_number, ol_i_id,
+                    ol_amount, ol_supply_w_id, ol_quantity, ol_dist_info)
+                SELECT
+                    w_id, d_id, o_id, number, i_id,
+                    amount, supply_w_id, quantity, dist_info
+                FROM AS_TABLE($values);
             )", std::move(built)),
         [opCount](TExecuteQueryResult) {
             return OkBatch(opCount);
@@ -449,22 +545,48 @@ TFuture<TBatchResult> TYdbTpccTransaction::ExecuteCompleteDeliveryBatch(const st
         .AddParam("$carrier_id").Int32(carrierId).Build()
         .Build();
     const size_t opCount = ops.size();
+    uint64_t expectedLines = 0;
+    for (const auto& op : ops) {
+        expectedLines += static_cast<uint64_t>(std::get<TCompleteOrderDelivery>(op).LineCount);
+    }
+    // SELECTs run before the DML so the counts are the pre-image. A short
+    // new_order count is a concurrent claim; carrier is UPDATE, not UPSERT.
     return CatchBatch(Then(
         ExecQuery(Prefix(Path_) + R"(
                 DECLARE $values AS List<Struct<w_id:Int32, d_id:Int32, o_id:Int32>>;
                 DECLARE $carrier_id AS Int32;
                 $keys = ListMap($values, ($row) -> (AsTuple($row.w_id, $row.d_id, $row.o_id)));
+                SELECT no_d_id, no_o_id FROM `new_order`
+                 WHERE (no_w_id, no_d_id, no_o_id) IN $keys;
+                SELECT o_d_id, o_id FROM `oorder`
+                 WHERE (o_w_id, o_d_id, o_id) IN $keys;
+                SELECT COUNT(*) AS n FROM `order_line`
+                 WHERE (ol_w_id, ol_d_id, ol_o_id) IN $keys;
                 DELETE FROM `new_order`
                  WHERE (no_w_id, no_d_id, no_o_id) IN $keys;
-                UPSERT INTO `oorder` (o_w_id, o_d_id, o_id, o_carrier_id)
-                SELECT u.w_id AS o_w_id, u.d_id AS o_d_id, u.o_id AS o_id, $carrier_id AS o_carrier_id
-                  FROM AS_TABLE($values) AS u;
+                UPDATE `oorder`
+                   SET o_carrier_id = $carrier_id
+                 WHERE (o_w_id, o_d_id, o_id) IN $keys;
                 UPDATE `order_line`
                    SET ol_delivery_d = CurrentUtcTimestamp()
                  WHERE (ol_w_id, ol_d_id, ol_o_id) IN $keys;
             )", std::move(built)),
-        [opCount](TExecuteQueryResult) {
-            return OkBatch(opCount);
+        [this, opCount, expectedLines](TExecuteQueryResult result) -> TFuture<TBatchResult> {
+            NYdb::TResultSetParser lines(result.GetResultSet(2));
+            uint64_t lineCount = 0;
+            if (lines.TryNextRow()) {
+                lineCount = ParseCount(lines, "n");
+            }
+            if (auto error = DeliveryCardinalityError(
+                    CountRows(result.GetResultSet(0)),
+                    CountRows(result.GetResultSet(1)),
+                    lineCount,
+                    opCount,
+                    expectedLines))
+            {
+                return RollbackThenFailBatch(error->first, error->second);
+            }
+            return MakeReadyFuture(OkBatch(opCount));
         }));
 }
 
@@ -487,6 +609,7 @@ TFuture<TBatchResult> TYdbTpccTransaction::ExecuteApplyDeliveryBatch(const std::
         ExecQuery(Prefix(Path_) + R"(
                 DECLARE $values AS List<Struct<
                     w_id:Int32, d_id:Int32, c_id:Int32, amount:Decimal(22,9)>>;
+                $keys = ListMap($values, ($row) -> (AsTuple($row.w_id, $row.d_id, $row.c_id)));
                 UPDATE `customer` ON
                 SELECT
                     u.w_id AS c_w_id,
@@ -497,32 +620,160 @@ TFuture<TBatchResult> TYdbTpccTransaction::ExecuteApplyDeliveryBatch(const std::
                 FROM AS_TABLE($values) AS u
                 INNER JOIN `customer` AS c
                     ON c.c_w_id = u.w_id AND c.c_d_id = u.d_id AND c.c_id = u.c_id;
+                SELECT c_w_id, c_d_id, c_id FROM `customer`
+                 WHERE (c_w_id, c_d_id, c_id) IN $keys;
             )", std::move(built)),
-        [opCount](TExecuteQueryResult) {
-            return OkBatch(opCount);
+        [this, opCount](TExecuteQueryResult result) -> TFuture<TBatchResult> {
+            if (CountRows(result.GetResultSet(0)) != opCount) {
+                return RollbackThenFailBatch(EErrorClass::Integrity, "customer delivery update");
+            }
+            return MakeReadyFuture(OkBatch(opCount));
         }));
 }
 
-TFuture<TFinalCommitResult> TYdbTpccTransaction::ExecuteFinalAndCommit(const TSemanticOp& op) {
-    FinalCommitMode_ = true;
-    return Then(Execute(op), [this](TOperationResult operation) -> TFuture<TFinalCommitResult> {
-        FinalCommitMode_ = false;
-        TFinalCommitResult out;
-        out.Operation = std::move(operation);
-        if (!out.Operation.Ok) {
-            return Then(Rollback(), [out = std::move(out)](TCommitResult commit) mutable {
-                out.Commit = std::move(commit);
-                return out;
-            });
-        }
-        if (Terminal_) {
-            out.Commit = {ECommitOutcome::Committed, EErrorClass::Permanent, {}, {}};
-            return MakeReadyFuture(std::move(out));
-        }
-        return Then(Commit(), [out = std::move(out)](TCommitResult commit) mutable {
+TFuture<TFinalCommitResult> TYdbTpccTransaction::CommitAfterOperation(TOperationResult operation) {
+    TFinalCommitResult out;
+    out.Operation = std::move(operation);
+    if (!out.Operation.Ok) {
+        return Then(Rollback(), [out = std::move(out)](TCommitResult commit) mutable {
             out.Commit = std::move(commit);
             return out;
         });
+    }
+    if (Terminal_) {
+        out.Commit = {ECommitOutcome::Committed, EErrorClass::Permanent, {}, {}};
+        return MakeReadyFuture(std::move(out));
+    }
+    return Then(Commit(), [out = std::move(out)](TCommitResult commit) mutable {
+        out.Commit = std::move(commit);
+        return out;
+    });
+}
+
+TFuture<TFinalCommitResult> TYdbTpccTransaction::FinishPayment(
+    const TUpdateCustomerPayment& update,
+    const TInsertPaymentHistory& history)
+{
+    TParamsBuilder builder;
+    builder
+        .AddParam("$w_id").Int32(update.WarehouseID).Build()
+        .AddParam("$d_id").Int32(update.DistrictID).Build()
+        .AddParam("$c_id").Int32(update.CustomerID).Build()
+        .AddParam("$balance").Decimal(Decimal(update.NewBalance)).Build()
+        .AddParam("$ytd_payment").Decimal(Decimal(update.NewYtdPayment)).Build()
+        .AddParam("$payment_cnt").Int32(update.NewPaymentCount).Build()
+        .AddParam("$h_w_id").Int32(history.PaymentWarehouseID).Build()
+        .AddParam("$hist_id").Int64(NextHistoryId()).Build()
+        .AddParam("$h_c_w_id").Int32(history.CustomerWarehouseID).Build()
+        .AddParam("$h_c_d_id").Int32(history.CustomerDistrictID).Build()
+        .AddParam("$h_c_id").Int32(history.CustomerID).Build()
+        .AddParam("$h_d_id").Int32(history.PaymentDistrictID).Build()
+        .AddParam("$h_amount").Decimal(Decimal(history.Amount)).Build()
+        .AddParam("$h_data").Utf8(history.Data).Build();
+    std::string dataDeclare;
+    std::string dataAssign;
+    if (update.UpdateData) {
+        builder.AddParam("$data").Utf8(update.NewData).Build();
+        dataDeclare = "DECLARE $data AS Utf8;\n";
+        dataAssign = ", c_data = $data";
+    }
+    auto params = builder.Build();
+    // No CommitTx: the customer SELECT is checked, then Commit or Rollback.
+    const std::string query = Prefix(Path_) + R"(
+                DECLARE $w_id AS Int32;
+                DECLARE $d_id AS Int32;
+                DECLARE $c_id AS Int32;
+                DECLARE $balance AS Decimal(22,9);
+                DECLARE $ytd_payment AS Decimal(22,9);
+                DECLARE $payment_cnt AS Int32;
+                DECLARE $h_w_id AS Int32;
+                DECLARE $hist_id AS Int64;
+                DECLARE $h_c_w_id AS Int32;
+                DECLARE $h_c_d_id AS Int32;
+                DECLARE $h_c_id AS Int32;
+                DECLARE $h_d_id AS Int32;
+                DECLARE $h_amount AS Decimal(22,9);
+                DECLARE $h_data AS Utf8;
+            )" + dataDeclare + fmt::format(R"(
+                UPDATE `customer`
+                   SET c_balance = $balance, c_ytd_payment = $ytd_payment,
+                       c_payment_cnt = $payment_cnt{}
+                 WHERE c_w_id = $w_id AND c_d_id = $d_id AND c_id = $c_id;
+                INSERT INTO `history` (h_w_id, hist_id, h_c_w_id, h_c_d_id, h_c_id, h_d_id, h_date, h_amount, h_data)
+                VALUES ($h_w_id, $hist_id, $h_c_w_id, $h_c_d_id, $h_c_id, $h_d_id,
+                        CurrentUtcTimestamp(), $h_amount, $h_data);
+                SELECT c_id FROM `customer`
+                 WHERE c_w_id = $w_id AND c_d_id = $d_id AND c_id = $c_id;
+            )", dataAssign);
+    return Then(
+        CatchOp(Then(
+            ExecQuery(query, std::move(params)),
+            [](TExecuteQueryResult result) -> TFuture<TOperationResult> {
+                NYdb::TResultSetParser parser(result.GetResultSet(0));
+                if (!parser.TryNextRow()) {
+                    return ReadyOp(FailOp(EErrorClass::Integrity, "customer payment update"));
+                }
+                return ReadyOp(OkOp(1, 1));
+            })),
+        [this](TOperationResult operation) {
+            return CommitAfterOperation(std::move(operation));
+        });
+}
+
+TFuture<TFinalCommitResult> TYdbTpccTransaction::FinishApplyDelivery(
+    const TApplyDeliveryToCustomer& apply)
+{
+    auto params = TParamsBuilder()
+        .AddParam("$w_id").Int32(apply.WarehouseID).Build()
+        .AddParam("$d_id").Int32(apply.DistrictID).Build()
+        .AddParam("$c_id").Int32(apply.CustomerID).Build()
+        .AddParam("$amount").Decimal(Decimal(apply.Amount)).Build()
+        .Build();
+    return Then(
+        CatchOp(Then(
+            ExecQuery(Prefix(Path_) + R"(
+                DECLARE $w_id AS Int32;
+                DECLARE $d_id AS Int32;
+                DECLARE $c_id AS Int32;
+                DECLARE $amount AS Decimal(22,9);
+                UPDATE `customer`
+                   SET c_balance = c_balance + $amount,
+                       c_delivery_cnt = c_delivery_cnt + 1
+                 WHERE c_w_id = $w_id AND c_d_id = $d_id AND c_id = $c_id;
+                SELECT c_id FROM `customer`
+                 WHERE c_w_id = $w_id AND c_d_id = $d_id AND c_id = $c_id;
+            )", std::move(params)),
+            [](TExecuteQueryResult result) -> TFuture<TOperationResult> {
+                NYdb::TResultSetParser parser(result.GetResultSet(0));
+                if (!parser.TryNextRow()) {
+                    return ReadyOp(FailOp(EErrorClass::Integrity, "customer delivery update"));
+                }
+                return ReadyOp(OkOp(1, 1));
+            })),
+        [this](TOperationResult operation) {
+            return CommitAfterOperation(std::move(operation));
+        });
+}
+
+TFuture<TFinalCommitResult> TYdbTpccTransaction::ExecuteFinalAndCommit(const TSemanticOp& op) {
+    if (Terminal_) {
+        return MakeReadyFuture(FailFinal(
+            EErrorClass::Permanent, "ExecuteFinalAndCommit called in terminal state"));
+    }
+    if (PendingPaymentUpdate_) {
+        if (const auto* history = std::get_if<TInsertPaymentHistory>(&op)) {
+            const auto update = *PendingPaymentUpdate_;
+            PendingPaymentUpdate_.reset();
+            return FinishPayment(update, *history);
+        }
+    }
+    if (const auto* apply = std::get_if<TApplyDeliveryToCustomer>(&op)) {
+        return FinishApplyDelivery(*apply);
+    }
+    FinalCommitMode_ = true;
+    return Then(Execute(op), [this](TOperationResult operation) -> TFuture<TFinalCommitResult> {
+        FinalCommitMode_ = false;
+        return CommitAfterOperation(std::move(operation));
     });
 }
 
@@ -563,8 +814,8 @@ TFuture<TOperationResult> TYdbTpccTransaction::Execute(const TSemanticOp& op) {
                 .AddParam("$w_id").Int32(p->WarehouseID).Build()
                 .AddParam("$d_id").Int32(p->DistrictID).Build()
                 .Build();
-            // One round trip: read next order id, then increment (ydb workload
-            // does these as two ExecuteQuery calls).
+            // One round trip: read next order id, then increment. The second
+            // SELECT must observe that increment before CreateOrder runs.
             return CatchOp(Then(
                 ExecQuery(Prefix(Path_) + R"(
                 DECLARE $w_id AS Int32;
@@ -575,16 +826,23 @@ TFuture<TOperationResult> TYdbTpccTransaction::Execute(const TSemanticOp& op) {
                 UPDATE `district`
                    SET d_next_o_id = d_next_o_id + 1
                  WHERE d_w_id = $w_id AND d_id = $d_id;
+                SELECT d_next_o_id
+                  FROM `district`
+                 WHERE d_w_id = $w_id AND d_id = $d_id;
             )", std::move(params)),
-                [](TExecuteQueryResult result) {
+                [this](TExecuteQueryResult result) -> TFuture<TOperationResult> {
                     NYdb::TResultSetParser parser(result.GetResultSet(0));
                     if (!parser.TryNextRow()) {
-                        return FailOp(EErrorClass::Integrity, "district not found");
+                        return RollbackThenFailOp(EErrorClass::Integrity, "district not found");
                     }
                     TDistrictOrderReservation res;
                     res.NextOrderID = ParseInt32(parser, "d_next_o_id");
                     res.DistrictTax = ParseRate(parser, "d_tax");
-                    return OkOp(1, 1, res);
+                    NYdb::TResultSetParser after(result.GetResultSet(1));
+                    if (!after.TryNextRow() || ParseInt32(after, "d_next_o_id") != res.NextOrderID + 1) {
+                        return RollbackThenFailOp(EErrorClass::Integrity, "district next order update");
+                    }
+                    return ReadyOp(OkOp(1, 1, std::move(res)));
                 }));
         }
 
@@ -696,9 +954,9 @@ TFuture<TOperationResult> TYdbTpccTransaction::Execute(const TSemanticOp& op) {
                 DECLARE $c_id AS Int32;
                 DECLARE $ol_cnt AS Int32;
                 DECLARE $all_local AS Int32;
-                UPSERT INTO `oorder` (o_w_id, o_d_id, o_id, o_c_id, o_carrier_id, o_ol_cnt, o_all_local, o_entry_d)
+                INSERT INTO `oorder` (o_w_id, o_d_id, o_id, o_c_id, o_carrier_id, o_ol_cnt, o_all_local, o_entry_d)
                 VALUES ($w_id, $d_id, $o_id, $c_id, NULL, $ol_cnt, $all_local, CurrentUtcTimestamp());
-                UPSERT INTO `new_order` (no_w_id, no_d_id, no_o_id)
+                INSERT INTO `new_order` (no_w_id, no_d_id, no_o_id)
                 VALUES ($w_id, $d_id, $o_id);
             )", std::move(params)),
                 [](TExecuteQueryResult) { return OkOp(2, 2); }));
@@ -778,8 +1036,15 @@ TFuture<TOperationResult> TYdbTpccTransaction::Execute(const TSemanticOp& op) {
                        s_order_cnt = s_order_cnt + 1,
                        s_remote_cnt = s_remote_cnt + $remote
                  WHERE s_w_id = $w_id AND s_i_id = $i_id;
+                SELECT s_i_id FROM `stock` WHERE s_w_id = $w_id AND s_i_id = $i_id;
             )", std::move(params)),
-                [](TExecuteQueryResult) { return OkOp(1, 1); }));
+                [this](TExecuteQueryResult result) -> TFuture<TOperationResult> {
+                    NYdb::TResultSetParser parser(result.GetResultSet(0));
+                    if (!parser.TryNextRow()) {
+                        return RollbackThenFailOp(EErrorClass::Integrity, "stock update");
+                    }
+                    return ReadyOp(OkOp(1, 1));
+                }));
         }
 
         if (const auto* p = std::get_if<TInsertOrderLine>(&op)) {
@@ -805,9 +1070,9 @@ TFuture<TOperationResult> TYdbTpccTransaction::Execute(const TSemanticOp& op) {
                 DECLARE $quantity AS Int32;
                 DECLARE $amount AS Decimal(22,9);
                 DECLARE $dist_info AS Utf8;
-                UPSERT INTO `order_line` (ol_w_id, ol_d_id, ol_o_id, ol_number, ol_i_id, ol_delivery_d,
+                INSERT INTO `order_line` (ol_w_id, ol_d_id, ol_o_id, ol_number, ol_i_id,
                                           ol_amount, ol_supply_w_id, ol_quantity, ol_dist_info)
-                VALUES ($w_id, $d_id, $o_id, $number, $i_id, NULL, $amount, $supply_w_id, $quantity, $dist_info);
+                VALUES ($w_id, $d_id, $o_id, $number, $i_id, $amount, $supply_w_id, $quantity, $dist_info);
             )", std::move(params), FinalCommitMode_),
                 [](TExecuteQueryResult) { return OkOp(1, 1); }));
         }
@@ -877,43 +1142,10 @@ TFuture<TOperationResult> TYdbTpccTransaction::Execute(const TSemanticOp& op) {
         }
 
         if (const auto* p = std::get_if<TUpdateCustomerPayment>(&op)) {
-            TParamsBuilder builder;
-            builder
-                .AddParam("$w_id").Int32(p->WarehouseID).Build()
-                .AddParam("$d_id").Int32(p->DistrictID).Build()
-                .AddParam("$c_id").Int32(p->CustomerID).Build()
-                .AddParam("$balance").Decimal(Decimal(p->NewBalance)).Build()
-                .AddParam("$ytd_payment").Decimal(Decimal(p->NewYtdPayment)).Build()
-                .AddParam("$payment_cnt").Int32(p->NewPaymentCount).Build();
-            std::string query = Prefix(Path_) + R"(
-                DECLARE $w_id AS Int32;
-                DECLARE $d_id AS Int32;
-                DECLARE $c_id AS Int32;
-                DECLARE $balance AS Decimal(22,9);
-                DECLARE $ytd_payment AS Decimal(22,9);
-                DECLARE $payment_cnt AS Int32;
-            )";
-            if (p->UpdateData) {
-                auto params = builder.AddParam("$data").Utf8(p->NewData).Build().Build();
-                return CatchOp(Then(
-                    ExecQuery(query + R"(
-                    DECLARE $data AS Utf8;
-                    UPDATE `customer`
-                       SET c_balance = $balance, c_ytd_payment = $ytd_payment,
-                           c_payment_cnt = $payment_cnt, c_data = $data
-                     WHERE c_w_id = $w_id AND c_d_id = $d_id AND c_id = $c_id;
-                )", std::move(params)),
-                    [](TExecuteQueryResult) { return OkOp(1, 1); }));
-            }
-            auto params = builder.Build();
-            return CatchOp(Then(
-                ExecQuery(query + R"(
-                    UPDATE `customer`
-                       SET c_balance = $balance, c_ytd_payment = $ytd_payment,
-                           c_payment_cnt = $payment_cnt
-                     WHERE c_w_id = $w_id AND c_d_id = $d_id AND c_id = $c_id;
-                )", std::move(params)),
-                [](TExecuteQueryResult) { return OkOp(1, 1); }));
+            // Applied with the history insert in ExecuteFinalAndCommit, so both
+            // statements share one script and c_data is set only for BC.
+            PendingPaymentUpdate_ = *p;
+            return ReadyOp(OkOp(1, 1));
         }
 
         if (const auto* p = std::get_if<TInsertPaymentHistory>(&op)) {
@@ -937,7 +1169,7 @@ TFuture<TOperationResult> TYdbTpccTransaction::Execute(const TSemanticOp& op) {
                 DECLARE $h_d_id AS Int32;
                 DECLARE $h_amount AS Decimal(22,9);
                 DECLARE $h_data AS Utf8;
-                UPSERT INTO `history` (h_w_id, hist_id, h_c_w_id, h_c_d_id, h_c_id, h_d_id, h_date, h_amount, h_data)
+                INSERT INTO `history` (h_w_id, hist_id, h_c_w_id, h_c_d_id, h_c_id, h_d_id, h_date, h_amount, h_data)
                 VALUES ($h_w_id, $hist_id, $h_c_w_id, $h_c_d_id, $h_c_id, $h_d_id,
                         CurrentUtcTimestamp(), $h_amount, $h_data);
             )", std::move(params), FinalCommitMode_),
@@ -1013,29 +1245,22 @@ TFuture<TOperationResult> TYdbTpccTransaction::Execute(const TSemanticOp& op) {
         }
 
         if (const auto* p = std::get_if<TGetOldestNewOrder>(&op)) {
-            auto params = TParamsBuilder()
-                .AddParam("$w_id").Int32(p->WarehouseID).Build()
-                .AddParam("$d_id").Int32(p->DistrictID).Build()
-                .Build();
+            const int warehouseId = p->WarehouseID;
+            const int districtId = p->DistrictID;
             return CatchOp(Then(
-                ExecQuery(Prefix(Path_) + R"(
-                DECLARE $w_id AS Int32;
-                DECLARE $d_id AS Int32;
-                SELECT no_o_id
-                  FROM `new_order`
-                 WHERE no_w_id = $w_id AND no_d_id = $d_id
-                 ORDER BY no_o_id ASC LIMIT 1;
-            )", std::move(params)),
-                [](TExecuteQueryResult result) {
-                    NYdb::TResultSetParser parser(result.GetResultSet(0));
-                    if (!parser.TryNextRow()) {
-                        return OkOp(0, 0, 0);
+                EnsureDeliveryPrefetch(warehouseId),
+                [this, districtId](TOperationResult prefetch) {
+                    if (!prefetch.Ok) {
+                        return prefetch;
                     }
-                    return OkOp(1, 1, ParseInt32(parser, "no_o_id"));
+                    return OldestFromCache(districtId);
                 }));
         }
 
         if (const auto* p = std::get_if<TGetDeliveryOrderInfo>(&op)) {
+            if (DeliveryPrefetch_.Loaded && DeliveryPrefetch_.WarehouseID == p->WarehouseID) {
+                return ReadyOp(DeliveryInfoFromCache(p->DistrictID, p->OrderID));
+            }
             auto params = TParamsBuilder()
                 .AddParam("$w_id").Int32(p->WarehouseID).Build()
                 .AddParam("$d_id").Int32(p->DistrictID).Build()
@@ -1070,6 +1295,7 @@ TFuture<TOperationResult> TYdbTpccTransaction::Execute(const TSemanticOp& op) {
         }
 
         if (const auto* p = std::get_if<TCompleteOrderDelivery>(&op)) {
+            const uint64_t expectedLines = static_cast<uint64_t>(p->LineCount);
             auto params = TParamsBuilder()
                 .AddParam("$w_id").Int32(p->WarehouseID).Build()
                 .AddParam("$d_id").Int32(p->DistrictID).Build()
@@ -1082,6 +1308,12 @@ TFuture<TOperationResult> TYdbTpccTransaction::Execute(const TSemanticOp& op) {
                 DECLARE $d_id AS Int32;
                 DECLARE $o_id AS Int32;
                 DECLARE $carrier_id AS Int32;
+                SELECT no_o_id FROM `new_order`
+                 WHERE no_w_id = $w_id AND no_d_id = $d_id AND no_o_id = $o_id;
+                SELECT o_id FROM `oorder`
+                 WHERE o_w_id = $w_id AND o_d_id = $d_id AND o_id = $o_id;
+                SELECT COUNT(*) AS n FROM `order_line`
+                 WHERE ol_w_id = $w_id AND ol_d_id = $d_id AND ol_o_id = $o_id;
                 DELETE FROM `new_order`
                  WHERE no_w_id = $w_id AND no_d_id = $d_id AND no_o_id = $o_id;
                 UPDATE `oorder`
@@ -1091,7 +1323,23 @@ TFuture<TOperationResult> TYdbTpccTransaction::Execute(const TSemanticOp& op) {
                    SET ol_delivery_d = CurrentUtcTimestamp()
                  WHERE ol_w_id = $w_id AND ol_d_id = $d_id AND ol_o_id = $o_id;
             )", std::move(params)),
-                [](TExecuteQueryResult) { return OkOp(3, 3); }));
+                [this, expectedLines](TExecuteQueryResult result) -> TFuture<TOperationResult> {
+                    NYdb::TResultSetParser lines(result.GetResultSet(2));
+                    uint64_t lineCount = 0;
+                    if (lines.TryNextRow()) {
+                        lineCount = ParseCount(lines, "n");
+                    }
+                    if (auto error = DeliveryCardinalityError(
+                            CountRows(result.GetResultSet(0)),
+                            CountRows(result.GetResultSet(1)),
+                            lineCount,
+                            1,
+                            expectedLines))
+                    {
+                        return RollbackThenFailOp(error->first, error->second);
+                    }
+                    return ReadyOp(OkOp(3, 3));
+                }));
         }
 
         if (const auto* p = std::get_if<TApplyDeliveryToCustomer>(&op)) {
@@ -1178,6 +1426,132 @@ TFuture<TOperationResult> TYdbTpccTransaction::Execute(const TSemanticOp& op) {
 
         return ReadyOp(FailOp(EErrorClass::Permanent, "semantic op not yet bound in TYdbTpccTransaction"));
     }
+
+TOperationResult TYdbTpccTransaction::OldestFromCache(int districtId) const {
+    const int idx = districtId - DISTRICT_LOW_ID;
+    if (idx < 0 || idx >= DISTRICT_COUNT) {
+        return FailOp(EErrorClass::Permanent, "delivery district out of range");
+    }
+    if (!DeliveryPrefetch_.OldestOrderId[idx]) {
+        return OkOp(0, 0, 0);
+    }
+    return OkOp(1, 1, *DeliveryPrefetch_.OldestOrderId[idx]);
+}
+
+TOperationResult TYdbTpccTransaction::DeliveryInfoFromCache(int districtId, int orderId) const {
+    const int idx = districtId - DISTRICT_LOW_ID;
+    if (idx < 0 || idx >= DISTRICT_COUNT || !DeliveryPrefetch_.Info[idx]) {
+        return FailOp(EErrorClass::Integrity, "order not found");
+    }
+    if (DeliveryPrefetch_.OldestOrderId[idx] && *DeliveryPrefetch_.OldestOrderId[idx] != orderId) {
+        return FailOp(EErrorClass::Integrity, "order not found");
+    }
+    return OkOp(1, 1, *DeliveryPrefetch_.Info[idx]);
+}
+
+TFuture<TOperationResult> TYdbTpccTransaction::EnsureDeliveryPrefetch(int warehouseId) {
+    if (DeliveryPrefetch_.Loaded && DeliveryPrefetch_.WarehouseID == warehouseId) {
+        return ReadyOp(OkOp(1, 1));
+    }
+    DeliveryPrefetch_ = {};
+    DeliveryPrefetch_.WarehouseID = warehouseId;
+    auto params = TParamsBuilder().AddParam("$w_id").Int32(warehouseId).Build().Build();
+    auto loaded = Then(
+        ExecQuery(Prefix(Path_) + OldestNewOrdersSql(), std::move(params)),
+        [this, warehouseId](TExecuteQueryResult oldest) -> TFuture<TOperationResult> {
+            const auto& sets = oldest.GetResultSets();
+            if (sets.size() != static_cast<size_t>(DISTRICT_COUNT)) {
+                return RollbackThenFailOp(
+                    EErrorClass::Integrity, "delivery oldest prefetch size mismatch");
+            }
+            std::vector<std::pair<int, int>> found;
+            found.reserve(DISTRICT_COUNT);
+            for (int districtId = DISTRICT_LOW_ID; districtId <= DISTRICT_HIGH_ID; ++districtId) {
+                const int idx = districtId - DISTRICT_LOW_ID;
+                NYdb::TResultSetParser parser(sets[static_cast<size_t>(idx)]);
+                if (!parser.TryNextRow()) {
+                    continue;
+                }
+                const int orderId = ParseInt32(parser, "no_o_id");
+                DeliveryPrefetch_.OldestOrderId[idx] = orderId;
+                found.emplace_back(districtId, orderId);
+            }
+            if (found.empty()) {
+                DeliveryPrefetch_.Loaded = true;
+                return ReadyOp(OkOp(0, 0));
+            }
+            TParamsBuilder keys;
+            auto& list = keys.AddParam("$keys").BeginList();
+            for (const auto& key : found) {
+                list.AddListItem()
+                    .BeginTuple()
+                    .AddElement().Int32(key.first)
+                    .AddElement().Int32(key.second)
+                    .EndTuple();
+            }
+            auto built = list.EndList().Build()
+                .AddParam("$w_id").Int32(warehouseId).Build()
+                .Build();
+            const size_t foundCount = found.size();
+            return Then(
+                ExecQuery(Prefix(Path_) + R"(
+                DECLARE $w_id AS Int32;
+                DECLARE $keys AS List<Tuple<Int32, Int32>>;
+                SELECT o_d_id, o_id, o_c_id FROM `oorder`
+                 WHERE o_w_id = $w_id AND (o_d_id, o_id) IN $keys;
+                SELECT ol_d_id, ol_o_id, ol_amount FROM `order_line`
+                 WHERE ol_w_id = $w_id AND (ol_d_id, ol_o_id) IN $keys;
+            )", std::move(built)),
+                [this, foundCount](TExecuteQueryResult info) -> TFuture<TOperationResult> {
+                    if (info.GetResultSets().size() < 2) {
+                        return RollbackThenFailOp(
+                            EErrorClass::Integrity, "delivery info prefetch size mismatch");
+                    }
+                    NYdb::TResultSetParser orders(info.GetResultSet(0));
+                    while (orders.TryNextRow()) {
+                        const int districtId = ParseInt32(orders, "o_d_id");
+                        const int idx = districtId - DISTRICT_LOW_ID;
+                        if (idx < 0 || idx >= DISTRICT_COUNT) {
+                            continue;
+                        }
+                        TDeliveryOrderInfo row;
+                        row.CustomerID = ParseInt32(orders, "o_c_id");
+                        DeliveryPrefetch_.Info[idx] = row;
+                    }
+                    NYdb::TResultSetParser lines(info.GetResultSet(1));
+                    while (lines.TryNextRow()) {
+                        const int districtId = ParseInt32(lines, "ol_d_id");
+                        const int idx = districtId - DISTRICT_LOW_ID;
+                        if (idx < 0 || idx >= DISTRICT_COUNT || !DeliveryPrefetch_.Info[idx]) {
+                            continue;
+                        }
+                        auto& row = *DeliveryPrefetch_.Info[idx];
+                        row.TotalAmount += ParseMoney(lines, "ol_amount");
+                        row.LineCount += 1;
+                    }
+                    for (int districtId = DISTRICT_LOW_ID; districtId <= DISTRICT_HIGH_ID; ++districtId) {
+                        const int idx = districtId - DISTRICT_LOW_ID;
+                        if (DeliveryPrefetch_.OldestOrderId[idx] && !DeliveryPrefetch_.Info[idx]) {
+                            return RollbackThenFailOp(EErrorClass::Integrity, "order not found");
+                        }
+                    }
+                    DeliveryPrefetch_.Loaded = true;
+                    return ReadyOp(OkOp(foundCount, foundCount));
+                });
+        });
+    // A query error is a value here. Roll the open transaction back unless a
+    // cardinality miss already did.
+    return Then(
+        CatchOp(std::move(loaded)),
+        [this](TOperationResult result) -> TFuture<TOperationResult> {
+            if (!result.Ok && !Terminal_) {
+                return Then(Rollback(), [result = std::move(result)](TCommitResult) {
+                    return result;
+                });
+            }
+            return ReadyOp(std::move(result));
+        });
+}
 
 TYdbTpccSession::TYdbTpccSession(TYdbConnection& connection, std::string path)
     : Connection_(connection)

@@ -418,7 +418,7 @@ TPutBatchResult PutWarehouseIdempotent(
                     ThrowArrow(data.Append(c.Data), "append c_data");
 
                     auto h = NGenerator::GenerateHistory(seed, warehouseId, d, cid);
-                    // Unique per warehouse; payment hist_id starts at wall-clock nanos.
+                    // Unique per warehouse. Runtime payment hist_id lives above this range.
                     const int64_t histId =
                         static_cast<int64_t>(d - DISTRICT_LOW_ID) * CUSTOMERS_PER_DISTRICT + cid;
                     ThrowArrow(hWId.Append(h.WarehouseId), "append h_w_id");
