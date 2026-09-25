@@ -86,6 +86,9 @@ func TestRun_helpMentionsLeaveProcesses(t *testing.T) {
 	if !strings.Contains(string(out), "Override worker/loader threads") {
 		t.Fatalf("help missing worker/loader --threads meaning:\n%s", out)
 	}
+	if !strings.Contains(string(out), "--max-inflight <n>") {
+		t.Fatalf("help missing --max-inflight:\n%s", out)
+	}
 	if !strings.Contains(string(out), "test        Arm workers") {
 		t.Fatalf("help missing test command:\n%s", out)
 	}
@@ -199,6 +202,35 @@ func TestRun_repeatsNonPositiveRejected(t *testing.T) {
 	})
 	if !strings.Contains(stderr, "--repeats must be greater than zero") {
 		t.Fatalf("stderr=%q", stderr)
+	}
+}
+
+func TestRun_maxInflightFlagAcceptedOnValidate(t *testing.T) {
+	dir := t.TempDir()
+	profilePath := writeCLITestProfile(t, dir)
+	for _, args := range [][]string{
+		{"validate", "--profile", profilePath, "--max-inflight", "256"},
+		{"validate", "--profile=" + profilePath, "--max-inflight=64"},
+	} {
+		if code := Run(args); code != 0 {
+			t.Fatalf("Run(%v)=%d, want 0", args, code)
+		}
+	}
+}
+
+func TestRun_maxInflightNonPositiveRejected(t *testing.T) {
+	dir := t.TempDir()
+	profilePath := writeCLITestProfile(t, dir)
+	for _, raw := range []string{"0", "-1"} {
+		stderr := captureStderr(t, func() {
+			code := Run([]string{"validate", "--profile", profilePath, "--max-inflight", raw})
+			if code != 2 {
+				t.Fatalf("--max-inflight %s exit=%d, want 2", raw, code)
+			}
+		})
+		if !strings.Contains(stderr, "--max-inflight must be greater than zero") {
+			t.Fatalf("stderr=%q", stderr)
+		}
 	}
 }
 

@@ -17,7 +17,8 @@ int RunWorkerFromRunConfig(
     const std::string& runConfigPath,
     const std::string& instance,
     const std::optional<std::string>& startAtRfc3339,
-    const std::optional<int>& threadOverride = {});
+    const std::optional<int>& threadOverride = {},
+    const std::optional<int>& maxInflightOverride = {});
 int RunSchemaFromRunConfig(const std::string& runConfigPath, const std::string& instance);
 int RunIndexesFromRunConfig(const std::string& runConfigPath, const std::string& instance);
 int RunDropFromRunConfig(const std::string& runConfigPath, const std::string& instance);

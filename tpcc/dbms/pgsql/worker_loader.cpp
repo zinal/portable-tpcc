@@ -62,7 +62,8 @@ int RunWorkerFromRunConfig(
     const std::string& runConfigPath,
     const std::string& instance,
     const std::optional<std::string>& startAtRfc3339,
-    const std::optional<int>& threadOverride)
+    const std::optional<int>& threadOverride,
+    const std::optional<int>& maxInflightOverride)
 {
     const auto doc = LoadRunConfigDocument(runConfigPath);
     TWorkerRoleHooks hooks;
@@ -105,7 +106,8 @@ int RunWorkerFromRunConfig(
         runCfg.StartAt = startAt;
         return RunSync(runCfg, &aggregated);
     };
-    return RunOrchestratedWorker(doc, instance, startAtRfc3339, kPgIdentity, hooks, threadOverride);
+    return RunOrchestratedWorker(
+        doc, instance, startAtRfc3339, kPgIdentity, hooks, threadOverride, maxInflightOverride);
 }
 
 int RunSchemaFromRunConfig(const std::string& runConfigPath, const std::string& instance) {

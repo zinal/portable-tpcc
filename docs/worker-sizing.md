@@ -9,7 +9,7 @@ Profile knobs:
 | Profile | Standalone | Meaning in this project |
 | --- | --- | --- |
 | `runtime.threads_per_worker` | `--threads` | Coroutine **scheduler** threads (`ComputeRunLayout`) |
-| `runtime.max_inflight_per_worker` | `--max-inflight` / `-m` | Admission cap: concurrent DBMS transactions **and** (PostgreSQL / OceanBase) connection-pool size |
+| `runtime.max_inflight_per_worker` | `--max-inflight` / `-m` | Admission cap: concurrent DBMS transactions **and** (PostgreSQL / OceanBase) connection-pool size. `mind-tpcc --max-inflight N` overrides the profile value for that `test` / `run` without rewriting run-config. |
 
 `0` / omit for threads keeps auto sizing on each worker. `max_inflight_per_worker`
 `≤ 0` materializes **100** (same as standalone and tpcc-postgres-cpp).

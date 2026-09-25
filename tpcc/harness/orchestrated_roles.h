@@ -52,7 +52,8 @@ int RunOrchestratedWorker(
     const std::optional<std::string>& startAtRfc3339,
     const TAdapterIdentity& id,
     const TWorkerRoleHooks& hooks,
-    const std::optional<int>& threadOverride = {});
+    const std::optional<int>& threadOverride = {},
+    const std::optional<int>& maxInflightOverride = {});
 
 int RunOrchestratedSchema(
     const TRunConfigDocument& doc,
@@ -83,6 +84,22 @@ inline void ApplyOrchestratedThreadOverride(size_t& threads, const std::optional
     RequireNonNegativeThreads(override);
     if (override.has_value()) {
         threads = static_cast<size_t>(*override);
+    }
+}
+
+inline void RequirePositiveMaxInflight(const std::optional<int>& maxInflight) {
+    if (maxInflight.has_value() && *maxInflight <= 0) {
+        throw std::runtime_error("--max-inflight must be greater than zero");
+    }
+}
+
+// Launch-time --max-inflight override. Missing keeps assignment.MaxInflight
+// from run-config. A positive value replaces it for this process: admission
+// cap and connection/session pool size (ComputeRunLayout PoolSize).
+inline void ApplyOrchestratedMaxInflightOverride(size_t& maxInflight, const std::optional<int>& override) {
+    RequirePositiveMaxInflight(override);
+    if (override.has_value()) {
+        maxInflight = static_cast<size_t>(*override);
     }
 }
 

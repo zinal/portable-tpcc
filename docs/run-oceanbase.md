@@ -361,7 +361,7 @@ Orchestrated roles launched by mind (for reference):
 tpcc-oceanbase schema --run-config run-config.json --instance schema-0
 tpcc-oceanbase loader --run-config run-config.json --instance <loader> [--threads=N]
 tpcc-oceanbase indexes --run-config run-config.json --instance indexes-0
-tpcc-oceanbase worker --run-config run-config.json --instance <worker> --start-at=<UTC> [--threads=N]
+tpcc-oceanbase worker --run-config run-config.json --instance <worker> --start-at=<UTC> [--threads=N] [--max-inflight=N]
 tpcc-oceanbase check  --run-config run-config.json --instance check-0 --after-import|--after-test [--threads=N]
 tpcc-oceanbase debug  --run-config run-config.json --instance debug-0 [--repeats=N]
 tpcc-oceanbase drop   --run-config run-config.json --instance drop-0    # mind-tpcc drop
