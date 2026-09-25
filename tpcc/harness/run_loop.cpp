@@ -502,14 +502,14 @@ void MaybeUpdateConsoleStats(
 
     const size_t inflight = TransactionsInflight.load(std::memory_order_relaxed);
     if (config.NoDelays) {
-        LOG_I(fmt::format("{} {:.0f}s/{:.0f}s ({:.0f}s left) | tpmC:{:.0f} | Fail:{} Inflight:{} |{}{}",
-              RunPhaseName(phase), elapsed, phaseTotal, remaining, tpmc,
+        LOG_I(fmt::format("{} {:.0f}s/{:.0f}s left | tpmC:{:.0f} | Fail:{} Inflight:{} |{}{}",
+              RunPhaseName(phase), remaining, phaseTotal, tpmc,
               totalFailed,
               inflight,
               latencies, FormatSchedulerStats(taskQueue)));
     } else {
-        LOG_I(fmt::format("{} {:.0f}s/{:.0f}s ({:.0f}s left) | tpmC:{:.0f} eff:{:.1f}% | Fail:{} Inflight:{} |{}{}",
-              RunPhaseName(phase), elapsed, phaseTotal, remaining, tpmc, efficiency,
+        LOG_I(fmt::format("{} {:.0f}s/{:.0f}s left | tpmC:{:.0f} eff:{:.1f}% | Fail:{} Inflight:{} |{}{}",
+              RunPhaseName(phase), remaining, phaseTotal, tpmc, efficiency,
               totalFailed,
               inflight,
               latencies, FormatSchedulerStats(taskQueue)));

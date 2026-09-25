@@ -181,8 +181,8 @@ std::string FormatProgressTransactionFields(
     std::array<size_t, TRANSACTION_TYPE_COUNT>& lastCompleted,
     const char* unit);
 
-// Throttled progress line: phase name, elapsed/total for the phase, seconds
-// left until phase end, and live tpmC from Progress* counters (including ramp).
+// Throttled progress line: phase name, remaining/total seconds left in the
+// phase, and live tpmC from Progress* counters (including ramp).
 // Per-type counts are the increment since the previous line; each seen type
 // shows the phase p90. When taskQueue is set, also append scheduler ready
 // depth and sleep overshoot.
