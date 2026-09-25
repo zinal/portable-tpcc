@@ -228,9 +228,12 @@ Logical inputs are fixed before the first attempt and MUST NOT be regenerated
 on retry.
 
 Admission uses `max_inflight` (profile `runtime.max_inflight_per_worker`,
-standalone `--max-inflight`). Scheduler `threads` (`runtime.threads_per_worker`
-/ `--threads`) run terminal coroutines. When `ITpccTransaction` returns
-incomplete futures, many transactions MAY be in flight per scheduler thread
+standalone or orchestrated `--max-inflight`). That same value sizes the
+connection pool: `PoolSize = min(terminals, max_inflight)` (PostgreSQL and
+OceanBase TCP connections; YDB concurrent sessions). Scheduler `threads`
+(`runtime.threads_per_worker` / `--threads`) run terminal coroutines. When
+`ITpccTransaction` returns incomplete futures, many transactions MAY be in
+flight per scheduler thread
 (up to `max_inflight`). Completing DBMS IO on the task-queue thread makes
 `Inflight ≈ ThreadCount` and MUST NOT be used on the worker path
 ([adapter-api.md](adapter-api.md) §4.3). Auto `threads=0`
@@ -536,6 +539,21 @@ NOT rewrite an already materialized `run-config.json`. When the flag is set,
   `load_assignment[].threads`.
 - `check`: parallel DBMS sessions; see §9.2. `mind-tpcc` always passes a
   resolved positive N.
+
+`mind-tpcc --max-inflight` is a launch-time override of the worker admission
+cap and connection-pool size for this invocation. It MUST NOT rewrite an
+already materialized `run-config.json`. When the flag is set, `mind-tpcc`
+passes `--max-inflight=N` on orchestrated `worker` argv only (`test` and the
+`test` step of `run`). Every `tpcc-<dbms>` binary MUST accept
+`--max-inflight=N`, `--max-inflight N`, `-m N`, and the gflags spelling
+`--max_inflight` (with `=` or a following argument). `N` MUST be greater than
+zero; a non-positive value MUST be rejected. The worker replaces
+`worker_assignment[].max_inflight` for that process. `ComputeRunLayout` then
+sets the connection pool (PostgreSQL / OceanBase) or concurrent session cap
+(YDB) to `min(terminals, max_inflight)`. When the flag is omitted, the worker
+uses `worker_assignment[].max_inflight` from run-config (profile
+`runtime.max_inflight_per_worker`; `≤ 0` materializes as 100). Loader, check,
+and debug MUST NOT apply the value.
 
 ### 9.2. Integrity-check reports
 

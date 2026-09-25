@@ -37,3 +37,22 @@ TEST(OrchestratedThreadOverride, RequireNonNegativeAcceptsMissingAndZero) {
     EXPECT_NO_THROW(RequireNonNegativeThreads(64));
     EXPECT_THROW(RequireNonNegativeThreads(-1), std::runtime_error);
 }
+
+TEST(OrchestratedMaxInflightOverride, MissingKeepsAssignment) {
+    size_t maxInflight = 100;
+    ApplyOrchestratedMaxInflightOverride(maxInflight, std::nullopt);
+    EXPECT_EQ(maxInflight, 100u);
+}
+
+TEST(OrchestratedMaxInflightOverride, PositiveReplacesAssignment) {
+    size_t maxInflight = 100;
+    ApplyOrchestratedMaxInflightOverride(maxInflight, 256);
+    EXPECT_EQ(maxInflight, 256u);
+}
+
+TEST(OrchestratedMaxInflightOverride, ZeroAndNegativeRejected) {
+    size_t maxInflight = 100;
+    EXPECT_THROW(ApplyOrchestratedMaxInflightOverride(maxInflight, 0), std::runtime_error);
+    EXPECT_THROW(ApplyOrchestratedMaxInflightOverride(maxInflight, -1), std::runtime_error);
+    EXPECT_EQ(maxInflight, 100u);
+}

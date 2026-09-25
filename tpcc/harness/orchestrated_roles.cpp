@@ -66,10 +66,12 @@ int RunOrchestratedWorker(
     const std::optional<std::string>& startAtRfc3339,
     const TAdapterIdentity& id,
     const TWorkerRoleHooks& hooks,
-    const std::optional<int>& threadOverride)
+    const std::optional<int>& threadOverride,
+    const std::optional<int>& maxInflightOverride)
 {
     auto assign = FindWorkerAssignment(doc, instance);
     ApplyOrchestratedThreadOverride(assign.Threads, threadOverride);
+    ApplyOrchestratedMaxInflightOverride(assign.MaxInflight, maxInflightOverride);
     const std::string instanceDir = InstanceWorkDir(doc, "worker", instance);
     EnsureInstanceDir(instanceDir);
     const auto paths = MakeArtifactPaths(instanceDir);

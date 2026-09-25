@@ -71,6 +71,7 @@ drop database objects; use `drop` for that.
 | `--ramp-up <duration>` | profile `phases.ramp_up` | Warmup override (`30s`, `5m`, …). |
 | `--measurement <duration>` | profile `phases.measurement` | Measurement override. |
 | `--threads <n>` | profile worker/loader threads and `runtime.check_concurrency` | Launch-time override for this invocation. `test`/`load`/`run` pass `--threads=N` to workers and loaders (`0` = auto at the binary). `check`/`run` pass a resolved session count to `check` (`0` = auto `min(scale.warehouses, 32)`). Does not rewrite an existing run-config. |
+| `--max-inflight <n>` | profile `runtime.max_inflight_per_worker` | Launch-time override for this invocation's test workers (`N > 0`). `test`/`run` pass `--max-inflight=N` to each worker. Sets the max in-flight async transactions and the connection-pool size (`min(terminals, N)`; YDB: concurrent sessions). Does not rewrite an existing run-config. |
 | `--insecure-ignore-host-key` | profile `ssh.insecure_ignore_host_key` | Skip SSH host-key checking (lab / reimaged hosts). Same as `ssh.insecure_ignore_host_key: true`. Recorded in run-state. `known_hosts` is then optional. |
 | `--skip <step>` | none | Skip a `run` pipeline step. Repeatable. Names: `deploy`, `schema`, `load`, `indexes`, `check_after_import`, `test` (alias `start`), `check_after_test` (alias `check_after_run`), `collect`, `consolidate`. |
 | `--yes` | false | Required for `drop`, `cleanup`, and `undeploy`. `configure` uses it to overwrite an existing file. |
@@ -394,7 +395,7 @@ Orchestrated invocation (written by mind):
 schema  --run-config <path> --instance <name>
 loader  --run-config <path> --instance <name> [--threads=N]
 indexes --run-config <path> --instance <name>
-worker  --run-config <path> --instance <name> --start-at=<RFC3339-UTC> [--threads=N]
+worker  --run-config <path> --instance <name> --start-at=<RFC3339-UTC> [--threads=N] [--max-inflight=N]
 check   --run-config <path> --instance <name> --after-import|--after-test [--threads=N]
 debug   --run-config <path> --instance <name> [--repeats=N]
 drop    --run-config <path> --instance <name>
@@ -410,7 +411,7 @@ drop    --run-config <path> --instance <name>
 | `--skip-warmup` | `false` | Skip warmup; start measurement immediately. |
 | `--duration` | `10` | Measurement minutes (> 0). |
 | `-t` / `--threads` | `0` | Run/import: `0` = auto. Check: parallel DBMS sessions (`<=0` = 1 session). Orchestrated worker/loader: `mind-tpcc --threads` when set, otherwise assignment `threads` from run-config. Orchestrated check: `mind-tpcc --threads` when set, otherwise `runtime.check_concurrency`. |
-| `-m` / `--max-inflight` | `100` | Max in-flight transactions (> 0). |
+| `-m` / `--max-inflight` | `100` | Max in-flight transactions and connection-pool size (> 0). Orchestrated worker: `mind-tpcc --max-inflight` when set, otherwise assignment `max_inflight` from run-config. |
 | `--stats-interval` | `30` | Seconds between worker progress statistics lines (> 0). Orchestrated workers use `runtime.stats_interval_ms` from run-config instead. |
 | `--no-delays` | `false` | Disable keying and think time (engineering). |
 | `--think-time-distribution` | `exponential` | `exponential` \| `compatibility` \| `constant`. |

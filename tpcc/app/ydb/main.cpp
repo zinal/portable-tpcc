@@ -44,7 +44,8 @@ DEFINE_int32(duration, 10, "Benchmark run duration in minutes");
 DEFINE_int32(threads, 0,
     "Number of threads (coroutines for run, importers for import, parallel query chunks for check); "
     "0 = auto");
-DEFINE_int32(max_inflight, NTpcc::DEFAULT_MAX_INFLIGHT, "Max inflight transactions");
+DEFINE_int32(max_inflight, NTpcc::DEFAULT_MAX_INFLIGHT,
+    "Max in-flight transactions and connection-pool size");
 DEFINE_int32(stats_interval, NTpcc::kDefaultStatsIntervalSeconds,
     "Seconds between worker progress statistics lines");
 DEFINE_bool(no_delays, false, "Disable keying and think time delays");
@@ -99,7 +100,7 @@ void PrintHelp() {
         "  --duration            Benchmark run duration in minutes (default: 10)\n"
         "  -t, --threads         Number of threads (coroutines for run, importers for import,\n"
         "                        parallel warehouse-range chunks for check); 0 = auto (default: 0)\n"
-        "  -m, --max-inflight    Max inflight transactions (default: 100)\n"
+        "  -m, --max-inflight    Max in-flight transactions and connection-pool size (default: 100)\n"
         "  --stats-interval      Seconds between progress statistics lines (default: 30)\n"
         "  --no-delays           Disable keying and think time delays (default: false)\n"
         "  --think-time-distribution  exponential (TPC-C default) or compatibility/constant\n"
@@ -114,7 +115,7 @@ void PrintHelp() {
         "  schema  --run-config <path> --instance <name>\n"
         "  loader  --run-config <path> --instance <name> [--threads=N]\n"
         "  indexes --run-config <path> --instance <name>\n"
-        "  worker  --run-config <path> --instance <name> --start-at=<RFC3339-UTC> [--threads=N]\n"
+        "  worker  --run-config <path> --instance <name> --start-at=<RFC3339-UTC> [--threads=N] [--max-inflight=N]\n"
         "  check   --run-config <path> --instance <name> --after-import|--after-test [--threads=N]\n"
         "  debug   --run-config <path> --instance <name> [--repeats=N]\n"
         "  drop    --run-config <path> --instance <name>\n"
@@ -190,12 +191,14 @@ bool ParseOrchestratedArgs(
     bool& afterImport,
     bool& afterRun,
     std::optional<int>& threads,
-    std::optional<int>& repeats)
+    std::optional<int>& repeats,
+    std::optional<int>& maxInflight)
 {
     afterImport = false;
     afterRun = false;
     threads.reset();
     repeats.reset();
+    maxInflight.reset();
     for (int i = 2; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "--run-config" && i + 1 < argc) {
@@ -215,6 +218,12 @@ bool ParseOrchestratedArgs(
             threads = std::stoi(arg.substr(std::string("--threads=").size()));
         } else if ((arg == "--threads" || arg == "-t") && i + 1 < argc) {
             threads = std::stoi(argv[++i]);
+        } else if (arg.rfind("--max-inflight=", 0) == 0) {
+            maxInflight = std::stoi(arg.substr(std::string("--max-inflight=").size()));
+        } else if (arg.rfind("--max_inflight=", 0) == 0) {
+            maxInflight = std::stoi(arg.substr(std::string("--max_inflight=").size()));
+        } else if ((arg == "--max-inflight" || arg == "--max_inflight" || arg == "-m") && i + 1 < argc) {
+            maxInflight = std::stoi(argv[++i]);
         } else if (arg.rfind("--repeats=", 0) == 0) {
             repeats = std::stoi(arg.substr(std::string("--repeats=").size()));
         } else if (arg == "--repeats" && i + 1 < argc) {
@@ -236,7 +245,8 @@ int RunOrchestrated(
     bool afterImport,
     bool afterRun,
     const std::optional<int>& threads,
-    const std::optional<int>& repeats)
+    const std::optional<int>& repeats,
+    const std::optional<int>& maxInflight)
 {
     if (threads.has_value() && *threads < 0) {
         throw std::runtime_error("--threads must not be negative");
@@ -244,9 +254,12 @@ int RunOrchestrated(
     if (repeats.has_value() && *repeats <= 0) {
         throw std::runtime_error("--repeats must be greater than zero");
     }
+    if (maxInflight.has_value() && *maxInflight <= 0) {
+        throw std::runtime_error("--max-inflight must be greater than zero");
+    }
     if (command == "worker") {
         LOG_I("Starting orchestrated worker " << instance << "...");
-        return NTpcc::RunWorkerFromRunConfig(runConfig, instance, startAt, threads);
+        return NTpcc::RunWorkerFromRunConfig(runConfig, instance, startAt, threads, maxInflight);
     }
     if (command == "loader") {
         LOG_I("Starting orchestrated loader " << instance << "...");
@@ -504,8 +517,9 @@ int main(int argc, char* argv[]) {
             bool afterRun = false;
             std::optional<int> threads;
             std::optional<int> repeats;
+            std::optional<int> maxInflight;
             const bool hasOrchestrated = ParseOrchestratedArgs(
-                argc, argv, runConfig, instance, startAt, afterImport, afterRun, threads, repeats);
+                argc, argv, runConfig, instance, startAt, afterImport, afterRun, threads, repeats, maxInflight);
             // schema/check/loader/worker with --run-config take the orchestrated path.
             // schema/check without run-config fall through to standalone gflags parsing.
             if (hasOrchestrated) {
@@ -520,7 +534,7 @@ int main(int argc, char* argv[]) {
                 NTpcc::InitLogging(TLOG_INFO);
                 try {
                     return RunOrchestrated(
-                        earlyCommand, runConfig, instance, startAt, afterImport, afterRun, threads, repeats);
+                        earlyCommand, runConfig, instance, startAt, afterImport, afterRun, threads, repeats, maxInflight);
                 } catch (const std::exception& ex) {
                     LOG_E("Fatal error: " << ex.what());
                     return 1;
@@ -590,8 +604,9 @@ int main(int argc, char* argv[]) {
             bool afterRun = false;
             std::optional<int> threads;
             std::optional<int> repeats;
+            std::optional<int> maxInflight;
             if (!ParseOrchestratedArgs(
-                    argc, argv, runConfig, instance, startAt, afterImport, afterRun, threads, repeats)) {
+                    argc, argv, runConfig, instance, startAt, afterImport, afterRun, threads, repeats, maxInflight)) {
                 std::cerr << "Error: worker/loader require --run-config and --instance\n";
                 return 1;
             }
@@ -600,7 +615,7 @@ int main(int argc, char* argv[]) {
                 return 1;
             }
             return RunOrchestrated(
-                command, runConfig, instance, startAt, afterImport, afterRun, threads, repeats);
+                command, runConfig, instance, startAt, afterImport, afterRun, threads, repeats, maxInflight);
         }
     } catch (const std::exception& ex) {
         LOG_E("Fatal error: " << ex.what());

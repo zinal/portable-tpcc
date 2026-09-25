@@ -91,6 +91,39 @@ func TestPlanHonorsThreadsOverride(t *testing.T) {
 	}
 }
 
+func TestPlanHonorsMaxInflightOverride(t *testing.T) {
+	dir := t.TempDir()
+	profilePath := writeTestProfile(t, dir, "")
+	if err := os.MkdirAll(filepath.Join(dir, "dist"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	inflight := 256
+	o, err := orchestrator.New(orchestrator.Options{
+		ProfilePath: profilePath,
+		MaxInflight: &inflight,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := o.Plan()
+	if err != nil {
+		t.Fatal(err)
+	}
+	argv := plan.WorkerArgv["h-127-0-0-1-2"]
+	if len(argv) == 0 || argv[len(argv)-1] != "--max-inflight=256" {
+		t.Fatalf("worker argv %v, want --max-inflight=256", argv)
+	}
+	loaderArgv := plan.LoaderArgv["h-127-0-0-1-1"]
+	for _, arg := range loaderArgv {
+		if strings.Contains(arg, "max-inflight") {
+			t.Fatalf("loader argv %v must not carry --max-inflight", loaderArgv)
+		}
+	}
+	if plan.WorkerAssignment[0].MaxInflight != 64 {
+		t.Fatalf("run-config max_inflight=%d, want profile value 64 (override is argv-only)", plan.WorkerAssignment[0].MaxInflight)
+	}
+}
+
 func TestMaterializePreservesActiveRunState(t *testing.T) {
 	dir := t.TempDir()
 	profilePath := writeTestProfile(t, dir, "")

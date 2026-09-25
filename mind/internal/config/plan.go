@@ -12,10 +12,19 @@ func appendThreadFlag(argv []string, threads *int) []string {
 	return argv
 }
 
+func appendMaxInflightFlag(argv []string, maxInflight *int) []string {
+	if maxInflight != nil {
+		return append(argv, fmt.Sprintf("--max-inflight=%d", *maxInflight))
+	}
+	return argv
+}
+
 // WorkerArgv returns argv for launching a worker.
 // When startAt is non-empty it appends --start-at=<RFC3339-UTC>.
 // threads, when non-nil, is a launch-time override (0 = auto at the binary).
-func WorkerArgv(runConfigPath, instance, startAt string, threads *int) []string {
+// maxInflight, when non-nil, replaces the profile max_inflight for this
+// process (admission cap and connection-pool size). It must be greater than zero.
+func WorkerArgv(runConfigPath, instance, startAt string, threads, maxInflight *int) []string {
 	args := []string{
 		"worker",
 		"--run-config", runConfigPath,
@@ -24,7 +33,8 @@ func WorkerArgv(runConfigPath, instance, startAt string, threads *int) []string 
 	if startAt != "" {
 		args = append(args, "--start-at="+startAt)
 	}
-	return appendThreadFlag(args, threads)
+	args = appendThreadFlag(args, threads)
+	return appendMaxInflightFlag(args, maxInflight)
 }
 
 // LoaderArgv returns argv for launching a loader.
@@ -155,10 +165,12 @@ type PlanSnapshot struct {
 // Worker argv omit --start-at; that value is computed at start time.
 // threads, when non-nil, is a launch-time --threads override: worker/loader
 // argv get --threads=N, and check argv uses EffectiveCheckConcurrency.
-func BuildPlanSnapshot(rc *RunConfig, threads *int) *PlanSnapshot {
+// maxInflight, when non-nil, is a launch-time --max-inflight override on
+// worker argv only. Neither override rewrites run-config assignments.
+func BuildPlanSnapshot(rc *RunConfig, threads, maxInflight *int) *PlanSnapshot {
 	workerArgv := make(map[string][]string)
 	for _, w := range rc.WorkerAssignment {
-		workerArgv[w.Instance] = WorkerArgv("run-config.json", w.Instance, "", threads)
+		workerArgv[w.Instance] = WorkerArgv("run-config.json", w.Instance, "", threads, maxInflight)
 	}
 	loaderArgv := make(map[string][]string)
 	for _, l := range rc.LoadAssignment {

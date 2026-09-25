@@ -48,6 +48,10 @@ type Options struct {
 	// invocation's worker, loader, and check argv. It does not rewrite
 	// run-config.json.
 	Threads *int
+	// MaxInflight, when non-nil, is a launch-time --max-inflight override for
+	// this invocation's worker argv. It replaces the profile admission cap and
+	// connection-pool size for the test and does not rewrite run-config.json.
+	MaxInflight *int
 	// Repeats, when non-nil, is a launch-time --repeats override for the
 	// diagnostic debug role. It does not rewrite run-config.json.
 	Repeats *int
@@ -319,7 +323,7 @@ func (o *Orchestrator) Plan() (*config.PlanSnapshot, error) {
 	if err != nil {
 		return nil, err
 	}
-	return config.BuildPlanSnapshot(ctx.RunConfig, o.Opts.Threads), nil
+	return config.BuildPlanSnapshot(ctx.RunConfig, o.Opts.Threads, o.Opts.MaxInflight), nil
 }
 
 // Deploy uploads the shared worker binary to runtime hosts.
@@ -724,7 +728,7 @@ func (o *Orchestrator) test(ctx *Context) error {
 
 	var workers []*launchedProc
 	for _, w := range ctx.RunConfig.WorkerAssignment {
-		argv := config.WorkerArgv("run-config.json", w.Instance, token.StartAt, o.Opts.Threads)
+		argv := config.WorkerArgv("run-config.json", w.Instance, token.StartAt, o.Opts.Threads, o.Opts.MaxInflight)
 		proc, err := o.launchRole(ctx, sessions, "worker", w.Host, w.Instance, argv)
 		if err != nil {
 			_ = o.stopPeers(ctx, sessions)
