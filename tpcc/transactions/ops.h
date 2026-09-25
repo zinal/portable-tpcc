@@ -152,8 +152,8 @@ struct TUpdateStock {
     int NewQuantity = 0;
     int OrderedQuantity = 0;
     int RemoteIncrement = 0;
-    // Absolute counters after this line (YDB AS_TABLE UPSERT). PostgreSQL and
-    // OceanBase still apply OrderedQuantity / RemoteIncrement on the server.
+    // Filled by the New-Order workflow. Adapters write NewQuantity and apply
+    // OrderedQuantity / RemoteIncrement (one order per line) on the server.
     TMoney NewYtd;
     int NewOrderCount = 0;
     int NewRemoteCount = 0;

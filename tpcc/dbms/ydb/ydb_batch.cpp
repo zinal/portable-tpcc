@@ -36,9 +36,9 @@ std::vector<TYdbStockBatchItem> AggregateYdbStockUpdates(const std::vector<TSema
         }
         auto& row = it->second;
         row.NewQuantity = p->NewQuantity;
-        row.NewYtd = p->NewYtd;
-        row.NewOrderCount = p->NewOrderCount;
-        row.NewRemoteCount = p->NewRemoteCount;
+        row.OrderedQuantity += p->OrderedQuantity;
+        row.RemoteIncrement += p->RemoteIncrement;
+        row.LineCount += 1;
     }
 
     std::vector<TYdbStockBatchItem> out;

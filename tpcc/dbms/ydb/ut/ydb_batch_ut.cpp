@@ -57,20 +57,18 @@ TEST(AggregateYdbStockUpdates, UniqueKeysPreserveOrder) {
     EXPECT_EQ(rows[0].WarehouseID, 1);
     EXPECT_EQ(rows[0].ItemID, 10);
     EXPECT_EQ(rows[0].NewQuantity, 90);
-    EXPECT_EQ(rows[0].NewYtd, TMoney::FromCents(500));
-    EXPECT_EQ(rows[0].NewOrderCount, 1);
-    EXPECT_EQ(rows[0].NewRemoteCount, 0);
+    EXPECT_EQ(rows[0].OrderedQuantity, 5);
+    EXPECT_EQ(rows[0].RemoteIncrement, 0);
+    EXPECT_EQ(rows[0].LineCount, 1);
     EXPECT_EQ(rows[1].WarehouseID, 2);
     EXPECT_EQ(rows[1].ItemID, 11);
     EXPECT_EQ(rows[1].NewQuantity, 40);
-    EXPECT_EQ(rows[1].NewYtd, TMoney::FromCents(300));
-    EXPECT_EQ(rows[1].NewOrderCount, 1);
-    EXPECT_EQ(rows[1].NewRemoteCount, 1);
+    EXPECT_EQ(rows[1].OrderedQuantity, 3);
+    EXPECT_EQ(rows[1].RemoteIncrement, 1);
+    EXPECT_EQ(rows[1].LineCount, 1);
 }
 
-TEST(AggregateYdbStockUpdates, DuplicateItemKeepsLastAbsoluteCounters) {
-    // Same (warehouse, item) on two New-Order lines: in-order mutation leaves
-    // the last absolute quantity/ytd/order_cnt/remote_cnt as the UPSERT row.
+TEST(AggregateYdbStockUpdates, DuplicateItemSumsIncrementsKeepsLastQuantity) {
     std::vector<TSemanticOp> ops{
         StockOp(1, 10, 90, 5, 0, TMoney::FromCents(500), 1, 0),
         StockOp(1, 11, 50, 2, 0, TMoney::FromCents(200), 1, 0),
@@ -80,12 +78,13 @@ TEST(AggregateYdbStockUpdates, DuplicateItemKeepsLastAbsoluteCounters) {
     EXPECT_EQ(rows[0].WarehouseID, 1);
     EXPECT_EQ(rows[0].ItemID, 10);
     EXPECT_EQ(rows[0].NewQuantity, 85);
-    EXPECT_EQ(rows[0].NewYtd, TMoney::FromCents(800));
-    EXPECT_EQ(rows[0].NewOrderCount, 2);
-    EXPECT_EQ(rows[0].NewRemoteCount, 1);
+    EXPECT_EQ(rows[0].OrderedQuantity, 8);
+    EXPECT_EQ(rows[0].RemoteIncrement, 1);
+    EXPECT_EQ(rows[0].LineCount, 2);
     EXPECT_EQ(rows[1].ItemID, 11);
     EXPECT_EQ(rows[1].NewQuantity, 50);
-    EXPECT_EQ(rows[1].NewOrderCount, 1);
+    EXPECT_EQ(rows[1].OrderedQuantity, 2);
+    EXPECT_EQ(rows[1].LineCount, 1);
 }
 
 TEST(AggregateYdbStockUpdates, IgnoresNonStockOps) {

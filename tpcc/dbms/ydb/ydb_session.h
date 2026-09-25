@@ -5,9 +5,12 @@
 
 #include <session.h>
 
+#include <constants.h>
+
 #include <ydb/public/sdk/cpp/include/ydb-cpp-sdk/client/params/params.h>
 #include <ydb/public/sdk/cpp/include/ydb-cpp-sdk/client/query/client.h>
 
+#include <array>
 #include <memory>
 #include <optional>
 #include <string>
@@ -38,6 +41,17 @@ private:
     TFuture<TBatchResult> ExecuteOrderLineBatch(const std::vector<TSemanticOp>& ops);
     TFuture<TBatchResult> ExecuteCompleteDeliveryBatch(const std::vector<TSemanticOp>& ops);
     TFuture<TBatchResult> ExecuteApplyDeliveryBatch(const std::vector<TSemanticOp>& ops);
+    TFuture<TOperationResult> EnsureDeliveryPrefetch(int warehouseId);
+    TOperationResult OldestFromCache(int districtId) const;
+    TOperationResult DeliveryInfoFromCache(int districtId, int orderId) const;
+    TFuture<TFinalCommitResult> FinishPayment(
+        const TUpdateCustomerPayment& update,
+        const TInsertPaymentHistory& history);
+    TFuture<TFinalCommitResult> FinishApplyDelivery(const TApplyDeliveryToCustomer& apply);
+    TFuture<TFinalCommitResult> CommitAfterOperation(TOperationResult operation);
+    TFuture<TOperationResult> RollbackThenFailOp(EErrorClass cls, std::string message);
+    TFuture<TBatchResult> RollbackThenFailBatch(EErrorClass cls, std::string message);
+    void ResetTxnState();
     TFuture<NYdb::NQuery::TExecuteQueryResult> ExecQuery(
         std::string query,
         std::optional<NYdb::TParams> params = std::nullopt,
@@ -50,6 +64,14 @@ private:
     TYdbErrorClassifier Classifier_;
     bool Terminal_ = false;
     bool FinalCommitMode_ = false;
+    std::optional<TUpdateCustomerPayment> PendingPaymentUpdate_;
+    struct TDeliveryPrefetch {
+        bool Loaded = false;
+        int WarehouseID = 0;
+        std::array<std::optional<int>, DISTRICT_COUNT> OldestOrderId{};
+        std::array<std::optional<TDeliveryOrderInfo>, DISTRICT_COUNT> Info{};
+    };
+    TDeliveryPrefetch DeliveryPrefetch_;
 };
 
 class TYdbTpccSession : public ITpccSession {

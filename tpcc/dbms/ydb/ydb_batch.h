@@ -10,14 +10,15 @@ struct TYdbStockBatchItem {
     int WarehouseID = 0;
     int ItemID = 0;
     int NewQuantity = 0;
-    TMoney NewYtd;
-    int NewOrderCount = 0;
-    int NewRemoteCount = 0;
+    int OrderedQuantity = 0;
+    int RemoteIncrement = 0;
+    int LineCount = 0;
 };
 
 // Collapse per-line TUpdateStock ops (including duplicate item ids) into one
-// row per (warehouse, item). Last absolute quantity/ytd/order_cnt/remote_cnt
-// wins, matching in-order application of the line ops.
+// row per (warehouse, item). Last absolute quantity wins; OrderedQuantity,
+// RemoteIncrement, and LineCount are summed so the batched UPDATE matches
+// in-order application of the single-row incremental statement.
 std::vector<TYdbStockBatchItem> AggregateYdbStockUpdates(const std::vector<TSemanticOp>& ops);
 
 template <typename T>
