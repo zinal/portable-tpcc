@@ -394,6 +394,10 @@ type launchedProc struct {
 	Finished bool
 	// warnedAlive is set after logging that the process was still alive after Finished.
 	warnedAlive bool
+	// logCursor is how far stdout/stderr have already been relayed. Ramp
+	// supervision and the measurement wait share it; a fresh cursor at
+	// measurement start would reprint the whole ramp log in one burst.
+	logCursor *processLogCursor
 }
 
 func uniquePIDs(pids ...int) []int {
@@ -760,6 +764,13 @@ type processLogCursor struct {
 	stdoutOff int
 }
 
+func (p *launchedProc) ensureLogCursor() *processLogCursor {
+	if p.logCursor == nil {
+		p.logCursor = &processLogCursor{}
+	}
+	return p.logCursor
+}
+
 func processInstanceDir(proc *launchedProc) string {
 	instanceDir := filepath.Dir(proc.ProcPath)
 	if instanceDir == "" || instanceDir == "." {
@@ -770,9 +781,14 @@ func processInstanceDir(proc *launchedProc) string {
 
 // completeLogLines returns finished lines from data[off:] and the new offset
 // (advanced only past complete newline-terminated lines).
+// A snapshot shorter than off is ignored: rewinding would reprint earlier
+// lines from this source together with newer ones.
 func completeLogLines(data []byte, off int) (lines []string, newOff int) {
-	if off < 0 || off > len(data) {
+	if off < 0 {
 		off = 0
+	}
+	if off > len(data) {
+		return nil, off
 	}
 	newOff = off
 	for newOff < len(data) {
@@ -822,7 +838,7 @@ func (o *Orchestrator) waitProcesses(ctx *Context, procs []*launchedProc, timeou
 	for _, p := range procs {
 		key := p.Role + "/" + p.Instance
 		remaining[key] = p
-		cursors[key] = &processLogCursor{}
+		cursors[key] = p.ensureLogCursor()
 	}
 	if len(remaining) > 0 {
 		progress.Printf("waiting for %d process(es): %s", len(remaining), sortedKeys(remaining))
@@ -1086,10 +1102,6 @@ func (o *Orchestrator) superviseWorkers(ctx *Context, workers []*launchedProc, t
 	if err != nil {
 		return err
 	}
-	cursors := map[string]*processLogCursor{}
-	for _, w := range workers {
-		cursors[w.Role+"/"+w.Instance] = &processLogCursor{}
-	}
 	progress.Printf("workers armed; measurement starts at %s", token.Phases.MeasurementStart)
 	lastHeartbeat := time.Now()
 	const heartbeatEvery = 15 * time.Second
@@ -1101,8 +1113,8 @@ func (o *Orchestrator) superviseWorkers(ctx *Context, workers []*launchedProc, t
 		}
 		anyRelayed := false
 		for _, w := range workers {
-			key := w.Role + "/" + w.Instance
-			if o.relayProcessLogs(w, cursors[key]) {
+			cursor := w.ensureLogCursor()
+			if o.relayProcessLogs(w, cursor) {
 				anyRelayed = true
 			}
 			alive, _ := w.Session.IsAlive(w.PID)
@@ -1112,13 +1124,13 @@ func (o *Orchestrator) superviseWorkers(ctx *Context, workers []*launchedProc, t
 				var manifest map[string]interface{}
 				_ = json.Unmarshal(data, &manifest)
 				if v, ok := manifest["exit_status"].(float64); ok && int(v) != 0 {
-					_ = o.relayProcessLogs(w, cursors[key])
+					_ = o.relayProcessLogs(w, cursor)
 					_ = o.stopPeers(ctx, sessions)
 					return fmt.Errorf("worker %s failed before measurement", w.Instance)
 				}
 			}
 			if !alive && !done {
-				_ = o.relayProcessLogs(w, cursors[key])
+				_ = o.relayProcessLogs(w, cursor)
 				_ = o.stopPeers(ctx, sessions)
 				return fmt.Errorf("worker %s died before measurement", w.Instance)
 			}

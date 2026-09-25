@@ -432,6 +432,77 @@ func TestCompleteLogLinesAdvancesOnlyPastNewlines(t *testing.T) {
 	}
 }
 
+func TestCompleteLogLinesDoesNotRewindShortSnapshot(t *testing.T) {
+	data := []byte("line1\nline2\n")
+	off := len(data)
+	lines, got := completeLogLines(data[:len("line1\n")], off)
+	if lines != nil {
+		t.Fatalf("short snapshot replayed lines: %v", lines)
+	}
+	if got != off {
+		t.Fatalf("off=%d want %d", got, off)
+	}
+	grown := append(append([]byte{}, data...), []byte("line3\n")...)
+	lines, got = completeLogLines(grown, off)
+	if len(lines) != 1 || lines[0] != "line3" {
+		t.Fatalf("lines=%v", lines)
+	}
+	if got != len(grown) {
+		t.Fatalf("off=%d want %d", got, len(grown))
+	}
+}
+
+func TestWaitProcessesDoesNotReplayRelayedPrefix(t *testing.T) {
+	var buf bytes.Buffer
+	progress.SetWriter(&buf)
+	defer progress.SetWriter(nil)
+
+	store := &state.Store{StateDir: t.TempDir()}
+	o := &Orchestrator{StateStore: store}
+	ctx := &Context{RunID: "run-1"}
+	const already = "2026-09-25T18:18:57Z INFO: Starting TPC-C benchmark\n"
+	const fresh = "2026-09-25T18:24:41Z INFO: measure 600s/600s left\n"
+	manifest := collect.ArtifactManifest{
+		SchemaVersion: 1,
+		Instance:      "ob-runner-3-3",
+		InstanceNonce: "nonce-1",
+		Finalized:     true,
+		ExitStatus:    0,
+	}
+	done, _ := json.Marshal(manifest)
+	sess := &fakeSession{files: map[string][]byte{
+		"stderr.log": []byte(already),
+	}, alive: true}
+	proc := &launchedProc{
+		Role:          "worker",
+		Host:          "host-a",
+		Instance:      "ob-runner-3-3",
+		Session:       sess,
+		PID:           123,
+		ProcPath:      "/run/worker/ob-runner-3-3/process.json",
+		DonePath:      "/done",
+		InstanceNonce: "nonce-1",
+	}
+
+	// Same cursor superviseWorkers uses before measurement, then waitProcesses.
+	if !o.relayProcessLogs(proc, proc.ensureLogCursor()) {
+		t.Fatal("expected ramp log line to relay")
+	}
+	sess.files["stderr.log"] = []byte(already + fresh)
+	sess.files["/done"] = done
+	sess.alive = false
+	if err := o.waitProcesses(ctx, []*launchedProc{proc}, time.Second, true); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if strings.Count(out, "Starting TPC-C benchmark") != 1 {
+		t.Fatalf("ramp line relayed %d times, want 1: %q", strings.Count(out, "Starting TPC-C benchmark"), out)
+	}
+	if strings.Count(out, "measure 600s/600s left") != 1 {
+		t.Fatalf("measure line relayed %d times, want 1: %q", strings.Count(out, "measure 600s/600s left"), out)
+	}
+}
+
 func TestWaitProcessesRelaysRemoteLogs(t *testing.T) {
 	var buf bytes.Buffer
 	progress.SetWriter(&buf)
