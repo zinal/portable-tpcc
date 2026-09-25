@@ -9,6 +9,7 @@ SRCS(
     artifact_manifest_stdio_ut.cpp
     debug_probe_ut.cpp
     latency_constraints_ut.cpp
+    progress_line_ut.cpp
 )
 
 PEERDIR(

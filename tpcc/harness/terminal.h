@@ -42,6 +42,7 @@ public:
             , LatencyHistogramAdmission(hdrTill, maxValue)
             , LatencyHistogramSessionPool(hdrTill, maxValue)
             , LatencyHistogramRetryBackoff(hdrTill, maxValue)
+            , ProgressLatencyFullMs(hdrTill, maxValue)
         {}
 
         void ResetHistograms(uint64_t hdrTill, uint64_t maxValue) {
@@ -52,6 +53,7 @@ public:
             LatencyHistogramAdmission = THistogram(hdrTill, maxValue);
             LatencyHistogramSessionPool = THistogram(hdrTill, maxValue);
             LatencyHistogramRetryBackoff = THistogram(hdrTill, maxValue);
+            ProgressLatencyFullMs = THistogram(hdrTill, maxValue);
         }
 
         void Collect(TTransactionStats& dst) const {
@@ -59,7 +61,8 @@ public:
             dst.Failed.fetch_add(Failed.load(std::memory_order_relaxed), std::memory_order_relaxed);
             dst.UserAborted.fetch_add(UserAborted.load(std::memory_order_relaxed), std::memory_order_relaxed);
             dst.Retried.fetch_add(Retried.load(std::memory_order_relaxed), std::memory_order_relaxed);
-            // Progress* is console-only and must not flow into measurement aggregates.
+            // Progress* and ProgressLatencyFullMs are console-only and must not
+            // flow into measurement aggregates.
 
             std::lock_guard guard(HistLock);
             dst.LatencyHistogramMs.Add(LatencyHistogramMs);
@@ -90,6 +93,8 @@ public:
             ProgressOK.store(0, std::memory_order_relaxed);
             ProgressFailed.store(0, std::memory_order_relaxed);
             ProgressUserAborted.store(0, std::memory_order_relaxed);
+            std::lock_guard guard(HistLock);
+            ProgressLatencyFullMs.Reset();
         }
 
         // Measurement-window counters (TPC-C §5.4.2); used for final results.
@@ -98,6 +103,7 @@ public:
         std::atomic<size_t> UserAborted = 0;
         std::atomic<size_t> Retried = 0;
         // Live console counters (ramp + measure). Reset when measure starts.
+        // The progress line prints per-type increments of OK+UserAborted, not these sums.
         std::atomic<size_t> ProgressOK = 0;
         std::atomic<size_t> ProgressFailed = 0;
         std::atomic<size_t> ProgressUserAborted = 0;
@@ -109,6 +115,9 @@ public:
         THistogram LatencyHistogramAdmission;
         THistogram LatencyHistogramSessionPool;
         THistogram LatencyHistogramRetryBackoff;
+        // Full response time for the console p90. Includes warmup, which must
+        // not enter LatencyHistogramFullMs. Cleared with the progress counters.
+        THistogram ProgressLatencyFullMs;
     };
 
 public:
@@ -157,9 +166,10 @@ public:
         PerTransactionTypeStats[static_cast<size_t>(type)].Retried.fetch_add(1, std::memory_order_relaxed);
     }
 
-    void AddProgressOK(ETransactionType type) {
-        PerTransactionTypeStats[static_cast<size_t>(type)].ProgressOK.fetch_add(
-            1, std::memory_order_relaxed);
+    void AddProgressOK(ETransactionType type, std::chrono::microseconds fullLatency) {
+        auto& stats = PerTransactionTypeStats[static_cast<size_t>(type)];
+        stats.ProgressOK.fetch_add(1, std::memory_order_relaxed);
+        RecordProgressLatency(stats, fullLatency);
     }
 
     void IncProgressFailed(ETransactionType type) {
@@ -167,14 +177,26 @@ public:
             1, std::memory_order_relaxed);
     }
 
-    void AddProgressUserAborted(ETransactionType type) {
-        PerTransactionTypeStats[static_cast<size_t>(type)].ProgressUserAborted.fetch_add(
-            1, std::memory_order_relaxed);
+    void AddProgressUserAborted(ETransactionType type, std::chrono::microseconds fullLatency) {
+        auto& stats = PerTransactionTypeStats[static_cast<size_t>(type)];
+        stats.ProgressUserAborted.fetch_add(1, std::memory_order_relaxed);
+        RecordProgressLatency(stats, fullLatency);
     }
 
     void Collect(TTerminalStats& dst) const {
         for (size_t i = 0; i < PerTransactionTypeStats.size(); ++i) {
             PerTransactionTypeStats[i].Collect(dst.PerTransactionTypeStats[i]);
+        }
+    }
+
+    // Console-only full-latency histogram. Separate from Collect() so warmup
+    // samples cannot enter result.json / measurement percentiles.
+    void CollectProgressLatency(TTerminalStats& dst) const {
+        for (size_t i = 0; i < PerTransactionTypeStats.size(); ++i) {
+            const auto& src = PerTransactionTypeStats[i];
+            auto& out = dst.PerTransactionTypeStats[i];
+            std::lock_guard guard(src.HistLock);
+            out.ProgressLatencyFullMs.Add(src.ProgressLatencyFullMs);
         }
     }
 
@@ -187,7 +209,8 @@ public:
 
     // Drop ramp live counters once when entering measurement so console tpmC
     // reflects the current phase only. Measurement OK/Fail are untouched.
-    void ClearProgressOnce() {
+    // Returns true on the call that actually cleared.
+    bool ClearProgressOnce() {
         bool expected = false;
         if (ProgressClearedForMeasure.compare_exchange_strong(
                 expected, true, std::memory_order_relaxed))
@@ -195,7 +218,9 @@ public:
             for (auto& stats : PerTransactionTypeStats) {
                 stats.ClearProgress();
             }
+            return true;
         }
+        return false;
     }
 
 private:
@@ -208,6 +233,12 @@ private:
             return static_cast<uint64_t>(n);
         }
         return static_cast<uint64_t>(n / 1000);
+    }
+
+    void RecordProgressLatency(TTransactionStats& stats, std::chrono::microseconds full) {
+        const uint64_t vFull = ToRecorded(full);
+        std::lock_guard guard(stats.HistLock);
+        stats.ProgressLatencyFullMs.RecordValue(vFull);
     }
 
     void RecordLatency(TTransactionStats& stats, const TLatencySample& sample)

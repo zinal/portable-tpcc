@@ -6,6 +6,7 @@
 #include <warehouse_range.h>
 #include <workload_config.h>
 
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <functional>
@@ -165,11 +166,26 @@ std::string FormatInvalidRunLatencyBanner(
 struct TProgressDisplayState {
     Clock::time_point LastUpdate{};
     TInflightStuckState InflightStuck;
+    // ProgressOK+ProgressUserAborted at the previous printed line, per type.
+    // Cleared when live counters reset at measurement start.
+    std::array<size_t, TRANSACTION_TYPE_COUNT> LastProgressCompleted{};
 };
+
+// Per-type fragment of the progress line. Counts are increments since
+// `lastCompleted` (updated to the current cumulative). p90 is the phase
+// response time: measurement LatencyHistogramFullMs once it has samples,
+// otherwise the warmup-only ProgressLatencyFullMs. No p50/p99.
+std::string FormatProgressTransactionFields(
+    const TTerminalStats& aggregated,
+    const std::array<size_t, TRANSACTION_TYPE_COUNT>& cumulativeCompleted,
+    std::array<size_t, TRANSACTION_TYPE_COUNT>& lastCompleted,
+    const char* unit);
 
 // Throttled progress line: phase name, elapsed/total for the phase, seconds
 // left until phase end, and live tpmC from Progress* counters (including ramp).
-// When taskQueue is set, also append scheduler ready depth and sleep overshoot.
+// Per-type counts are the increment since the previous line; each seen type
+// shows the phase p90. When taskQueue is set, also append scheduler ready
+// depth and sleep overshoot.
 void MaybeUpdateConsoleStats(
     TProgressDisplayState& state,
     const TRunStatsConfig& config,
