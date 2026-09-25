@@ -276,11 +276,60 @@ func (o *Orchestrator) latestContinuableRunID() (string, error) {
 			return "", fmt.Errorf("load existing run-config.json: %w", err)
 		}
 		if err := config.OverridesMatchRunConfig(o.Opts.Overrides, rc); err != nil {
-			progress.Printf("overrides differ from run_id=%s; allocating a new run", latest)
+			progress.Printf("overrides differ from run_id=%s; not continuing this run", latest)
 			return "", nil
 		}
 	}
 	return latest, nil
+}
+
+// ResolveConsolidateRunID selects an existing run for standalone consolidate.
+// It does not allocate a run id. When --run-id is empty and this profile has
+// no non-terminal run, the id stays empty and no run state is written, so a
+// later test can allocate its own id.
+func (o *Orchestrator) ResolveConsolidateRunID() (string, error) {
+	vr := o.Validate()
+	if !vr.Valid {
+		return "", fmt.Errorf("profile invalid: %v", vr.Errors)
+	}
+	runID := strings.TrimSpace(o.Opts.RunID)
+	if runID == "" {
+		latest, err := o.latestContinuableRunID()
+		if err != nil {
+			return "", err
+		}
+		if latest == "" {
+			return "", fmt.Errorf("no active run to consolidate for profile %q; refusing to allocate a run id", o.Profile.Metadata.Name)
+		}
+		progress.Printf("continuing run_id=%s", latest)
+		runID = latest
+	} else {
+		if err := validateCleanupRunID(runID); err != nil {
+			return "", err
+		}
+		recorded, err := o.runRecorded(runID)
+		if err != nil {
+			return "", err
+		}
+		if !recorded {
+			return "", fmt.Errorf("run %s not found under %s; consolidate does not create a run", runID, o.StateStore.StateDir)
+		}
+	}
+	if err := o.refuseConsolidateWithoutTest(&Context{RunID: runID}); err != nil {
+		return "", err
+	}
+	return runID, nil
+}
+
+func (o *Orchestrator) runRecorded(runID string) (bool, error) {
+	_, err := os.Stat(o.StateStore.StatePath(runID))
+	if err == nil {
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, err
 }
 
 func (o *Orchestrator) uniqueRunID(first string) (string, error) {
@@ -805,7 +854,14 @@ func (o *Orchestrator) consolidate(ctx *Context) error {
 // `mind-tpcc consolidate` is enough to produce the result. The `run` pipeline
 // still calls collect and consolidate as separate steps; `--skip collect`
 // continues to skip only the collect step of `run`.
+//
+// An empty run id, a run that was never recorded, or a run that has not
+// finished test is left untouched. Advancing such a run to collecting would
+// make a later test with the same id impossible.
 func (o *Orchestrator) RunConsolidate(ctx *Context) error {
+	if err := o.refuseConsolidateWithoutTest(ctx); err != nil {
+		return err
+	}
 	if !collect.HasCollectionManifest(o.Expanded.ResultRoot, ctx.RunID) {
 		progress.Printf("stage consolidate: collection-manifest missing; running collect first")
 		if err := o.collect(ctx); err != nil {
@@ -813,6 +869,42 @@ func (o *Orchestrator) RunConsolidate(ctx *Context) error {
 		}
 	}
 	return o.consolidate(ctx)
+}
+
+// refuseConsolidateWithoutTest reports whether standalone consolidate must
+// stop before it writes run state. Terminal and stopping runs fall through
+// so the existing transition checks reject them without a rewrite.
+func (o *Orchestrator) refuseConsolidateWithoutTest(ctx *Context) error {
+	if ctx == nil || ctx.RunID == "" {
+		return fmt.Errorf("consolidate: empty run_id; state unchanged")
+	}
+	if _, err := os.Stat(o.StateStore.StatePath(ctx.RunID)); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("consolidate: run %s has no state; state unchanged", ctx.RunID)
+		}
+		return err
+	}
+	rs, err := o.StateStore.Load(ctx.RunID)
+	if err != nil {
+		return err
+	}
+	if consolidateReady(rs.State) || state.IsTerminal(rs.State) || rs.State == state.StateStopping {
+		return nil
+	}
+	st := rs.State
+	if st == "" {
+		st = state.StatePlanned
+	}
+	return fmt.Errorf("consolidate refused: run %s has not finished test (state %s); state unchanged", ctx.RunID, st)
+}
+
+func consolidateReady(st string) bool {
+	switch st {
+	case state.StateDraining, state.StateCheckingResult, state.StateCollecting, state.StateConsolidating:
+		return true
+	default:
+		return false
+	}
 }
 
 // Status returns current run state.

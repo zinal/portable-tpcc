@@ -3,6 +3,7 @@ package cli
 import (
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -245,6 +246,71 @@ func TestRun_threadsNegativeRejected(t *testing.T) {
 	})
 	if !strings.Contains(stderr, "--threads must not be negative") {
 		t.Fatalf("stderr=%q", stderr)
+	}
+}
+
+func TestRun_consolidateWithoutRunLeavesRunIDEmpty(t *testing.T) {
+	dir := t.TempDir()
+	profilePath := writeCLITestProfile(t, dir)
+	stderr := captureStderr(t, func() {
+		code := Run([]string{"consolidate", "--profile", profilePath})
+		if code == 0 {
+			t.Fatal("expected consolidate without a run to fail")
+		}
+	})
+	if !strings.Contains(stderr, "refusing to allocate") {
+		t.Fatalf("stderr=%q", stderr)
+	}
+	entries, err := os.ReadDir(filepath.Join(dir, "state", "runs"))
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("consolidate created %d run dir(s)", len(entries))
+	}
+}
+
+func TestRun_consolidateBeforeTestKeepsPlannedState(t *testing.T) {
+	dir := t.TempDir()
+	profilePath := writeCLITestProfile(t, dir)
+	if code := Run([]string{"plan", "--profile", profilePath}); code != 0 {
+		t.Fatalf("plan=%d", code)
+	}
+	runs := filepath.Join(dir, "state", "runs")
+	entries, err := os.ReadDir(runs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("runs=%d, want 1", len(entries))
+	}
+	statePath := filepath.Join(runs, entries[0].Name(), "run-state.json")
+	before, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stderr := captureStderr(t, func() {
+		code := Run([]string{"consolidate", "--profile", profilePath})
+		if code == 0 {
+			t.Fatal("expected consolidate before test to fail")
+		}
+	})
+	if !strings.Contains(stderr, "has not finished test") {
+		t.Fatalf("stderr=%q", stderr)
+	}
+	after, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("state changed:\n%s", after)
+	}
+	again, err := os.ReadDir(runs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(again) != 1 || again[0].Name() != entries[0].Name() {
+		t.Fatalf("run set changed")
 	}
 }
 

@@ -225,7 +225,7 @@ func run(args []string, interrupt context.Context) int {
 	case "collect":
 		return runStage(opts, "collect")
 	case "consolidate":
-		return runStage(opts, "consolidate")
+		return runConsolidate(opts)
 	case "run":
 		return runFull(opts)
 	case "drop":
@@ -329,6 +329,42 @@ func runUndeploy(opts orchestrator.Options, yes bool) int {
 	return 0
 }
 
+func runConsolidate(opts orchestrator.Options) int {
+	o, err := orch(opts)
+	if err != nil {
+		return exitErr(err)
+	}
+	if err := withConsolidateLock(o, func(ctx *orchestrator.Context) error {
+		return o.RunConsolidate(ctx)
+	}); err != nil {
+		return exitErr(err)
+	}
+	return 0
+}
+
+// withConsolidateLock resolves an existing run and runs fn.
+// It does not allocate a run id or write state when --run-id is empty and
+// there is no active run, and it does not materialize a run that has not
+// finished test.
+func withConsolidateLock(o *orchestrator.Orchestrator, fn func(*orchestrator.Context) error) error {
+	runID, err := o.ResolveConsolidateRunID()
+	if err != nil {
+		return err
+	}
+	if err := o.StateStore.AcquireProfileLock(o.Profile.Metadata.Name, runID); err != nil {
+		return err
+	}
+	defer o.StateStore.ReleaseProfileLock(o.Profile.Metadata.Name, runID)
+	oldRunID := o.Opts.RunID
+	o.Opts.RunID = runID
+	defer func() { o.Opts.RunID = oldRunID }()
+	ctx, err := o.Materialize()
+	if err != nil {
+		return err
+	}
+	return fn(ctx)
+}
+
 func runStage(opts orchestrator.Options, stage string) int {
 	o, err := orch(opts)
 	if err != nil {
@@ -346,8 +382,6 @@ func runStage(opts orchestrator.Options, stage string) int {
 			return o.RunTest(ctx)
 		case "collect":
 			return o.RunCollect(ctx)
-		case "consolidate":
-			return o.RunConsolidate(ctx)
 		default:
 			return fmt.Errorf("unknown stage %s", stage)
 		}
@@ -562,7 +596,8 @@ Commands:
   status      Show run state
   stop        Stop workers gracefully
   collect     Collect artifacts from runtime hosts
-  consolidate Merge worker results into aggregate.json (collects first if needed)
+  consolidate Merge worker results into aggregate.json (collects first if needed;
+              does not allocate a run id)
   run         Full pipeline (requires prior explicit deploy)
   drop        Drop TPC-C objects for the profile database path (--yes)
   cleanup     Remove run artifacts on all hosts including control (--yes)
@@ -570,7 +605,9 @@ Commands:
 Options:
   --profile <path>         Profile YAML path
   --run-id <id>            Run identifier (default: continue latest active run
-                           for this profile, else allocate a new id)
+                           for this profile, else allocate a new id).
+                           consolidate does not allocate; an empty id with no
+                           active run is left empty and does not write state
   --worker-binary <path>   Worker binary path
   --warehouses <n>         Override scale.warehouses (must be <= profile value)
   --ramp-up <duration>     Override phases.ramp_up (warmup), e.g. 30s, 5m

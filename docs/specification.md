@@ -441,6 +441,14 @@ available to re-pull artifacts (for example after a late `check --after-test`).
 `--skip collect` still skips only the collect step of `run` and does not
 trigger this implicit collect.
 
+Standalone `consolidate` MUST NOT allocate a `run_id`. When `--run-id` is
+omitted and the profile has no non-terminal run, the command fails without
+creating run artifacts or run-state, and the run id stays empty. A recorded
+run whose state is still before `draining` (test has not finished) MUST be
+left unchanged, so a later `test` with that same run id can still start.
+`run` is unaffected: its consolidate step still follows the pipeline state
+machine, including after `--skip test`.
+
 `run` = validate → require prior `deploy` (shared worker binaries present on
 every assigned host; no auto-upload) → schema → load → indexes →
 check(after-import) → test → check(after-test) → collect → consolidate.
