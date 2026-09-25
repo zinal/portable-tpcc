@@ -99,13 +99,10 @@ TFinalCommitResult FailFinal(EErrorClass cls, std::string message, std::string c
     return out;
 }
 
+// ExecuteQuery concatenates every FORMAT_VALUE part into one ResultSet.
+// RowsCount() is that fragment's rows_size — the same bound TryNextRow uses.
 size_t CountRows(const NYdb::TResultSet& resultSet) {
-    NYdb::TResultSetParser parser(resultSet);
-    size_t n = 0;
-    while (parser.TryNextRow()) {
-        ++n;
-    }
-    return n;
+    return resultSet.RowsCount();
 }
 
 std::optional<std::pair<EErrorClass, const char*>> DeliveryCardinalityError(
