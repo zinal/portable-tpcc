@@ -823,8 +823,9 @@ TFuture<TOperationResult> TYdbTpccTransaction::Execute(const TSemanticOp& op) {
                 .AddParam("$w_id").Int32(p->WarehouseID).Build()
                 .AddParam("$d_id").Int32(p->DistrictID).Build()
                 .Build();
-            // One round trip: read next order id, then increment. The second
-            // SELECT must observe that increment before CreateOrder runs.
+            // One round trip: read next order id, then increment. Do not
+            // SELECT district again here. Under snapshot-rw that read flushes
+            // the write and holds the district lock until Commit.
             return CatchOp(Then(
                 ExecQuery(Prefix(Path_) + R"(
                 DECLARE $w_id AS Int32;
@@ -835,9 +836,6 @@ TFuture<TOperationResult> TYdbTpccTransaction::Execute(const TSemanticOp& op) {
                 UPDATE `district`
                    SET d_next_o_id = d_next_o_id + 1
                  WHERE d_w_id = $w_id AND d_id = $d_id;
-                SELECT d_next_o_id
-                  FROM `district`
-                 WHERE d_w_id = $w_id AND d_id = $d_id;
             )", std::move(params)),
                 [this](TExecuteQueryResult result) -> TFuture<TOperationResult> {
                     NYdb::TResultSetParser parser(result.GetResultSet(0));
@@ -847,10 +845,6 @@ TFuture<TOperationResult> TYdbTpccTransaction::Execute(const TSemanticOp& op) {
                     TDistrictOrderReservation res;
                     res.NextOrderID = ParseInt32(parser, "d_next_o_id");
                     res.DistrictTax = ParseRate(parser, "d_tax");
-                    NYdb::TResultSetParser after(result.GetResultSet(1));
-                    if (!after.TryNextRow() || ParseInt32(after, "d_next_o_id") != res.NextOrderID + 1) {
-                        return RollbackThenFailOp(EErrorClass::Integrity, "district next order update");
-                    }
                     return ReadyOp(OkOp(1, 1, std::move(res)));
                 }));
         }
