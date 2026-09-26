@@ -38,7 +38,7 @@ mind-tpcc configure --profile <path> --dbms <pgsql|ydb|oceanbase> [options]
 | `status` | Show run state. |
 | `stop` | Stop workers gracefully. |
 | `collect` | Copy artifacts from runtime hosts. |
-| `consolidate` | Merge worker results into `aggregate.json` and print a brief stats summary. Runs `collect` first when `collection-manifest.json` is absent. Does not allocate a run id. An omitted `--run-id` with no active run is left empty and does not write run-state. A run that has not finished `test` is left unchanged. |
+| `consolidate` | Merge worker results into `aggregate.json` and print a brief stats summary, including the commit id of each launched module. Rejects the run when collected `process.json` commits differ or are missing. Runs `collect` first when `collection-manifest.json` is absent. Does not allocate a run id. An omitted `--run-id` with no active run is left empty and does not write run-state. A run that has not finished `test` is left unchanged. |
 | `run` | Full pipeline. Requires a prior explicit `deploy`. |
 | `drop` | Drop TPC-C objects for the profile's database path. Requires `--yes`. |
 | `cleanup` | Teardown: stop, remote + local run artifacts (including the control host). Does not drop database objects. Requires `--yes`. |

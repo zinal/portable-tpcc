@@ -9,6 +9,7 @@ ADDINCL(
 SRCS(
     terminal.cpp
     artifacts.cpp
+    version.cpp
     clock_skew.cpp
     sha256.cpp
     run_loop.cpp
