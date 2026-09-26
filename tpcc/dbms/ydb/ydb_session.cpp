@@ -369,7 +369,6 @@ TFuture<TCommitResult> TYdbTpccTransaction::Rollback() {
 
 void TYdbTpccTransaction::ResetTxnState() {
     PendingPaymentUpdate_.reset();
-    PendingPaymentLocation_.reset();
     DeliveryPrefetch_ = {};
 }
 
@@ -463,19 +462,15 @@ TFuture<TBatchResult> TYdbTpccTransaction::ExecuteStockBatch(const std::vector<T
     }
     auto built = params.EndList().Build().Build();
     const size_t opCount = ops.size();
-    const size_t expected = rows.size();
-    // Incremental UPDATE, same as the single-row statement. A missing stock
-    // row is not inserted. COUNT is the pre-image: Query Service does not
-    // report affected rows. It must run before the UPDATE. Under snapshot-rw
-    // a later read of stock flushes the write and holds those locks until
-    // Commit.
+    // Incremental UPDATE. No follow-up read of stock: under snapshot-rw that
+    // read flushes every deferred effect in the transaction, including the
+    // district increment, and holds those locks until Commit. A missing stock
+    // row is not inserted; the earlier stock lookup already required the row.
     return CatchBatch(Then(
         ExecQuery(Prefix(Path_) + R"(
                 DECLARE $values AS List<Struct<
                     w_id:Int32, i_id:Int32, quantity:Int32,
                     ytd_inc:Decimal(22,9), line_cnt:Int32, remote_inc:Int32>>;
-                $keys = ListMap($values, ($row) -> (AsTuple($row.w_id, $row.i_id)));
-                SELECT COUNT(*) AS n FROM `stock` WHERE (s_w_id, s_i_id) IN $keys;
                 UPDATE `stock` ON
                 SELECT
                     u.w_id AS s_w_id,
@@ -488,11 +483,8 @@ TFuture<TBatchResult> TYdbTpccTransaction::ExecuteStockBatch(const std::vector<T
                 INNER JOIN `stock` AS s
                     ON s.s_w_id = u.w_id AND s.s_i_id = u.i_id;
             )", std::move(built)),
-        [this, opCount, expected](TExecuteQueryResult result) -> TFuture<TBatchResult> {
-            if (CountColumn(result.GetResultSet(0)) != expected) {
-                return RollbackThenFailBatch(EErrorClass::Integrity, "stock update batch");
-            }
-            return MakeReadyFuture(OkBatch(opCount));
+        [opCount](TExecuteQueryResult) {
+            return OkBatch(opCount);
         }));
 }
 
@@ -516,16 +508,18 @@ TFuture<TBatchResult> TYdbTpccTransaction::ExecuteOrderLineBatch(const std::vect
     }
     auto built = params.EndList().Build().Build();
     const size_t opCount = ops.size();
-    // Named projection, not SELECT *: a column list plus SELECT * fails YQL
-    // type annotation. Aliases match that list; a name mismatch is warning
-    // 4517 even though values are bound by position. ol_delivery_d is omitted
-    // so it stays NULL.
+    // UPSERT, not INSERT. An INSERT that does not commit is executed
+    // immediately and flushes every deferred effect, including the district
+    // increment. A key committed by another transaction after this snapshot
+    // still aborts at Commit under snapshot-rw. Aliases match the column
+    // list: UPSERT SELECT maps by name. ol_delivery_d is omitted so it stays
+    // NULL.
     return CatchBatch(Then(
         ExecQuery(Prefix(Path_) + R"(
                 DECLARE $values AS List<Struct<
                     w_id:Int32, d_id:Int32, o_id:Int32, number:Int32, i_id:Int32,
                     amount:Decimal(22,9), supply_w_id:Int32, quantity:Int32, dist_info:Utf8>>;
-                INSERT INTO `order_line` (
+                UPSERT INTO `order_line` (
                     ol_w_id, ol_d_id, ol_o_id, ol_number, ol_i_id,
                     ol_amount, ol_supply_w_id, ol_quantity, ol_dist_info)
                 SELECT
@@ -622,8 +616,6 @@ TFuture<TBatchResult> TYdbTpccTransaction::ExecuteApplyDeliveryBatch(const std::
                 DECLARE $values AS List<Struct<
                     w_id:Int32, d_id:Int32, c_id:Int32, amount:Decimal(22,9)>>;
                 $keys = ListMap($values, ($row) -> (AsTuple($row.w_id, $row.d_id, $row.c_id)));
-                SELECT COUNT(*) AS n FROM `customer`
-                 WHERE (c_w_id, c_d_id, c_id) IN $keys;
                 UPDATE `customer` ON
                 SELECT
                     u.w_id AS c_w_id,
@@ -634,6 +626,8 @@ TFuture<TBatchResult> TYdbTpccTransaction::ExecuteApplyDeliveryBatch(const std::
                 FROM AS_TABLE($values) AS u
                 INNER JOIN `customer` AS c
                     ON c.c_w_id = u.w_id AND c.c_d_id = u.d_id AND c.c_id = u.c_id;
+                SELECT COUNT(*) AS n FROM `customer`
+                 WHERE (c_w_id, c_d_id, c_id) IN $keys;
             )", std::move(built)),
         [this, opCount](TExecuteQueryResult result) -> TFuture<TBatchResult> {
             if (CountColumn(result.GetResultSet(0)) != opCount) {
@@ -666,16 +660,6 @@ TFuture<TFinalCommitResult> TYdbTpccTransaction::FinishPayment(
     const TUpdateCustomerPayment& update,
     const TInsertPaymentHistory& history)
 {
-    if (!PendingPaymentLocation_) {
-        TFinalCommitResult out;
-        out.Operation = FailOp(EErrorClass::Permanent, "payment location update missing");
-        return Then(Rollback(), [out = std::move(out)](TCommitResult commit) mutable {
-            out.Commit = std::move(commit);
-            return out;
-        });
-    }
-    const TPendingPaymentLocation location = *PendingPaymentLocation_;
-    PendingPaymentLocation_.reset();
     TParamsBuilder builder;
     builder
         .AddParam("$w_id").Int32(update.WarehouseID).Build()
@@ -691,10 +675,7 @@ TFuture<TFinalCommitResult> TYdbTpccTransaction::FinishPayment(
         .AddParam("$h_c_id").Int32(history.CustomerID).Build()
         .AddParam("$h_d_id").Int32(history.PaymentDistrictID).Build()
         .AddParam("$h_amount").Decimal(Decimal(history.Amount)).Build()
-        .AddParam("$h_data").Utf8(history.Data).Build()
-        .AddParam("$pay_w_id").Int32(location.WarehouseID).Build()
-        .AddParam("$pay_d_id").Int32(location.DistrictID).Build()
-        .AddParam("$pay_amount").Decimal(Decimal(location.Amount)).Build();
+        .AddParam("$h_data").Utf8(history.Data).Build();
     std::string dataDeclare;
     std::string dataAssign;
     if (update.UpdateData) {
@@ -703,11 +684,16 @@ TFuture<TFinalCommitResult> TYdbTpccTransaction::FinishPayment(
         dataAssign = ", c_data = $data";
     }
     auto params = builder.Build();
-    // No CommitTx: the customer SELECT is checked, then Commit or Rollback.
-    // That SELECT is the pre-image. Warehouse and district YTD updates are
-    // last and are not read again: under snapshot-rw a following read flushes
-    // the write and holds the hot-row lock until Commit.
-    const std::string query = Prefix(Path_) + R"(
+    auto existsParams = TParamsBuilder()
+        .AddParam("$w_id").Int32(update.WarehouseID).Build()
+        .AddParam("$d_id").Int32(update.DistrictID).Build()
+        .AddParam("$c_id").Int32(update.CustomerID).Build()
+        .Build();
+    // The existence read is its own statement, before the writes. A SELECT of
+    // customer after the UPDATE would flush the deferred warehouse and
+    // district effects. CommitTx on the write statement then applies those
+    // effects together with the customer update and history insert.
+    const std::string writeSql = Prefix(Path_) + R"(
                 DECLARE $w_id AS Int32;
                 DECLARE $d_id AS Int32;
                 DECLARE $c_id AS Int32;
@@ -722,12 +708,7 @@ TFuture<TFinalCommitResult> TYdbTpccTransaction::FinishPayment(
                 DECLARE $h_d_id AS Int32;
                 DECLARE $h_amount AS Decimal(22,9);
                 DECLARE $h_data AS Utf8;
-                DECLARE $pay_w_id AS Int32;
-                DECLARE $pay_d_id AS Int32;
-                DECLARE $pay_amount AS Decimal(22,9);
             )" + dataDeclare + fmt::format(R"(
-                SELECT c_id FROM `customer`
-                 WHERE c_w_id = $w_id AND c_d_id = $d_id AND c_id = $c_id;
                 UPDATE `customer`
                    SET c_balance = $balance, c_ytd_payment = $ytd_payment,
                        c_payment_cnt = $payment_cnt{}
@@ -735,13 +716,16 @@ TFuture<TFinalCommitResult> TYdbTpccTransaction::FinishPayment(
                 INSERT INTO `history` (h_w_id, hist_id, h_c_w_id, h_c_d_id, h_c_id, h_d_id, h_date, h_amount, h_data)
                 VALUES ($h_w_id, $hist_id, $h_c_w_id, $h_c_d_id, $h_c_id, $h_d_id,
                         CurrentUtcTimestamp(), $h_amount, $h_data);
-                UPDATE `warehouse` SET w_ytd = w_ytd + $pay_amount WHERE w_id = $pay_w_id;
-                UPDATE `district` SET d_ytd = d_ytd + $pay_amount
-                 WHERE d_w_id = $pay_w_id AND d_id = $pay_d_id;
             )", dataAssign);
     return Then(
         CatchOp(Then(
-            ExecQuery(query, std::move(params)),
+            ExecQuery(Prefix(Path_) + R"(
+                DECLARE $w_id AS Int32;
+                DECLARE $d_id AS Int32;
+                DECLARE $c_id AS Int32;
+                SELECT c_id FROM `customer`
+                 WHERE c_w_id = $w_id AND c_d_id = $d_id AND c_id = $c_id;
+            )", std::move(existsParams)),
             [](TExecuteQueryResult result) -> TFuture<TOperationResult> {
                 NYdb::TResultSetParser parser(result.GetResultSet(0));
                 if (!parser.TryNextRow()) {
@@ -749,8 +733,17 @@ TFuture<TFinalCommitResult> TYdbTpccTransaction::FinishPayment(
                 }
                 return ReadyOp(OkOp(1, 1));
             })),
-        [this](TOperationResult operation) {
-            return CommitAfterOperation(std::move(operation));
+        [this, writeSql, params = std::move(params)](TOperationResult operation) -> TFuture<TFinalCommitResult> {
+            if (!operation.Ok) {
+                return CommitAfterOperation(std::move(operation));
+            }
+            return Then(
+                CatchOp(Then(
+                    ExecQuery(writeSql, params, true),
+                    [](TExecuteQueryResult) { return OkOp(1, 1); })),
+                [this](TOperationResult committed) {
+                    return CommitAfterOperation(std::move(committed));
+                });
         });
 }
 
@@ -770,11 +763,11 @@ TFuture<TFinalCommitResult> TYdbTpccTransaction::FinishApplyDelivery(
                 DECLARE $d_id AS Int32;
                 DECLARE $c_id AS Int32;
                 DECLARE $amount AS Decimal(22,9);
-                SELECT c_id FROM `customer`
-                 WHERE c_w_id = $w_id AND c_d_id = $d_id AND c_id = $c_id;
                 UPDATE `customer`
                    SET c_balance = c_balance + $amount,
                        c_delivery_cnt = c_delivery_cnt + 1
+                 WHERE c_w_id = $w_id AND c_d_id = $d_id AND c_id = $c_id;
+                SELECT c_id FROM `customer`
                  WHERE c_w_id = $w_id AND c_d_id = $d_id AND c_id = $c_id;
             )", std::move(params)),
             [](TExecuteQueryResult result) -> TFuture<TOperationResult> {
@@ -974,6 +967,10 @@ TFuture<TOperationResult> TYdbTpccTransaction::Execute(const TSemanticOp& op) {
                 .AddParam("$ol_cnt").Int32(p->LineCount).Build()
                 .AddParam("$all_local").Int32(p->AllLocal).Build()
                 .Build();
+            // UPSERT stays deferred until Commit. INSERT here would run
+            // immediately and publish the district increment for the rest of
+            // New-Order. A duplicate key committed after this snapshot still
+            // aborts at Commit under snapshot-rw.
             return CatchOp(Then(
                 ExecQuery(Prefix(Path_) + R"(
                 DECLARE $w_id AS Int32;
@@ -982,9 +979,9 @@ TFuture<TOperationResult> TYdbTpccTransaction::Execute(const TSemanticOp& op) {
                 DECLARE $c_id AS Int32;
                 DECLARE $ol_cnt AS Int32;
                 DECLARE $all_local AS Int32;
-                INSERT INTO `oorder` (o_w_id, o_d_id, o_id, o_c_id, o_carrier_id, o_ol_cnt, o_all_local, o_entry_d)
+                UPSERT INTO `oorder` (o_w_id, o_d_id, o_id, o_c_id, o_carrier_id, o_ol_cnt, o_all_local, o_entry_d)
                 VALUES ($w_id, $d_id, $o_id, $c_id, NULL, $ol_cnt, $all_local, CurrentUtcTimestamp());
-                INSERT INTO `new_order` (no_w_id, no_d_id, no_o_id)
+                UPSERT INTO `new_order` (no_w_id, no_d_id, no_o_id)
                 VALUES ($w_id, $d_id, $o_id);
             )", std::move(params)),
                 [](TExecuteQueryResult) { return OkOp(2, 2); }));
@@ -1051,6 +1048,8 @@ TFuture<TOperationResult> TYdbTpccTransaction::Execute(const TSemanticOp& op) {
                 .AddParam("$ordered").Decimal(TDecimalValue(std::to_string(p->OrderedQuantity), MONEY_PRECISION, MONEY_SCALE)).Build()
                 .AddParam("$remote").Int32(p->RemoteIncrement).Build()
                 .Build();
+            // No follow-up read: it would flush this write and any deferred
+            // district increment. The stock row was read by TGetStocksForUpdate.
             return CatchOp(Then(
                 ExecQuery(Prefix(Path_) + R"(
                 DECLARE $w_id AS Int32;
@@ -1058,7 +1057,6 @@ TFuture<TOperationResult> TYdbTpccTransaction::Execute(const TSemanticOp& op) {
                 DECLARE $quantity AS Int32;
                 DECLARE $ordered AS Decimal(22,9);
                 DECLARE $remote AS Int32;
-                SELECT s_i_id FROM `stock` WHERE s_w_id = $w_id AND s_i_id = $i_id;
                 UPDATE `stock`
                    SET s_quantity = $quantity,
                        s_ytd = s_ytd + $ordered,
@@ -1066,13 +1064,7 @@ TFuture<TOperationResult> TYdbTpccTransaction::Execute(const TSemanticOp& op) {
                        s_remote_cnt = s_remote_cnt + $remote
                  WHERE s_w_id = $w_id AND s_i_id = $i_id;
             )", std::move(params)),
-                [this](TExecuteQueryResult result) -> TFuture<TOperationResult> {
-                    NYdb::TResultSetParser parser(result.GetResultSet(0));
-                    if (!parser.TryNextRow()) {
-                        return RollbackThenFailOp(EErrorClass::Integrity, "stock update");
-                    }
-                    return ReadyOp(OkOp(1, 1));
-                }));
+                [](TExecuteQueryResult) { return OkOp(1, 1); }));
         }
 
         if (const auto* p = std::get_if<TInsertOrderLine>(&op)) {
@@ -1098,7 +1090,7 @@ TFuture<TOperationResult> TYdbTpccTransaction::Execute(const TSemanticOp& op) {
                 DECLARE $quantity AS Int32;
                 DECLARE $amount AS Decimal(22,9);
                 DECLARE $dist_info AS Utf8;
-                INSERT INTO `order_line` (ol_w_id, ol_d_id, ol_o_id, ol_number, ol_i_id,
+                UPSERT INTO `order_line` (ol_w_id, ol_d_id, ol_o_id, ol_number, ol_i_id,
                                           ol_amount, ol_supply_w_id, ol_quantity, ol_dist_info)
                 VALUES ($w_id, $d_id, $o_id, $number, $i_id, $amount, $supply_w_id, $quantity, $dist_info);
             )", std::move(params), FinalCommitMode_),
@@ -1106,18 +1098,16 @@ TFuture<TOperationResult> TYdbTpccTransaction::Execute(const TSemanticOp& op) {
         }
 
         if (const auto* p = std::get_if<TApplyPaymentToLocation>(&op)) {
-            const int warehouseId = p->WarehouseID;
-            const int districtId = p->DistrictID;
+            const int wId = p->WarehouseID;
+            const int dId = p->DistrictID;
             const TMoney amount = p->Amount;
-            PendingPaymentLocation_.reset();
-            auto params = TParamsBuilder()
-                .AddParam("$w_id").Int32(warehouseId).Build()
-                .AddParam("$d_id").Int32(districtId).Build()
+            auto readParams = TParamsBuilder()
+                .AddParam("$w_id").Int32(wId).Build()
+                .AddParam("$d_id").Int32(dId).Build()
                 .Build();
-            // Names only. w_ytd / d_ytd are applied in FinishPayment with no
-            // following read. Updating them here and then selecting the same
-            // rows flushes the write under snapshot-rw and holds the warehouse
-            // lock across the customer lookup.
+            // Read the names before the YTD updates, in a separate statement.
+            // A SELECT of warehouse or district after those updates flushes
+            // the writes under snapshot-rw and holds both locks until Commit.
             return CatchOp(Then(
                 ExecQuery(Prefix(Path_) + R"(
                 DECLARE $w_id AS Int32;
@@ -1126,16 +1116,14 @@ TFuture<TOperationResult> TYdbTpccTransaction::Execute(const TSemanticOp& op) {
                   FROM `warehouse` WHERE w_id = $w_id;
                 SELECT d_name, d_street_1, d_street_2, d_city, d_state, d_zip
                   FROM `district` WHERE d_w_id = $w_id AND d_id = $d_id;
-            )", std::move(params)),
-                [this, warehouseId, districtId, amount](TExecuteQueryResult result) {
+            )", std::move(readParams)),
+                [this, wId, dId, amount](TExecuteQueryResult result) -> TFuture<TOperationResult> {
                     TWarehouseDistrictInfo info;
                     NYdb::TResultSetParser wh(result.GetResultSet(0));
                     NYdb::TResultSetParser dist(result.GetResultSet(1));
                     if (!wh.TryNextRow() || !dist.TryNextRow()) {
-                        return FailOp(EErrorClass::Integrity, "warehouse or district not found");
+                        return ReadyOp(FailOp(EErrorClass::Integrity, "warehouse or district not found"));
                     }
-                    PendingPaymentLocation_ = TPendingPaymentLocation{
-                        warehouseId, districtId, amount};
                     info.WarehouseName = ParseUtf8(wh, "w_name");
                     info.WarehouseStreet1 = ParseUtf8(wh, "w_street_1");
                     info.WarehouseStreet2 = ParseUtf8(wh, "w_street_2");
@@ -1148,7 +1136,22 @@ TFuture<TOperationResult> TYdbTpccTransaction::Execute(const TSemanticOp& op) {
                     info.DistrictCity = ParseUtf8(dist, "d_city");
                     info.DistrictState = ParseUtf8(dist, "d_state");
                     info.DistrictZip = ParseUtf8(dist, "d_zip");
-                    return OkOp(2, 2, std::move(info));
+                    auto writeParams = TParamsBuilder()
+                        .AddParam("$w_id").Int32(wId).Build()
+                        .AddParam("$d_id").Int32(dId).Build()
+                        .AddParam("$amount").Decimal(Decimal(amount)).Build()
+                        .Build();
+                    return CatchOp(Then(
+                        ExecQuery(Prefix(Path_) + R"(
+                        DECLARE $w_id AS Int32;
+                        DECLARE $d_id AS Int32;
+                        DECLARE $amount AS Decimal(22,9);
+                        UPDATE `warehouse` SET w_ytd = w_ytd + $amount WHERE w_id = $w_id;
+                        UPDATE `district` SET d_ytd = d_ytd + $amount WHERE d_w_id = $w_id AND d_id = $d_id;
+                    )", std::move(writeParams)),
+                        [info = std::move(info)](TExecuteQueryResult) {
+                            return OkOp(2, 2, info);
+                        }));
                 }));
         }
 
