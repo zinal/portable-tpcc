@@ -426,6 +426,16 @@ Adapters MUST:
 - Worker OLTP `tx_mode`: `snapshot-rw` (default, snapshot isolation /
   Repeatable Read analogue) or `serializable-rw`. See
   [run-ydb.md](run-ydb.md).
+- Under `snapshot-rw`, a deferred write is flushed when that table is read
+  again or when an `INSERT` does not commit. The flush publishes every
+  deferred effect in the transaction and holds those locks until `Commit`.
+  Payment reads warehouse and district names in one statement and applies
+  `w_ytd` / `d_ytd` in a following statement with no later read of those
+  tables. The customer existence check is its own statement; the customer
+  update and history `INSERT` use `CommitTx` so they commit together with
+  the deferred YTD updates. New-Order order and order-line writes use
+  `UPSERT` so they stay deferred, and stock is not read again after the
+  district increment.
 - Typed `BulkUpsert` (or equivalent) for `PutBatch`.
 - Prefer set-oriented YQL and **`ExecuteFinalAndCommit`** so the last
   statement and commit are one round trip. Homogeneous `ExecuteBatch` of
