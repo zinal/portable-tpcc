@@ -514,7 +514,9 @@ TFuture<TBatchResult> TYdbTpccTransaction::ExecuteOrderLineBatch(const std::vect
     auto built = params.EndList().Build().Build();
     const size_t opCount = ops.size();
     // Named projection, not SELECT *: a column list plus SELECT * fails YQL
-    // type annotation. ol_delivery_d is omitted so it stays NULL.
+    // type annotation. Aliases match that list; a name mismatch is warning
+    // 4517 even though values are bound by position. ol_delivery_d is omitted
+    // so it stays NULL.
     return CatchBatch(Then(
         ExecQuery(Prefix(Path_) + R"(
                 DECLARE $values AS List<Struct<
@@ -524,8 +526,15 @@ TFuture<TBatchResult> TYdbTpccTransaction::ExecuteOrderLineBatch(const std::vect
                     ol_w_id, ol_d_id, ol_o_id, ol_number, ol_i_id,
                     ol_amount, ol_supply_w_id, ol_quantity, ol_dist_info)
                 SELECT
-                    w_id, d_id, o_id, number, i_id,
-                    amount, supply_w_id, quantity, dist_info
+                    w_id AS ol_w_id,
+                    d_id AS ol_d_id,
+                    o_id AS ol_o_id,
+                    number AS ol_number,
+                    i_id AS ol_i_id,
+                    amount AS ol_amount,
+                    supply_w_id AS ol_supply_w_id,
+                    quantity AS ol_quantity,
+                    dist_info AS ol_dist_info
                 FROM AS_TABLE($values);
             )", std::move(built)),
         [opCount](TExecuteQueryResult) {
