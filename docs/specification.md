@@ -320,7 +320,8 @@ Each worker writes `result.json` with:
 - its warehouse ranges;
 - actual phase timestamps;
 - counters, retries, histograms, async-queue telemetry;
-- adapter/server version and fatal errors if any.
+- adapter/server version and fatal errors if any;
+- `versions.commit`, the short commit id of the worker binary (see §9.1).
 
 The official per-transaction histogram is the queue-inclusive response time
 (admission wait through commit). Workers MUST also emit, under
@@ -363,11 +364,15 @@ Consolidation:
    (workers present, assignment OK, clocks OK, no integrity errors,
    TPC-C settings conformant flag and deviation list, latency
    constraint flag and violation list, …);
-7. keep raw per-worker files beside the aggregate for detail.
+7. keep raw per-worker files beside the aggregate for detail;
+8. require every collected `process.json` to carry the same non-empty
+   `commit`. Differing or missing commits are an error. The aggregate
+   records `module_versions` (role, instance, commit) for those files.
 
 `mind-tpcc consolidate` MUST also print a brief human summary of the
 aggregate (status flags, New-Order throughput, and response-time min/max/avg
-and percentiles) to the progress log. The same text is written to
+and percentiles, plus the list of launched module commits when any
+`process.json` was collected) to the progress log. The same text is written to
 `summary.txt`.
 
 When the merged 90th-percentile Transaction RT does not meet TPC-C 5.11
@@ -481,8 +486,10 @@ version and **MUST NOT** intentionally reuse binaries from an earlier version.
 `run` **MUST NOT** silently re-upload binaries: it only verifies that
 `deploy` already placed them, so the operator controls which version is live.
 All workers in one run are therefore assumed to execute a homogeneous artifact
-set. Mixed worker versions are unsupported and are an operator/deployment
-error, not a compatibility mode that `consolidate` is required to reconcile.
+set. Mixed module versions are unsupported and are an operator/deployment
+error. `consolidate` MUST reject them when collected `process.json` commits
+differ or are missing, and MUST print each module's role, instance, and
+commit. It does not reconcile or convert mixed artifacts.
 
 Skipped steps are recorded in the run-state and aggregate.
 
@@ -505,7 +512,15 @@ role work. The file MUST include at least:
 
 - OS pid of the binary;
 - `instance_nonce` unique to this launch;
-- `run_id`, instance name, and role.
+- `run_id`, instance name, and role;
+- `commit`, the short commit id of this binary.
+
+On start, before other role work, the binary MUST print one stdout line
+`module <role>/<instance> commit <id>` with that same id. A standalone
+measurement (`run`) that does not write `process.json` MUST print
+`module run commit <id>` instead. The short id is the build-time VCS commit
+identifier, shortened to its first 12 hexadecimal digits when the identifier
+is a longer hexadecimal hash. An empty identifier is `unknown`.
 
 The orchestrator uses `process.json` to bind supervision (stop/signal) to this
 launch and to reject stale artifacts. It waits only briefly for the file.

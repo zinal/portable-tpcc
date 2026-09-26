@@ -11,6 +11,7 @@
 #include <phase_controller.h>
 #include <run_loop.h>
 #include <task_queue.h>
+#include <version.h>
 #include <terminal.h>
 #include <time_util.h>
 #include <warehouse_range.h>
@@ -45,6 +46,7 @@ TRunStatsConfig MakeRunStatsConfig(const TRunConfig& config, const TRunLayout& l
 } // anonymous
 
 TRunOutcome RunSync(const TRunConfig& config, TTerminalStats* aggregatedStats) {
+    AnnounceModuleCommit("run", "");
     TRunOutcome outcome;
     signal(SIGINT, InterruptHandler);
     signal(SIGTERM, InterruptHandler);

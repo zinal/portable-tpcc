@@ -29,18 +29,26 @@ type Status struct {
 	LatencyConstraintViolations []string `json:"latency_constraint_violations,omitempty"`
 }
 
+// ModuleVersion is the short commit id reported by one launched role.
+type ModuleVersion struct {
+	Role     string `json:"role"`
+	Instance string `json:"instance"`
+	Commit   string `json:"commit,omitempty"`
+}
+
 // Aggregate is the canonical consolidated result.
 // It embeds concrete run settings rather than config hashes.
 type Aggregate struct {
-	SchemaVersion int                    `json:"schema_version"`
-	RunID         string                 `json:"run_id"`
-	ResultClass   string                 `json:"result_class"`
-	Settings      map[string]interface{} `json:"settings"`
-	Status        Status                 `json:"status"`
-	Metrics       map[string]interface{} `json:"metrics"`
-	Workers       []string               `json:"workers"`
-	SkippedSteps  []string               `json:"skipped_steps,omitempty"`
-	Checks        map[string]interface{} `json:"checks,omitempty"`
+	SchemaVersion  int                    `json:"schema_version"`
+	RunID          string                 `json:"run_id"`
+	ResultClass    string                 `json:"result_class"`
+	Settings       map[string]interface{} `json:"settings"`
+	Status         Status                 `json:"status"`
+	Metrics        map[string]interface{} `json:"metrics"`
+	Workers        []string               `json:"workers"`
+	ModuleVersions []ModuleVersion        `json:"module_versions,omitempty"`
+	SkippedSteps   []string               `json:"skipped_steps,omitempty"`
+	Checks         map[string]interface{} `json:"checks,omitempty"`
 }
 
 // Options tune consolidate status evaluation.
@@ -240,6 +248,16 @@ func (c *Consolidator) ConsolidateWithOptions(runID string, rc *config.RunConfig
 	}
 	if !workersComplete && !opts.AllowIncomplete {
 		return nil, fmt.Errorf("incomplete worker artifacts: %s", strings.Join(incompleteWorkers, "; "))
+	}
+	modules, err := collectModuleVersions(c.ResultRoot, runID)
+	if err != nil {
+		return nil, err
+	}
+	if err := requireUniformModuleVersions(modules); err != nil {
+		return nil, err
+	}
+	if len(modules) > 0 {
+		agg.ModuleVersions = modules
 	}
 	return agg, nil
 }
@@ -787,6 +805,95 @@ func FormatSummary(agg *Aggregate) string {
 	}
 	appendLatencyInvalidBanner(&b, violations)
 	appendTPCCResultsSummary(&b, agg, violations)
+	if list := formatModuleVersionList(agg.ModuleVersions); list != "" {
+		b.WriteString(list)
+	}
+	return b.String()
+}
+
+func collectModuleVersions(resultRoot, runID string) ([]ModuleVersion, error) {
+	raw := filepath.Join(resultRoot, runID, "raw")
+	roles, err := os.ReadDir(raw)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var modules []ModuleVersion
+	for _, role := range roles {
+		if !role.IsDir() {
+			continue
+		}
+		roleName := role.Name()
+		instances, err := os.ReadDir(filepath.Join(raw, roleName))
+		if err != nil {
+			return nil, err
+		}
+		for _, inst := range instances {
+			if !inst.IsDir() {
+				continue
+			}
+			procPath := filepath.Join(raw, roleName, inst.Name(), "process.json")
+			data, err := os.ReadFile(procPath)
+			if err != nil {
+				if os.IsNotExist(err) {
+					continue
+				}
+				return nil, err
+			}
+			var meta map[string]interface{}
+			if err := json.Unmarshal(data, &meta); err != nil {
+				return nil, fmt.Errorf("%s/%s: invalid process.json: %w", roleName, inst.Name(), err)
+			}
+			commit, _ := meta["commit"].(string)
+			modules = append(modules, ModuleVersion{
+				Role:     roleName,
+				Instance: inst.Name(),
+				Commit:   strings.TrimSpace(commit),
+			})
+		}
+	}
+	sort.Slice(modules, func(i, j int) bool {
+		if modules[i].Role != modules[j].Role {
+			return modules[i].Role < modules[j].Role
+		}
+		return modules[i].Instance < modules[j].Instance
+	})
+	return modules, nil
+}
+
+func requireUniformModuleVersions(modules []ModuleVersion) error {
+	if len(modules) == 0 {
+		return nil
+	}
+	first := modules[0].Commit
+	uniform := first != ""
+	for _, m := range modules[1:] {
+		if m.Commit == "" || m.Commit != first {
+			uniform = false
+			break
+		}
+	}
+	if uniform {
+		return nil
+	}
+	return fmt.Errorf("module versions are not identical:\n%s", strings.TrimRight(formatModuleVersionList(modules), "\n"))
+}
+
+func formatModuleVersionList(modules []ModuleVersion) string {
+	if len(modules) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("module versions:\n")
+	for _, m := range modules {
+		commit := m.Commit
+		if commit == "" {
+			commit = "<missing>"
+		}
+		fmt.Fprintf(&b, "  %s/%s %s\n", m.Role, m.Instance, commit)
+	}
 	return b.String()
 }
 

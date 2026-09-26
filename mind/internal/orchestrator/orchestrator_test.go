@@ -918,6 +918,7 @@ func writeWorkerPayloads(t *testing.T, dir string, w config.WorkerAssignmentJSON
 			"instance":       w.Instance,
 			"role":           "worker",
 			"pid":            1234,
+			"commit":         "0123456789ab",
 		},
 	}
 	var payloads []collect.ArtifactPayloadEntry

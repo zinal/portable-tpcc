@@ -1,5 +1,6 @@
 #include "artifacts.h"
 #include "sha256.h"
+#include "version.h"
 
 #include <log_backend.h>
 #include <nlohmann/json.hpp>
@@ -128,6 +129,7 @@ void EnsureInstanceDir(const std::string& instanceDir) {
 void WriteProcessJson(const TArtifactPaths& paths, const TRunConfigDocument& doc,
                       const std::string& instance, const std::string& role, int pid,
                       const std::string& instanceNonce) {
+    AnnounceModuleCommit(role, instance);
     Json j = {
         {"schema_version", 1},
         {"run_id", doc.RunId},
@@ -136,6 +138,7 @@ void WriteProcessJson(const TArtifactPaths& paths, const TRunConfigDocument& doc
         {"pid", pid},
         {"run_config_sha256", doc.RunConfigSha256},
         {"instance_nonce", instanceNonce},
+        {"commit", ShortCommitId()},
         {"started_at", FormatTime(SysClock::now())},
     };
     WriteJsonAtomic(paths.ProcessJson, j);
@@ -298,6 +301,7 @@ void WriteWorkerResultJson(const TArtifactPaths& paths, const TRunConfigDocument
         {"versions", {
             {"adapter", adapterName},
             {"binary", doc.Binary.empty() ? defaultBinary : doc.Binary},
+            {"commit", ShortCommitId()},
         }},
         {"exit_status", exitCode},
         {"completed_at", FormatTime(SysClock::now())},

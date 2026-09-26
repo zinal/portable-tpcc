@@ -1240,3 +1240,121 @@ func TestConsolidate_rejectsMismatchedWarehouseAssignment(t *testing.T) {
 		t.Fatalf("expected warehouse_ranges mismatch error, got %v", err)
 	}
 }
+
+func writeModuleProcess(t *testing.T, root, runID, role, instance, commit string) {
+	t.Helper()
+	dir := filepath.Join(root, runID, "raw", role, instance)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	doc := map[string]interface{}{
+		"schema_version": 1,
+		"run_id":         runID,
+		"role":           role,
+		"instance":       instance,
+		"instance_nonce": "nonce-" + instance,
+		"pid":            1,
+	}
+	if commit != "" {
+		doc["commit"] = commit
+	}
+	data, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "process.json"), data, 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestConsolidate_moduleVersionsMatch(t *testing.T) {
+	root := t.TempDir()
+	runID := "run-versions-match"
+	rc := minimalRunConfig(runID)
+	sha := writeRunConfig(t, root, runID, rc)
+	writeWorkerArtifacts(t, root, runID, "worker-a", sha, rc, nil)
+	const commit = "0123456789ab"
+	writeModuleProcess(t, root, runID, "worker", "worker-a", commit)
+	writeModuleProcess(t, root, runID, "loader", "loader-0", commit)
+	writeModuleProcess(t, root, runID, "schema", "schema-0", commit)
+
+	cons := &consolidate.Consolidator{ResultRoot: root}
+	agg, err := cons.Consolidate(runID, rc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(agg.ModuleVersions) != 3 {
+		t.Fatalf("module versions: %+v", agg.ModuleVersions)
+	}
+	wantOrder := []string{"loader/loader-0", "schema/schema-0", "worker/worker-a"}
+	for i, label := range wantOrder {
+		got := agg.ModuleVersions[i].Role + "/" + agg.ModuleVersions[i].Instance
+		if got != label || agg.ModuleVersions[i].Commit != commit {
+			t.Fatalf("module[%d]=%s %s, want %s %s", i, got, agg.ModuleVersions[i].Commit, label, commit)
+		}
+	}
+	text := consolidate.FormatSummary(agg)
+	for _, label := range wantOrder {
+		line := "  " + label + " " + commit
+		if !strings.Contains(text, line) {
+			t.Fatalf("summary missing %q:\n%s", line, text)
+		}
+	}
+	if !strings.Contains(text, "module versions:\n") {
+		t.Fatalf("summary missing version header:\n%s", text)
+	}
+}
+
+func TestConsolidate_rejectsDifferentModuleVersions(t *testing.T) {
+	root := t.TempDir()
+	runID := "run-versions-differ"
+	rc := &config.RunConfig{
+		RunID: runID,
+		Phases: config.PhasesJSON{
+			MeasurementMs:  60000,
+			MaxClockSkewMs: 100,
+		},
+		Scale: config.ScaleBlock{Warehouses: 20},
+		WorkerAssignment: []config.WorkerAssignmentJSON{
+			{Instance: "worker-a", Host: "host-a", WarehouseRanges: [][]int{{1, 11}}, Threads: 1, MaxInflight: 64},
+			{Instance: "worker-b", Host: "host-b", WarehouseRanges: [][]int{{11, 21}}, Threads: 1, MaxInflight: 64},
+		},
+	}
+	sha := writeRunConfig(t, root, runID, rc)
+	writeWorkerArtifacts(t, root, runID, "worker-a", sha, rc, map[string]interface{}{
+		"counters":   map[string]interface{}{"new_order_ok": 5},
+		"histograms": map[string]interface{}{"new_order": measurementHistogram(5)},
+	})
+	writeWorkerArtifacts(t, root, runID, "worker-b", sha, rc, map[string]interface{}{
+		"counters":   map[string]interface{}{"new_order_ok": 5},
+		"histograms": map[string]interface{}{"new_order": measurementHistogram(5)},
+	})
+	writeModuleProcess(t, root, runID, "worker", "worker-a", "0123456789ab")
+	writeModuleProcess(t, root, runID, "worker", "worker-b", "ffffffffffff")
+
+	cons := &consolidate.Consolidator{ResultRoot: root}
+	_, err := cons.Consolidate(runID, rc)
+	if err == nil || !strings.Contains(err.Error(), "not identical") {
+		t.Fatalf("expected version mismatch, got %v", err)
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "worker/worker-a 0123456789ab") || !strings.Contains(msg, "worker/worker-b ffffffffffff") {
+		t.Fatalf("error missing version list:\n%s", msg)
+	}
+}
+
+func TestConsolidate_rejectsMissingModuleCommit(t *testing.T) {
+	root := t.TempDir()
+	runID := "run-versions-missing"
+	rc := minimalRunConfig(runID)
+	sha := writeRunConfig(t, root, runID, rc)
+	writeWorkerArtifacts(t, root, runID, "worker-a", sha, rc, nil)
+	writeModuleProcess(t, root, runID, "worker", "worker-a", "0123456789ab")
+	writeModuleProcess(t, root, runID, "loader", "loader-0", "")
+
+	cons := &consolidate.Consolidator{ResultRoot: root}
+	_, err := cons.Consolidate(runID, rc)
+	if err == nil || !strings.Contains(err.Error(), "not identical") || !strings.Contains(err.Error(), "loader/loader-0 <missing>") {
+		t.Fatalf("expected missing commit, got %v", err)
+	}
+}
