@@ -426,6 +426,12 @@ Adapters MUST:
 - Worker OLTP `tx_mode`: `snapshot-rw` (default, snapshot isolation /
   Repeatable Read analogue) or `serializable-rw`. See
   [run-ydb.md](run-ydb.md).
+- Under `snapshot-rw`, do not read a table after updating it in the same
+  interactive transaction. Query Service flushes that write on the later
+  read and holds the lock until `Commit`. Payment reads warehouse and
+  district names first and applies `w_ytd` / `d_ytd` only in the final
+  script, after every read. Stock and customer cardinality checks are
+  pre-images for the same reason.
 - Typed `BulkUpsert` (or equivalent) for `PutBatch`.
 - Prefer set-oriented YQL and **`ExecuteFinalAndCommit`** so the last
   statement and commit are one round trip. Homogeneous `ExecuteBatch` of

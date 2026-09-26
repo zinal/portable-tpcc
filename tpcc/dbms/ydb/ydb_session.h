@@ -65,6 +65,14 @@ private:
     bool Terminal_ = false;
     bool FinalCommitMode_ = false;
     std::optional<TUpdateCustomerPayment> PendingPaymentUpdate_;
+    // YTD increment captured by TApplyPaymentToLocation and applied in
+    // FinishPayment, after every read, so snapshot-rw does not flush it early.
+    struct TPendingPaymentLocation {
+        int WarehouseID = 0;
+        int DistrictID = 0;
+        TMoney Amount;
+    };
+    std::optional<TPendingPaymentLocation> PendingPaymentLocation_;
     struct TDeliveryPrefetch {
         bool Loaded = false;
         int WarehouseID = 0;
