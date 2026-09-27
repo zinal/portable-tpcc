@@ -666,7 +666,8 @@ Options:
   --skip <step>            Skip pipeline step
   --force                  consolidate only: skip the profile.sha256 check and
                            continue when name, DBMS, worker hosts, and
-                           authentication still match the recorded run
+                           authentication still match the recorded run.
+                           Module-commit mismatches are warnings
   --yes                    Non-interactive confirmation (drop, cleanup, undeploy, configure overwrite)
   --leave-processes        Debug: do not kill remote processes this
                            invocation launched when mind-tpcc exits
