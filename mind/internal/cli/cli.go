@@ -342,19 +342,20 @@ func runConsolidate(opts orchestrator.Options) int {
 	return 0
 }
 
-// withConsolidateLock resolves an existing run and runs fn.
-// It does not allocate a run id or write state when --run-id is empty and
-// there is no active run, and it does not materialize a run that has not
-// finished test.
+// withConsolidateLock resolves an existing run and runs fn under that run's
+// lock only. It does not take the profile lock, so consolidate can run while
+// test of a different run_id holds the profile. It does not allocate a run id
+// or write state when --run-id is empty and there is no active run, and it
+// does not materialize a run that has not finished test.
 func withConsolidateLock(o *orchestrator.Orchestrator, fn func(*orchestrator.Context) error) error {
 	runID, err := o.ResolveConsolidateRunID()
 	if err != nil {
 		return err
 	}
-	if err := o.StateStore.AcquireProfileLock(o.Profile.Metadata.Name, runID); err != nil {
+	if err := o.StateStore.AcquireRunLock(runID); err != nil {
 		return err
 	}
-	defer o.StateStore.ReleaseProfileLock(o.Profile.Metadata.Name, runID)
+	defer o.StateStore.ReleaseRunLock(runID)
 	oldRunID := o.Opts.RunID
 	o.Opts.RunID = runID
 	defer func() { o.Opts.RunID = oldRunID }()
@@ -463,10 +464,10 @@ func withMaterializedProfileLock(o *orchestrator.Orchestrator, fn func(*orchestr
 	if err != nil {
 		return err
 	}
-	if err := o.StateStore.AcquireProfileLock(o.Profile.Metadata.Name, runID); err != nil {
+	if err := o.StateStore.AcquireProfileAndRunLocks(o.Profile.Metadata.Name, runID); err != nil {
 		return err
 	}
-	defer o.StateStore.ReleaseProfileLock(o.Profile.Metadata.Name, runID)
+	defer o.StateStore.ReleaseProfileAndRunLocks(o.Profile.Metadata.Name, runID)
 	oldRunID := o.Opts.RunID
 	o.Opts.RunID = runID
 	defer func() { o.Opts.RunID = oldRunID }()
@@ -518,16 +519,16 @@ func runCleanup(opts orchestrator.Options, yes bool) int {
 	return 0
 }
 
-// withExistingRunCleanup locks the profile and loads an existing run (no new run_id).
+// withExistingRunCleanup locks the profile and the run, then loads an existing run (no new run_id).
 func withExistingRunCleanup(o *orchestrator.Orchestrator, fn func(*orchestrator.Context) error) error {
 	runID, err := o.ResolveCleanupRunID()
 	if err != nil {
 		return err
 	}
-	if err := o.StateStore.AcquireProfileLock(o.Profile.Metadata.Name, runID); err != nil {
+	if err := o.StateStore.AcquireProfileAndRunLocks(o.Profile.Metadata.Name, runID); err != nil {
 		return err
 	}
-	defer o.StateStore.ReleaseProfileLock(o.Profile.Metadata.Name, runID)
+	defer o.StateStore.ReleaseProfileAndRunLocks(o.Profile.Metadata.Name, runID)
 	oldRunID := o.Opts.RunID
 	o.Opts.RunID = runID
 	defer func() { o.Opts.RunID = oldRunID }()

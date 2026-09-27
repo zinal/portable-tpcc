@@ -454,6 +454,11 @@ left unchanged, so a later `test` with that same run id can still start.
 `run` is unaffected: its consolidate step still follows the pipeline state
 machine, including after `--skip test`.
 
+Standalone `consolidate` of one `run_id` MUST be able to proceed while `test`
+(or another pipeline command) is in progress for a different `run_id` of the
+same profile. It MUST NOT run concurrently with a command that is still
+mutating that same `run_id`.
+
 `run` = validate → require prior `deploy` (shared worker binaries present on
 every assigned host; no auto-upload) → schema → load → indexes →
 check(after-import) → test → check(after-test) → collect → consolidate.

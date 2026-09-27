@@ -650,6 +650,42 @@ func TestRunAcquiresProfileLockBeforeMaterialize(t *testing.T) {
 	}
 }
 
+func TestRunBlockedBySameRunLock(t *testing.T) {
+	dir := t.TempDir()
+	profilePath := writeTestProfile(t, dir, "")
+	o, err := orchestrator.New(orchestrator.Options{ProfilePath: profilePath, RunID: "run-locked"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, err := o.Materialize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(o.StateStore.StatePath(ctx.RunID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := o.StateStore.AcquireRunLock(ctx.RunID); err != nil {
+		t.Fatal(err)
+	}
+	defer o.StateStore.ReleaseRunLock(ctx.RunID)
+
+	err = o.Run()
+	if err == nil || !strings.Contains(err.Error(), "run run-locked locked") {
+		t.Fatalf("expected run lock error, got %v", err)
+	}
+	after, err := os.ReadFile(o.StateStore.StatePath(ctx.RunID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("state rewritten while run lock held:\n%s", after)
+	}
+	if _, err := os.Stat(o.StateStore.ProfileLockPath(o.Profile.Metadata.Name)); !os.IsNotExist(err) {
+		t.Fatalf("profile lock leaked: %v", err)
+	}
+}
+
 func TestRunConsolidateCollectsWhenManifestMissing(t *testing.T) {
 	dir := t.TempDir()
 	profilePath := writeTestProfile(t, dir, "")

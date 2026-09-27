@@ -451,10 +451,10 @@ func (o *Orchestrator) Run() error {
 	if err != nil {
 		return err
 	}
-	if err := o.StateStore.AcquireProfileLock(o.Profile.Metadata.Name, runID); err != nil {
+	if err := o.StateStore.AcquireProfileAndRunLocks(o.Profile.Metadata.Name, runID); err != nil {
 		return err
 	}
-	defer o.StateStore.ReleaseProfileLock(o.Profile.Metadata.Name, runID)
+	defer o.StateStore.ReleaseProfileAndRunLocks(o.Profile.Metadata.Name, runID)
 	oldRunID := o.Opts.RunID
 	o.Opts.RunID = runID
 	defer func() { o.Opts.RunID = oldRunID }()
