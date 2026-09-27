@@ -459,6 +459,29 @@ Standalone `consolidate` of one `run_id` MUST be able to proceed while `test`
 same profile. It MUST NOT run concurrently with a command that is still
 mutating that same `run_id`.
 
+Without `--force`, standalone `consolidate` MUST refuse a run whose recorded
+`profile.sha256` differs from the current profile file, the same binding other
+stages use when they reuse a run. `consolidate --force` MUST instead continue
+that run when the live profile still identifies it: `metadata.name` equals the
+recorded `profile_name`, `database.dbms` matches, the set of `workers` host
+addresses matches `worker_assignment`, and database authentication matches
+(`auth_scheme`, `user`, `password_env`, `sa_key_file`, and `ca_file`). Scale,
+workload, phase, runtime, and check differences MUST be ignored. `--force`
+MUST load the existing `run-config.json` and MUST NOT rewrite
+`run-config.json`, `profile.sha256`, or `profile.redacted.yaml`. It MUST NOT
+allocate a `run_id`, and it MUST still leave a run unchanged when test has not
+finished. Full structural validation of the edited profile is not required.
+
+`paths.state_dir` and `paths.result_root` MUST still match the recorded
+profile. When `collection-manifest.json` is absent, `--force` MUST also
+require the `loaders` host set, `paths.remote_root`, and SSH dial settings
+(`user`, `use_agent`, `known_hosts`, `connect_timeout`, and
+`insecure_ignore_host_key`, including a CLI override of that flag) to match
+the recorded profile, because consolidate then runs collect. `--warehouses`,
+`--ramp-up`, and `--measurement` MUST be rejected together with `--force`.
+The `run` pipeline does not take `--force`; its consolidate step keeps the
+profile byte-identity check.
+
 `run` = validate → require prior `deploy` (shared worker binaries present on
 every assigned host; no auto-upload) → schema → load → indexes →
 check(after-import) → test → check(after-test) → collect → consolidate.

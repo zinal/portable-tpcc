@@ -105,6 +105,9 @@ func TestRun_helpMentionsLeaveProcesses(t *testing.T) {
 	if !strings.Contains(string(out), "collects first if needed") {
 		t.Fatalf("help missing consolidate auto-collect:\n%s", out)
 	}
+	if !strings.Contains(string(out), "--force") {
+		t.Fatalf("help missing --force:\n%s", out)
+	}
 	if !strings.Contains(string(out), "drop        Drop TPC-C objects") {
 		t.Fatalf("help missing drop command:\n%s", out)
 	}
@@ -246,6 +249,41 @@ func TestRun_threadsNegativeRejected(t *testing.T) {
 	})
 	if !strings.Contains(stderr, "--threads must not be negative") {
 		t.Fatalf("stderr=%q", stderr)
+	}
+}
+
+func TestRun_forceOnlyOnConsolidate(t *testing.T) {
+	dir := t.TempDir()
+	profilePath := writeCLITestProfile(t, dir)
+	stderr := captureStderr(t, func() {
+		code := Run([]string{"validate", "--profile", profilePath, "--force"})
+		if code != 2 {
+			t.Fatalf("validate --force exit=%d, want 2", code)
+		}
+	})
+	if !strings.Contains(stderr, "--force is only valid with consolidate") {
+		t.Fatalf("stderr=%q", stderr)
+	}
+}
+
+func TestRun_consolidateForceRejectsWarehouses(t *testing.T) {
+	dir := t.TempDir()
+	profilePath := writeCLITestProfile(t, dir)
+	stderr := captureStderr(t, func() {
+		code := Run([]string{"consolidate", "--profile", profilePath, "--force", "--warehouses", "1"})
+		if code != 2 {
+			t.Fatalf("exit=%d, want 2", code)
+		}
+	})
+	if !strings.Contains(stderr, "does not accept --warehouses") {
+		t.Fatalf("stderr=%q", stderr)
+	}
+	entries, err := os.ReadDir(filepath.Join(dir, "state", "runs"))
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("consolidate --force created %d run dir(s)", len(entries))
 	}
 }
 

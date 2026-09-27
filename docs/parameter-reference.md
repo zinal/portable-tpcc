@@ -38,7 +38,7 @@ mind-tpcc configure --profile <path> --dbms <pgsql|ydb|oceanbase> [options]
 | `status` | Show run state. |
 | `stop` | Stop workers gracefully. |
 | `collect` | Copy artifacts from runtime hosts. |
-| `consolidate` | Merge worker results into `aggregate.json` and print a brief stats summary, including the commit id of each launched module. Rejects the run when collected `process.json` commits differ or are missing. Runs `collect` first when `collection-manifest.json` is absent. Does not allocate a run id. An omitted `--run-id` with no active run is left empty and does not write run-state. A run that has not finished `test` is left unchanged. |
+| `consolidate` | Merge worker results into `aggregate.json` and print a brief stats summary, including the commit id of each launched module. Rejects the run when collected `process.json` commits differ or are missing. Runs `collect` first when `collection-manifest.json` is absent. Does not allocate a run id. An omitted `--run-id` with no active run is left empty and does not write run-state. A run that has not finished `test` is left unchanged. Without `--force`, the profile file must match the run's `profile.sha256`. |
 | `run` | Full pipeline. Requires a prior explicit `deploy`. |
 | `drop` | Drop TPC-C objects for the profile's database path. Requires `--yes`. |
 | `cleanup` | Teardown: stop, remote + local run artifacts (including the control host). Does not drop database objects. Requires `--yes`. |
@@ -75,6 +75,7 @@ drop database objects; use `drop` for that.
 | `--insecure-ignore-host-key` | profile `ssh.insecure_ignore_host_key` | Skip SSH host-key checking (lab / reimaged hosts). Same as `ssh.insecure_ignore_host_key: true`. Recorded in run-state. `known_hosts` is then optional. |
 | `--skip <step>` | none | Skip a `run` pipeline step. Repeatable. Names: `deploy`, `schema`, `load`, `indexes`, `check_after_import`, `test` (alias `start`), `check_after_test` (alias `check_after_run`), `collect`, `consolidate`. |
 | `--yes` | false | Required for `drop`, `cleanup`, and `undeploy`. `configure` uses it to overwrite an existing file. |
+| `--force` | false | `consolidate` only. Skip the `profile.sha256` check and continue when `metadata.name`, `database.dbms`, the `workers` host set, and database authentication still match the recorded run. Workload, phase, runtime, and check edits are ignored; the materialized `run-config.json` is not rewritten. `paths.state_dir` and `paths.result_root` must still match. When collect has not run, loader hosts, `paths.remote_root`, and SSH dial settings must match too. Rejects `--warehouses`, `--ramp-up`, and `--measurement`. |
 | `--after-import` / `--after-test` | — | Select the `check` phase. `--after-run` is a deprecated alias for `--after-test`. |
 | `--leave-processes` | false | Debug: leave remote processes running when `mind-tpcc` exits. Default is to stop leftovers this invocation launched (and warn if a process is still alive after it reported finished). |
 
