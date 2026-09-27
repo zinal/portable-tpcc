@@ -1343,6 +1343,116 @@ func TestConsolidate_rejectsDifferentModuleVersions(t *testing.T) {
 	}
 }
 
+func TestConsolidate_acceptsAbsentModuleCommits(t *testing.T) {
+	root := t.TempDir()
+	runID := "run-versions-absent"
+	rc := &config.RunConfig{
+		RunID: runID,
+		Phases: config.PhasesJSON{
+			MeasurementMs:  60000,
+			MaxClockSkewMs: 100,
+		},
+		Scale: config.ScaleBlock{Warehouses: 20},
+		WorkerAssignment: []config.WorkerAssignmentJSON{
+			{Instance: "worker-a", Host: "host-a", WarehouseRanges: [][]int{{1, 11}}, Threads: 1, MaxInflight: 64},
+			{Instance: "worker-b", Host: "host-b", WarehouseRanges: [][]int{{11, 21}}, Threads: 1, MaxInflight: 64},
+		},
+	}
+	sha := writeRunConfig(t, root, runID, rc)
+	writeWorkerArtifacts(t, root, runID, "worker-a", sha, rc, map[string]interface{}{
+		"counters":   map[string]interface{}{"new_order_ok": 5},
+		"histograms": map[string]interface{}{"new_order": measurementHistogram(5)},
+	})
+	writeWorkerArtifacts(t, root, runID, "worker-b", sha, rc, map[string]interface{}{
+		"counters":   map[string]interface{}{"new_order_ok": 5},
+		"histograms": map[string]interface{}{"new_order": measurementHistogram(5)},
+	})
+	writeModuleProcess(t, root, runID, "worker", "worker-a", "")
+	writeModuleProcess(t, root, runID, "worker", "worker-b", "")
+
+	cons := &consolidate.Consolidator{ResultRoot: root}
+	agg, err := cons.Consolidate(runID, rc)
+	if err != nil {
+		t.Fatalf("absent commits should consolidate: %v", err)
+	}
+	if agg.ModuleVersionWarning != "" {
+		t.Fatalf("absent commits are not a mismatch warning: %q", agg.ModuleVersionWarning)
+	}
+	if len(agg.ModuleVersions) != 2 || agg.ModuleVersions[0].Commit != "" || agg.ModuleVersions[1].Commit != "" {
+		t.Fatalf("module versions: %+v", agg.ModuleVersions)
+	}
+	text := consolidate.FormatSummary(agg)
+	if strings.Contains(text, "warning:") {
+		t.Fatalf("summary warned on absent commits:\n%s", text)
+	}
+	if !strings.Contains(text, "worker/worker-a <missing>") || !strings.Contains(text, "worker/worker-b <missing>") {
+		t.Fatalf("summary missing absent commits:\n%s", text)
+	}
+}
+
+func TestConsolidate_forceWarnsOnDifferentModuleVersions(t *testing.T) {
+	root := t.TempDir()
+	runID := "run-versions-force"
+	rc := &config.RunConfig{
+		RunID: runID,
+		Phases: config.PhasesJSON{
+			MeasurementMs:  60000,
+			MaxClockSkewMs: 100,
+		},
+		Scale: config.ScaleBlock{Warehouses: 20},
+		WorkerAssignment: []config.WorkerAssignmentJSON{
+			{Instance: "worker-a", Host: "host-a", WarehouseRanges: [][]int{{1, 11}}, Threads: 1, MaxInflight: 64},
+			{Instance: "worker-b", Host: "host-b", WarehouseRanges: [][]int{{11, 21}}, Threads: 1, MaxInflight: 64},
+		},
+	}
+	sha := writeRunConfig(t, root, runID, rc)
+	writeWorkerArtifacts(t, root, runID, "worker-a", sha, rc, map[string]interface{}{
+		"counters":   map[string]interface{}{"new_order_ok": 5},
+		"histograms": map[string]interface{}{"new_order": measurementHistogram(5)},
+	})
+	writeWorkerArtifacts(t, root, runID, "worker-b", sha, rc, map[string]interface{}{
+		"counters":   map[string]interface{}{"new_order_ok": 5},
+		"histograms": map[string]interface{}{"new_order": measurementHistogram(5)},
+	})
+	writeModuleProcess(t, root, runID, "worker", "worker-a", "0123456789ab")
+	writeModuleProcess(t, root, runID, "worker", "worker-b", "")
+
+	cons := &consolidate.Consolidator{ResultRoot: root}
+	agg, err := cons.ConsolidateWithOptions(runID, rc, consolidate.Options{
+		AllowMismatchedModuleVersions: true,
+	})
+	if err != nil {
+		t.Fatalf("force should not reject a version mismatch: %v", err)
+	}
+	if agg.ModuleVersionWarning != "module versions are not identical" {
+		t.Fatalf("warning=%q", agg.ModuleVersionWarning)
+	}
+	data, err := json.Marshal(agg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "not identical") {
+		t.Fatalf("warning leaked into aggregate json: %s", data)
+	}
+	text := consolidate.FormatSummary(agg)
+	if !strings.Contains(text, "warning: module versions are not identical") {
+		t.Fatalf("summary missing warning:\n%s", text)
+	}
+	if !strings.Contains(text, "worker/worker-a 0123456789ab") || !strings.Contains(text, "worker/worker-b <missing>") {
+		t.Fatalf("summary missing version list:\n%s", text)
+	}
+	if err := consolidate.WriteAggregate(root, runID, agg); err != nil {
+		t.Fatal(err)
+	}
+	summary, err := os.ReadFile(filepath.Join(root, runID, "summary.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(summary), "warning: module versions are not identical") {
+		t.Fatalf("summary.txt missing warning:\n%s", summary)
+	}
+}
+
 func TestConsolidate_rejectsMissingModuleCommit(t *testing.T) {
 	root := t.TempDir()
 	runID := "run-versions-missing"

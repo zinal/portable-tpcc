@@ -863,9 +863,10 @@ func (o *Orchestrator) consolidate(ctx *Context) error {
 	}
 	cons := &consolidate.Consolidator{ResultRoot: o.Expanded.ResultRoot}
 	agg, err := cons.ConsolidateWithOptions(ctx.RunID, ctx.RunConfig, consolidate.Options{
-		SkippedSteps:            rs.SkippedSteps,
-		MaxClockSkewMs:          ctx.RunConfig.Phases.MaxClockSkewMs,
-		ExpectedRunConfigSHA256: runConfigSHA,
+		SkippedSteps:                  rs.SkippedSteps,
+		MaxClockSkewMs:                ctx.RunConfig.Phases.MaxClockSkewMs,
+		ExpectedRunConfigSHA256:       runConfigSHA,
+		AllowMismatchedModuleVersions: o.Opts.Force,
 	})
 	if err != nil {
 		return err

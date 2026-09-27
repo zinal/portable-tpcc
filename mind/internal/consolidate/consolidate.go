@@ -49,14 +49,19 @@ type Aggregate struct {
 	ModuleVersions []ModuleVersion        `json:"module_versions,omitempty"`
 	SkippedSteps   []string               `json:"skipped_steps,omitempty"`
 	Checks         map[string]interface{} `json:"checks,omitempty"`
+	// ModuleVersionWarning is set when commits differ and the caller asked
+	// consolidate to continue. It is printed in summary.txt and omitted from
+	// aggregate.json.
+	ModuleVersionWarning string `json:"-"`
 }
 
 // Options tune consolidate status evaluation.
 type Options struct {
-	SkippedSteps            []string
-	MaxClockSkewMs          int64
-	ExpectedRunConfigSHA256 string
-	AllowIncomplete         bool
+	SkippedSteps                  []string
+	MaxClockSkewMs                int64
+	ExpectedRunConfigSHA256       string
+	AllowIncomplete               bool
+	AllowMismatchedModuleVersions bool
 }
 
 // Consolidator merges worker artifacts deterministically.
@@ -253,11 +258,8 @@ func (c *Consolidator) ConsolidateWithOptions(runID string, rc *config.RunConfig
 	if err != nil {
 		return nil, err
 	}
-	if err := requireUniformModuleVersions(modules); err != nil {
+	if err := applyModuleVersions(agg, modules, opts.AllowMismatchedModuleVersions); err != nil {
 		return nil, err
-	}
-	if len(modules) > 0 {
-		agg.ModuleVersions = modules
 	}
 	return agg, nil
 }
@@ -805,6 +807,9 @@ func FormatSummary(agg *Aggregate) string {
 	}
 	appendLatencyInvalidBanner(&b, violations)
 	appendTPCCResultsSummary(&b, agg, violations)
+	if agg.ModuleVersionWarning != "" {
+		fmt.Fprintf(&b, "warning: %s\n", agg.ModuleVersionWarning)
+	}
 	if list := formatModuleVersionList(agg.ModuleVersions); list != "" {
 		b.WriteString(list)
 	}
@@ -863,22 +868,46 @@ func collectModuleVersions(resultRoot, runID string) ([]ModuleVersion, error) {
 	return modules, nil
 }
 
-func requireUniformModuleVersions(modules []ModuleVersion) error {
-	if len(modules) == 0 {
+func applyModuleVersions(agg *Aggregate, modules []ModuleVersion, allowMismatch bool) error {
+	if len(modules) > 0 {
+		agg.ModuleVersions = modules
+	}
+	if !moduleVersionsDiffer(modules) {
 		return nil
 	}
-	first := modules[0].Commit
-	uniform := first != ""
-	for _, m := range modules[1:] {
-		if m.Commit == "" || m.Commit != first {
-			uniform = false
-			break
-		}
-	}
-	if uniform {
+	if allowMismatch {
+		agg.ModuleVersionWarning = "module versions are not identical"
 		return nil
 	}
 	return fmt.Errorf("module versions are not identical:\n%s", strings.TrimRight(formatModuleVersionList(modules), "\n"))
+}
+
+// moduleVersionsDiffer reports whether collected commits are not one shared
+// value. Every commit empty is not a difference: binaries that omit commit
+// still consolidate.
+func moduleVersionsDiffer(modules []ModuleVersion) bool {
+	if len(modules) == 0 {
+		return false
+	}
+	present := 0
+	first := ""
+	for _, m := range modules {
+		if m.Commit == "" {
+			continue
+		}
+		present++
+		if first == "" {
+			first = m.Commit
+			continue
+		}
+		if m.Commit != first {
+			return true
+		}
+	}
+	if present == 0 {
+		return false
+	}
+	return present != len(modules)
 }
 
 func formatModuleVersionList(modules []ModuleVersion) string {

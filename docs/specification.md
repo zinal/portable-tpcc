@@ -365,9 +365,14 @@ Consolidation:
    TPC-C settings conformant flag and deviation list, latency
    constraint flag and violation list, …);
 7. keep raw per-worker files beside the aggregate for detail;
-8. require every collected `process.json` to carry the same non-empty
-   `commit`. Differing or missing commits are an error. The aggregate
-   records `module_versions` (role, instance, commit) for those files.
+8. when any collected `process.json` carries a `commit`, require every
+   collected `process.json` to carry that same non-empty `commit`.
+   Differing commits, or a mix of present and missing commits, are an
+   error. When every collected commit is absent, consolidate still
+   produces `aggregate.json`. `consolidate --force` records a commit
+   mismatch as a warning in the summary and still writes the aggregate.
+   The aggregate records `module_versions` (role, instance, commit) for
+   collected `process.json` files.
 
 `mind-tpcc consolidate` MUST also print a brief human summary of the
 aggregate (status flags, New-Order throughput, and response-time min/max/avg
@@ -480,7 +485,7 @@ require the `loaders` host set, `paths.remote_root`, and SSH dial settings
 the recorded profile, because consolidate then runs collect. `--warehouses`,
 `--ramp-up`, and `--measurement` MUST be rejected together with `--force`.
 The `run` pipeline does not take `--force`; its consolidate step keeps the
-profile byte-identity check.
+profile byte-identity check and still rejects differing module commits.
 
 `run` = validate → require prior `deploy` (shared worker binaries present on
 every assigned host; no auto-upload) → schema → load → indexes →
@@ -515,9 +520,14 @@ version and **MUST NOT** intentionally reuse binaries from an earlier version.
 `deploy` already placed them, so the operator controls which version is live.
 All workers in one run are therefore assumed to execute a homogeneous artifact
 set. Mixed module versions are unsupported and are an operator/deployment
-error. `consolidate` MUST reject them when collected `process.json` commits
-differ or are missing, and MUST print each module's role, instance, and
-commit. It does not reconcile or convert mixed artifacts.
+error. When any collected `process.json` carries a `commit`, `consolidate`
+MUST reject the run if those commits differ or if some files omit `commit`,
+and MUST print each module's role, instance, and commit. A run whose collected
+commits are all absent MUST still produce `aggregate.json`. `consolidate
+--force` MUST downgrade a commit mismatch to a warning in `summary.txt` and
+the progress log, and MUST still write `aggregate.json`. It does not
+reconcile or convert mixed artifacts. The `run` pipeline does not pass
+`--force`, so its consolidate step still rejects a commit mismatch.
 
 Skipped steps are recorded in the run-state and aggregate.
 
