@@ -55,6 +55,11 @@ type Options struct {
 	// Repeats, when non-nil, is a launch-time --repeats override for the
 	// diagnostic debug role. It does not rewrite run-config.json.
 	Repeats *int
+	// Force is consolidate --force. It selects and loads an existing run by
+	// profile identity (name, DBMS, worker hosts, authentication) instead of
+	// profile.sha256. Workload edits are ignored. The recorded run-config is
+	// not rewritten. Other commands leave this false.
+	Force bool
 }
 
 // Orchestrator coordinates mind-tpcc stages.
@@ -287,14 +292,30 @@ func (o *Orchestrator) latestContinuableRunID() (string, error) {
 // It does not allocate a run id. When --run-id is empty and this profile has
 // no non-terminal run, the id stays empty and no run state is written, so a
 // later test can allocate its own id.
+//
+// Without Force, the run must still match profile.sha256 (via
+// latestContinuableRunID and the caller's Materialize). With Force, selection
+// uses profile identity and does not require the profile file bytes to match.
 func (o *Orchestrator) ResolveConsolidateRunID() (string, error) {
-	vr := o.Validate()
-	if !vr.Valid {
-		return "", fmt.Errorf("profile invalid: %v", vr.Errors)
+	if o.Opts.Force {
+		if err := rejectForceConsolidateOverrides(o.Opts.Overrides); err != nil {
+			return "", err
+		}
+	} else {
+		vr := o.Validate()
+		if !vr.Valid {
+			return "", fmt.Errorf("profile invalid: %v", vr.Errors)
+		}
 	}
 	runID := strings.TrimSpace(o.Opts.RunID)
 	if runID == "" {
-		latest, err := o.latestContinuableRunID()
+		var latest string
+		var err error
+		if o.Opts.Force {
+			latest, err = o.latestForceConsolidateRunID()
+		} else {
+			latest, err = o.latestContinuableRunID()
+		}
 		if err != nil {
 			return "", err
 		}
@@ -314,9 +335,17 @@ func (o *Orchestrator) ResolveConsolidateRunID() (string, error) {
 		if !recorded {
 			return "", fmt.Errorf("run %s not found under %s; consolidate does not create a run", runID, o.StateStore.StateDir)
 		}
+		if o.Opts.Force {
+			if err := o.verifyConsolidateIdentity(runID); err != nil {
+				return "", err
+			}
+		}
 	}
 	if err := o.refuseConsolidateWithoutTest(&Context{RunID: runID}); err != nil {
 		return "", err
+	}
+	if o.Opts.Force {
+		progress.Printf("consolidate --force: profile.sha256 check skipped for run_id=%s", runID)
 	}
 	return runID, nil
 }

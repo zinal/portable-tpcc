@@ -28,6 +28,7 @@ type Config struct {
 	Threads        *int
 	MaxInflight    *int
 	Repeats        *int
+	Force          bool
 }
 
 // Run dispatches mind-tpcc subcommands (specification §9).
@@ -155,6 +156,8 @@ func run(args []string, interrupt context.Context) int {
 			i = next
 		case arg == "--yes":
 			cfg.Yes = true
+		case arg == "--force":
+			cfg.Force = true
 		case arg == "--insecure-ignore-host-key" || strings.HasPrefix(arg, "--insecure-ignore-host-key="):
 			v, next, err := requireFlagBool(rest, i, "--insecure-ignore-host-key")
 			if err != nil {
@@ -179,6 +182,11 @@ func run(args []string, interrupt context.Context) int {
 		}
 	}
 
+	if cfg.Force && cmd != "consolidate" {
+		fmt.Fprintln(os.Stderr, "error: --force is only valid with consolidate")
+		return 2
+	}
+
 	if cfg.ProfilePath == "" {
 		fmt.Fprintln(os.Stderr, "error: --profile is required")
 		return 2
@@ -195,6 +203,7 @@ func run(args []string, interrupt context.Context) int {
 		Threads:        cfg.Threads,
 		MaxInflight:    cfg.MaxInflight,
 		Repeats:        cfg.Repeats,
+		Force:          cfg.Force,
 	}
 
 	switch cmd {
@@ -330,6 +339,10 @@ func runUndeploy(opts orchestrator.Options, yes bool) int {
 }
 
 func runConsolidate(opts orchestrator.Options) int {
+	if err := forceConsolidateOverrideError(opts.Overrides, opts.Force); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 2
+	}
 	o, err := orch(opts)
 	if err != nil {
 		return exitErr(err)
@@ -347,6 +360,10 @@ func runConsolidate(opts orchestrator.Options) int {
 // test of a different run_id holds the profile. It does not allocate a run id
 // or write state when --run-id is empty and there is no active run, and it
 // does not materialize a run that has not finished test.
+//
+// The default path loads the run through Materialize, which requires
+// profile.sha256 to match. --force loads the recorded run-config without
+// rewriting it.
 func withConsolidateLock(o *orchestrator.Orchestrator, fn func(*orchestrator.Context) error) error {
 	runID, err := o.ResolveConsolidateRunID()
 	if err != nil {
@@ -359,11 +376,39 @@ func withConsolidateLock(o *orchestrator.Orchestrator, fn func(*orchestrator.Con
 	oldRunID := o.Opts.RunID
 	o.Opts.RunID = runID
 	defer func() { o.Opts.RunID = oldRunID }()
-	ctx, err := o.Materialize()
+	var ctx *orchestrator.Context
+	if o.Opts.Force {
+		ctx, err = o.LoadConsolidateContext(runID)
+	} else {
+		ctx, err = o.Materialize()
+	}
 	if err != nil {
 		return err
 	}
 	return fn(ctx)
+}
+
+// forceConsolidateOverrideError rejects workload overrides on consolidate --force.
+// Those flags must not look like inputs to the merge; the recorded run-config
+// is the source of scale and phase durations.
+func forceConsolidateOverrideError(o config.ProfileOverrides, force bool) error {
+	if !force {
+		return nil
+	}
+	var flags []string
+	if o.Warehouses != nil {
+		flags = append(flags, "--warehouses")
+	}
+	if o.RampUp != nil {
+		flags = append(flags, "--ramp-up")
+	}
+	if o.Measurement != nil {
+		flags = append(flags, "--measurement")
+	}
+	if len(flags) == 0 {
+		return nil
+	}
+	return fmt.Errorf("consolidate --force does not accept %s", strings.Join(flags, ", "))
 }
 
 func runStage(opts orchestrator.Options, stage string) int {
@@ -598,7 +643,8 @@ Commands:
   stop        Stop workers gracefully
   collect     Collect artifacts from runtime hosts
   consolidate Merge worker results into aggregate.json (collects first if needed;
-              does not allocate a run id)
+              does not allocate a run id). --force continues after a profile
+              edit when name, DBMS, worker hosts, and authentication still match
   run         Full pipeline (requires prior explicit deploy)
   drop        Drop TPC-C objects for the profile database path (--yes)
   cleanup     Remove run artifacts on all hosts including control (--yes)
@@ -618,6 +664,9 @@ Options:
   --repeats <n>            Override debug executions per transaction type (default: 10)
   --insecure-ignore-host-key  Skip SSH host-key checking (lab / reimaged hosts)
   --skip <step>            Skip pipeline step
+  --force                  consolidate only: skip the profile.sha256 check and
+                           continue when name, DBMS, worker hosts, and
+                           authentication still match the recorded run
   --yes                    Non-interactive confirmation (drop, cleanup, undeploy, configure overwrite)
   --leave-processes        Debug: do not kill remote processes this
                            invocation launched when mind-tpcc exits
