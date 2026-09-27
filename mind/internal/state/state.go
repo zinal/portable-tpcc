@@ -91,6 +91,13 @@ func (s *Store) ProfileLockPath(profileID string) string {
 	return filepath.Join(s.StateDir, "profiles", profileID, "run.lock")
 }
 
+// RunLockPath returns the per-run lock file path.
+// The file lives outside runs/<runID> so cleanup can delete the run directory
+// while the lock is still held.
+func (s *Store) RunLockPath(runID string) string {
+	return filepath.Join(s.StateDir, "run-locks", runID)
+}
+
 // Load reads run-state.json.
 func (s *Store) Load(runID string) (*RunState, error) {
 	path := s.StatePath(runID)
@@ -222,22 +229,74 @@ func (s *Store) Fail(runID string, cause error) error {
 // AcquireProfileLock creates an exclusive lock for a profile.
 func (s *Store) AcquireProfileLock(profileID, runID string) error {
 	dir := filepath.Join(s.StateDir, "profiles", profileID)
+	return acquireLockFile(dir, s.ProfileLockPath(profileID), runID, func() error {
+		return fmt.Errorf("profile %s locked by another run", profileID)
+	}, func(existing string) error {
+		return fmt.Errorf("profile %s locked by run %s", profileID, existing)
+	})
+}
+
+// ReleaseProfileLock removes profile lock if owned by runID.
+func (s *Store) ReleaseProfileLock(profileID, runID string) error {
+	return releaseLockFile(s.ProfileLockPath(profileID), runID, "profile lock held by another run")
+}
+
+// AcquireRunLock creates an exclusive lock for one run.
+// Standalone consolidate takes only this lock, so a test of a different run
+// can keep the profile lock. Database-mutating commands take the profile lock
+// first, then this lock (see AcquireProfileAndRunLocks).
+func (s *Store) AcquireRunLock(runID string) error {
+	if runID == "" {
+		return fmt.Errorf("run lock requires a run id")
+	}
+	dir := filepath.Join(s.StateDir, "run-locks")
+	return acquireLockFile(dir, s.RunLockPath(runID), runID, func() error {
+		return fmt.Errorf("run %s locked", runID)
+	}, func(string) error {
+		return fmt.Errorf("run %s locked", runID)
+	})
+}
+
+// ReleaseRunLock removes the run lock if owned by runID.
+func (s *Store) ReleaseRunLock(runID string) error {
+	return releaseLockFile(s.RunLockPath(runID), runID, "run lock held by another run")
+}
+
+// AcquireProfileAndRunLocks locks the profile, then the run.
+// Never acquire the profile lock while holding a run lock.
+func (s *Store) AcquireProfileAndRunLocks(profileID, runID string) error {
+	if err := s.AcquireProfileLock(profileID, runID); err != nil {
+		return err
+	}
+	if err := s.AcquireRunLock(runID); err != nil {
+		_ = s.ReleaseProfileLock(profileID, runID)
+		return err
+	}
+	return nil
+}
+
+// ReleaseProfileAndRunLocks releases the run lock, then the profile lock.
+func (s *Store) ReleaseProfileAndRunLocks(profileID, runID string) {
+	_ = s.ReleaseRunLock(runID)
+	_ = s.ReleaseProfileLock(profileID, runID)
+}
+
+func acquireLockFile(dir, lockPath, owner string, onUnreadable func() error, onHeld func(existing string) error) error {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
-	lockPath := s.ProfileLockPath(profileID)
 	f, err := os.OpenFile(lockPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
 	if err != nil {
 		if os.IsExist(err) {
 			data, readErr := os.ReadFile(lockPath)
 			if readErr != nil {
-				return fmt.Errorf("profile %s locked by another run", profileID)
+				return onUnreadable()
 			}
-			return fmt.Errorf("profile %s locked by run %s", profileID, string(data))
+			return onHeld(string(data))
 		}
 		return err
 	}
-	if _, err := f.Write([]byte(runID)); err != nil {
+	if _, err := f.Write([]byte(owner)); err != nil {
 		_ = f.Close()
 		_ = os.Remove(lockPath)
 		return err
@@ -245,9 +304,7 @@ func (s *Store) AcquireProfileLock(profileID, runID string) error {
 	return f.Close()
 }
 
-// ReleaseProfileLock removes profile lock if owned by runID.
-func (s *Store) ReleaseProfileLock(profileID, runID string) error {
-	lockPath := s.ProfileLockPath(profileID)
+func releaseLockFile(lockPath, owner, mismatch string) error {
 	data, err := os.ReadFile(lockPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -255,8 +312,8 @@ func (s *Store) ReleaseProfileLock(profileID, runID string) error {
 		}
 		return err
 	}
-	if string(data) != runID {
-		return fmt.Errorf("profile lock held by another run")
+	if string(data) != owner {
+		return fmt.Errorf("%s", mismatch)
 	}
 	return os.Remove(lockPath)
 }

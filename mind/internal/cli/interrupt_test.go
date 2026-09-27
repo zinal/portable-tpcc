@@ -49,6 +49,10 @@ func TestWithMaterializedProfileLock_releasesOnInterrupt(t *testing.T) {
 	if _, err := os.Stat(lockPath); err != nil {
 		t.Fatalf("expected profile lock during stage: %v", err)
 	}
+	runLockPath := o.StateStore.RunLockPath("run-interrupt")
+	if _, err := os.Stat(runLockPath); err != nil {
+		t.Fatalf("expected run lock during stage: %v", err)
+	}
 
 	cancel()
 	select {
@@ -62,6 +66,9 @@ func TestWithMaterializedProfileLock_releasesOnInterrupt(t *testing.T) {
 
 	if _, err := os.Stat(lockPath); !os.IsNotExist(err) {
 		t.Fatalf("profile lock should be released after interrupt, stat=%v", err)
+	}
+	if _, err := os.Stat(runLockPath); !os.IsNotExist(err) {
+		t.Fatalf("run lock should be released after interrupt, stat=%v", err)
 	}
 }
 
@@ -94,6 +101,7 @@ func TestSIGINTReleasesProfileLock(t *testing.T) {
 	profilePath := writeCLITestProfile(t, dir)
 	stateDir := filepath.Join(dir, "state")
 	lockPath := filepath.Join(stateDir, "profiles", "test-profile", "run.lock")
+	runLockPath := filepath.Join(stateDir, "run-locks", "run-sigint")
 	readyPath := filepath.Join(dir, "ready")
 
 	cmd := exec.Command(os.Args[0], "-test.run=^TestSIGINTReleasesProfileLock$", "-test.v=false")
@@ -123,6 +131,10 @@ func TestSIGINTReleasesProfileLock(t *testing.T) {
 		_ = cmd.Process.Kill()
 		t.Fatalf("expected lock before SIGINT: %v", err)
 	}
+	if _, err := os.Stat(runLockPath); err != nil {
+		_ = cmd.Process.Kill()
+		t.Fatalf("expected run lock before SIGINT: %v", err)
+	}
 
 	if err := cmd.Process.Signal(os.Interrupt); err != nil {
 		_ = cmd.Process.Kill()
@@ -135,6 +147,9 @@ func TestSIGINTReleasesProfileLock(t *testing.T) {
 
 	if _, err := os.Stat(lockPath); !os.IsNotExist(err) {
 		t.Fatalf("profile lock should be released after SIGINT, stat=%v", err)
+	}
+	if _, err := os.Stat(runLockPath); !os.IsNotExist(err) {
+		t.Fatalf("run lock should be released after SIGINT, stat=%v", err)
 	}
 }
 
