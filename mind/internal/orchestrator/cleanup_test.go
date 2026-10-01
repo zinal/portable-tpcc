@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -85,6 +86,100 @@ func TestRemoveRemoteRunDirs(t *testing.T) {
 	}
 	if len(sess.removedAll) != 1 || sess.removedAll[0] != filepath.Join(remoteRoot, "run-abc") {
 		t.Fatalf("removedAll=%v", sess.removedAll)
+	}
+}
+
+func TestResolveDropRunIDMissingExplicit(t *testing.T) {
+	dir := t.TempDir()
+	profilePath := writeCleanupProfile(t, dir)
+	o, err := New(Options{ProfilePath: profilePath, RunID: "drop58000"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := o.ResolveDropRunID(); !errors.Is(err, ErrNoRuns) {
+		t.Fatalf("expected ErrNoRuns, got %v", err)
+	}
+}
+
+func TestResolveDropRunIDNoRuns(t *testing.T) {
+	dir := t.TempDir()
+	profilePath := writeCleanupProfile(t, dir)
+	o, err := New(Options{ProfilePath: profilePath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := o.ResolveDropRunID(); !errors.Is(err, ErrNoRuns) {
+		t.Fatalf("expected ErrNoRuns, got %v", err)
+	}
+}
+
+func TestResolveDropRunIDReusesRecorded(t *testing.T) {
+	dir := t.TempDir()
+	profilePath := writeCleanupProfile(t, dir)
+	o, err := New(Options{ProfilePath: profilePath, RunID: "run-done"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := o.Materialize(); err != nil {
+		t.Fatal(err)
+	}
+	o2, err := New(Options{ProfilePath: profilePath, RunID: "run-done"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := o2.ResolveDropRunID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "run-done" {
+		t.Fatalf("run_id=%q, want run-done", got)
+	}
+}
+
+func TestResolveDropRunIDRejectsDifferentProfile(t *testing.T) {
+	dir := t.TempDir()
+	profilePath := writeCleanupProfile(t, dir)
+	o, err := New(Options{ProfilePath: profilePath, RunID: "run-reuse"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := o.Materialize(); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(profilePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed := strings.Replace(string(data), "endpoint: localhost:5432", "endpoint: localhost:15432", 1)
+	if changed == string(data) {
+		t.Fatal("profile fixture missing endpoint")
+	}
+	if err := os.WriteFile(profilePath, []byte(changed), 0644); err != nil {
+		t.Fatal(err)
+	}
+	o2, err := New(Options{ProfilePath: profilePath, RunID: "run-reuse"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = o2.ResolveDropRunID()
+	if err == nil || errors.Is(err, ErrNoRuns) || !strings.Contains(err.Error(), "different profile") {
+		t.Fatalf("expected profile mismatch, got %v", err)
+	}
+}
+
+func TestResolveCleanupRunIDMissingExplicit(t *testing.T) {
+	dir := t.TempDir()
+	profilePath := writeCleanupProfile(t, dir)
+	o, err := New(Options{ProfilePath: profilePath, RunID: "drop58000"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = o.ResolveCleanupRunID()
+	if err == nil || errors.Is(err, ErrNoRuns) {
+		t.Fatalf("cleanup must keep a missing explicit run as an error, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("got %v", err)
 	}
 }
 

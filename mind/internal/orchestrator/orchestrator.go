@@ -27,7 +27,9 @@ import (
 // ErrInterrupted is returned when Options.Interrupt is cancelled (e.g. Ctrl+C).
 var ErrInterrupted = errors.New("interrupted")
 
-// ErrNoRuns is returned when a profile has no matching run under state_dir.
+// ErrNoRuns is returned when drop or cleanup has no recorded run to reuse.
+// drop treats it as "materialize a run-config from the profile", including
+// an explicit --run-id that is not yet under state. cleanup surfaces it.
 var ErrNoRuns = errors.New("no runs found")
 
 // Options configure the orchestrator runtime.
@@ -968,6 +970,49 @@ func (o *Orchestrator) Stop(ctx *Context) error {
 	}
 	progress.Printf("stage stop: complete")
 	return nil
+}
+
+// ResolveDropRunID selects a recorded run whose run-config drop can reuse.
+// Explicit --run-id wins when that run is already under state; otherwise the
+// newest matching run is used (including terminal runs). When the explicit
+// run is not recorded, or the profile has no runs, it returns ErrNoRuns so
+// the caller materializes a run-config from the profile the same way schema
+// does. It does not allocate a run_id itself.
+func (o *Orchestrator) ResolveDropRunID() (string, error) {
+	runID := strings.TrimSpace(o.Opts.RunID)
+	if runID == "" {
+		return o.ResolveCleanupRunID()
+	}
+	vr := o.Validate()
+	if !vr.Valid {
+		return "", fmt.Errorf("profile invalid: %v", vr.Errors)
+	}
+	if err := validateCleanupRunID(runID); err != nil {
+		return "", err
+	}
+	missing, err := o.missingRunConfig(runID)
+	if err != nil {
+		return "", err
+	}
+	if missing {
+		return "", fmt.Errorf("%w: run %s not found under %s", ErrNoRuns, runID, o.StateStore.StateDir)
+	}
+	if err := o.verifyRunProfileSHA(runID); err != nil {
+		return "", err
+	}
+	progress.Printf("run_id=%s", runID)
+	return runID, nil
+}
+
+func (o *Orchestrator) missingRunConfig(runID string) (bool, error) {
+	_, err := os.Stat(filepath.Join(o.StateStore.RunDir(runID), "run-config.json"))
+	if err == nil {
+		return false, nil
+	}
+	if os.IsNotExist(err) {
+		return true, nil
+	}
+	return false, err
 }
 
 // ResolveCleanupRunID selects an existing run for cleanup.

@@ -491,11 +491,14 @@ profile byte-identity check and still rejects differing module commits.
 every assigned host; no auto-upload) → schema → load → indexes →
 check(after-import) → test → check(after-test) → collect → consolidate.
 
-`drop --yes` drops TPC-C objects for the profile's database path. It uses
-`--run-id` if given, otherwise the newest matching run (to reuse that
-run-config); if no run exists it materializes a run-config from the profile.
-It launches orchestrated `drop` on the first loader host. It does not remove
-run artifacts; use `cleanup` for that. Requires `--yes`.
+`drop --yes` drops TPC-C objects for the profile's database path. It reuses
+a recorded run-config: `--run-id` when that run is already under state,
+otherwise the newest matching run. When that run is not recorded — an
+explicit `--run-id` with no state, or no runs at all — it materializes a
+run-config from the profile the same way `schema` does, and does not require
+a prior pipeline run. It launches orchestrated `drop` on the first loader
+host. It does not remove run artifacts; use `cleanup` for that. Requires
+`--yes`.
 
 `cleanup --yes` tears down an existing run for the profile (explicit
 `--run-id`, else the newest matching run, including terminal states). Phases

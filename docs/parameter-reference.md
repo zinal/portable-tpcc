@@ -50,9 +50,11 @@ check(after-test) **if** `checks.after_test` → collect → consolidate.
 
 `run` does not upload binaries. Re-run `deploy` after rebuilding `tpcc-*`.
 
-`drop --yes` uses `--run-id` if given, otherwise the newest matching run
-(to reuse that run-config); if no run exists it materializes a run-config
-from the profile. It launches orchestrated `drop` on the first loader host.
+`drop --yes` reuses a recorded run-config: `--run-id` when that run is
+already under state, otherwise the newest matching run. When that run is
+not recorded — an explicit `--run-id` with no state, or no runs at all — it
+materializes a run-config from the profile the same way `schema` does. It
+launches orchestrated `drop` on the first loader host.
 
 `cleanup --yes` uses `--run-id` if given, otherwise the newest matching run.
 When state is past planned it removes `remote_root/<run_id>` on every runtime
