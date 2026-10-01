@@ -65,6 +65,19 @@ YDB deferred/fused writes, YDB Delivery cardinality, progress/p90 reporting,
 Статический аудит не заменяет live DBMS integration, concurrent fault
 injection, power-loss tests и длительный measurement run.
 
+Выполнена unit-проверка текущего HEAD:
+
+```text
+./ya make -t -DHAVE_CUDA=no -DCUDA_VERSION=11.4 \
+  tpcc/domain/ut tpcc/generator/ut tpcc/transactions/ut \
+  tpcc/runtime/ut tpcc/metrics/ut tpcc/harness/ut tpcc/checks/ut \
+  tpcc/loader/ut tpcc/dbms/pgsql/ut tpcc/dbms/ydb/ut \
+  tpcc/dbms/oceanbase/ut
+go -C mind test ./...
+```
+
+Результат: 11 C++ suites / 228 tests и все Go tests прошли.
+
 ## Классификация по происхождению
 
 ### Проблемы, вызванные новыми изменениями после `b5b83006`
