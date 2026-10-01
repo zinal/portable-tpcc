@@ -1,5 +1,405 @@
 # Анализ соответствия реализации требованиям TPC-C 5.11
 
+Статус: полный повторный анализ реализации на commit `d39f225d`.
+
+Основа сравнения: [TPC Benchmark C Standard Specification, Revision
+5.11](https://www.tpc.org/TPC_Documents_Current_Versions/pdf/tpc-c_v5.11.0.pdf).
+
+Предыдущий результат на `b5b83006` не использовался как доказательство.
+Сначала заново проверены исполняемые shared workflows, три DBMS adapter,
+population, runtime, checks и consolidator. Только после этого результат
+сопоставлен с git history и предыдущей редакцией документа, чтобы разделить:
+
+1. проблемы, внесённые после `b5b83006`;
+2. проблемы, уже существовавшие на `b5b83006`, но пропущенные прошлым
+   анализом;
+3. ранее известные и независимо подтверждённые ограничения.
+
+## Итог
+
+Репозиторий реализует согласованный engineering workload по мотивам TPC-C для
+PostgreSQL, YDB и OceanBase. Пять основных транзакций на штатных данных
+функционально реализованы во всех трёх adapters. Результат правильно
+маркируется `result_class: engineering`; полный официальный TPC-C 5.11 result
+из него получить нельзя без RTE, deferred Delivery, полного verification
+набора и независимой TPC verification.
+
+После `b5b83006` существенно изменился прежде всего YDB transaction path.
+Повторная проверка не нашла подтверждённой регрессии штатной бизнес-логики:
+новые fused/deferred writes сохраняют атомарность, а Delivery теперь проверяет
+наличие `new_order`, `oorder`, ожидаемое число `order_line` и customer rows.
+
+Найден один новый для анализа, но не новый для кода дефект: старый успешный
+JSON integrity check может быть принят как результат более позднего
+неуспешного запуска check. Он существовал уже на `b5b83006` и был пропущен
+предыдущим анализом.
+
+| Область | PostgreSQL | YDB | OceanBase |
+| --- | --- | --- | --- |
+| New-Order, Payment, Order-Status, Delivery, Stock-Level | Реализованы | Реализованы | Реализованы |
+| Успешный commit/rollback path | Корректен | Корректен; post-`b5b83006` refactor не дал доказанной регрессии | Commit корректен; ошибка `ROLLBACK` всё ещё игнорируется |
+| Consistency 3.3.2 | Полный catalog, формулы корректны | Полный catalog, но nullable comparisons могут дать false pass | Полный catalog, dialect translation корректен |
+| Exact money/rate | Exact decimal/text path | `Decimal(22,9)` | Exact decimal/text path |
+| Delivery cardinality guards | Есть | Добавлены после `b5b83006` | Есть |
+| Физическая schema | Близка к TPC-C, есть type deviations | Более permissive и nullable | Близка к TPC-C, есть type deviations |
+
+## Область и методика
+
+Проверены непосредственно:
+
+- Clause 1.3.1, 2.1.6, 2.3, 2.4-2.8, 3.3.2, 4.3 и 5.1-5.6 официальной
+  спецификации;
+- shared domain, generator, population, loader и все пять workflows;
+- все semantic operations и commit/rollback paths PostgreSQL, YDB и
+  OceanBase;
+- schema, exact numeric conversions, locks/isolation, retries и error
+  classification;
+- phase boundaries, pacing, histograms, artifacts, collect/consolidate и
+  integrity checks;
+- diff и history `b5b83006..d39f225d` только после статического аудита HEAD.
+
+Особое внимание уделено изменениям remote-warehouse inputs, `C_DATA`,
+YDB deferred/fused writes, YDB Delivery cardinality, progress/p90 reporting,
+`max_inflight` и module commit metadata.
+
+Статический аудит не заменяет live DBMS integration, concurrent fault
+injection, power-loss tests и длительный measurement run.
+
+## Классификация по происхождению
+
+### Проблемы, вызванные новыми изменениями после `b5b83006`
+
+**Подтверждённых проблем нет.**
+
+Проверены следующие потенциально рискованные изменения:
+
+- `workload.remote_warehouse_percent` корректно передаётся в shared context.
+  Значения, отличные от 1% New-Order и 15% Payment, являются явными
+  non-conformant profile overrides и отражаются в soft conformance status.
+- `new_order_max_remote_warehouses` при default `0` не меняет TPC-C
+  распределение. Ненулевое значение намеренно ограничивает число remote
+  order lines и также маркируется как deviation.
+- вынос `C_DATA` в отдельную YDB column family не изменил Payment BC:
+  `C_DATA` читается только для BC customer и обновляется атомарно с Payment.
+- YDB deferred New-Order/Payment writes и fused commit не дали
+  воспроизводимого пути к успешному, но неполному commit на корректно
+  загруженных данных. Customer, warehouse/district и stock keys проверяются
+  чтениями в той же transaction; concurrent writers конфликтуют в
+  `SnapshotRW`.
+- YDB Delivery больше не использует carrier `UPSERT` как замену проверки
+  parent row и валидирует cardinality до commit.
+- p90 banner, progress counters, `max_inflight` override и module commit
+  metadata не изменяют logical transaction inputs или state transitions
+  внутри DB transaction.
+
+### Проблемы, пропущенные предыдущим анализом
+
+#### M1. Stale check report может дать ложный `integrity_ok`
+
+**Критичность: высокая в retry/manual collect сценарии.**
+
+Check report лежит в общем
+`{run_dir}/checks/{after-import|after-test}.json`, но новый запуск check
+очищает только instance-local `process.json`, `ready.json`, `result.json` и
+`artifact-manifest.json`
+([drive.go](../mind/internal/orchestrator/drive.go)). Если новый check падает
+до `WriteCheckReportJson` — например, в `CheckDbForRun` — adapters пишут
+ненулевой process exit status, но старый report не удаляют
+([PostgreSQL](../tpcc/dbms/pgsql/check.cpp),
+[YDB](../tpcc/dbms/ydb/check.cpp),
+[OceanBase](../tpcc/dbms/oceanbase/check.cpp)).
+
+Поздний `collect` копирует существующий run-level report без связи с nonce
+последнего check process. `checkReportOK` в
+[consolidate.go](../mind/internal/consolidate/consolidate.go) принимает любой
+JSON с `ok: true`; `run_id`, ожидаемая phase, counters и instance nonce не
+сверяются.
+
+Воспроизводимый сценарий:
+
+1. check фазы успешно записал `ok: true`;
+2. повторный check той же фазы завершился до записи нового report;
+3. оператор вызвал `collect`, затем `consolidate`;
+4. aggregate получает `integrity_ok: true` из старого файла.
+
+Это один дефект binding/lifecycle, а не две независимые проблемы JSON schema
+и cleanup. Он присутствовал на `b5b83006`, но в предыдущей редакции не был
+зафиксирован.
+
+## Ранее известные проблемы, подтверждённые заново
+
+### K1. Фактическая variability не верифицируется
+
+**Критичность: высокая для официального TPC-C.**
+
+Clause 5.5.1.5 требует проверять фактические доли rollback New-Order, число
+order lines, remote New-Order lines, remote Payment и выбор customer по
+фамилии. Генераторы используют требуемые default probabilities, но worker
+artifacts не содержат business-input counters, достаточных для post-hoc
+verification.
+
+### K2. Initial population не полностью соответствует Clause 4.3
+
+**Критичность: высокая для официального TPC-C.**
+
+- `RandomAString` в
+  [strings.h](../tpcc/generator/strings.h) использует только 26 lower-case
+  letters. Clause 4.3.2.2 требует random alphanumeric strings и character set
+  как минимум с lower-case, upper-case и digits.
+- `C_ID_C`, `OL_I_ID_C`, `C_LAST_LOAD_C` и `C_LAST_RUN_C` в
+  [constants.h](../tpcc/domain/constants.h) compile-time constants, а Clause
+  2.1.6 требует выбирать C для population/run случайно при соблюдении
+  C-Load/C-Run delta.
+- synthetic initial timestamps являются сознательным engineering deviation
+  от OS current time.
+
+Cardinalities, customer/order permutation, split 2100/900,
+`D_NEXT_O_ID = 3001`, delivered `OL_AMOUNT = 0`, carrier range и
+`OL_DELIVERY_D = O_ENTRY_D` реализованы корректно.
+
+### K3. Payment при одном warehouse иногда выбирает не home district
+
+**Критичность: средняя. Затрагивает все adapters.**
+
+В remote branch
+[payment.cpp](../tpcc/transactions/payment.cpp) при
+`WarehouseCount == 1` customer warehouse неизбежно остаётся home warehouse,
+но `CustomerDistrictID` уже выбран случайно. Когда remote warehouse
+невозможен, input должен оставаться полностью local:
+`C_W_ID = W_ID` и `C_D_ID = D_ID`.
+
+### K4. YDB consistency checks могут fail-open на NULL
+
+**Критичность: высокая для YDB integrity verdict.**
+
+YDB schema оставляет многие non-key columns nullable, а checks 3.3.2.1,
+3.3.2.6, 3.3.2.8-10 и 3.3.2.12 используют `value != expected`
+([check.cpp](../tpcc/dbms/ydb/check.cpp)). В YQL сравнение с `NULL` даёт
+`UNKNOWN`, поэтому corrupted row не попадает в `bad` и report может быть
+успешным.
+
+Check 3.3.2.4 дополнительно сравнивает
+`COALESCE(sum_o_ol_cnt, 0)` и `COALESCE(line_count, 0)`, что не отличает
+missing aggregate side от явного zero. PostgreSQL использует null-safe
+`IS DISTINCT FROM`, OceanBase — `<=>`/явные null-safe predicates.
+
+### K5. Повторная попытка run может использовать старую local collection
+
+**Критичность: высокая для достоверности aggregate.**
+
+Remote launch nonce и worker artifacts проверяются строго. Однако standalone
+`consolidate` не запускает collect, если
+`results/<run_id>/collection-manifest.json` уже существует. Повторный запуск
+stages того же run id не инвалидирует старые `raw/` и collection manifest.
+Внутренне согласованный bundle предыдущей попытки поэтому может снова попасть
+в aggregate.
+
+Это отличается от M1: K5 относится ко всему local worker bundle, M1 — к
+run-level integrity report, не связанному с check launch nonce.
+
+### K6. Aggregate throughput использует configured measurement duration
+
+**Критичность: средняя.**
+
+[consolidate.go](../mind/internal/consolidate/consolidate.go) делит completed
+New-Order count на `run-config.phases.measurement_ms`. Worker timestamps и
+фактический `measurement_seconds` не сверяются и не агрегируются. При early
+stop или schedule drift опубликованный tpmC может не соответствовать реально
+исполненному интервалу.
+
+### K7. Custom worker binary не полностью связан с reused run config
+
+**Критичность: средняя operational.**
+
+Для нового run `--worker-binary` согласован с materialized `binary`. Но при
+повторном открытии уже materialized run gate строит имя из текущего CLI
+option/default, тогда как launch использует сохранённый
+`run-config.binary`. Если custom option не повторить, gate способен проверить
+другой shared binary.
+
+### K8. OceanBase не подтверждает успешный ROLLBACK
+
+**Критичность: высокая для error/intentional-rollback path.**
+
+[TObConnection::Rollback](../tpcc/dbms/oceanbase/ob_connection.cpp) игнорирует
+ошибку `mysql_query("ROLLBACK")`. Верхний слой после этого очищает `InTxn_` и
+может вернуть `RolledBack`. Это затрагивает intentional New-Order rollback и
+любую защитную ошибку перед commit. PostgreSQL и YDB не имеют такого
+fail-open path.
+
+### K9. OceanBase pool initialization может пережить `--start-at`
+
+**Критичность: высокая operational.**
+
+Конструктор
+[TObConnectionPool](../tpcc/dbms/oceanbase/ob_connection_pool.cpp)
+бесконечно повторяет initial connect, включая permanent auth/config errors,
+без stop token и deadline. Проверка missed start deadline происходит только
+после создания pool, поэтому worker может зависнуть вместо обязательного
+fatal exit.
+
+### K10. `cancelled` operation result не всегда останавливает phase
+
+**Критичность: средняя operational.**
+
+Terminal правильно обрабатывает брошенный `TClassifiedError(Cancelled)`, но
+`ThrowIfRetryable` не бросает для `Cancelled`, а `FailPermanent` возвращает
+обычный `false`. Поэтому adapter operation, вернувшая classified result
+`cancelled`, может быть учтена как transaction failure и workload продолжит
+работу, хотя contract требует phase stop без retry.
+
+### K11. Check query errors смешиваются с consistency failures
+
+**Критичность: средняя для диагностики. PostgreSQL и OceanBase.**
+
+Per-chunk runners ловят timeout/connection/syntax exceptions и записывают
+`ECheckStatus::Failed`, как если бы predicate нашёл нарушение данных.
+Fail-open не возникает, но structured report теряет различие `failed` и
+`error`.
+
+### K12. Diagnostic component histograms остаются слабее main histogram
+
+**Критичность: средняя для диагностики; основной response time корректен.**
+
+- merge не требует одинакового полного набора components у всех workers;
+- `pure` содержит только последнюю retry attempt, а intentional rollback
+  остаётся с zero `pure`, потому что workflow бросает до финальной записи
+  latency;
+- PostgreSQL `session_pool_wait` не включает 1 ms polling yield после
+  `nullptr`, поэтому границы одноимённой метрики различаются между adapters.
+
+Main queue-inclusive histogram, completed counters, extrema, overflow и
+bucket arithmetic валидируются строго.
+
+### K13. Debug probe не использует одну session на всю серию
+
+**Критичность: средняя для диагностики.**
+
+[debug_probe.cpp](../tpcc/harness/debug_probe.cpp) получает новую
+`ITpccSession` для каждой attempt, хотя internal contract требует открыть
+одну worker session и последовательно выполнить все attempts. Для YDB это
+может менять SDK session и plan-cache context между `first` и `rest_avg`.
+
+### K14. Physical schemas permissive относительно Clause 1.3.1
+
+**Критичность: низкая/средняя.**
+
+- PostgreSQL/OceanBase: `OL_QUANTITY decimal(6,2)` вместо `Numeric(2,0)`;
+- OceanBase: `S_YTD decimal(8,2)` вместо integer-style `Numeric(8,0)`;
+- YDB: широкие `Decimal(22,9)`, `Int32 OL_QUANTITY`, unbounded `Utf8` и
+  nullable non-key columns.
+
+Generator пишет допустимые значения, поэтому normal transaction semantics не
+ломаются, но DDL не обеспечивает все logical constraints TPC-C.
+
+### K15. Regression coverage SQL/YQL transaction paths недостаточен
+
+**Критичность: высокая как риск, низкая как самостоятельный дефект.**
+
+DBMS unit suites покрывают config, batching, parsing и отдельные helpers, но
+не исполняют все transaction SQL/YQL и consistency predicates на live
+fixtures. Нет обязательных tests для NULL corruption, concurrent Delivery,
+Payment atomicity, intentional rollback и postcondition failures на всех
+трёх DBMS.
+
+## Результат аудита пяти транзакций
+
+### New-Order
+
+Подтверждены NURand inputs, 5-15 lines, 1% unused item, independent 1% remote
+line selection при default cap `0`, `O_ALL_LOCAL`, district reservation,
+stock formula, `S_YTD`/counts, order-line inserts и полный valid-line profile
+до intentional rollback. Inputs фиксируются один раз и повторно используются
+только при retry той же business transaction.
+
+Порядок customer/warehouse/district operations отличается от порядка списка
+в Clause 2.4.2.2, но это **не дефект**: Clause 2.3.1 прямо разрешает менять
+порядок data manipulations внутри transaction, если результат функционально
+эквивалентен. Для unused-item profile valid lines обрабатываются до
+not-found, как требует Clause 2.4.2.3.
+
+### Payment
+
+Подтверждены amount, 60/40 name/id, 85/15 local/remote при scale > 1,
+ascending `C_FIRST` и правильный lower median, W/D YTD, customer balance/YTD
+and count, BC `C_DATA`, HISTORY и atomic commit. Активный input defect для
+single-warehouse описан в K3.
+
+### Order-Status
+
+Customer selection и latest `O_ID` корректны, все order lines возвращаются.
+Отсутствие `ORDER BY OL_NUMBER` в PostgreSQL/OceanBase **не является
+нарушением**: Comment 1 к Clause 2.6.3.3 прямо разрешает произвольный порядок
+items на Order-Status screen. Предыдущее замечание об обязательной сортировке
+было ложноположительным и удалено из актуального результата.
+
+### Delivery
+
+Все adapters выбирают oldest `new_order` для каждого district, удаляют
+`new_order`, задают carrier и delivery timestamp, суммируют line amount,
+увеличивают customer balance и delivery count атомарно. PostgreSQL и
+OceanBase используют locks/affected-row guards; YDB после `b5b83006` добавил
+эквивалентные precondition/cardinality checks.
+
+Inline synchronous Delivery остаётся сознательным отклонением от официальной
+deferred model.
+
+### Stock-Level
+
+Используется постоянный home district terminal, threshold 10-20 и distinct
+items последних 20 orders с `S_QUANTITY < threshold`. Реализация одинакова по
+смыслу во всех adapters.
+
+## Исправления и уточнения относительно прошлого документа
+
+Подтверждены исправленными или ошибочно считавшимися активными:
+
+- YDB Delivery cardinality и carrier parent validation теперь реализованы;
+- отсутствие `ORDER BY OL_NUMBER` допустимо Clause 2.6.3.3;
+- порядок W/D/customer внутри New-Order допустимо менять по Clause 2.3.1;
+- отсутствие affected-row API в отдельных YDB writes само по себе не
+  доказывает partial successful commit: rows предварительно прочитаны в той
+  же transaction, а concurrent write/delete должен дать snapshot conflict;
+- `C_DATA` не обязан иметь выдуманный fixed-width/zero-padded format:
+  Clause 2.5.2.2 требует readable representation, что текущая строка
+  обеспечивает;
+- YDB `SnapshotRW` не дал конкретной consistency anomaly в проверенных
+  access patterns; `SerializableRW` остаётся configurable option.
+
+## Ограничения, исключающие официальный TPC-C result
+
+Это не новые regressions, а явные границы продукта:
+
+- нет полноценного Remote Terminal Emulator, menu/screens и end-user RT;
+- Delivery выполняется inline, нет deferred queue/result log и 80-second
+  completion metric;
+- нет встроенных ACID certification, power-loss/durability и checkpoint
+  procedures;
+- response-time reporting не содержит обязательные official distributions и
+  disclosure graphs; reported throughput не truncates до целого;
+- нет автоматического sustained-operation proof, FDR, price/tpmC и
+  независимой verification.
+
+## Итоговая оценка
+
+| Область | Оценка |
+| --- | --- |
+| Shared transaction core | Пять workflows функционально корректны на штатных данных; активный input defect — single-warehouse Payment district |
+| PostgreSQL | Transaction mapping и consistency predicates корректны; остаются schema deviations и check error classification |
+| YDB | Крупный refactor не дал подтверждённой регрессии; Delivery guards исправлены; integrity checks fail-open на NULL |
+| OceanBase | Успешный transaction/batching path корректен; rollback и initial pool deadline остаются дефектными |
+| Population | Cardinalities и delivered split корректны; a-string alphabet, random C values и dates не соответствуют полному 5.11 |
+| Runtime | Pacing, retries и measurement admission корректны; cancelled-result и debug-session contract остаются |
+| Reporting | Main histogram строгий; official variability/RT reporting и component diagnostics неполны |
+| Orchestration | Worker nonce checks строги; stale collection и stale check-report binding остаются |
+
+Главный вывод по последним transaction changes: они не внесли доказанной
+регрессии бизнес-логики. Главный новый вывод аудита — M1, существовавший до
+этих изменений и пропущенный прошлой проверкой.
+
+<details>
+<summary>Архив предыдущей редакции на commit b5b83006 (не источник доказательств для анализа выше)</summary>
+
 Статус: обновлённый анализ реализации на commit `b5b83006`.
 
 Основа сравнения: [TPC Benchmark C Standard Specification, Revision
@@ -928,5 +1328,7 @@ binding, think-time sampling, timestamp population и carrier checks.
 tpmC включает intentional rollback, rollback New-Order создаёт полную
 DB-нагрузку, default think-time distribution экспоненциальное, а response-time
 artifacts теперь содержат extrema и average.
+
+</details>
 
 </details>
