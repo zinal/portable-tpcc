@@ -308,6 +308,70 @@ func TestRun_consolidateWithoutRunLeavesRunIDEmpty(t *testing.T) {
 	}
 }
 
+func TestRun_dropMissingRunIDMaterializes(t *testing.T) {
+	dir := t.TempDir()
+	profilePath := writeCLITestProfile(t, dir)
+	t.Setenv("TPCC_PASSWORD", "secret")
+	if err := os.MkdirAll(filepath.Join(dir, "remote"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	script := `#!/bin/sh
+set -e
+cmd="$1"
+instance="drop-0"
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "--instance" ]; then instance="$a"; fi
+  prev="$a"
+done
+if [ "$cmd" != "drop" ]; then
+  echo "expected drop role, got $cmd" >&2
+  exit 1
+fi
+mkdir -p "$cmd/$instance"
+printf '{"pid":%s,"instance_nonce":"n1"}\n' "$$" > "$cmd/$instance/process.json"
+printf '{"schema_version":1,"instance":"%s","instance_nonce":"n1","finalized":true,"exit_status":0,"payloads":[]}\n' "$instance" > "$cmd/$instance/artifact-manifest.json"
+`
+	if err := os.WriteFile(filepath.Join(dir, "remote", "tpcc-pgsql"), []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	var code int
+	stderr := captureStderr(t, func() {
+		code = Run([]string{"drop", "--profile", profilePath, "--run-id", "drop58000", "--yes"})
+	})
+	if code != 0 {
+		t.Fatalf("drop=%d\n%s", code, stderr)
+	}
+	if strings.Contains(stderr, "not found") {
+		t.Fatalf("stderr=%s", stderr)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "state", "runs", "drop58000", "run-config.json")); err != nil {
+		t.Fatalf("run-config: %v\nstderr=%s", err, stderr)
+	}
+}
+
+func TestRun_cleanupMissingRunIDStillErrors(t *testing.T) {
+	dir := t.TempDir()
+	profilePath := writeCLITestProfile(t, dir)
+	var code int
+	stderr := captureStderr(t, func() {
+		code = Run([]string{"cleanup", "--profile", profilePath, "--run-id", "drop58000", "--yes"})
+	})
+	if code == 0 {
+		t.Fatalf("cleanup of a missing run should fail\n%s", stderr)
+	}
+	if !strings.Contains(stderr, "not found") {
+		t.Fatalf("stderr=%q", stderr)
+	}
+	entries, err := os.ReadDir(filepath.Join(dir, "state", "runs"))
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("cleanup created %d run dir(s)", len(entries))
+	}
+}
+
 func TestRun_consolidateBeforeTestKeepsPlannedState(t *testing.T) {
 	dir := t.TempDir()
 	profilePath := writeCLITestProfile(t, dir)

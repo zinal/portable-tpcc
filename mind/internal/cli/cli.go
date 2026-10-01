@@ -532,7 +532,7 @@ func runDrop(opts orchestrator.Options, yes bool) int {
 	if err != nil {
 		return exitErr(err)
 	}
-	if err := withExistingRunCleanup(o, func(ctx *orchestrator.Context) error {
+	if err := withRecordedRun(o, o.ResolveDropRunID, func(ctx *orchestrator.Context) error {
 		return o.Drop(ctx, true)
 	}); err != nil {
 		if !errors.Is(err, orchestrator.ErrNoRuns) {
@@ -566,7 +566,13 @@ func runCleanup(opts orchestrator.Options, yes bool) int {
 
 // withExistingRunCleanup locks the profile and the run, then loads an existing run (no new run_id).
 func withExistingRunCleanup(o *orchestrator.Orchestrator, fn func(*orchestrator.Context) error) error {
-	runID, err := o.ResolveCleanupRunID()
+	return withRecordedRun(o, o.ResolveCleanupRunID, fn)
+}
+
+// withRecordedRun locks the profile and the run selected by resolve, then loads
+// that run. resolve must not allocate a new run_id.
+func withRecordedRun(o *orchestrator.Orchestrator, resolve func() (string, error), fn func(*orchestrator.Context) error) error {
+	runID, err := resolve()
 	if err != nil {
 		return err
 	}
