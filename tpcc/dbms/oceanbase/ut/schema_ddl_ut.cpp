@@ -55,6 +55,22 @@ TEST(ObSchemaDdl, ItemDuplicateWithoutHashPartitions) {
     EXPECT_EQ(warehouse->find("PARTITION BY"), std::string::npos);
 }
 
+TEST(ObSchemaDdl, HistoryHistIdIsBigintAutoIncrement) {
+    const TObSchemaLayout layouts[] = {
+        TObSchemaLayout{},
+        TObSchemaLayout{true, true, 64},
+    };
+    for (const auto& layout : layouts) {
+        const auto stmts = BuildObCreateStatements(layout, TObSchemaOptions{});
+        const auto* history = FindCreateTable(stmts, "history");
+        ASSERT_NE(history, nullptr);
+        EXPECT_NE(history->find("hist_id BIGINT"), std::string::npos) << *history;
+        EXPECT_NE(history->find("AUTO_INCREMENT"), std::string::npos) << *history;
+        EXPECT_EQ(history->find("hist_id INT"), std::string::npos) << *history;
+        EXPECT_NE(history->find("PRIMARY KEY (h_w_id, hist_id)"), std::string::npos) << *history;
+    }
+}
+
 TEST(ObSchemaDdl, ItemPlainWhenDuplicateDisabled) {
     TObSchemaLayout layout;
 

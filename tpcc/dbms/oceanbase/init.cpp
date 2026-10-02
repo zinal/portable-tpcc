@@ -126,7 +126,10 @@ std::vector<std::string> BuildObCreateStatements(
         : std::string{};
 
     const std::string historyDataSuffix = options.EnableForeignKeys ? "," : "";
-    const std::string historyHistId = "    hist_id INT          NOT NULL AUTO_INCREMENT,\n";
+    // Signed INT stops at 2147483647 (~71582 warehouses of initial history).
+    // OceanBase caps AUTO_INCREMENT at the column type; BIGINT matches
+    // PostgreSQL bigint IDENTITY and YDB Int64.
+    const std::string historyHistId = "    hist_id BIGINT       NOT NULL AUTO_INCREMENT,\n";
     const std::string historyPkClause = ",\n    PRIMARY KEY (h_w_id, hist_id)";
 
     return {

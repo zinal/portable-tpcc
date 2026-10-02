@@ -826,7 +826,9 @@ visible in the result settings/options.
   limit worse. Size tenant `MEMORY_SIZE` for `sessions × prepared statements`
   (see [run-oceanbase.md](run-oceanbase.md)).
   `history` uses technical `PRIMARY KEY (h_w_id, hist_id)` with
-  `AUTO_INCREMENT` (cluster and standalone layouts).
+  `BIGINT AUTO_INCREMENT` (cluster and standalone layouts). The counter is
+  64-bit: signed `INT` stops at 2147483647, about 71582 warehouses of initial
+  history (10 districts × 3000 rows) before Payment inserts.
 
 See [adapter-api.md](adapter-api.md) §5–§6 for the full logical/physical and
 query-binding contract.
