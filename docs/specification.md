@@ -817,10 +817,10 @@ visible in the result settings/options.
   (no histograms). A HASH partition has one leader, so each partition is
   gathered with `degree=>1` (`partname` `p0`…`pN-1`, `granularity=>'PARTITION'`)
   and those gathers run concurrently, one session per partition, capped at 64.
-  Each statement stays within session `ob_query_timeout`. Global row counts and
-  column NDVs are then derived from those partition stats (partition-key NDV is
-  the sum; other columns use the max partition NDV) without a second full-table
-  scan. `item` is not HASH-partitioned and is one gather, with DOP equal to the
+  Each statement stays within session `ob_query_timeout`. Global row counts come
+  from `DBA_TAB_STATISTICS`. Column NDVs come from `DBA_PART_COL_STATISTICS`
+  (partition-key NDV is the sum; other columns use the max partition NDV)
+  without a second full-table scan. `item` is not HASH-partitioned and is one gather, with DOP equal to the
   HASH partition count (`1` when partitioning is off). Session `ob_query_timeout` (`database.options.query_timeout`, default
   600s) MUST apply to load, indexes, statistics, integrity-check, and
   pre-flight catalog sessions (specification §9.2); worker OLTP sessions MAY
