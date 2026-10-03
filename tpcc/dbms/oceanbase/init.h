@@ -36,17 +36,26 @@ void AnalyzeTables(
     const TObSchemaOptions& options = {});
 
 // One DBMS_STATS.GATHER_TABLE_STATS statement.
-// HASH-partitioned tables other than duplicate `item` are split by partition
-// (`p0` …) so each statement stays within session ob_query_timeout.
+// HASH-partitioned tables other than duplicate `item` are one call per
+// partition (`p0` …) with degree 1: a HASH partition has a single leader, so
+// cluster parallelism is concurrent calls, not intra-partition DOP.
 struct TObGatherTableStatsCall {
     std::string Label;
     std::string Sql;
 };
 
+// `degree` is the intra-statement DOP for a table that is not HASH-partitioned
+// (`item`, or partitioning off). HASH-partition calls always use degree 1.
 std::vector<TObGatherTableStatsCall> BuildObGatherTableStatsCalls(
     const std::string& database,
     const char* table,
     int degree,
     int hashPartitions);
+
+// Sessions that gather different HASH partitions of one table at the same time.
+// Capped so a warehouse-derived partition count cannot open one session per warehouse.
+inline constexpr int OB_MAX_PARALLEL_STATS_GATHERS = 64;
+
+int ObStatsGatherSessionCount(int hashPartitions);
 
 } // namespace NTpcc
