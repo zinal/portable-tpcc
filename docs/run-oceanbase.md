@@ -104,10 +104,13 @@ Unknown `database.options.*` keys are rejected for `dbms=oceanbase`.
 OceanBase creates a binding `TABLEGROUP` and HASH-partitions warehouse-scoped
 tables by warehouse id (`w_id` / `*_w_id`). Partition count is set **only at
 schema time** (`tpcc-oceanbase schema` / `mind-tpcc` schema stage). The same
-value is reused at `indexes` as the `DBMS_STATS.GATHER_TABLE_STATS` degree of
-parallelism (`1` when partitioning is off). Each HASH partition is gathered
-on its own (`partname` `p0`, `p1`, …) with `method_opt=>'FOR ALL COLUMNS SIZE 1'`.
-A single whole-table gather of `stock` or `order_line` at large scale exceeds
+value is the number of concurrent `DBMS_STATS.GATHER_TABLE_STATS` sessions at
+`indexes` (`1` when partitioning is off), capped at 64. A HASH partition has
+one leader, so each partition is gathered with `degree=>1` (`partname` `p0`,
+`p1`, …) and `method_opt=>'FOR ALL COLUMNS SIZE 1'` while other partitions of
+the same table are gathered at the same time. Intra-partition `degree` stays 1
+so each scan stays on that partition's leader. A single
+whole-table gather of `stock` or `order_line` at large scale also exceeds
 session `ob_query_timeout` and fails with `[4012] Timeout`. Global row counts
 and column NDVs are aggregated from the partition statistics afterward.
 `item` is not HASH-partitioned and is one gather.
@@ -220,9 +223,8 @@ $BIN schema --connection="$CONN" --path=tpcc -w 10 \
 $BIN import --connection="$CONN" --path=tpcc -w 10 -t 8
 
 # indexes + statistics (after load); CREATE INDEX uses PARALLEL 4 by default.
-# DBMS_STATS gather DOP equals HASH partition count (--partitions / -w; 1 if -1).
-# HASH tables are gathered per partition (no histograms) so each statement
-# stays within query_timeout.
+# HASH partitions are gathered concurrently (degree 1 each; session count =
+# partition count, capped at 64). Non-partitioned gather DOP is 1.
 $BIN indexes --connection="$CONN" --path=tpcc -w 10 --partitions=0
 #   --index-parallel=8   # raise DOP for a single CREATE INDEX
 #   --index-parallel=1   # serial index build

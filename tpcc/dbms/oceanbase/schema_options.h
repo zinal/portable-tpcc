@@ -21,7 +21,9 @@ struct TObSchemaOptions {
 
 int ResolveObPartitionCount(const TObSchemaOptions& options);
 int ResolveObIndexParallel(const TObSchemaOptions& options);
-// DBMS_STATS gather DOP: HASH partition count, or 1 when partitioning is off.
+// Intra-statement DBMS_STATS DOP for a non-partitioned gather, and the
+// partition count used as the parallel session count for HASH partitions
+// (each partition gather itself uses degree 1). 1 when partitioning is off.
 int ResolveObAnalyzeDegree(const TObSchemaOptions& options);
 std::string ObPartitioningStyle(const TObSchemaOptions& options);
 std::string ForeignKeysModeLabel(bool enabled);

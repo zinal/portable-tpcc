@@ -813,14 +813,15 @@ visible in the result settings/options.
   cached statements, clear error classes, optional FKs as a recorded physical
   option, optional `CREATE INDEX … PARALLEL n`
   (`database.options.index_parallel`, default 4),
-  `DBMS_STATS.GATHER_TABLE_STATS` with gather DOP equal to the HASH partition
-  count and `method_opt=>'FOR ALL COLUMNS SIZE 1'` (no histograms). HASH-partitioned
-  tables are gathered one partition at a time (`partname` `p0`…`pN-1`,
-  `granularity=>'PARTITION'`) so each statement stays within session
-  `ob_query_timeout`; global row counts and column NDVs are then derived from
-  those partition stats (partition-key NDV is the sum; other columns use the
-  max partition NDV) without a second full-table scan. `item` is not
-  HASH-partitioned and is one gather. Session `ob_query_timeout` (`database.options.query_timeout`, default
+  `DBMS_STATS.GATHER_TABLE_STATS` with `method_opt=>'FOR ALL COLUMNS SIZE 1'`
+  (no histograms). A HASH partition has one leader, so each partition is
+  gathered with `degree=>1` (`partname` `p0`…`pN-1`, `granularity=>'PARTITION'`)
+  and those gathers run concurrently, one session per partition, capped at 64.
+  Each statement stays within session `ob_query_timeout`. Global row counts and
+  column NDVs are then derived from those partition stats (partition-key NDV is
+  the sum; other columns use the max partition NDV) without a second full-table
+  scan. `item` is not HASH-partitioned and is one gather, with DOP equal to the
+  HASH partition count (`1` when partitioning is off). Session `ob_query_timeout` (`database.options.query_timeout`, default
   600s) MUST apply to load, indexes, statistics, integrity-check, and
   pre-flight catalog sessions (specification §9.2); worker OLTP sessions MAY
   keep the server default (10s).

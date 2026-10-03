@@ -9,10 +9,14 @@
 #include <fmt/format.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cstring>
+#include <exception>
+#include <mutex>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace NTpcc {
@@ -525,13 +529,85 @@ std::vector<TObGatherTableStatsCall> BuildObGatherTableStatsCalls(
         TObGatherTableStatsCall call;
         call.Label = "`" + std::string(table) + "` partition " + part
             + " (" + std::to_string(i + 1) + "/" + std::to_string(hashPartitions) + ")";
+        // degree 1: this partition's leader is one observer. Parallelism is
+        // the concurrent calls in ExecuteGatherCalls, not PX inside the partition.
         call.Sql = fmt::format(
-            "CALL DBMS_STATS.GATHER_TABLE_STATS({}, {}, {}, degree=>{}, granularity=>{}, method_opt=>{})",
-            db, tab, QuoteSqlString(part), degree, granularity, methodOpt);
+            "CALL DBMS_STATS.GATHER_TABLE_STATS({}, {}, {}, degree=>1, granularity=>{}, method_opt=>{})",
+            db, tab, QuoteSqlString(part), granularity, methodOpt);
         calls.push_back(std::move(call));
     }
     return calls;
 }
+
+int ObStatsGatherSessionCount(int hashPartitions) {
+    if (hashPartitions < 1) {
+        return 1;
+    }
+    return std::min(hashPartitions, OB_MAX_PARALLEL_STATS_GATHERS);
+}
+
+namespace {
+
+void ExecuteGatherCalls(
+    TObConnection& primary,
+    const TObConnectionConfig& cfg,
+    const std::vector<TObGatherTableStatsCall>& calls,
+    int sessions)
+{
+    if (calls.empty()) {
+        return;
+    }
+    const int workers = std::max(1, std::min(sessions, static_cast<int>(calls.size())));
+    if (workers == 1) {
+        for (const auto& call : calls) {
+            LOG_I("Gathering stats for " << call.Label << "...");
+            primary.ExecuteSimple(call.Sql);
+        }
+        return;
+    }
+
+    std::atomic<size_t> next{0};
+    std::atomic<bool> failed{false};
+    std::mutex errorMu;
+    std::exception_ptr error;
+
+    std::vector<std::thread> threads;
+    threads.reserve(static_cast<size_t>(workers));
+    for (int i = 0; i < workers; ++i) {
+        threads.emplace_back([&, cfg]() {
+            try {
+                auto conn = ConnectToTargetDatabase(cfg);
+                conn->ConfigureBulkLoadSession();
+                for (;;) {
+                    if (failed.load(std::memory_order_relaxed)) {
+                        return;
+                    }
+                    const size_t idx = next.fetch_add(1, std::memory_order_relaxed);
+                    if (idx >= calls.size()) {
+                        return;
+                    }
+                    LOG_I("Gathering stats for " << calls[idx].Label << "...");
+                    conn->ExecuteSimple(calls[idx].Sql);
+                }
+            } catch (const std::exception& ex) {
+                LOG_E("Stats gather failed: " << ex.what());
+                bool expected = false;
+                if (failed.compare_exchange_strong(expected, true)) {
+                    std::lock_guard lock(errorMu);
+                    error = std::current_exception();
+                }
+            }
+        });
+    }
+    for (auto& thread : threads) {
+        thread.join();
+    }
+    if (error) {
+        std::rethrow_exception(error);
+    }
+}
+
+} // namespace
 
 void AnalyzeTables(
     const std::string& connectionString,
@@ -542,8 +618,8 @@ void AnalyzeTables(
     const std::string db = EffectiveDatabase(cfg);
     auto conn = ConnectToTargetDatabase(cfg);
     // Fresh session: raise ob_query_timeout via connection property query_timeout.
-    // One whole-table gather of stock/order_line hits [4012] Timeout; partition
-    // calls below keep each statement inside that limit.
+    // HASH partitions are gathered concurrently, each with degree 1, so a
+    // stock/order_line scan stays inside ob_query_timeout and on its own leader.
     conn->ConfigureBulkLoadSession();
 
     if (!IsOceanBaseServer(*conn)) {
@@ -557,14 +633,12 @@ void AnalyzeTables(
 
     const int partitions = ResolveObPartitionCount(options);
     const int degree = ResolveObAnalyzeDegree(options);
-    LOG_I("Gathering optimizer statistics via DBMS_STATS (degree=" << degree
-          << ", method_opt=FOR ALL COLUMNS SIZE 1)...");
+    const int sessions = ObStatsGatherSessionCount(partitions);
+    LOG_I("Gathering optimizer statistics via DBMS_STATS (parallel_sessions=" << sessions
+          << ", partition_degree=1, method_opt=FOR ALL COLUMNS SIZE 1)...");
     for (const auto* table : TPCC_TABLES) {
         const auto calls = BuildObGatherTableStatsCalls(db, table, degree, partitions);
-        for (const auto& call : calls) {
-            LOG_I("Gathering stats for " << call.Label << "...");
-            conn->ExecuteSimple(call.Sql);
-        }
+        ExecuteGatherCalls(*conn, cfg, calls, sessions);
         const bool perPartition = partitions >= 1 && std::strcmp(table, TABLE_ITEM) != 0;
         if (!perPartition) {
             continue;

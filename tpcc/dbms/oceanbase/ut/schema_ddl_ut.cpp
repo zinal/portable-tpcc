@@ -77,7 +77,8 @@ TEST(ObGatherStats, HashPartitionsAreSeparateCallsWithoutHistograms) {
     const auto calls = BuildObGatherTableStatsCalls("tpcc", TABLE_STOCK, 36, 36);
     ASSERT_EQ(calls.size(), 36u);
     EXPECT_NE(calls.front().Sql.find("CALL DBMS_STATS.GATHER_TABLE_STATS('tpcc', 'stock', 'p0'"), std::string::npos);
-    EXPECT_NE(calls.front().Sql.find("degree=>36"), std::string::npos);
+    EXPECT_NE(calls.front().Sql.find("degree=>1"), std::string::npos);
+    EXPECT_EQ(calls.front().Sql.find("degree=>36"), std::string::npos);
     EXPECT_NE(calls.front().Sql.find("granularity=>'PARTITION'"), std::string::npos);
     EXPECT_NE(calls.front().Sql.find("method_opt=>'FOR ALL COLUMNS SIZE 1'"), std::string::npos);
     EXPECT_NE(calls.back().Sql.find("'p35'"), std::string::npos);
@@ -98,6 +99,14 @@ TEST(ObGatherStats, ItemAndPlainTablesStayOneCall) {
     ASSERT_EQ(plain.size(), 1u);
     EXPECT_NE(plain[0].Sql.find("degree=>1"), std::string::npos);
     EXPECT_EQ(plain[0].Sql.find("'p0'"), std::string::npos);
+}
+
+TEST(ObGatherStats, ParallelSessionsFollowPartitionCount) {
+    EXPECT_EQ(ObStatsGatherSessionCount(-1), 1);
+    EXPECT_EQ(ObStatsGatherSessionCount(1), 1);
+    EXPECT_EQ(ObStatsGatherSessionCount(36), 36);
+    EXPECT_EQ(ObStatsGatherSessionCount(OB_MAX_PARALLEL_STATS_GATHERS), OB_MAX_PARALLEL_STATS_GATHERS);
+    EXPECT_EQ(ObStatsGatherSessionCount(OB_MAX_PARALLEL_STATS_GATHERS + 100), OB_MAX_PARALLEL_STATS_GATHERS);
 }
 
 TEST(ObGatherStats, RejectsEmptyTableOrDegree) {
