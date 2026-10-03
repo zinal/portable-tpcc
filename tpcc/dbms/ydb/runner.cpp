@@ -19,7 +19,6 @@
 #include <chrono>
 #include <csignal>
 #include <memory>
-#include <thread>
 #include <vector>
 
 namespace NTpcc {
@@ -152,13 +151,10 @@ TRunOutcome RunSync(const TRunConfig& config, TTerminalStats* aggregatedStats) {
         // Keep TransactionDrainMs as the max wait for in-flight to finish.
     }
 
-    constexpr auto MinWarmupPerTerminalMs = std::chrono::milliseconds(1);
-
     // Start terminals during prepare (they wait until MayAdmit).
-    for (size_t i = 0; i < terminals.size() && !stopToken.stop_requested(); ++i) {
-        terminals[i]->Start();
-        std::this_thread::sleep_for(MinWarmupPerTerminalMs);
-    }
+    // Skip the 1ms stagger when --start-at is set so prepare is not linear
+    // in terminal count.
+    StartWorkerTerminals(terminals, config.StartAt.has_value(), stopToken);
 
     using SysClock = std::chrono::system_clock;
     const auto preparedAt = SysClock::now();

@@ -288,9 +288,8 @@ TRunLayout ComputeRunLayout(const TRunSizingInput& input) {
 }
 
 TPhaseDurationResult ResolvePhaseDurations(const TPhaseDurationInput& input) {
-    constexpr auto MinWarmupPerTerminalMs = std::chrono::milliseconds(1);
     const uint32_t minWarmupSeconds = static_cast<uint32_t>(
-        input.TerminalCount * MinWarmupPerTerminalMs.count() / 1000 + 1);
+        input.TerminalCount * kStandaloneTerminalStartStagger.count() / 1000 + 1);
 
     TPhaseDurationResult result;
     auto& durations = result.Durations;
@@ -369,6 +368,26 @@ EStartAtWaitResult WaitUntilStartAt(
         return EStartAtWaitResult::Interrupted;
     }
     return EStartAtWaitResult::Ok;
+}
+
+void StartWorkerTerminals(
+    const std::vector<std::unique_ptr<TTerminal>>& terminals,
+    bool hasStartAt,
+    std::stop_token stopToken)
+{
+    const auto stagger = TerminalStartStagger(hasStartAt);
+    const auto startedAt = std::chrono::steady_clock::now();
+    size_t started = 0;
+    for (size_t i = 0; i < terminals.size() && !stopToken.stop_requested(); ++i) {
+        terminals[i]->Start();
+        ++started;
+        if (stagger.count() > 0) {
+            std::this_thread::sleep_for(stagger);
+        }
+    }
+    const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - startedAt).count();
+    LOG_I("Started " << started << " terminals in " << elapsedMs << " ms");
 }
 
 std::string FormatProgressTransactionFields(
