@@ -35,4 +35,18 @@ void AnalyzeTables(
     const std::string& path = {},
     const TObSchemaOptions& options = {});
 
+// One DBMS_STATS.GATHER_TABLE_STATS statement.
+// HASH-partitioned tables other than duplicate `item` are split by partition
+// (`p0` …) so each statement stays within session ob_query_timeout.
+struct TObGatherTableStatsCall {
+    std::string Label;
+    std::string Sql;
+};
+
+std::vector<TObGatherTableStatsCall> BuildObGatherTableStatsCalls(
+    const std::string& database,
+    const char* table,
+    int degree,
+    int hashPartitions);
+
 } // namespace NTpcc

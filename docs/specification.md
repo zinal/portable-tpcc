@@ -814,7 +814,13 @@ visible in the result settings/options.
   option, optional `CREATE INDEX … PARALLEL n`
   (`database.options.index_parallel`, default 4),
   `DBMS_STATS.GATHER_TABLE_STATS` with gather DOP equal to the HASH partition
-  count. Session `ob_query_timeout` (`database.options.query_timeout`, default
+  count and `method_opt=>'FOR ALL COLUMNS SIZE 1'` (no histograms). HASH-partitioned
+  tables are gathered one partition at a time (`partname` `p0`…`pN-1`,
+  `granularity=>'PARTITION'`) so each statement stays within session
+  `ob_query_timeout`; global row counts and column NDVs are then derived from
+  those partition stats (partition-key NDV is the sum; other columns use the
+  max partition NDV) without a second full-table scan. `item` is not
+  HASH-partitioned and is one gather. Session `ob_query_timeout` (`database.options.query_timeout`, default
   600s) MUST apply to load, indexes, statistics, integrity-check, and
   pre-flight catalog sessions (specification §9.2); worker OLTP sessions MAY
   keep the server default (10s).
