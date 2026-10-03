@@ -3,6 +3,7 @@
 #include "ob_connection.h"
 #include "schema_options.h"
 
+#include <log.h>
 #include <password_secret.h>
 #include <sha256.h>
 #include <think_time.h>
@@ -456,6 +457,17 @@ TRunConfigDocument LoadRunConfigDocument(const std::string& path) {
     }
     ValidateRunConfigDocument(doc);
     return doc;
+}
+
+void ApplyObQueryTimeoutOverride(TRunConfigDocument& doc, const std::optional<int>& seconds) {
+    if (!seconds.has_value()) {
+        return;
+    }
+    if (*seconds <= 0) {
+        throw std::runtime_error("--query-timeout must be a positive integer (seconds)");
+    }
+    doc.QueryTimeoutSeconds = *seconds;
+    LOG_I("Session ob_query_timeout override: " << *seconds << "s");
 }
 
 std::string BuildObConnectionString(const TRunConfigDocument& doc) {

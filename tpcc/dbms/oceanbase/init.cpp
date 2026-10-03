@@ -392,10 +392,6 @@ void CreateIndexes(
 namespace {
 
 constexpr const char* OB_STATS_METHOD_OPT = "FOR ALL COLUMNS SIZE 1";
-// A full scan of one stock partition (~250e6 rows at 90k warehouses) exceeds
-// the default 600s ob_query_timeout. SAMPLE BLOCK (1) reads one percent of
-// the macro blocks; OceanBase scales num_rows and NDV from that sample.
-constexpr int OB_STATS_ESTIMATE_PERCENT = 1;
 
 const char* ObHashPartitionColumn(const char* table) {
     if (table == nullptr) {
@@ -519,10 +515,9 @@ std::vector<TObGatherTableStatsCall> BuildObGatherTableStatsCalls(
     if (!perPartition) {
         TObGatherTableStatsCall call;
         call.Label = "`" + std::string(table) + "`";
-        // Anonymous block: OceanBase accepts boolean args (block_sample) only there.
         call.Sql = fmt::format(
-            "BEGIN DBMS_STATS.GATHER_TABLE_STATS({}, {}, estimate_percent=>{}, block_sample=>true, degree=>{}, method_opt=>{}); END",
-            db, tab, OB_STATS_ESTIMATE_PERCENT, degree, methodOpt);
+            "CALL DBMS_STATS.GATHER_TABLE_STATS({}, {}, degree=>{}, method_opt=>{})",
+            db, tab, degree, methodOpt);
         return {std::move(call)};
     }
 
@@ -537,8 +532,8 @@ std::vector<TObGatherTableStatsCall> BuildObGatherTableStatsCalls(
         // degree 1: this partition's leader is one observer. Parallelism is
         // the concurrent calls in ExecuteGatherCalls, not PX inside the partition.
         call.Sql = fmt::format(
-            "BEGIN DBMS_STATS.GATHER_TABLE_STATS({}, {}, {}, estimate_percent=>{}, block_sample=>true, degree=>1, granularity=>{}, method_opt=>{}); END",
-            db, tab, QuoteSqlString(part), OB_STATS_ESTIMATE_PERCENT, granularity, methodOpt);
+            "CALL DBMS_STATS.GATHER_TABLE_STATS({}, {}, {}, degree=>1, granularity=>{}, method_opt=>{})",
+            db, tab, QuoteSqlString(part), granularity, methodOpt);
         calls.push_back(std::move(call));
     }
     return calls;
@@ -642,7 +637,8 @@ void AnalyzeTables(
     const std::string db = EffectiveDatabase(cfg);
     auto conn = ConnectToTargetDatabase(cfg);
     // Fresh session: raise ob_query_timeout via connection property query_timeout.
-    // Each HASH partition is a 1% block sample at degree 1, on its own leader.
+    // HASH partitions are gathered concurrently, each with degree 1, on that
+    // partition's leader. A large partition scan needs a longer query_timeout.
     conn->ConfigureBulkLoadSession();
 
     if (!IsOceanBaseServer(*conn)) {
@@ -658,8 +654,7 @@ void AnalyzeTables(
     const int degree = ResolveObAnalyzeDegree(options);
     const int sessions = ObStatsGatherSessionCount(partitions);
     LOG_I("Gathering optimizer statistics via DBMS_STATS (parallel_sessions=" << sessions
-          << ", partition_degree=1, estimate_percent=" << OB_STATS_ESTIMATE_PERCENT
-          << ", block_sample=true, method_opt=FOR ALL COLUMNS SIZE 1)...");
+          << ", partition_degree=1, method_opt=FOR ALL COLUMNS SIZE 1)...");
     for (const auto* table : TPCC_TABLES) {
         const auto calls = BuildObGatherTableStatsCalls(db, table, degree, partitions);
         ExecuteGatherCalls(*conn, cfg, calls, sessions);

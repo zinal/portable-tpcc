@@ -35,12 +35,10 @@ void AnalyzeTables(
     const std::string& path = {},
     const TObSchemaOptions& options = {});
 
-// One DBMS_STATS.GATHER_TABLE_STATS statement (anonymous block).
+// One DBMS_STATS.GATHER_TABLE_STATS statement.
 // HASH-partitioned tables other than duplicate `item` are one call per
 // partition (`p0` …) with degree 1: a HASH partition has a single leader, so
 // cluster parallelism is concurrent calls, not intra-partition DOP.
-// Every call uses estimate_percent=>1 and block_sample=>true so the scan
-// stays inside ob_query_timeout.
 struct TObGatherTableStatsCall {
     std::string Label;
     std::string Sql;

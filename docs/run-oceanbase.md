@@ -107,12 +107,14 @@ schema time** (`tpcc-oceanbase schema` / `mind-tpcc` schema stage). The same
 value is the number of concurrent `DBMS_STATS.GATHER_TABLE_STATS` sessions at
 `indexes` (`1` when partitioning is off), capped at 64. A HASH partition has
 one leader, so each partition is gathered with `degree=>1` (`partname` `p0`,
-`p1`, …), `estimate_percent=>1`, `block_sample=>true`, and
-`method_opt=>'FOR ALL COLUMNS SIZE 1'` while other partitions of
+`p1`, …) and `method_opt=>'FOR ALL COLUMNS SIZE 1'` while other partitions of
 the same table are gathered at the same time. Intra-partition `degree` stays 1
-so each scan stays on that partition's leader. The 1% block sample is what
-keeps that scan inside session `ob_query_timeout`; a full scan of one
-`stock` or `order_line` partition at large scale fails with `[4012] Timeout`.
+so each scan stays on that partition's leader. A full scan of one `stock` or
+`order_line` partition at large scale can exceed session `ob_query_timeout`
+and fail with `[4012] Timeout`. Raise it for this invocation with
+`mind-tpcc indexes --query-timeout <seconds>` (also applies to schema, load,
+check, debug, and drop when those commands are used). The flag does not
+rewrite the profile or `run-config.json`. Workers keep the server default.
 Global row counts
 are aggregated from `DBA_TAB_STATISTICS` and column NDVs from
 `DBA_PART_COL_STATISTICS` afterward.

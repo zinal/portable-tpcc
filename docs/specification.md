@@ -619,6 +619,18 @@ uses `worker_assignment[].max_inflight` from run-config (profile
 `runtime.max_inflight_per_worker`; `≤ 0` materializes as 100). Loader, check,
 and debug MUST NOT apply the value.
 
+`mind-tpcc --query-timeout` is a launch-time override of OceanBase session
+`ob_query_timeout` for this invocation, in seconds (`N` > 0). It MUST NOT
+rewrite the profile or an already materialized `run-config.json`. When the
+flag is set, `mind-tpcc` passes `--query-timeout=N` on orchestrated `schema`,
+`loader`, `indexes`, `check`, `debug`, and `drop` argv. `tpcc-oceanbase` MUST
+accept `--query-timeout=N`, `--query-timeout N`, and the gflags spelling
+`--query_timeout`, and use that value instead of
+`database.options.query_timeout` for those roles. Worker argv MUST NOT carry
+the flag; worker OLTP sessions keep the server default. Other DBMS binaries
+MUST ignore the flag. When the flag is omitted, OceanBase uses the profile
+value (default 600).
+
 ### 9.2. Integrity-check reports
 
 Orchestrated `check` uses instance `check-0` on the first loader host.
@@ -814,14 +826,14 @@ visible in the result settings/options.
   option, optional `CREATE INDEX … PARALLEL n`
   (`database.options.index_parallel`, default 4),
   `DBMS_STATS.GATHER_TABLE_STATS` with `method_opt=>'FOR ALL COLUMNS SIZE 1'`
-  (no histograms), `estimate_percent=>1`, and `block_sample=>true`. The call is
-  an anonymous block so OceanBase accepts the boolean argument. A HASH
-  partition has one leader, so each partition is gathered with `degree=>1`
-  (`partname` `p0`…`pN-1`, `granularity=>'PARTITION'`) and those gathers run
-  concurrently, one session per partition, capped at 64. The 1% block sample
-  keeps each statement inside session `ob_query_timeout`: a full scan of one
-  `stock` or `order_line` partition at large scale exceeds that timeout
-  (error 4012) even at `degree=>1`. Global row counts come
+  (no histograms). A HASH partition has one leader, so each partition is
+  gathered with `degree=>1` (`partname` `p0`…`pN-1`, `granularity=>'PARTITION'`)
+  and those gathers run concurrently, one session per partition, capped at 64.
+  Each statement uses session `ob_query_timeout`. A full scan of one `stock`
+  or `order_line` partition at large scale can exceed the profile default
+  (600s) and fail with error 4012. `mind-tpcc --query-timeout=<seconds>` raises
+  that session timeout for this invocation without rewriting the profile or
+  `run-config.json`. Global row counts come
   from `DBA_TAB_STATISTICS`. Column NDVs come from `DBA_PART_COL_STATISTICS`
   (partition-key NDV is the sum; other columns use the max partition NDV)
   without a second full-table scan. `item` is not HASH-partitioned and is one gather, with DOP equal to the

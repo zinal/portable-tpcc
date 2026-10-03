@@ -99,13 +99,13 @@ void PrintHelp() {
         "  --repeats             debug: executions per transaction type (default: 10)\n"
         "\n"
         "Orchestrated mode (mind-tpcc):\n"
-        "  schema  --run-config <path> --instance <name>\n"
-        "  loader  --run-config <path> --instance <name> [--threads=N]\n"
-        "  indexes --run-config <path> --instance <name>\n"
+        "  schema  --run-config <path> --instance <name> [--query-timeout=N]\n"
+        "  loader  --run-config <path> --instance <name> [--threads=N] [--query-timeout=N]\n"
+        "  indexes --run-config <path> --instance <name> [--query-timeout=N]\n"
         "  worker  --run-config <path> --instance <name> --start-at=<RFC3339-UTC> [--threads=N] [--max-inflight=N]\n"
-        "  check   --run-config <path> --instance <name> --after-import|--after-test [--threads=N]\n"
-        "  debug   --run-config <path> --instance <name> [--repeats=N]\n"
-        "  drop    --run-config <path> --instance <name>\n";
+        "  check   --run-config <path> --instance <name> --after-import|--after-test [--threads=N] [--query-timeout=N]\n"
+        "  debug   --run-config <path> --instance <name> [--repeats=N] [--query-timeout=N]\n"
+        "  drop    --run-config <path> --instance <name> [--query-timeout=N]\n";
 }
 
 ELogPriority ParseLogLevel(const std::string& level) {
@@ -167,13 +167,15 @@ bool ParseOrchestratedArgs(
     bool& afterRun,
     std::optional<int>& threads,
     std::optional<int>& repeats,
-    std::optional<int>& maxInflight)
+    std::optional<int>& maxInflight,
+    std::optional<int>& queryTimeout)
 {
     afterImport = false;
     afterRun = false;
     threads.reset();
     repeats.reset();
     maxInflight.reset();
+    queryTimeout.reset();
     for (int i = 2; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "--run-config" && i + 1 < argc) {
@@ -203,6 +205,12 @@ bool ParseOrchestratedArgs(
             repeats = std::stoi(arg.substr(std::string("--repeats=").size()));
         } else if (arg == "--repeats" && i + 1 < argc) {
             repeats = std::stoi(argv[++i]);
+        } else if (arg.rfind("--query-timeout=", 0) == 0) {
+            queryTimeout = std::stoi(arg.substr(std::string("--query-timeout=").size()));
+        } else if (arg.rfind("--query_timeout=", 0) == 0) {
+            queryTimeout = std::stoi(arg.substr(std::string("--query_timeout=").size()));
+        } else if ((arg == "--query-timeout" || arg == "--query_timeout") && i + 1 < argc) {
+            queryTimeout = std::stoi(argv[++i]);
         }
     }
     return !runConfig.empty() && !instance.empty();
@@ -217,7 +225,8 @@ int RunOrchestrated(
     bool afterRun,
     const std::optional<int>& threads,
     const std::optional<int>& repeats,
-    const std::optional<int>& maxInflight)
+    const std::optional<int>& maxInflight,
+    const std::optional<int>& queryTimeout)
 {
     if (threads.has_value() && *threads < 0) {
         throw std::runtime_error("--threads must not be negative");
@@ -228,24 +237,28 @@ int RunOrchestrated(
     if (maxInflight.has_value() && *maxInflight <= 0) {
         throw std::runtime_error("--max-inflight must be greater than zero");
     }
+    if (queryTimeout.has_value() && *queryTimeout <= 0) {
+        throw std::runtime_error("--query-timeout must be a positive integer (seconds)");
+    }
     if (command == "worker") {
         return NTpcc::RunWorkerFromRunConfig(runConfig, instance, startAt, threads, maxInflight);
     }
-    if (command == "loader") return NTpcc::RunLoaderFromRunConfig(runConfig, instance, threads);
-    if (command == "schema") return NTpcc::RunSchemaFromRunConfig(runConfig, instance);
-    if (command == "indexes") return NTpcc::RunIndexesFromRunConfig(runConfig, instance);
+    if (command == "loader") return NTpcc::RunLoaderFromRunConfig(runConfig, instance, threads, queryTimeout);
+    if (command == "schema") return NTpcc::RunSchemaFromRunConfig(runConfig, instance, queryTimeout);
+    if (command == "indexes") return NTpcc::RunIndexesFromRunConfig(runConfig, instance, queryTimeout);
     if (command == "check") {
         const int checkConcurrency = (!threads.has_value() || *threads <= 0) ? 1 : *threads;
         LOG_I("Starting orchestrated check " << instance
               << " (concurrency=" << checkConcurrency << ")...");
-        return NTpcc::RunCheckFromRunConfig(runConfig, instance, afterImport, afterRun, checkConcurrency);
+        return NTpcc::RunCheckFromRunConfig(
+            runConfig, instance, afterImport, afterRun, checkConcurrency, queryTimeout);
     }
     if (command == "debug") {
         const int n = repeats.value_or(NTpcc::kDefaultDebugRepeats);
         LOG_I("Starting orchestrated debug " << instance << " (repeats=" << n << ")...");
-        return NTpcc::RunDebugFromRunConfig(runConfig, instance, n);
+        return NTpcc::RunDebugFromRunConfig(runConfig, instance, n, queryTimeout);
     }
-    if (command == "drop") return NTpcc::RunDropFromRunConfig(runConfig, instance);
+    if (command == "drop") return NTpcc::RunDropFromRunConfig(runConfig, instance, queryTimeout);
     return 1;
 }
 
@@ -421,8 +434,10 @@ int main(int argc, char* argv[]) {
             std::optional<int> threads;
             std::optional<int> repeats;
             std::optional<int> maxInflight;
+            std::optional<int> queryTimeout;
             if (ParseOrchestratedArgs(
-                    argc, argv, runConfig, instance, startAt, afterImport, afterRun, threads, repeats, maxInflight)) {
+                    argc, argv, runConfig, instance, startAt, afterImport, afterRun,
+                    threads, repeats, maxInflight, queryTimeout)) {
                 if (earlyCommand == "worker" && !startAt.has_value()) {
                     std::cerr << "Error: worker requires --start-at=<RFC3339-UTC>\n";
                     return 1;
@@ -434,7 +449,8 @@ int main(int argc, char* argv[]) {
                 NTpcc::InitLogging(TLOG_INFO);
                 try {
                     return RunOrchestrated(
-                        earlyCommand, runConfig, instance, startAt, afterImport, afterRun, threads, repeats, maxInflight);
+                        earlyCommand, runConfig, instance, startAt, afterImport, afterRun,
+                        threads, repeats, maxInflight, queryTimeout);
                 } catch (const std::exception& ex) {
                     LOG_E("Fatal error: " << ex.what());
                     return 1;

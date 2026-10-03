@@ -73,6 +73,7 @@ drop database objects; use `drop` for that.
 | `--ramp-up <duration>` | profile `phases.ramp_up` | Warmup override (`30s`, `5m`, …). |
 | `--measurement <duration>` | profile `phases.measurement` | Measurement override. |
 | `--threads <n>` | profile worker/loader threads and `runtime.check_concurrency` | Launch-time override for this invocation. `test`/`load`/`run` pass `--threads=N` to workers and loaders (`0` = auto at the binary). `check`/`run` pass a resolved session count to `check` (`0` = auto `min(scale.warehouses, 32)`). Does not rewrite an existing run-config. |
+| `--query-timeout <sec>` | profile `database.options.query_timeout` (OceanBase, default 600) | Launch-time override for this invocation (`N` > 0, seconds). `schema`/`load`/`indexes`/`check`/`debug`/`drop`/`run` pass `--query-timeout=N` to those roles. `tpcc-oceanbase` sets session `ob_query_timeout` from it. Does not rewrite the profile or an existing run-config. Workers are unchanged. Other DBMS binaries ignore the flag. |
 | `--max-inflight <n>` | profile `runtime.max_inflight_per_worker` | Launch-time override for this invocation's test workers (`N > 0`). `test`/`run` pass `--max-inflight=N` to each worker. Sets the max in-flight async transactions and the connection-pool size (`min(terminals, N)`; YDB: concurrent sessions). Does not rewrite an existing run-config. |
 | `--insecure-ignore-host-key` | profile `ssh.insecure_ignore_host_key` | Skip SSH host-key checking (lab / reimaged hosts). Same as `ssh.insecure_ignore_host_key: true`. Recorded in run-state. `known_hosts` is then optional. |
 | `--skip <step>` | none | Skip a `run` pipeline step. Repeatable. Names: `deploy`, `schema`, `load`, `indexes`, `check_after_import`, `test` (alias `start`), `check_after_test` (alias `check_after_run`), `collect`, `consolidate`. |
@@ -217,7 +218,7 @@ Orchestrated profiles do not.
 | --- | --- | --- | --- |
 | `partitions` | `-1`, `0`, or `1`…`8192` | `0` | `-1` off, `0` derive from warehouses, `N` explicit HASH count (schema time only). Does not control `item`: on OceanBase that table is always `DUPLICATE_SCOPE = cluster`. |
 | `foreign_keys` | bool or `on`/`off`/… | `on` | FOREIGN KEY constraints at schema time. |
-| `query_timeout` | positive int (seconds) | `600` | Session `ob_query_timeout` for bulk import / `CREATE INDEX` / `DBMS_STATS` / integrity checks / pre-flight catalog queries. |
+| `query_timeout` | positive int (seconds) | `600` | Session `ob_query_timeout` for bulk import / `CREATE INDEX` / `DBMS_STATS` / integrity checks / pre-flight catalog queries. `mind-tpcc --query-timeout` overrides it for one invocation without editing the profile. |
 | `index_parallel` | positive int | `4` | `CREATE INDEX … PARALLEL n`. `1` = serial. |
 
 OceanBase user: `database.user`, else `TPCC_OB_USER`, else `root@root`.
@@ -395,13 +396,13 @@ Local aliases: `init` ≡ `schema`; `import` (standalone load); `run`
 Orchestrated invocation (written by mind):
 
 ```text
-schema  --run-config <path> --instance <name>
-loader  --run-config <path> --instance <name> [--threads=N]
-indexes --run-config <path> --instance <name>
+schema  --run-config <path> --instance <name> [--query-timeout=N]
+loader  --run-config <path> --instance <name> [--threads=N] [--query-timeout=N]
+indexes --run-config <path> --instance <name> [--query-timeout=N]
 worker  --run-config <path> --instance <name> --start-at=<RFC3339-UTC> [--threads=N] [--max-inflight=N]
-check   --run-config <path> --instance <name> --after-import|--after-test [--threads=N]
-debug   --run-config <path> --instance <name> [--repeats=N]
-drop    --run-config <path> --instance <name>
+check   --run-config <path> --instance <name> --after-import|--after-test [--threads=N] [--query-timeout=N]
+debug   --run-config <path> --instance <name> [--repeats=N] [--query-timeout=N]
+drop    --run-config <path> --instance <name> [--query-timeout=N]
 ```
 
 ### Shared flags

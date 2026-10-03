@@ -28,6 +28,7 @@ type Config struct {
 	Threads        *int
 	MaxInflight    *int
 	Repeats        *int
+	QueryTimeout   *int
 	Force          bool
 }
 
@@ -142,6 +143,18 @@ func run(args []string, interrupt context.Context) int {
 			}
 			cfg.MaxInflight = &n
 			i = next
+		case arg == "--query-timeout" || strings.HasPrefix(arg, "--query-timeout="):
+			n, next, err := requireFlagInt(rest, i, "--query-timeout")
+			if err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 2
+			}
+			if n <= 0 {
+				fmt.Fprintln(os.Stderr, "--query-timeout must be greater than zero")
+				return 2
+			}
+			cfg.QueryTimeout = &n
+			i = next
 		case arg == "--repeats" || strings.HasPrefix(arg, "--repeats="):
 			n, next, err := requireFlagInt(rest, i, "--repeats")
 			if err != nil {
@@ -203,6 +216,7 @@ func run(args []string, interrupt context.Context) int {
 		Threads:        cfg.Threads,
 		MaxInflight:    cfg.MaxInflight,
 		Repeats:        cfg.Repeats,
+		QueryTimeout:   cfg.QueryTimeout,
 		Force:          cfg.Force,
 	}
 
@@ -297,7 +311,7 @@ func runPlan(opts orchestrator.Options) int {
 	}
 	var plan *config.PlanSnapshot
 	if err := withMaterializedProfileLock(o, func(ctx *orchestrator.Context) error {
-		plan = config.BuildPlanSnapshot(ctx.RunConfig, o.Opts.Threads, o.Opts.MaxInflight)
+		plan = config.BuildPlanSnapshot(ctx.RunConfig, o.Opts.Threads, o.Opts.MaxInflight, o.Opts.QueryTimeout)
 		return nil
 	}); err != nil {
 		return exitErr(err)
@@ -666,6 +680,9 @@ Options:
   --ramp-up <duration>     Override phases.ramp_up (warmup), e.g. 30s, 5m
   --measurement <duration> Override phases.measurement, e.g. 2m, 120m
   --threads <n>            Override worker/loader threads and check sessions (0 = auto)
+  --query-timeout <sec>    Override OceanBase ob_query_timeout for this invocation
+                           (schema, load, indexes, check, debug, drop; > 0).
+                           Does not rewrite the profile or run-config. Workers unchanged
   --max-inflight <n>       Override max in-flight transactions and connection-pool size per test worker (> 0)
   --repeats <n>            Override debug executions per transaction type (default: 10)
   --insecure-ignore-host-key  Skip SSH host-key checking (lab / reimaged hosts)
