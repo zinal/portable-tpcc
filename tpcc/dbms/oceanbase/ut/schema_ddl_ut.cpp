@@ -77,6 +77,8 @@ TEST(ObGatherStats, HashPartitionsAreSeparateCallsWithoutHistograms) {
     const auto calls = BuildObGatherTableStatsCalls("tpcc", TABLE_STOCK, 36, 36);
     ASSERT_EQ(calls.size(), 36u);
     EXPECT_NE(calls.front().Sql.find("CALL DBMS_STATS.GATHER_TABLE_STATS('tpcc', 'stock', 'p0'"), std::string::npos);
+    EXPECT_EQ(calls.front().Sql.find("estimate_percent"), std::string::npos);
+    EXPECT_EQ(calls.front().Sql.find("block_sample"), std::string::npos);
     EXPECT_NE(calls.front().Sql.find("degree=>1"), std::string::npos);
     EXPECT_EQ(calls.front().Sql.find("degree=>36"), std::string::npos);
     EXPECT_NE(calls.front().Sql.find("granularity=>'PARTITION'"), std::string::npos);
@@ -92,6 +94,7 @@ TEST(ObGatherStats, ItemAndPlainTablesStayOneCall) {
     const auto item = BuildObGatherTableStatsCalls("tpcc", TABLE_ITEM, 36, 36);
     ASSERT_EQ(item.size(), 1u);
     EXPECT_NE(item[0].Sql.find("CALL DBMS_STATS.GATHER_TABLE_STATS('tpcc', 'item', degree=>36"), std::string::npos);
+    EXPECT_EQ(item[0].Sql.find("estimate_percent"), std::string::npos);
     EXPECT_EQ(item[0].Sql.find("granularity"), std::string::npos);
     EXPECT_NE(item[0].Sql.find("method_opt=>'FOR ALL COLUMNS SIZE 1'"), std::string::npos);
 

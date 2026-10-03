@@ -238,6 +238,23 @@ func TestRun_maxInflightNonPositiveRejected(t *testing.T) {
 	}
 }
 
+func TestRun_queryTimeoutNonPositiveRejected(t *testing.T) {
+	for _, args := range [][]string{
+		{"validate", "--query-timeout", "0"},
+		{"validate", "--query-timeout=-5"},
+	} {
+		stderr := captureStderr(t, func() {
+			code := Run(args)
+			if code != 2 {
+				t.Fatalf("Run(%v)=%d, want 2", args, code)
+			}
+		})
+		if !strings.Contains(stderr, "--query-timeout must be greater than zero") {
+			t.Fatalf("stderr=%q", stderr)
+		}
+	}
+}
+
 func TestRun_threadsNegativeRejected(t *testing.T) {
 	dir := t.TempDir()
 	profilePath := writeCLITestProfile(t, dir)

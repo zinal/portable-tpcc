@@ -2,6 +2,7 @@
 
 #include <adapter.h>
 
+#include <optional>
 #include <string>
 
 namespace NTpcc {
@@ -34,6 +35,7 @@ int RunCheckFromRunConfig(
     const std::string& instance,
     bool afterImport,
     bool afterRun,
-    int checkConcurrency = 1);
+    int checkConcurrency = 1,
+    const std::optional<int>& queryTimeoutSeconds = {});
 
 } // namespace NTpcc

@@ -57,6 +57,10 @@ type Options struct {
 	// Repeats, when non-nil, is a launch-time --repeats override for the
 	// diagnostic debug role. It does not rewrite run-config.json.
 	Repeats *int
+	// QueryTimeout, when non-nil, is a launch-time --query-timeout override
+	// (seconds, > 0) for schema, loader, indexes, check, debug, and drop.
+	// It does not rewrite the profile or run-config.json. Workers are unchanged.
+	QueryTimeout *int
 	// Force is consolidate --force. It selects and loads an existing run by
 	// profile identity (name, DBMS, worker hosts, authentication) instead of
 	// profile.sha256. Workload edits are ignored. The recorded run-config is
@@ -403,7 +407,7 @@ func (o *Orchestrator) Plan() (*config.PlanSnapshot, error) {
 	if err != nil {
 		return nil, err
 	}
-	return config.BuildPlanSnapshot(ctx.RunConfig, o.Opts.Threads, o.Opts.MaxInflight), nil
+	return config.BuildPlanSnapshot(ctx.RunConfig, o.Opts.Threads, o.Opts.MaxInflight, o.Opts.QueryTimeout), nil
 }
 
 // Deploy uploads the shared worker binary to runtime hosts.
@@ -569,7 +573,7 @@ func (o *Orchestrator) schema(ctx *Context) error {
 
 	hostKey := ctx.RunConfig.LoadAssignment[0].Host
 	instance := "schema-0"
-	argv := config.SchemaArgv("run-config.json", instance)
+	argv := config.SchemaArgv("run-config.json", instance, o.Opts.QueryTimeout)
 	proc, err := o.launchRole(ctx, sessions, "schema", hostKey, instance, argv)
 	if err != nil {
 		return err
@@ -609,7 +613,7 @@ func (o *Orchestrator) load(ctx *Context) error {
 			"load shard %s on %s: ranges=%v owns_global_data=%v threads=%d",
 			l.Instance, l.Host, l.WarehouseRanges, l.OwnsGlobalData, threads,
 		)
-		argv := config.LoaderArgv("run-config.json", l.Instance, o.Opts.Threads)
+		argv := config.LoaderArgv("run-config.json", l.Instance, o.Opts.Threads, o.Opts.QueryTimeout)
 		proc, err := o.launchRole(ctx, sessions, "loader", l.Host, l.Instance, argv)
 		if err != nil {
 			_ = o.stopPeers(ctx, sessions)
@@ -643,7 +647,7 @@ func (o *Orchestrator) indexes(ctx *Context) error {
 
 	hostKey := ctx.RunConfig.LoadAssignment[0].Host
 	instance := "indexes-0"
-	argv := config.IndexesArgv("run-config.json", instance)
+	argv := config.IndexesArgv("run-config.json", instance, o.Opts.QueryTimeout)
 	proc, err := o.launchRole(ctx, sessions, "indexes", hostKey, instance, argv)
 	if err != nil {
 		return err
@@ -688,7 +692,7 @@ func (o *Orchestrator) check(ctx *Context, phase string) error {
 		ctx.RunConfig.Runtime.CheckConcurrency,
 		o.Opts.Threads,
 	)
-	argv := config.CheckArgv("run-config.json", instance, phase, threads)
+	argv := config.CheckArgv("run-config.json", instance, phase, threads, o.Opts.QueryTimeout)
 	proc, err := o.launchRole(ctx, sessions, "check", hostKey, instance, argv)
 	if err != nil {
 		return err
@@ -752,7 +756,7 @@ func (o *Orchestrator) debug(ctx *Context) error {
 	hostKey := ctx.RunConfig.LoadAssignment[0].Host
 	instance := "debug-0"
 	repeats := config.EffectiveDebugRepeats(o.Opts.Repeats)
-	argv := config.DebugArgv("run-config.json", instance, repeats)
+	argv := config.DebugArgv("run-config.json", instance, repeats, o.Opts.QueryTimeout)
 	proc, err := o.launchRole(ctx, sessions, "debug", hostKey, instance, argv)
 	if err != nil {
 		return err
@@ -1263,7 +1267,7 @@ func (o *Orchestrator) dropDatabase(ctx *Context, sessions map[string]remote.Ses
 		return fmt.Errorf("drop: worker binary missing on %s; run `mind-tpcc deploy --profile ...` first", hostKey)
 	}
 	instance := "drop-0"
-	argv := config.DropArgv("run-config.json", instance)
+	argv := config.DropArgv("run-config.json", instance, o.Opts.QueryTimeout)
 	progress.Printf("drop: drop TPC-C objects via %s/%s", hostKey, instance)
 	proc, err := o.launchRole(ctx, sessions, "drop", hostKey, instance, argv)
 	if err != nil {

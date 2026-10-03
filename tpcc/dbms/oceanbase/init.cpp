@@ -637,8 +637,8 @@ void AnalyzeTables(
     const std::string db = EffectiveDatabase(cfg);
     auto conn = ConnectToTargetDatabase(cfg);
     // Fresh session: raise ob_query_timeout via connection property query_timeout.
-    // HASH partitions are gathered concurrently, each with degree 1, so a
-    // stock/order_line scan stays inside ob_query_timeout and on its own leader.
+    // HASH partitions are gathered concurrently, each with degree 1, on that
+    // partition's leader. A large partition scan needs a longer query_timeout.
     conn->ConfigureBulkLoadSession();
 
     if (!IsOceanBaseServer(*conn)) {

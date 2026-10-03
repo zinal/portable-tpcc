@@ -60,7 +60,7 @@ func TestValidateCleanupRunID(t *testing.T) {
 }
 
 func TestDropArgv(t *testing.T) {
-	got := config.DropArgv("run-config.json", "drop-0")
+	got := config.DropArgv("run-config.json", "drop-0", nil)
 	want := []string{"drop", "--run-config", "run-config.json", "--instance", "drop-0"}
 	if len(got) != len(want) {
 		t.Fatalf("argv=%v", got)

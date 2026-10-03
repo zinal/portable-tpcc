@@ -51,7 +51,7 @@ func TestBuildPlanSnapshotResolvesCheckThreads(t *testing.T) {
 		Scale:   ScaleBlock{Warehouses: 10},
 		Runtime: RunRuntime{CheckConcurrency: 0},
 	}
-	plan := BuildPlanSnapshot(rc, nil, nil)
+	plan := BuildPlanSnapshot(rc, nil, nil, nil)
 	want := []string{
 		"check",
 		"--run-config", "run-config.json",
@@ -63,7 +63,7 @@ func TestBuildPlanSnapshotResolvesCheckThreads(t *testing.T) {
 		t.Fatalf("CheckArgvImport=%v, want %v", plan.CheckArgvImport, want)
 	}
 	cli := 16
-	overridden := BuildPlanSnapshot(rc, &cli, nil)
+	overridden := BuildPlanSnapshot(rc, &cli, nil, nil)
 	if got := overridden.CheckArgvImport; len(got) == 0 || got[len(got)-1] != "--threads=16" {
 		t.Fatalf("CLI CheckArgvImport=%v, want --threads=16", overridden.CheckArgvImport)
 	}
@@ -84,7 +84,7 @@ func TestBuildPlanSnapshotPassesThreadsToWorkerAndLoader(t *testing.T) {
 			Threads:  2,
 		}},
 	}
-	plan := BuildPlanSnapshot(rc, nil, nil)
+	plan := BuildPlanSnapshot(rc, nil, nil, nil)
 	if got := plan.WorkerArgv["worker-a"]; len(got) != 5 {
 		t.Fatalf("unset worker argv %v, want 5 args without --threads", got)
 	}
@@ -92,7 +92,7 @@ func TestBuildPlanSnapshotPassesThreadsToWorkerAndLoader(t *testing.T) {
 		t.Fatalf("unset loader argv %v, want 5 args without --threads", got)
 	}
 	cli := 64
-	overridden := BuildPlanSnapshot(rc, &cli, nil)
+	overridden := BuildPlanSnapshot(rc, &cli, nil, nil)
 	if got := overridden.WorkerArgv["worker-a"]; len(got) == 0 || got[len(got)-1] != "--threads=64" {
 		t.Fatalf("worker argv %v, want --threads=64", got)
 	}
@@ -103,7 +103,7 @@ func TestBuildPlanSnapshotPassesThreadsToWorkerAndLoader(t *testing.T) {
 		t.Fatalf("assignment threads=%d, want 2 (run-config unchanged)", overridden.WorkerAssignment[0].Threads)
 	}
 	zero := 0
-	auto := BuildPlanSnapshot(rc, &zero, nil)
+	auto := BuildPlanSnapshot(rc, &zero, nil, nil)
 	if got := auto.WorkerArgv["worker-a"]; len(got) == 0 || got[len(got)-1] != "--threads=0" {
 		t.Fatalf("auto worker argv %v, want --threads=0", got)
 	}
@@ -125,7 +125,7 @@ func TestBuildPlanSnapshotPassesMaxInflightToWorkerOnly(t *testing.T) {
 			MaxInflight: 100,
 		}},
 	}
-	plan := BuildPlanSnapshot(rc, nil, nil)
+	plan := BuildPlanSnapshot(rc, nil, nil, nil)
 	if got := plan.WorkerArgv["worker-a"]; len(got) != 5 {
 		t.Fatalf("unset worker argv %v, want 5 args without --max-inflight", got)
 	}
@@ -133,7 +133,7 @@ func TestBuildPlanSnapshotPassesMaxInflightToWorkerOnly(t *testing.T) {
 		t.Fatalf("loader argv %v, want no max-inflight flag", got)
 	}
 	inflight := 256
-	overridden := BuildPlanSnapshot(rc, nil, &inflight)
+	overridden := BuildPlanSnapshot(rc, nil, &inflight, nil)
 	if got := overridden.WorkerArgv["worker-a"]; len(got) == 0 || got[len(got)-1] != "--max-inflight=256" {
 		t.Fatalf("worker argv %v, want --max-inflight=256", got)
 	}
@@ -144,16 +144,54 @@ func TestBuildPlanSnapshotPassesMaxInflightToWorkerOnly(t *testing.T) {
 		t.Fatalf("assignment max_inflight=%d, want 100 (run-config unchanged)", overridden.WorkerAssignment[0].MaxInflight)
 	}
 	threads := 8
-	both := BuildPlanSnapshot(rc, &threads, &inflight)
+	both := BuildPlanSnapshot(rc, &threads, &inflight, nil)
 	got := both.WorkerArgv["worker-a"]
 	if len(got) < 2 || got[len(got)-2] != "--threads=8" || got[len(got)-1] != "--max-inflight=256" {
 		t.Fatalf("worker argv %v, want --threads=8 --max-inflight=256", got)
 	}
 }
 
+func TestBuildPlanSnapshotPassesQueryTimeoutToBulkRoles(t *testing.T) {
+	t.Parallel()
+	rc := &RunConfig{
+		Scale: ScaleBlock{Warehouses: 10},
+		LoadAssignment: []LoadAssignmentJSON{{
+			Instance: "loader-a",
+			Host:     "h1",
+			Threads:  2,
+		}},
+		WorkerAssignment: []WorkerAssignmentJSON{{
+			Instance: "worker-a",
+			Host:     "h1",
+			Threads:  2,
+		}},
+	}
+	timeout := 7200
+	plan := BuildPlanSnapshot(rc, nil, nil, &timeout)
+	if got := plan.IndexesArgv; len(got) == 0 || got[len(got)-1] != "--query-timeout=7200" {
+		t.Fatalf("indexes argv %v, want --query-timeout=7200", got)
+	}
+	if got := plan.LoaderArgv["loader-a"]; len(got) == 0 || got[len(got)-1] != "--query-timeout=7200" {
+		t.Fatalf("loader argv %v, want --query-timeout=7200", got)
+	}
+	if got := plan.SchemaArgv; len(got) == 0 || got[len(got)-1] != "--query-timeout=7200" {
+		t.Fatalf("schema argv %v, want --query-timeout=7200", got)
+	}
+	for _, argv := range [][]string{plan.CheckArgvImport, plan.CheckArgvTest, plan.DebugArgv} {
+		if len(argv) == 0 || argv[len(argv)-1] != "--query-timeout=7200" {
+			t.Fatalf("argv %v, want --query-timeout=7200", argv)
+		}
+	}
+	for _, arg := range plan.WorkerArgv["worker-a"] {
+		if arg == "--query-timeout=7200" || len(arg) > 16 && arg[:16] == "--query-timeout=" {
+			t.Fatalf("worker argv %v must not carry --query-timeout", plan.WorkerArgv["worker-a"])
+		}
+	}
+}
+
 func TestCheckArgvIncludesThreads(t *testing.T) {
 	t.Parallel()
-	got := CheckArgv("run-config.json", "check-0", "after-import", 10)
+	got := CheckArgv("run-config.json", "check-0", "after-import", 10, nil)
 	want := []string{
 		"check",
 		"--run-config", "run-config.json",
@@ -164,7 +202,7 @@ func TestCheckArgvIncludesThreads(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("CheckArgv=%v, want %v", got, want)
 	}
-	serial := CheckArgv("run-config.json", "check-0", "after-test", 0)
+	serial := CheckArgv("run-config.json", "check-0", "after-test", 0, nil)
 	wantSerial := []string{
 		"check",
 		"--run-config", "run-config.json",
@@ -178,7 +216,7 @@ func TestCheckArgvIncludesThreads(t *testing.T) {
 
 func TestDebugArgvIncludesRepeats(t *testing.T) {
 	t.Parallel()
-	got := DebugArgv("run-config.json", "debug-0", 0)
+	got := DebugArgv("run-config.json", "debug-0", 0, nil)
 	want := []string{
 		"debug",
 		"--run-config", "run-config.json",
@@ -188,7 +226,7 @@ func TestDebugArgvIncludesRepeats(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("DebugArgv default=%v, want %v", got, want)
 	}
-	got = DebugArgv("run-config.json", "debug-0", 3)
+	got = DebugArgv("run-config.json", "debug-0", 3, nil)
 	if got[len(got)-1] != "--repeats=3" {
 		t.Fatalf("DebugArgv override=%v, want --repeats=3", got)
 	}

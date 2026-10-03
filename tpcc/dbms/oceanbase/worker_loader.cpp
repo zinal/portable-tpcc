@@ -39,9 +39,11 @@ TObSchemaOptions MakeSchemaOptions(const TRunConfigDocument& d) {
 int RunLoaderFromRunConfig(
     const std::string& runConfigPath,
     const std::string& instance,
-    const std::optional<int>& threadOverride)
+    const std::optional<int>& threadOverride,
+    const std::optional<int>& queryTimeoutSeconds)
 {
-    const auto doc = LoadRunConfigDocument(runConfigPath);
+    auto doc = LoadRunConfigDocument(runConfigPath);
+    ApplyObQueryTimeoutOverride(doc, queryTimeoutSeconds);
     TLoaderRoleHooks hooks;
     hooks.Calibrate = [](const TRunConfigDocument& d) {
         const std::string connection = BuildObConnectionString(d);
@@ -119,8 +121,13 @@ int RunWorkerFromRunConfig(
         doc, instance, startAtRfc3339, kObIdentity, hooks, threadOverride, maxInflightOverride);
 }
 
-int RunSchemaFromRunConfig(const std::string& runConfigPath, const std::string& instance) {
-    const auto doc = LoadRunConfigDocument(runConfigPath);
+int RunSchemaFromRunConfig(
+    const std::string& runConfigPath,
+    const std::string& instance,
+    const std::optional<int>& queryTimeoutSeconds)
+{
+    auto doc = LoadRunConfigDocument(runConfigPath);
+    ApplyObQueryTimeoutOverride(doc, queryTimeoutSeconds);
     return RunOrchestratedSchema(doc, instance, [instance](const TRunConfigDocument& d) {
         const std::string connection = BuildObConnectionString(d);
         CheckDbForInit(connection, d.Path);
@@ -134,8 +141,13 @@ int RunSchemaFromRunConfig(const std::string& runConfigPath, const std::string& 
     });
 }
 
-int RunIndexesFromRunConfig(const std::string& runConfigPath, const std::string& instance) {
-    const auto doc = LoadRunConfigDocument(runConfigPath);
+int RunIndexesFromRunConfig(
+    const std::string& runConfigPath,
+    const std::string& instance,
+    const std::optional<int>& queryTimeoutSeconds)
+{
+    auto doc = LoadRunConfigDocument(runConfigPath);
+    ApplyObQueryTimeoutOverride(doc, queryTimeoutSeconds);
     return RunOrchestratedIndexes(doc, instance, [instance](const TRunConfigDocument& d) {
         const std::string connection = BuildObConnectionString(d);
         CheckDbForIndexes(connection, d.Path);
@@ -149,8 +161,13 @@ int RunIndexesFromRunConfig(const std::string& runConfigPath, const std::string&
     });
 }
 
-int RunDropFromRunConfig(const std::string& runConfigPath, const std::string& instance) {
-    const auto doc = LoadRunConfigDocument(runConfigPath);
+int RunDropFromRunConfig(
+    const std::string& runConfigPath,
+    const std::string& instance,
+    const std::optional<int>& queryTimeoutSeconds)
+{
+    auto doc = LoadRunConfigDocument(runConfigPath);
+    ApplyObQueryTimeoutOverride(doc, queryTimeoutSeconds);
     return RunOrchestratedDrop(doc, instance, [instance](const TRunConfigDocument& d) {
         const std::string connection = BuildObConnectionString(d);
         TObAdminAdapter admin(connection, d.Path);
@@ -180,9 +197,11 @@ TDebugReport RunObDebugProbe(
 int RunDebugFromRunConfig(
     const std::string& runConfigPath,
     const std::string& instance,
-    int repeats)
+    int repeats,
+    const std::optional<int>& queryTimeoutSeconds)
 {
-    const auto doc = LoadRunConfigDocument(runConfigPath);
+    auto doc = LoadRunConfigDocument(runConfigPath);
+    ApplyObQueryTimeoutOverride(doc, queryTimeoutSeconds);
     return RunOrchestratedDebug(doc, instance, repeats,
         [](const TRunConfigDocument& d, TDebugProbeRequest req) {
             const std::string connection = BuildObConnectionString(d);

@@ -754,13 +754,15 @@ int RunCheckFromRunConfig(
     const std::string& instance,
     bool afterImport,
     bool afterRun,
-    int checkConcurrency)
+    int checkConcurrency,
+    const std::optional<int>& queryTimeoutSeconds)
 {
     if (afterImport == afterRun) {
         throw std::runtime_error("check requires exactly one of --after-import or --after-test");
     }
 
-    const auto doc = LoadRunConfigDocument(runConfigPath);
+    auto doc = LoadRunConfigDocument(runConfigPath);
+    ApplyObQueryTimeoutOverride(doc, queryTimeoutSeconds);
     const std::string instanceDir = InstanceWorkDir(doc, "check", instance);
     EnsureInstanceDir(instanceDir);
     const auto paths = MakeArtifactPaths(instanceDir);

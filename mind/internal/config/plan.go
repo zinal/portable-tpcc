@@ -19,6 +19,13 @@ func appendMaxInflightFlag(argv []string, maxInflight *int) []string {
 	return argv
 }
 
+func appendQueryTimeoutFlag(argv []string, queryTimeout *int) []string {
+	if queryTimeout != nil {
+		return append(argv, fmt.Sprintf("--query-timeout=%d", *queryTimeout))
+	}
+	return argv
+}
+
 // WorkerArgv returns argv for launching a worker.
 // When startAt is non-empty it appends --start-at=<RFC3339-UTC>.
 // threads, when non-nil, is a launch-time override (0 = auto at the binary).
@@ -39,39 +46,42 @@ func WorkerArgv(runConfigPath, instance, startAt string, threads, maxInflight *i
 
 // LoaderArgv returns argv for launching a loader.
 // threads, when non-nil, is a launch-time override (0 = auto).
-func LoaderArgv(runConfigPath, instance string, threads *int) []string {
-	return appendThreadFlag([]string{
+func LoaderArgv(runConfigPath, instance string, threads, queryTimeout *int) []string {
+	return appendQueryTimeoutFlag(appendThreadFlag([]string{
 		"loader",
 		"--run-config", runConfigPath,
 		"--instance", instance,
-	}, threads)
+	}, threads), queryTimeout)
 }
 
 // SchemaArgv returns argv for the schema role.
-func SchemaArgv(runConfigPath, instance string) []string {
-	return []string{
+// queryTimeout, when non-nil, is a launch-time ob_query_timeout override (seconds).
+func SchemaArgv(runConfigPath, instance string, queryTimeout *int) []string {
+	return appendQueryTimeoutFlag([]string{
 		"schema",
 		"--run-config", runConfigPath,
 		"--instance", instance,
-	}
+	}, queryTimeout)
 }
 
 // IndexesArgv returns argv for the post-load indexes role.
-func IndexesArgv(runConfigPath, instance string) []string {
-	return []string{
+// queryTimeout, when non-nil, is a launch-time ob_query_timeout override (seconds).
+func IndexesArgv(runConfigPath, instance string, queryTimeout *int) []string {
+	return appendQueryTimeoutFlag([]string{
 		"indexes",
 		"--run-config", runConfigPath,
 		"--instance", instance,
-	}
+	}, queryTimeout)
 }
 
 // DropArgv returns argv for the drop admin helper (mind-tpcc drop).
-func DropArgv(runConfigPath, instance string) []string {
-	return []string{
+// queryTimeout, when non-nil, is a launch-time ob_query_timeout override (seconds).
+func DropArgv(runConfigPath, instance string, queryTimeout *int) []string {
+	return appendQueryTimeoutFlag([]string{
 		"drop",
 		"--run-config", runConfigPath,
 		"--instance", instance,
-	}
+	}, queryTimeout)
 }
 
 // DefaultCheckConcurrencyCap limits auto-selected parallel check sessions.
@@ -103,7 +113,8 @@ func EffectiveCheckConcurrency(warehouses, configured int, cliThreads *int) int 
 }
 
 // CheckArgv returns argv for the check role.
-func CheckArgv(runConfigPath, instance, phase string, threads int) []string {
+// queryTimeout, when non-nil, is a launch-time ob_query_timeout override (seconds).
+func CheckArgv(runConfigPath, instance, phase string, threads int, queryTimeout *int) []string {
 	flag := "--after-test"
 	if phase == "after-import" {
 		flag = "--after-import"
@@ -117,23 +128,23 @@ func CheckArgv(runConfigPath, instance, phase string, threads int) []string {
 	if threads > 0 {
 		argv = append(argv, fmt.Sprintf("--threads=%d", threads))
 	}
-	return argv
+	return appendQueryTimeoutFlag(argv, queryTimeout)
 }
 
 // DefaultDebugRepeats is sequential executions per TPC-C transaction type.
 const DefaultDebugRepeats = 10
 
 // DebugArgv returns argv for the diagnostic debug role.
-func DebugArgv(runConfigPath, instance string, repeats int) []string {
+func DebugArgv(runConfigPath, instance string, repeats int, queryTimeout *int) []string {
 	if repeats <= 0 {
 		repeats = DefaultDebugRepeats
 	}
-	return []string{
+	return appendQueryTimeoutFlag([]string{
 		"debug",
 		"--run-config", runConfigPath,
 		"--instance", instance,
 		fmt.Sprintf("--repeats=%d", repeats),
-	}
+	}, queryTimeout)
 }
 
 // EffectiveDebugRepeats is the per-type execution count passed as --repeats.
@@ -166,15 +177,17 @@ type PlanSnapshot struct {
 // threads, when non-nil, is a launch-time --threads override: worker/loader
 // argv get --threads=N, and check argv uses EffectiveCheckConcurrency.
 // maxInflight, when non-nil, is a launch-time --max-inflight override on
-// worker argv only. Neither override rewrites run-config assignments.
-func BuildPlanSnapshot(rc *RunConfig, threads, maxInflight *int) *PlanSnapshot {
+// worker argv only. queryTimeout, when non-nil, is a launch-time
+// --query-timeout override on schema, loader, indexes, check, debug, and
+// drop argv. Workers are unchanged. None of these rewrite run-config.
+func BuildPlanSnapshot(rc *RunConfig, threads, maxInflight, queryTimeout *int) *PlanSnapshot {
 	workerArgv := make(map[string][]string)
 	for _, w := range rc.WorkerAssignment {
 		workerArgv[w.Instance] = WorkerArgv("run-config.json", w.Instance, "", threads, maxInflight)
 	}
 	loaderArgv := make(map[string][]string)
 	for _, l := range rc.LoadAssignment {
-		loaderArgv[l.Instance] = LoaderArgv("run-config.json", l.Instance, threads)
+		loaderArgv[l.Instance] = LoaderArgv("run-config.json", l.Instance, threads, queryTimeout)
 	}
 	schemaInstance := "schema-0"
 	indexesInstance := "indexes-0"
@@ -191,11 +204,11 @@ func BuildPlanSnapshot(rc *RunConfig, threads, maxInflight *int) *PlanSnapshot {
 		WorkerAssignment: rc.WorkerAssignment,
 		WorkerArgv:       workerArgv,
 		LoaderArgv:       loaderArgv,
-		SchemaArgv:       SchemaArgv("run-config.json", schemaInstance),
-		IndexesArgv:      IndexesArgv("run-config.json", indexesInstance),
-		CheckArgvImport:  CheckArgv("run-config.json", "check-0", "after-import", checkThreads),
-		CheckArgvTest:    CheckArgv("run-config.json", "check-0", "after-test", checkThreads),
-		DebugArgv:        DebugArgv("run-config.json", "debug-0", EffectiveDebugRepeats(nil)),
+		SchemaArgv:       SchemaArgv("run-config.json", schemaInstance, queryTimeout),
+		IndexesArgv:      IndexesArgv("run-config.json", indexesInstance, queryTimeout),
+		CheckArgvImport:  CheckArgv("run-config.json", "check-0", "after-import", checkThreads, queryTimeout),
+		CheckArgvTest:    CheckArgv("run-config.json", "check-0", "after-test", checkThreads, queryTimeout),
+		DebugArgv:        DebugArgv("run-config.json", "debug-0", EffectiveDebugRepeats(nil), queryTimeout),
 	}
 }
 
