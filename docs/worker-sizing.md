@@ -73,9 +73,11 @@ use that IO pool: sessions are taken lazily from QueryClient
 That is a bad client layout even though think time keeps most terminals
 idle:
 
-- Each worker sleeps **1 ms per terminal** while starting them, then must
-  finish prepare before `--start-at` (specification §7). 5 000 warehouses
-  on one process is already ~50 s of that sleep plus pool setup.
+- Standalone runs sleep **1 ms per terminal** while starting them.
+  Orchestrated workers (`--start-at`) do not: each terminal suspends until
+  ramp admission, and 1 ms × terminals (5 000 warehouses ≈ 50 s) finishes
+  prepare after the deadline (specification §7). Prepare is then pool
+  connect plus terminal setup, which still has to finish before `--start-at`.
 - PostgreSQL / OceanBase would try to open `max_inflight` connections
   **and** `max_inflight` IO threads **in that one process**.
 - YDB developers recommend **at most ~5 000 warehouses per client
@@ -286,9 +288,10 @@ runtime:
 | PostgreSQL | `0` (or `2`–`4` if co-located) | `64`–`128` (rarely `256`) | `workers × inflight` vs `max_connections` and ~2× server cores |
 | OceanBase | `0` (or `2`–`4` if co-located) | `100`, try `128`–`256` if no -4013 | tenant `MEMORY_SIZE` and session limit |
 
-`phases.start_lead` must cover terminal start (≈ 1 ms × terminals) plus
-PostgreSQL/OceanBase pool connect. For 2 000 WH/worker budget **well
-above 45 s** (on the order of a minute or more).
+`phases.start_lead` must cover remote launch and PostgreSQL/OceanBase pool
+connect. Orchestrated terminal start does not add 1 ms × terminals. The
+default **45 s** is enough when pools come up in a few seconds; raise it
+when connect or SSH is slower.
 
 ## 6. How to confirm a worker is sized well
 

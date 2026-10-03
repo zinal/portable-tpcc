@@ -87,6 +87,27 @@ EStartAtWaitResult WaitUntilStartAt(
     std::chrono::system_clock::time_point preparedAt,
     std::stop_token stopToken);
 
+// Standalone runs sleep this long after each terminal Start() so initial
+// keying is spread out. ResolvePhaseDurations uses the same quantum as the
+// minimum warmup. Orchestrated --start-at must not: terminals already
+// suspend until MayAdmit, and 1ms x terminals (5000 warehouses -> 50s)
+// finishes prepare after the deadline.
+inline constexpr auto kStandaloneTerminalStartStagger = std::chrono::milliseconds(1);
+
+inline std::chrono::milliseconds TerminalStartStagger(bool hasStartAt) {
+    if (hasStartAt) {
+        return std::chrono::milliseconds::zero();
+    }
+    return kStandaloneTerminalStartStagger;
+}
+
+// Start every terminal during prepare. hasStartAt skips the stagger so
+// prepare can finish before the wall-clock deadline.
+void StartWorkerTerminals(
+    const std::vector<std::unique_ptr<TTerminal>>& terminals,
+    bool hasStartAt,
+    std::stop_token stopToken);
+
 // Worker progress / console-stats line. Profile runtime.stats_interval,
 // run-config runtime.stats_interval_ms, standalone --stats-interval.
 inline constexpr int kDefaultStatsIntervalSeconds = 30;
