@@ -493,8 +493,9 @@ Adapters MUST:
 - Post-index `DBMS_STATS.GATHER_TABLE_STATS` with
   `method_opt=>'FOR ALL COLUMNS SIZE 1'`. HASH partitions are gathered
   concurrently (`p0`…), each call `degree=>1`, because a partition has one
-  leader; session count equals the partition count, capped at 64. Global stats
-  are derived from the partition stats, so one `stock` / `order_line` scan does
+  leader; session count equals the partition count, capped at 64. Global row
+  counts come from `DBA_TAB_STATISTICS` and column NDVs from
+  `DBA_PART_COL_STATISTICS`, so one `stock` / `order_line` scan does
   not exceed `ob_query_timeout` (error 4012). `item` is a single gather whose
   DOP equals the HASH partition count (`1` when partitioning is off).
   Non-OceanBase MySQL targets keep `ANALYZE TABLE`.

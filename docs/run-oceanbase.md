@@ -112,7 +112,8 @@ the same table are gathered at the same time. Intra-partition `degree` stays 1
 so each scan stays on that partition's leader. A single
 whole-table gather of `stock` or `order_line` at large scale also exceeds
 session `ob_query_timeout` and fails with `[4012] Timeout`. Global row counts
-and column NDVs are aggregated from the partition statistics afterward.
+are aggregated from `DBA_TAB_STATISTICS` and column NDVs from
+`DBA_PART_COL_STATISTICS` afterward.
 `item` is not HASH-partitioned and is one gather.
 
 DB-wide `item` is not HASH-partitioned. On OceanBase it is created as a

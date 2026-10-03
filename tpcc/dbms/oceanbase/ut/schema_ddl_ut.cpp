@@ -112,6 +112,19 @@ TEST(ObGatherStats, ParallelSessionsFollowPartitionCount) {
 TEST(ObGatherStats, RejectsEmptyTableOrDegree) {
     EXPECT_THROW(BuildObGatherTableStatsCalls("tpcc", "", 1, -1), std::runtime_error);
     EXPECT_THROW(BuildObGatherTableStatsCalls("tpcc", TABLE_STOCK, 0, 4), std::runtime_error);
+    EXPECT_THROW(BuildObPartitionColumnStatsQuery("tpcc", ""), std::runtime_error);
+    EXPECT_THROW(BuildObPartitionColumnStatsQuery("tpcc", nullptr), std::runtime_error);
+}
+
+TEST(ObGatherStats, ColumnStatsComeFromPartitionView) {
+    const auto sql = BuildObPartitionColumnStatsQuery("tpcc", TABLE_STOCK);
+    EXPECT_NE(sql.find("FROM oceanbase.DBA_PART_COL_STATISTICS"), std::string::npos) << sql;
+    EXPECT_EQ(sql.find("DBA_TAB_COL_STATISTICS"), std::string::npos) << sql;
+    EXPECT_NE(sql.find("WHERE owner = 'tpcc' AND table_name = 'stock'"), std::string::npos) << sql;
+    EXPECT_NE(sql.find("partition_name IS NOT NULL"), std::string::npos) << sql;
+    EXPECT_NE(sql.find("GROUP BY column_name"), std::string::npos) << sql;
+    EXPECT_NE(sql.find("SUM(num_distinct)"), std::string::npos) << sql;
+    EXPECT_NE(sql.find("MAX(num_distinct)"), std::string::npos) << sql;
 }
 
 TEST(ObSchemaDdl, ItemPlainWhenDuplicateDisabled) {

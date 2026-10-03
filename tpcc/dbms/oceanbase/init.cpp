@@ -457,41 +457,41 @@ void PublishObGlobalStatsFromPartitions(
     conn.ExecuteSimple(setTable);
     LOG_I("Set global table stats for `" << table << "` (numrows=" << *numRows << ")");
 
-    const char* hashColumn = ObHashPartitionColumn(table);
-    auto columns = conn.QuerySimple(
-        "SELECT column_name, "
-        "CAST(SUM(num_distinct) AS SIGNED), "
-        "CAST(MAX(num_distinct) AS SIGNED), "
-        "CAST(SUM(num_nulls) AS SIGNED), "
-        "CAST(AVG(avg_col_len) AS SIGNED) "
-        "FROM oceanbase.DBA_TAB_COL_STATISTICS" + where +
-        " GROUP BY column_name");
-    int published = 0;
-    while (columns.TryNextRow()) {
-        const auto name = columns.GetOptionalString(0);
-        const auto sumNdv = columns.GetOptionalInt64(1);
-        const auto maxNdv = columns.GetOptionalInt64(2);
-        if (!name || name->empty() || !maxNdv || *maxNdv < 0) {
-            continue;
+    // Table stats are already committed. A column-view failure must not be
+    // reported as a failure of the row-count publish above.
+    try {
+        const char* hashColumn = ObHashPartitionColumn(table);
+        auto columns = conn.QuerySimple(BuildObPartitionColumnStatsQuery(database, table));
+        int published = 0;
+        while (columns.TryNextRow()) {
+            const auto name = columns.GetOptionalString(0);
+            const auto sumNdv = columns.GetOptionalInt64(1);
+            const auto maxNdv = columns.GetOptionalInt64(2);
+            if (!name || name->empty() || !maxNdv || *maxNdv < 0) {
+                continue;
+            }
+            const bool partitionKey = SameColumnName(*name, hashColumn);
+            const int64_t ndv = (partitionKey && sumNdv && *sumNdv >= 0) ? *sumNdv : *maxNdv;
+            std::string setColumn = fmt::format(
+                "CALL DBMS_STATS.SET_COLUMN_STATS({}, {}, {}, distcnt=>{}",
+                QuoteSqlString(database), QuoteSqlString(table), QuoteSqlString(*name), ndv);
+            const auto nulls = columns.GetOptionalInt64(3);
+            if (nulls && *nulls >= 0) {
+                setColumn += fmt::format(", nullcnt=>{}", *nulls);
+            }
+            const auto avgColLen = columns.GetOptionalInt64(4);
+            if (avgColLen && *avgColLen > 0) {
+                setColumn += fmt::format(", avgclen=>{}", *avgColLen);
+            }
+            setColumn += ")";
+            conn.ExecuteSimple(setColumn);
+            ++published;
         }
-        const bool partitionKey = SameColumnName(*name, hashColumn);
-        const int64_t ndv = (partitionKey && sumNdv && *sumNdv >= 0) ? *sumNdv : *maxNdv;
-        std::string setColumn = fmt::format(
-            "CALL DBMS_STATS.SET_COLUMN_STATS({}, {}, {}, distcnt=>{}",
-            QuoteSqlString(database), QuoteSqlString(table), QuoteSqlString(*name), ndv);
-        const auto nulls = columns.GetOptionalInt64(3);
-        if (nulls && *nulls >= 0) {
-            setColumn += fmt::format(", nullcnt=>{}", *nulls);
-        }
-        const auto avgColLen = columns.GetOptionalInt64(4);
-        if (avgColLen && *avgColLen > 0) {
-            setColumn += fmt::format(", avgclen=>{}", *avgColLen);
-        }
-        setColumn += ")";
-        conn.ExecuteSimple(setColumn);
-        ++published;
+        LOG_I("Set global column stats for `" << table << "` (" << published << " columns)");
+    } catch (const std::exception& e) {
+        LOG_W("Could not publish global column stats for `" << table << "` (" << e.what()
+              << "); global row counts and partition statistics are in place");
     }
-    LOG_I("Set global column stats for `" << table << "` (" << published << " columns)");
 }
 
 } // namespace
@@ -544,6 +544,25 @@ int ObStatsGatherSessionCount(int hashPartitions) {
         return 1;
     }
     return std::min(hashPartitions, OB_MAX_PARALLEL_STATS_GATHERS);
+}
+
+std::string BuildObPartitionColumnStatsQuery(
+    const std::string& database,
+    const char* table)
+{
+    if (table == nullptr || table[0] == '\0') {
+        throw std::runtime_error("table name must not be empty");
+    }
+    return "SELECT column_name, "
+        "CAST(SUM(num_distinct) AS SIGNED), "
+        "CAST(MAX(num_distinct) AS SIGNED), "
+        "CAST(SUM(num_nulls) AS SIGNED), "
+        "CAST(AVG(avg_col_len) AS SIGNED) "
+        "FROM oceanbase.DBA_PART_COL_STATISTICS"
+        " WHERE owner = " + QuoteSqlString(database)
+        + " AND table_name = " + QuoteSqlString(table)
+        + " AND partition_name IS NOT NULL"
+        " GROUP BY column_name";
 }
 
 namespace {

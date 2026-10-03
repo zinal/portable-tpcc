@@ -58,4 +58,11 @@ inline constexpr int OB_MAX_PARALLEL_STATS_GATHERS = 64;
 
 int ObStatsGatherSessionCount(int hashPartitions);
 
+// Aggregate partition column stats. Rows come from
+// oceanbase.DBA_PART_COL_STATISTICS, which has PARTITION_NAME.
+// DBA_TAB_COL_STATISTICS is global-only and rejects partition_name (error 1054).
+std::string BuildObPartitionColumnStatsQuery(
+    const std::string& database,
+    const char* table);
+
 } // namespace NTpcc
