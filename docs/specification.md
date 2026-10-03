@@ -814,10 +814,14 @@ visible in the result settings/options.
   option, optional `CREATE INDEX … PARALLEL n`
   (`database.options.index_parallel`, default 4),
   `DBMS_STATS.GATHER_TABLE_STATS` with `method_opt=>'FOR ALL COLUMNS SIZE 1'`
-  (no histograms). A HASH partition has one leader, so each partition is
-  gathered with `degree=>1` (`partname` `p0`…`pN-1`, `granularity=>'PARTITION'`)
-  and those gathers run concurrently, one session per partition, capped at 64.
-  Each statement stays within session `ob_query_timeout`. Global row counts come
+  (no histograms), `estimate_percent=>1`, and `block_sample=>true`. The call is
+  an anonymous block so OceanBase accepts the boolean argument. A HASH
+  partition has one leader, so each partition is gathered with `degree=>1`
+  (`partname` `p0`…`pN-1`, `granularity=>'PARTITION'`) and those gathers run
+  concurrently, one session per partition, capped at 64. The 1% block sample
+  keeps each statement inside session `ob_query_timeout`: a full scan of one
+  `stock` or `order_line` partition at large scale exceeds that timeout
+  (error 4012) even at `degree=>1`. Global row counts come
   from `DBA_TAB_STATISTICS`. Column NDVs come from `DBA_PART_COL_STATISTICS`
   (partition-key NDV is the sum; other columns use the max partition NDV)
   without a second full-table scan. `item` is not HASH-partitioned and is one gather, with DOP equal to the
