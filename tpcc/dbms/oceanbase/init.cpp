@@ -9,6 +9,8 @@
 #include <fmt/format.h>
 
 #include <algorithm>
+#include <cctype>
+#include <cstring>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -383,6 +385,154 @@ void CreateIndexes(
     }
 }
 
+namespace {
+
+constexpr const char* OB_STATS_METHOD_OPT = "FOR ALL COLUMNS SIZE 1";
+
+const char* ObHashPartitionColumn(const char* table) {
+    if (table == nullptr) {
+        return nullptr;
+    }
+    if (std::strcmp(table, TABLE_WAREHOUSE) == 0) return "w_id";
+    if (std::strcmp(table, TABLE_STOCK) == 0) return "s_w_id";
+    if (std::strcmp(table, TABLE_DISTRICT) == 0) return "d_w_id";
+    if (std::strcmp(table, TABLE_CUSTOMER) == 0) return "c_w_id";
+    if (std::strcmp(table, TABLE_HISTORY) == 0) return "h_w_id";
+    if (std::strcmp(table, TABLE_OORDER) == 0) return "o_w_id";
+    if (std::strcmp(table, TABLE_NEW_ORDER) == 0) return "no_w_id";
+    if (std::strcmp(table, TABLE_ORDER_LINE) == 0) return "ol_w_id";
+    return nullptr;
+}
+
+bool SameColumnName(const std::string& left, const char* right) {
+    if (right == nullptr || left.size() != std::strlen(right)) {
+        return false;
+    }
+    for (size_t i = 0; i < left.size(); ++i) {
+        const unsigned char a = static_cast<unsigned char>(left[i]);
+        const unsigned char b = static_cast<unsigned char>(right[i]);
+        if (std::tolower(a) != std::tolower(b)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// Partition stats are already committed. Publish table-level row counts and
+// column NDVs from them so the optimizer has global stats without a second
+// full scan (that scan is what hits [4012] Timeout on stock / order_line).
+void PublishObGlobalStatsFromPartitions(
+    TObConnection& conn,
+    const std::string& database,
+    const char* table)
+{
+    const std::string where = " WHERE owner = " + QuoteSqlString(database)
+        + " AND table_name = " + QuoteSqlString(table)
+        + " AND partition_name IS NOT NULL";
+    auto tableStats = conn.QuerySimple(
+        "SELECT CAST(SUM(num_rows) AS SIGNED), "
+        "CAST(SUM(avg_row_len * num_rows) / NULLIF(SUM(num_rows), 0) AS SIGNED) "
+        "FROM oceanbase.DBA_TAB_STATISTICS" + where);
+    if (!tableStats.TryNextRow()) {
+        LOG_W("No partition statistics rows for `" << table << "`");
+        return;
+    }
+    const auto numRows = tableStats.GetOptionalInt64(0);
+    if (!numRows || *numRows < 0) {
+        LOG_W("No partition row counts for `" << table << "`; global table stats not updated");
+        return;
+    }
+    const auto avgLen = tableStats.GetOptionalInt64(1);
+    std::string setTable = fmt::format(
+        "CALL DBMS_STATS.SET_TABLE_STATS({}, {}, numrows=>{}",
+        QuoteSqlString(database), QuoteSqlString(table), *numRows);
+    if (avgLen && *avgLen > 0) {
+        setTable += fmt::format(", avgrlen=>{}", *avgLen);
+    }
+    setTable += ")";
+    conn.ExecuteSimple(setTable);
+    LOG_I("Set global table stats for `" << table << "` (numrows=" << *numRows << ")");
+
+    const char* hashColumn = ObHashPartitionColumn(table);
+    auto columns = conn.QuerySimple(
+        "SELECT column_name, "
+        "CAST(SUM(num_distinct) AS SIGNED), "
+        "CAST(MAX(num_distinct) AS SIGNED), "
+        "CAST(SUM(num_nulls) AS SIGNED), "
+        "CAST(AVG(avg_col_len) AS SIGNED) "
+        "FROM oceanbase.DBA_TAB_COL_STATISTICS" + where +
+        " GROUP BY column_name");
+    int published = 0;
+    while (columns.TryNextRow()) {
+        const auto name = columns.GetOptionalString(0);
+        const auto sumNdv = columns.GetOptionalInt64(1);
+        const auto maxNdv = columns.GetOptionalInt64(2);
+        if (!name || name->empty() || !maxNdv || *maxNdv < 0) {
+            continue;
+        }
+        const bool partitionKey = SameColumnName(*name, hashColumn);
+        const int64_t ndv = (partitionKey && sumNdv && *sumNdv >= 0) ? *sumNdv : *maxNdv;
+        std::string setColumn = fmt::format(
+            "CALL DBMS_STATS.SET_COLUMN_STATS({}, {}, {}, distcnt=>{}",
+            QuoteSqlString(database), QuoteSqlString(table), QuoteSqlString(*name), ndv);
+        const auto nulls = columns.GetOptionalInt64(3);
+        if (nulls && *nulls >= 0) {
+            setColumn += fmt::format(", nullcnt=>{}", *nulls);
+        }
+        const auto avgColLen = columns.GetOptionalInt64(4);
+        if (avgColLen && *avgColLen > 0) {
+            setColumn += fmt::format(", avgclen=>{}", *avgColLen);
+        }
+        setColumn += ")";
+        conn.ExecuteSimple(setColumn);
+        ++published;
+    }
+    LOG_I("Set global column stats for `" << table << "` (" << published << " columns)");
+}
+
+} // namespace
+
+std::vector<TObGatherTableStatsCall> BuildObGatherTableStatsCalls(
+    const std::string& database,
+    const char* table,
+    int degree,
+    int hashPartitions)
+{
+    if (table == nullptr || table[0] == '\0') {
+        throw std::runtime_error("table name must not be empty");
+    }
+    if (degree < 1) {
+        throw std::runtime_error("analyze degree must be a positive integer");
+    }
+    const std::string db = QuoteSqlString(database);
+    const std::string tab = QuoteSqlString(table);
+    const std::string methodOpt = QuoteSqlString(OB_STATS_METHOD_OPT);
+    const bool perPartition = hashPartitions >= 1 && std::strcmp(table, TABLE_ITEM) != 0;
+    if (!perPartition) {
+        TObGatherTableStatsCall call;
+        call.Label = "`" + std::string(table) + "`";
+        call.Sql = fmt::format(
+            "CALL DBMS_STATS.GATHER_TABLE_STATS({}, {}, degree=>{}, method_opt=>{})",
+            db, tab, degree, methodOpt);
+        return {std::move(call)};
+    }
+
+    std::vector<TObGatherTableStatsCall> calls;
+    calls.reserve(static_cast<size_t>(hashPartitions));
+    const std::string granularity = QuoteSqlString("PARTITION");
+    for (int i = 0; i < hashPartitions; ++i) {
+        const std::string part = "p" + std::to_string(i);
+        TObGatherTableStatsCall call;
+        call.Label = "`" + std::string(table) + "` partition " + part
+            + " (" + std::to_string(i + 1) + "/" + std::to_string(hashPartitions) + ")";
+        call.Sql = fmt::format(
+            "CALL DBMS_STATS.GATHER_TABLE_STATS({}, {}, {}, degree=>{}, granularity=>{}, method_opt=>{})",
+            db, tab, QuoteSqlString(part), degree, granularity, methodOpt);
+        calls.push_back(std::move(call));
+    }
+    return calls;
+}
+
 void AnalyzeTables(
     const std::string& connectionString,
     const std::string& path,
@@ -392,7 +542,8 @@ void AnalyzeTables(
     const std::string db = EffectiveDatabase(cfg);
     auto conn = ConnectToTargetDatabase(cfg);
     // Fresh session: raise ob_query_timeout via connection property query_timeout.
-    // Gather on large customer/stock/order_line otherwise hits [4012] Timeout.
+    // One whole-table gather of stock/order_line hits [4012] Timeout; partition
+    // calls below keep each statement inside that limit.
     conn->ConfigureBulkLoadSession();
 
     if (!IsOceanBaseServer(*conn)) {
@@ -404,13 +555,27 @@ void AnalyzeTables(
         return;
     }
 
+    const int partitions = ResolveObPartitionCount(options);
     const int degree = ResolveObAnalyzeDegree(options);
-    LOG_I("Gathering optimizer statistics via DBMS_STATS (degree=" << degree << ")...");
+    LOG_I("Gathering optimizer statistics via DBMS_STATS (degree=" << degree
+          << ", method_opt=FOR ALL COLUMNS SIZE 1)...");
     for (const auto* table : TPCC_TABLES) {
-        LOG_I("Gathering stats for `" << table << "`...");
-        conn->ExecuteSimple(fmt::format(
-            "CALL DBMS_STATS.GATHER_TABLE_STATS({}, {}, degree=>{})",
-            QuoteSqlString(db), QuoteSqlString(table), degree));
+        const auto calls = BuildObGatherTableStatsCalls(db, table, degree, partitions);
+        for (const auto& call : calls) {
+            LOG_I("Gathering stats for " << call.Label << "...");
+            conn->ExecuteSimple(call.Sql);
+        }
+        const bool perPartition = partitions >= 1 && std::strcmp(table, TABLE_ITEM) != 0;
+        if (!perPartition) {
+            continue;
+        }
+        try {
+            LOG_I("Publishing global stats for `" << table << "` from partition statistics...");
+            PublishObGlobalStatsFromPartitions(*conn, db, table);
+        } catch (const std::exception& e) {
+            LOG_W("Could not publish global stats for `" << table << "` (" << e.what()
+                  << "); partition statistics are in place");
+        }
     }
 }
 

@@ -105,7 +105,12 @@ OceanBase creates a binding `TABLEGROUP` and HASH-partitions warehouse-scoped
 tables by warehouse id (`w_id` / `*_w_id`). Partition count is set **only at
 schema time** (`tpcc-oceanbase schema` / `mind-tpcc` schema stage). The same
 value is reused at `indexes` as the `DBMS_STATS.GATHER_TABLE_STATS` degree of
-parallelism (`1` when partitioning is off).
+parallelism (`1` when partitioning is off). Each HASH partition is gathered
+on its own (`partname` `p0`, `p1`, …) with `method_opt=>'FOR ALL COLUMNS SIZE 1'`.
+A single whole-table gather of `stock` or `order_line` at large scale exceeds
+session `ob_query_timeout` and fails with `[4012] Timeout`. Global row counts
+and column NDVs are aggregated from the partition statistics afterward.
+`item` is not HASH-partitioned and is one gather.
 
 DB-wide `item` is not HASH-partitioned. On OceanBase it is created as a
 **duplicate table** (`DUPLICATE_SCOPE = 'cluster'`) so every observer in the
@@ -216,6 +221,8 @@ $BIN import --connection="$CONN" --path=tpcc -w 10 -t 8
 
 # indexes + statistics (after load); CREATE INDEX uses PARALLEL 4 by default.
 # DBMS_STATS gather DOP equals HASH partition count (--partitions / -w; 1 if -1).
+# HASH tables are gathered per partition (no histograms) so each statement
+# stays within query_timeout.
 $BIN indexes --connection="$CONN" --path=tpcc -w 10 --partitions=0
 #   --index-parallel=8   # raise DOP for a single CREATE INDEX
 #   --index-parallel=1   # serial index build

@@ -491,8 +491,12 @@ Adapters MUST:
 - Parallel `CREATE INDEX` via `PARALLEL n` (`database.options.index_parallel`,
   default 4; DOP for one index, not concurrent DDL).
 - Post-index `DBMS_STATS.GATHER_TABLE_STATS` with `degree` equal to the HASH
-  partition count (`1` when partitioning is off). Non-OceanBase MySQL targets
-  keep `ANALYZE TABLE`.
+  partition count (`1` when partitioning is off) and
+  `method_opt=>'FOR ALL COLUMNS SIZE 1'`. HASH-partitioned tables are gathered
+  per partition (`p0`…), then global stats are derived from the partition
+  stats, so one `stock` / `order_line` scan does not exceed
+  `ob_query_timeout` (error 4012). `item` is a single gather. Non-OceanBase
+  MySQL targets keep `ANALYZE TABLE`.
 - MariaDB-compatible connectors are fine for transport; validation MUST run
   against real OceanBase, not only MariaDB.
 

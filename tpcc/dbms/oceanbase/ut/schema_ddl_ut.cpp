@@ -1,7 +1,9 @@
 #include <gtest/gtest.h>
 
+#include <constants.h>
 #include <init.h>
 
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -69,6 +71,38 @@ TEST(ObSchemaDdl, HistoryHistIdIsBigintAutoIncrement) {
         EXPECT_EQ(history->find("hist_id INT"), std::string::npos) << *history;
         EXPECT_NE(history->find("PRIMARY KEY (h_w_id, hist_id)"), std::string::npos) << *history;
     }
+}
+
+TEST(ObGatherStats, HashPartitionsAreSeparateCallsWithoutHistograms) {
+    const auto calls = BuildObGatherTableStatsCalls("tpcc", TABLE_STOCK, 36, 36);
+    ASSERT_EQ(calls.size(), 36u);
+    EXPECT_NE(calls.front().Sql.find("CALL DBMS_STATS.GATHER_TABLE_STATS('tpcc', 'stock', 'p0'"), std::string::npos);
+    EXPECT_NE(calls.front().Sql.find("degree=>36"), std::string::npos);
+    EXPECT_NE(calls.front().Sql.find("granularity=>'PARTITION'"), std::string::npos);
+    EXPECT_NE(calls.front().Sql.find("method_opt=>'FOR ALL COLUMNS SIZE 1'"), std::string::npos);
+    EXPECT_NE(calls.back().Sql.find("'p35'"), std::string::npos);
+    EXPECT_NE(calls.front().Label.find("partition p0 (1/36)"), std::string::npos);
+    for (const auto& call : calls) {
+        EXPECT_EQ(call.Sql.find("SIZE AUTO"), std::string::npos) << call.Sql;
+    }
+}
+
+TEST(ObGatherStats, ItemAndPlainTablesStayOneCall) {
+    const auto item = BuildObGatherTableStatsCalls("tpcc", TABLE_ITEM, 36, 36);
+    ASSERT_EQ(item.size(), 1u);
+    EXPECT_NE(item[0].Sql.find("CALL DBMS_STATS.GATHER_TABLE_STATS('tpcc', 'item', degree=>36"), std::string::npos);
+    EXPECT_EQ(item[0].Sql.find("granularity"), std::string::npos);
+    EXPECT_NE(item[0].Sql.find("method_opt=>'FOR ALL COLUMNS SIZE 1'"), std::string::npos);
+
+    const auto plain = BuildObGatherTableStatsCalls("tpcc", TABLE_CUSTOMER, 1, -1);
+    ASSERT_EQ(plain.size(), 1u);
+    EXPECT_NE(plain[0].Sql.find("degree=>1"), std::string::npos);
+    EXPECT_EQ(plain[0].Sql.find("'p0'"), std::string::npos);
+}
+
+TEST(ObGatherStats, RejectsEmptyTableOrDegree) {
+    EXPECT_THROW(BuildObGatherTableStatsCalls("tpcc", "", 1, -1), std::runtime_error);
+    EXPECT_THROW(BuildObGatherTableStatsCalls("tpcc", TABLE_STOCK, 0, 4), std::runtime_error);
 }
 
 TEST(ObSchemaDdl, ItemPlainWhenDuplicateDisabled) {
