@@ -29,7 +29,8 @@ std::string RenderPrometheusMetrics(const TPromSnapshot& snapshot);
 // Each scrape copies `perThreadStats` (cumulative since process start) and
 // the current inflight gauge. `perThreadStats` must outlive this object and
 // must not be resized. port 0 asks the kernel for an ephemeral port (tests).
-// Listen failures throw.
+// Listen failures throw. Construct this before opening DBMS connections so
+// the listen port is not stolen as an outbound source port.
 class TPrometheusExporter {
 public:
     TPrometheusExporter(

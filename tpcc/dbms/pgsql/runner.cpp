@@ -71,16 +71,6 @@ TRunOutcome RunSync(const TRunConfig& config, TTerminalStats* aggregatedStats) {
           << layout.PoolSize << " connections, "
           << layout.MaxInflight << " max inflight");
 
-    auto connectionPool = std::make_unique<PgConnectionPool>(
-        config.ConnectionString, layout.PoolSize, layout.IoThreads, config.Path);
-    auto sessionFactory = std::make_unique<TPgSessionFactory>(*connectionPool);
-
-    auto taskQueue = CreateTaskQueue(
-        layout.ThreadCount, layout.MaxInflight, layout.TerminalCount, layout.TerminalCount);
-
-    auto stopToken = GetGlobalInterruptSource().get_token();
-    TPhaseController phaseController;
-
     const bool recordUs = config.Histogram.Configured && config.Histogram.Unit == "us";
     const uint64_t histHdr = config.Histogram.Configured
         ? config.Histogram.HdrTill()
@@ -99,10 +89,23 @@ TRunOutcome RunSync(const TRunConfig& config, TTerminalStats* aggregatedStats) {
             stats->EnableLiveMetrics();
         }
     }
+    // Bind before the DBMS pool. Default 43800 sits in the Linux ephemeral
+    // range (ip_local_port_range 32768–60999); pool connect() would otherwise
+    // steal it as a source port and bind() fails with EADDRINUSE.
     std::unique_ptr<TPrometheusExporter> prometheus;
     if (config.MetricsPort > 0) {
         prometheus = std::make_unique<TPrometheusExporter>(config.MetricsPort, perThreadStats);
     }
+
+    auto connectionPool = std::make_unique<PgConnectionPool>(
+        config.ConnectionString, layout.PoolSize, layout.IoThreads, config.Path);
+    auto sessionFactory = std::make_unique<TPgSessionFactory>(*connectionPool);
+
+    auto taskQueue = CreateTaskQueue(
+        layout.ThreadCount, layout.MaxInflight, layout.TerminalCount, layout.TerminalCount);
+
+    auto stopToken = GetGlobalInterruptSource().get_token();
+    TPhaseController phaseController;
 
     std::vector<std::unique_ptr<TTerminal>> terminals;
     terminals.reserve(layout.TerminalCount);

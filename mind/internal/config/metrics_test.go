@@ -1,6 +1,8 @@
 package config
 
 import (
+	"fmt"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -27,6 +29,60 @@ func TestAssignMetricsTargetsPerHost(t *testing.T) {
 		}
 		if got[i].Index != port-43800 {
 			t.Fatalf("index[%d]=%d", i, got[i].Index)
+		}
+	}
+}
+
+func TestAssignMetricsTargetsRepeatedHosts(t *testing.T) {
+	t.Parallel()
+	var workers []MetricsWorker
+	for round := 0; round < 2; round++ {
+		for i := 1; i <= 12; i++ {
+			host := fmt.Sprintf("ob-runner-%d", i)
+			workers = append(workers, MetricsWorker{
+				Instance: fmt.Sprintf("%s-%d", host, round+3),
+				Host:     host,
+			})
+		}
+	}
+	got, err := AssignMetricsTargets(workers, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 24 {
+		t.Fatalf("len=%d", len(got))
+	}
+	seen := map[string]map[int]string{}
+	for _, tgot := range got {
+		wantPort := 43800
+		if strings.HasSuffix(tgot.Instance, "-4") {
+			wantPort = 43801
+		}
+		if tgot.Port != wantPort {
+			t.Fatalf("%s on %s port=%d, want %d", tgot.Instance, tgot.Host, tgot.Port, wantPort)
+		}
+		if seen[tgot.Host] == nil {
+			seen[tgot.Host] = map[int]string{}
+		}
+		if prev, ok := seen[tgot.Host][tgot.Port]; ok {
+			t.Fatalf("host %s port %d assigned to %s and %s", tgot.Host, tgot.Port, prev, tgot.Instance)
+		}
+		seen[tgot.Host][tgot.Port] = tgot.Instance
+	}
+
+	sorted := append([]MetricsWorker(nil), workers...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Instance < sorted[j].Instance })
+	gotSorted, err := AssignMetricsTargets(sorted, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ports := map[string]int{}
+	for _, tgot := range got {
+		ports[tgot.Instance] = tgot.Port
+	}
+	for _, tgot := range gotSorted {
+		if ports[tgot.Instance] != tgot.Port {
+			t.Fatalf("%s port profile-order=%d name-order=%d", tgot.Instance, ports[tgot.Instance], tgot.Port)
 		}
 	}
 }

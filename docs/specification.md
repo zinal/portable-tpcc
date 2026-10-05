@@ -252,7 +252,10 @@ when `--metrics` is set. The listen port of worker process *i* on a host is
 `base + i`, where *i* is 0, 1, 2, … in worker-assignment order on that
 host and `base` is `runtime.metrics_port` (default **43800**), overridable
 with `--metrics-port`. Standalone `tpcc-* run --metrics-port=N` listens on
-`N` directly. Each worker serves Prometheus text exposition on
+`N` directly. Workers bind that port **before** opening DBMS connections:
+the default 43800 lies in the common Linux ephemeral range
+(`ip_local_port_range` 32768–60999), and a connection pool that connects
+first can consume it as a source port (`EADDRINUSE` on listen). Each worker serves Prometheus text exposition on
 `GET /metrics` (`text/plain; version=0.0.4`). The body is the process state
 at scrape time. Counters and histogram series increase monotonically until
 the process exits. `runtime.stats_interval` only throttles the console
