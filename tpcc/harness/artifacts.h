@@ -42,9 +42,15 @@ void WriteWorkerResultJson(const TArtifactPaths& paths, const TRunConfigDocument
                            double measureSeconds, int exitCode,
                            const std::string& instanceNonce,
                            const std::string& adapterName,
-                           const std::string& defaultBinary);
+                           const std::string& defaultBinary,
+                           bool incomplete = false,
+                           std::chrono::system_clock::time_point stoppedAt = {});
+// sealStdio detaches stdout/stderr after the payload hash. An interrupted
+// worker writes once with sealStdio false before joining terminals, then
+// again with the default when it exits.
 void WriteArtifactManifest(const TArtifactPaths& paths, const std::string& instance,
-                           const std::string& instanceNonce, int exitCode);
+                           const std::string& instanceNonce, int exitCode,
+                           bool sealStdio = true);
 
 std::string GenerateInstanceNonce();
 

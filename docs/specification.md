@@ -351,6 +351,23 @@ Each worker writes `result.json` with:
 - adapter/server version and fatal errors if any;
 - `versions.commit`, the short commit id of the worker binary (see §9.1).
 
+On `SIGINT` or `SIGTERM` the worker installs a handler that only requests
+stop. After that handler returns, the main thread — not the handler —
+finishes the in-flight check of the stop flag and writes `result.json`
+before joining terminals. That file MUST set `incomplete` to true,
+`stopped_at` to the wall-clock time the stop was observed, and
+`metrics.measurement_seconds` to the elapsed measurement time from
+`phases.measurement_start` until `stopped_at`. `phases` keeps the planned
+schedule. If the signal arrives before measurement start,
+`measurement_seconds` is 0. `exit_status` stays 0 when
+the process shuts down cleanly after the signal. A fatal error that also
+requests stop is not this incomplete-run snapshot. The same snapshot is
+written again with the artifact manifest when the process exits; the early
+file exists so a later `SIGKILL` during terminal join cannot drop the
+partial result. `artifact-manifest.json` written before stdio is sealed
+MUST still be acceptable to collect (stdio MAY grow after that hash; see
+§9.1).
+
 The official per-transaction histogram is the queue-inclusive response time
 (admission wait through commit). Workers MUST also emit, under
 `histograms.<type>.components`, the already-collected component distributions
@@ -419,9 +436,33 @@ MUST NOT change `result_class`. Completed New-Order transactions that miss
 the p90 bound remain in tpmC (Clause 5.4.2); the banner marks the run as
 unqualified.
 
-Do not average p99s, scale partial runs, invent zero samples, or emit an
-official TPC-C conformance verdict. Soft launch-parameter deviation reporting
-and the latency `INVALID RUN` banner are not such a verdict.
+When any collected worker `result.json` has `incomplete: true`, the run is
+an interrupted measurement. `consolidate` MUST still write `aggregate.json`.
+It MUST set `status.incomplete` to true and MUST compute New-Order
+throughput from the actual elapsed measurement time, not from
+`phases.measurement_ms`. That elapsed time is `stopped_at` minus
+`phases.measurement_start` on the worker whose `stopped_at` is the latest
+among incomplete workers (the last handler to observe the signal). If that
+stop is at or before measurement start, the elapsed time is 0 and
+throughput is 0. The summary (`summary.txt` and the progress log) MUST
+print, in capital letters, that the run is invalid because it is incomplete:
+
+```text
+************************************************************************
+*** ПРОГОН НЕВАЛИДНЫЙ, ТАК КАК НЕПОЛНЫЙ
+************************************************************************
+```
+
+`result_class` stays `engineering`. This banner is not an official TPC-C
+conformance verdict. Counts and histograms are the samples those workers
+recorded; they MUST NOT be scaled up to the configured measurement window.
+
+Do not average p99s, scale partial runs up to the configured duration,
+invent zero samples, or emit an official TPC-C conformance verdict. An
+interrupted run reported at the last handler's actual elapsed time is not
+such scaling. Soft launch-parameter deviation reporting, the latency
+`INVALID RUN` banner, and the incomplete-run banner are not a conformance
+verdict.
 
 Layout:
 
@@ -473,6 +514,13 @@ to those defaults. Optional flags override individual fields.
 compatibility alias for `test`. `--skip start` skips the same `run` step.
 `--metrics` turns on the live Prometheus endpoint described in §7.
 `--metrics-port` overrides the base port for that invocation.
+
+`SIGINT` / `SIGTERM` on `mind-tpcc` during `test` (including the `test` step
+of `run`) stops workers with `SIGTERM`, waits the stop grace, then collects
+and consolidates whatever incomplete worker results were written (§8.1,
+§8.2). The pipeline step still fails (`interrupted`, exit 130) and the
+run-state becomes `failed`. The aggregate and summary of the partial
+measurement are kept.
 
 `prometheus-config` prints a Prometheus scrape fragment for the current
 profile's workers. It does not allocate a `run_id` or launch processes.

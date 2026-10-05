@@ -199,7 +199,9 @@ void WriteWorkerResultJson(const TArtifactPaths& paths, const TRunConfigDocument
                            double measureSeconds, int exitCode,
                            const std::string& instanceNonce,
                            const std::string& adapterName,
-                           const std::string& defaultBinary) {
+                           const std::string& defaultBinary,
+                           bool incomplete,
+                           SysClock::time_point stoppedAt) {
     Json counters = Json::object();
     Json histograms = Json::object();
     size_t totalFailed = 0;
@@ -306,16 +308,27 @@ void WriteWorkerResultJson(const TArtifactPaths& paths, const TRunConfigDocument
         {"exit_status", exitCode},
         {"completed_at", FormatTime(SysClock::now())},
     };
+    if (incomplete) {
+        j["incomplete"] = true;
+        if (stoppedAt.time_since_epoch().count() != 0) {
+            j["stopped_at"] = FormatTime(stoppedAt);
+        }
+    }
     WriteJsonAtomic(paths.ResultJson, j);
 }
 
 void WriteArtifactManifest(const TArtifactPaths& paths, const std::string& instance,
-                           const std::string& instanceNonce, int exitCode) {
+                           const std::string& instanceNonce, int exitCode,
+                           bool sealStdio) {
     // stdout.log / stderr.log are the live process stdio. Hash them only after
     // the threaded logger and libc buffers are drained, then detach fds so
     // later destructor output cannot change the snapshot collect will verify.
+    // An early interrupt snapshot leaves the fds attached (sealStdio false);
+    // collect accepts a longer stdio file whose hashed prefix still matches.
     FlushLogs();
-    RedirectStdioToDevNull();
+    if (sealStdio) {
+        RedirectStdioToDevNull();
+    }
 
     Json payloads = Json::array();
     auto addPayload = [&](const std::string& rel) {

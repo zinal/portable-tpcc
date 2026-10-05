@@ -25,10 +25,39 @@ struct TRunOutcome {
     std::chrono::system_clock::time_point MeasurementStart;
     std::chrono::system_clock::time_point MeasurementEnd;
     std::chrono::system_clock::time_point DrainDeadline;
+    // Planned measurement length, replaced on signal shutdown with the
+    // elapsed time from MeasurementStart until StoppedAt (0 if the signal
+    // arrived first).
     double MeasurementSeconds = 0.0;
     int ExitCode = 0;
     bool HighResHistogram = false;
+    // Set on the main thread when SIGINT/SIGTERM requested stop and no fatal
+    // error flag is set. The signal handler itself only requests stop.
+    bool Interrupted = false;
+    std::chrono::system_clock::time_point StoppedAt{};
 };
+
+// Elapsed measurement time ending at stoppedAt. Zero when measurement has
+// not started or stoppedAt is not after measurementStart.
+double MeasurementSecondsUntilStop(
+    std::chrono::system_clock::time_point measurementStart,
+    std::chrono::system_clock::time_point stoppedAt);
+
+void ApplyPlannedSchedule(TRunOutcome& outcome, const TPhaseSchedule& schedule);
+
+// Copy the planned schedule into outcome, then observe a signal stop.
+// Call on the main thread before the runner's own request_stop() that joins
+// terminals. On interrupt, merges per-thread stats and runs the hook below
+// so result files are written before that join.
+void SnapshotMeasurement(
+    TRunOutcome& outcome,
+    std::stop_token stopToken,
+    const std::vector<std::shared_ptr<TTerminalStats>>& perThreadStats,
+    TTerminalStats* aggregatedStats);
+
+// Invoked from SnapshotMeasurement on interrupt, on the main thread.
+void SetInterruptedResultHook(std::function<void(const TRunOutcome&)> hook);
+void ClearInterruptedResultHook();
 
 inline constexpr auto kRunLoopSleepEvery = std::chrono::milliseconds(50);
 
@@ -228,7 +257,8 @@ void PrintFinalResults(
     const TRunStatsConfig& config,
     const std::vector<std::shared_ptr<TTerminalStats>>& perThreadStats,
     std::chrono::duration<double> measureElapsed,
-    ITaskQueue* taskQueue = nullptr);
+    ITaskQueue* taskQueue = nullptr,
+    bool incomplete = false);
 
 void RunMeasurementDrainLoop(
     TPhaseController& phaseController,
