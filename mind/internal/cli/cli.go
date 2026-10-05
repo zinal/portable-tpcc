@@ -29,6 +29,8 @@ type Config struct {
 	MaxInflight    *int
 	Repeats        *int
 	QueryTimeout   *int
+	Metrics        bool
+	MetricsPort    *int
 	Force          bool
 }
 
@@ -155,6 +157,20 @@ func run(args []string, interrupt context.Context) int {
 			}
 			cfg.QueryTimeout = &n
 			i = next
+		case arg == "--metrics":
+			cfg.Metrics = true
+		case arg == "--metrics-port" || strings.HasPrefix(arg, "--metrics-port="):
+			n, next, err := requireFlagInt(rest, i, "--metrics-port")
+			if err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 2
+			}
+			if n <= 0 || n > 65535 {
+				fmt.Fprintln(os.Stderr, "--metrics-port must be between 1 and 65535")
+				return 2
+			}
+			cfg.MetricsPort = &n
+			i = next
 		case arg == "--repeats" || strings.HasPrefix(arg, "--repeats="):
 			n, next, err := requireFlagInt(rest, i, "--repeats")
 			if err != nil {
@@ -217,6 +233,8 @@ func run(args []string, interrupt context.Context) int {
 		MaxInflight:    cfg.MaxInflight,
 		Repeats:        cfg.Repeats,
 		QueryTimeout:   cfg.QueryTimeout,
+		Metrics:        cfg.Metrics,
+		MetricsPort:    cfg.MetricsPort,
 		Force:          cfg.Force,
 	}
 
@@ -249,6 +267,8 @@ func run(args []string, interrupt context.Context) int {
 		return runStage(opts, "collect")
 	case "consolidate":
 		return runConsolidate(opts)
+	case "prometheus-config":
+		return runPrometheusConfig(opts)
 	case "run":
 		return runFull(opts)
 	case "drop":
@@ -311,7 +331,11 @@ func runPlan(opts orchestrator.Options) int {
 	}
 	var plan *config.PlanSnapshot
 	if err := withMaterializedProfileLock(o, func(ctx *orchestrator.Context) error {
-		plan = config.BuildPlanSnapshot(ctx.RunConfig, o.Opts.Threads, o.Opts.MaxInflight, o.Opts.QueryTimeout)
+		ports, err := o.WorkerMetricsPorts(ctx.RunConfig.WorkerAssignment)
+		if err != nil {
+			return err
+		}
+		plan = config.BuildPlanSnapshotMetrics(ctx.RunConfig, o.Opts.Threads, o.Opts.MaxInflight, o.Opts.QueryTimeout, ports)
 		return nil
 	}); err != nil {
 		return exitErr(err)
@@ -321,6 +345,26 @@ func runPlan(opts orchestrator.Options) int {
 		return exitErr(err)
 	}
 	fmt.Println(string(data))
+	return 0
+}
+
+func runPrometheusConfig(opts orchestrator.Options) int {
+	o, err := orch(opts)
+	if err != nil {
+		return exitErr(err)
+	}
+	res := o.Validate()
+	if !res.Valid {
+		for _, e := range res.Errors {
+			fmt.Fprintln(os.Stderr, e)
+		}
+		return 1
+	}
+	text, err := o.PrometheusFragment()
+	if err != nil {
+		return exitErr(err)
+	}
+	fmt.Print(text)
 	return 0
 }
 
@@ -665,6 +709,8 @@ Commands:
   consolidate Merge worker results into aggregate.json (collects first if needed;
               does not allocate a run id). --force continues after a profile
               edit when name, DBMS, worker hosts, and authentication still match
+  prometheus-config
+              Print a Prometheus scrape fragment for this profile's workers
   run         Full pipeline (requires prior explicit deploy)
   drop        Drop TPC-C objects for the profile database path (--yes)
   cleanup     Remove run artifacts on all hosts including control (--yes)
@@ -684,6 +730,8 @@ Options:
                            (schema, load, indexes, check, debug, drop; > 0).
                            Does not rewrite the profile or run-config. Workers unchanged
   --max-inflight <n>       Override max in-flight transactions and connection-pool size per test worker (> 0)
+  --metrics                Enable Prometheus /metrics on test workers
+  --metrics-port <n>       Base listen port for --metrics and prometheus-config (default: 43800)
   --repeats <n>            Override debug executions per transaction type (default: 10)
   --insecure-ignore-host-key  Skip SSH host-key checking (lab / reimaged hosts)
   --skip <step>            Skip pipeline step

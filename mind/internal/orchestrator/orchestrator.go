@@ -61,6 +61,12 @@ type Options struct {
 	// (seconds, > 0) for schema, loader, indexes, check, debug, and drop.
 	// It does not rewrite the profile or run-config.json. Workers are unchanged.
 	QueryTimeout *int
+	// Metrics enables the worker Prometheus /metrics endpoint for this
+	// invocation's test workers. It does not rewrite run-config.json.
+	Metrics bool
+	// MetricsPort, when non-nil, overrides runtime.metrics_port (default
+	// 43800) as the base listen port. Each worker on a host gets base+index.
+	MetricsPort *int
 	// Force is consolidate --force. It selects and loads an existing run by
 	// profile identity (name, DBMS, worker hosts, authentication) instead of
 	// profile.sha256. Workload edits are ignored. The recorded run-config is
@@ -407,7 +413,58 @@ func (o *Orchestrator) Plan() (*config.PlanSnapshot, error) {
 	if err != nil {
 		return nil, err
 	}
-	return config.BuildPlanSnapshot(ctx.RunConfig, o.Opts.Threads, o.Opts.MaxInflight, o.Opts.QueryTimeout), nil
+	ports, err := o.WorkerMetricsPorts(ctx.RunConfig.WorkerAssignment)
+	if err != nil {
+		return nil, err
+	}
+	return config.BuildPlanSnapshotMetrics(ctx.RunConfig, o.Opts.Threads, o.Opts.MaxInflight, o.Opts.QueryTimeout, ports), nil
+}
+
+// PrometheusFragment renders a Prometheus scrape_configs snippet for the
+// profile's worker processes. Ports follow the same base+index rule as
+// mind-tpcc test --metrics.
+func (o *Orchestrator) PrometheusFragment() (string, error) {
+	if o.Profile == nil {
+		return "", fmt.Errorf("profile is not loaded")
+	}
+	listed := make([]config.MetricsWorker, len(o.Profile.Workers))
+	for i, w := range o.Profile.Workers {
+		listed[i] = config.MetricsWorker{Instance: w.Name, Host: w.Host}
+	}
+	targets, err := config.AssignMetricsTargets(listed, o.metricsBasePort())
+	if err != nil {
+		return "", err
+	}
+	return config.PrometheusScrapeFragment(o.Profile.Metadata.Name, o.Profile.Database.DBMS, targets), nil
+}
+
+func (o *Orchestrator) metricsBasePort() int {
+	if o.Opts.MetricsPort != nil {
+		return *o.Opts.MetricsPort
+	}
+	if o.Profile != nil && o.Profile.Runtime.MetricsPort > 0 {
+		return o.Profile.Runtime.MetricsPort
+	}
+	return profile.DefaultMetricsPort
+}
+
+func (o *Orchestrator) WorkerMetricsPorts(workers []config.WorkerAssignmentJSON) (map[string]int, error) {
+	if !o.Opts.Metrics {
+		return nil, nil
+	}
+	listed := make([]config.MetricsWorker, len(workers))
+	for i, w := range workers {
+		listed[i] = config.MetricsWorker{Instance: w.Instance, Host: w.Host}
+	}
+	targets, err := config.AssignMetricsTargets(listed, o.metricsBasePort())
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]int, len(targets))
+	for _, t := range targets {
+		out[t.Instance] = t.Port
+	}
+	return out, nil
 }
 
 // Deploy uploads the shared worker binary to runtime hosts.
@@ -810,9 +867,13 @@ func (o *Orchestrator) test(ctx *Context) error {
 		return err
 	}
 
+	ports, err := o.WorkerMetricsPorts(ctx.RunConfig.WorkerAssignment)
+	if err != nil {
+		return err
+	}
 	var workers []*launchedProc
 	for _, w := range ctx.RunConfig.WorkerAssignment {
-		argv := config.WorkerArgv("run-config.json", w.Instance, token.StartAt, o.Opts.Threads, o.Opts.MaxInflight)
+		argv := config.WorkerArgv("run-config.json", w.Instance, token.StartAt, o.Opts.Threads, o.Opts.MaxInflight, ports[w.Instance])
 		proc, err := o.launchRole(ctx, sessions, "worker", w.Host, w.Instance, argv)
 		if err != nil {
 			_ = o.stopPeers(ctx, sessions)

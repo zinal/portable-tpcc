@@ -60,7 +60,8 @@ int RunWorkerFromRunConfig(
     const std::string& instance,
     const std::optional<std::string>& startAtRfc3339,
     const std::optional<int>& threadOverride,
-    const std::optional<int>& maxInflightOverride)
+    const std::optional<int>& maxInflightOverride,
+    const std::optional<int>& metricsPort)
 {
     const auto doc = LoadRunConfigDocument(runConfigPath);
     TWorkerRoleHooks hooks;
@@ -69,7 +70,7 @@ int RunWorkerFromRunConfig(
         CheckDbForRun(connection, d.ScaleWarehouses);
         return MeasureClockCalibration(connection, d.Endpoint);
     };
-    hooks.Run = [instance](
+    hooks.Run = [instance, metricsPort](
         const TRunConfigDocument& d,
         const TWorkerAssignment& assign,
         const std::string& instanceDir,
@@ -96,6 +97,9 @@ int RunWorkerFromRunConfig(
         runCfg.Workload = d.Workload;
         runCfg.Histogram = d.Histogram;
         runCfg.StatsInterval = StatsIntervalFromMs(d.StatsIntervalMs);
+        if (metricsPort.has_value()) {
+            runCfg.MetricsPort = *metricsPort;
+        }
         runCfg.ThinkTimeDistribution = d.ThinkTimeDistribution;
         runCfg.StartAt = startAt;
         if (!ParseYdbTxMode(d.TxMode, runCfg.Isolation)) {

@@ -13,6 +13,7 @@ SRCS(
     clock_skew.cpp
     sha256.cpp
     run_loop.cpp
+    prometheus_export.cpp
     orchestrated_roles.cpp
     password_secret.cpp
     debug_probe.cpp

@@ -8,6 +8,7 @@ ADDINCL(
 
 SRCS(
     histogram.cpp
+    prom_histogram.cpp
 )
 
 END()

@@ -9,6 +9,7 @@
 
 #include <array>
 #include <algorithm>
+#include <mutex>
 #include <stdexcept>
 #include <utility>
 
@@ -288,23 +289,34 @@ TFuture<void> TTerminal::Run() {
         };
         auto recordOk = [&](auto latencyTransaction, auto latencyFull, auto endWall) {
             Stats->AddProgressOK(txType, latencyFull);
+            const auto sample = makeSample(latencyTransaction, latencyFull);
             if (shouldRecordMetrics(endWall)) {
-                Stats->AddOK(txType, makeSample(latencyTransaction, latencyFull));
+                Stats->AddOK(txType, sample);
             }
+            Stats->RecordLiveSuccess(txType, sample, false);
         };
         auto recordFailed = [&](auto endWall) {
             Stats->IncProgressFailed(txType);
             if (shouldRecordMetrics(endWall)) {
                 Stats->IncFailed(txType);
             }
+            const auto endTime = std::chrono::steady_clock::now();
+            const auto latencyFull = std::chrono::duration_cast<std::chrono::microseconds>(
+                endTime - startTime);
+            const auto latencyTransaction = std::chrono::duration_cast<std::chrono::microseconds>(
+                endTime - startTimeTransaction);
+            Stats->RecordLiveFailure(txType, makeSample(latencyTransaction, latencyFull));
         };
         auto recordUserAborted = [&](auto latencyTransaction, auto latencyFull, auto endWall) {
             Stats->AddProgressUserAborted(txType, latencyFull);
+            const auto sample = makeSample(latencyTransaction, latencyFull);
             if (shouldRecordMetrics(endWall)) {
-                Stats->AddUserAborted(txType, makeSample(latencyTransaction, latencyFull));
+                Stats->AddUserAborted(txType, sample);
             }
+            Stats->RecordLiveSuccess(txType, sample, true);
         };
         auto recordRetried = [&](auto endWall) {
+            Stats->RecordLiveRetry(txType);
             if (shouldRecordMetrics(endWall)) {
                 Stats->IncRetried(txType);
             }
@@ -492,6 +504,85 @@ TFuture<void> TTerminal::Run() {
     LOG_D("Terminal " << Context.TerminalID << " stopped");
     Done.store(true, std::memory_order_relaxed);
     co_return;
+}
+
+void TLiveTx::TakeInto(TPromTxSnapshot& dst) {
+    dst.Success += Success;
+    dst.Failure += Failure;
+    dst.Retries += Retries;
+    dst.Rollbacks += Rollbacks;
+    Success = 0;
+    Failure = 0;
+    Retries = 0;
+    Rollbacks = 0;
+    dst.SuccessLatency.Add(SuccessLatency);
+    dst.FailureLatency.Add(FailureLatency);
+    dst.AdmissionWait.Add(AdmissionWait);
+    dst.SessionPoolWait.Add(SessionPoolWait);
+    dst.RetryBackoff.Add(RetryBackoff);
+    SuccessLatency.Reset();
+    FailureLatency.Reset();
+    AdmissionWait.Reset();
+    SessionPoolWait.Reset();
+    RetryBackoff.Reset();
+}
+
+void TTerminalStats::EnableLiveMetrics() {
+    if (!Live_) {
+        Live_ = std::make_unique<TLiveTx[]>(TRANSACTION_TYPE_COUNT);
+    }
+}
+
+void TTerminalStats::RecordLiveSuccess(
+    ETransactionType type,
+    const TLatencySample& sample,
+    bool userAborted)
+{
+    if (!Live_) {
+        return;
+    }
+    auto& tx = Live_[static_cast<size_t>(type)];
+    std::lock_guard<TSpinLock> guard(tx.Lock);
+    ++tx.Success;
+    if (userAborted) {
+        ++tx.Rollbacks;
+    }
+    tx.SuccessLatency.RecordMicros(sample.Full.count());
+    tx.AdmissionWait.RecordMicros(sample.AdmissionWait.count());
+    tx.SessionPoolWait.RecordMicros(sample.SessionPoolWait.count());
+    tx.RetryBackoff.RecordMicros(sample.RetryBackoff.count());
+}
+
+void TTerminalStats::RecordLiveFailure(ETransactionType type, const TLatencySample& sample) {
+    if (!Live_) {
+        return;
+    }
+    auto& tx = Live_[static_cast<size_t>(type)];
+    std::lock_guard<TSpinLock> guard(tx.Lock);
+    ++tx.Failure;
+    tx.FailureLatency.RecordMicros(sample.Full.count());
+    tx.AdmissionWait.RecordMicros(sample.AdmissionWait.count());
+    tx.SessionPoolWait.RecordMicros(sample.SessionPoolWait.count());
+    tx.RetryBackoff.RecordMicros(sample.RetryBackoff.count());
+}
+
+void TTerminalStats::RecordLiveRetry(ETransactionType type) {
+    if (!Live_) {
+        return;
+    }
+    auto& tx = Live_[static_cast<size_t>(type)];
+    std::lock_guard<TSpinLock> guard(tx.Lock);
+    ++tx.Retries;
+}
+
+void TTerminalStats::TakeLiveInterval(std::array<TPromTxSnapshot, TRANSACTION_TYPE_COUNT>& dst) {
+    if (!Live_) {
+        return;
+    }
+    for (size_t i = 0; i < TRANSACTION_TYPE_COUNT; ++i) {
+        std::lock_guard<TSpinLock> guard(Live_[i].Lock);
+        Live_[i].TakeInto(dst[i]);
+    }
 }
 
 } // namespace NTpcc

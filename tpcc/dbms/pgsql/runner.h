@@ -39,6 +39,8 @@ struct TRunConfig {
     bool NoDelays = false;
     bool HighResHistogram = false;
     std::chrono::milliseconds StatsInterval{kDefaultStatsInterval};
+    // Prometheus text endpoint. 0 disables live metrics.
+    int MetricsPort = 0;
 
     // Simulation mode: replaces real TPC-C transactions with a lightweight
     // SELECT 1 loop. Useful for testing the coroutine/IO stack.

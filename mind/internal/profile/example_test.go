@@ -73,6 +73,7 @@ func TestExample_pgsqlIncludesOptions(t *testing.T) {
 		"remote_warehouse_percent:",
 		"max_inflight_per_worker: 100",
 		"stats_interval: 30s",
+		"metrics_port: 43800",
 		"local_artifacts: .",
 		"remote_root: portable-tpcc",
 		"result_root: results",

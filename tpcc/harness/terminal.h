@@ -3,6 +3,7 @@
 #include <task_queue.h>
 #include <constants.h>
 #include <histogram.h>
+#include <prom_histogram.h>
 #include <phase_controller.h>
 #include <workload_config.h>
 #include <error_classifier.h>
@@ -20,6 +21,25 @@
 #include <string>
 
 namespace NTpcc {
+
+//-----------------------------------------------------------------------------
+
+// Per-type accumulator for the optional Prometheus interval export.
+// Not part of measurement result.json.
+struct TLiveTx {
+    uint64_t Success = 0;
+    uint64_t Failure = 0;
+    uint64_t Retries = 0;
+    uint64_t Rollbacks = 0;
+    TPromHistogram SuccessLatency;
+    TPromHistogram FailureLatency;
+    TPromHistogram AdmissionWait;
+    TPromHistogram SessionPoolWait;
+    TPromHistogram RetryBackoff;
+    mutable TSpinLock Lock;
+
+    void TakeInto(TPromTxSnapshot& dst);
+};
 
 //-----------------------------------------------------------------------------
 
@@ -166,6 +186,14 @@ public:
         PerTransactionTypeStats[static_cast<size_t>(type)].Retried.fetch_add(1, std::memory_order_relaxed);
     }
 
+    // Optional real-time interval metrics. Disabled until EnableLiveMetrics().
+    void EnableLiveMetrics();
+    bool LiveMetricsEnabled() const { return static_cast<bool>(Live_); }
+    void RecordLiveSuccess(ETransactionType type, const TLatencySample& sample, bool userAborted);
+    void RecordLiveFailure(ETransactionType type, const TLatencySample& sample);
+    void RecordLiveRetry(ETransactionType type);
+    void TakeLiveInterval(std::array<TPromTxSnapshot, TRANSACTION_TYPE_COUNT>& dst);
+
     void AddProgressOK(ETransactionType type, std::chrono::microseconds fullLatency) {
         auto& stats = PerTransactionTypeStats[static_cast<size_t>(type)];
         stats.ProgressOK.fetch_add(1, std::memory_order_relaxed);
@@ -261,6 +289,7 @@ private:
     }
 
     std::array<TTransactionStats, TRANSACTION_TYPE_COUNT> PerTransactionTypeStats;
+    std::unique_ptr<TLiveTx[]> Live_;
     std::atomic<bool> ProgressClearedForMeasure{false};
     bool RecordMicroseconds = false;
     uint64_t HdrTill_ = 4096;

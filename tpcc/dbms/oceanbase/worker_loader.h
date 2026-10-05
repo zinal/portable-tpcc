@@ -15,7 +15,8 @@ int RunWorkerFromRunConfig(
     const std::string& instance,
     const std::optional<std::string>& startAtRfc3339,
     const std::optional<int>& threadOverride = {},
-    const std::optional<int>& maxInflightOverride = {});
+    const std::optional<int>& maxInflightOverride = {},
+    const std::optional<int>& metricsPort = {});
 int RunSchemaFromRunConfig(
     const std::string& runConfigPath,
     const std::string& instance,

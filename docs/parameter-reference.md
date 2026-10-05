@@ -39,6 +39,7 @@ mind-tpcc configure --profile <path> --dbms <pgsql|ydb|oceanbase> [options]
 | `stop` | Stop workers gracefully. |
 | `collect` | Copy artifacts from runtime hosts. |
 | `consolidate` | Merge worker results into `aggregate.json` and print a brief stats summary, including the commit id of each launched module. Rejects the run when collected `process.json` commits differ, or when some commits are present and some are absent. Commits that are absent on every module do not reject the run. `--force` records a commit mismatch as a warning and still writes `aggregate.json`. Runs `collect` first when `collection-manifest.json` is absent. Does not allocate a run id. An omitted `--run-id` with no active run is left empty and does not write run-state. A run that has not finished `test` is left unchanged. Without `--force`, the profile file must match the run's `profile.sha256`. |
+| `prometheus-config` | Print a Prometheus `scrape_configs` fragment for the profile's worker processes. Does not allocate a run id or launch anything. Targets are `host:port` with `port = base + index` on that host (`index` is 0, 1, 2, … in worker order). |
 | `run` | Full pipeline. Requires a prior explicit `deploy`. |
 | `drop` | Drop TPC-C objects for the profile's database path. Requires `--yes`. |
 | `cleanup` | Teardown: stop, remote + local run artifacts (including the control host). Does not drop database objects. Requires `--yes`. |
@@ -75,6 +76,8 @@ drop database objects; use `drop` for that.
 | `--threads <n>` | profile worker/loader threads and `runtime.check_concurrency` | Launch-time override for this invocation. `test`/`load`/`run` pass `--threads=N` to workers and loaders (`0` = auto at the binary). `check`/`run` pass a resolved session count to `check` (`0` = auto `min(scale.warehouses, 32)`). Does not rewrite an existing run-config. |
 | `--query-timeout <sec>` | profile `database.options.query_timeout` (OceanBase, default 600) | Launch-time override for this invocation (`N` > 0, seconds). `schema`/`load`/`indexes`/`check`/`debug`/`drop`/`run` pass `--query-timeout=N` to those roles. `tpcc-oceanbase` sets session `ob_query_timeout` from it. Does not rewrite the profile or an existing run-config. Workers are unchanged. Other DBMS binaries ignore the flag. |
 | `--max-inflight <n>` | profile `runtime.max_inflight_per_worker` | Launch-time override for this invocation's test workers (`N > 0`). `test`/`run` pass `--max-inflight=N` to each worker. Sets the max in-flight async transactions and the connection-pool size (`min(terminals, N)`; YDB: concurrent sessions). Does not rewrite an existing run-config. |
+| `--metrics` | off | Enable the live Prometheus `/metrics` endpoint on this invocation's test workers. `test`/`run` pass each worker its computed `--metrics-port`. Does not rewrite the profile or run-config. |
+| `--metrics-port <n>` | profile `runtime.metrics_port`, else **43800** | Base listen port (`1..65535`) for `--metrics` and for `prometheus-config`. Worker *i* on a host listens on `base+i`. |
 | `--insecure-ignore-host-key` | profile `ssh.insecure_ignore_host_key` | Skip SSH host-key checking (lab / reimaged hosts). Same as `ssh.insecure_ignore_host_key: true`. Recorded in run-state. `known_hosts` is then optional. |
 | `--skip <step>` | none | Skip a `run` pipeline step. Repeatable. Names: `deploy`, `schema`, `load`, `indexes`, `check_after_import`, `test` (alias `start`), `check_after_test` (alias `check_after_run`), `collect`, `consolidate`. |
 | `--yes` | false | Required for `drop`, `cleanup`, and `undeploy`. `configure` uses it to overwrite an existing file. |
@@ -317,7 +320,8 @@ All listed fields except `async_work_drain` are required.
 | `threads_per_worker` | `0` | Worker coroutine threads. `0` / omit keeps `threads: 0` in the assignment so each worker applies the same CPU + warehouse auto as standalone `--threads=0` / tpcc-postgres-cpp (see `ComputeRunLayout`, ≈ `ceil(warehouses / 1000)`). Explicit `N > 0` pins that many threads per worker. Auto sizing is useful when `ITpccTransaction` does not block the scheduler (PostgreSQL, OceanBase, and YDB worker paths). See [async-adapter-transactions.md](async-adapter-transactions.md). High-scale starting values: [worker-sizing.md](worker-sizing.md). |
 | `check_concurrency` | `0` | Parallel DBMS sessions for integrity checks. `0` / omit = auto (`min(scale.warehouses, 32)`). `1` = serial. Passed to `tpcc-<dbms> check` as `--threads=N`. `mind-tpcc --threads` overrides check concurrency, and also worker/loader threads, for the current invocation without rewriting run-config. |
 | `max_inflight_per_worker` | `100` if ≤ 0 | Max in-flight transactions per worker. Matches standalone `tpcc-* --max_inflight` / tpcc-postgres-cpp default. Override when a shard needs a higher cap (also bounded by adapter `MaxRecommendedInflight`). High-scale starting values per DBMS: [worker-sizing.md](worker-sizing.md). |
-| `stats_interval` | `30s` | How often each worker prints a progress statistics line (phase, tpmC, counts, inflight). Go duration (`30s`, `5s`, …) or a bare integer (milliseconds). Omitted uses 30s. Must be greater than zero. Materialized as `runtime.stats_interval_ms`. Matches standalone `tpcc-* --stats-interval`. |
+| `stats_interval` | `30s` | How often each worker prints a progress statistics line (phase, tpmC, counts, inflight). Go duration (`30s`, `5s`, …) or a bare integer (milliseconds). Omitted uses 30s. Must be greater than zero. Materialized as `runtime.stats_interval_ms`. Matches standalone `tpcc-* --stats-interval`. The same interval is the live Prometheus collection window when `--metrics` is set. |
+| `metrics_port` | `43800` | Base TCP port for optional worker Prometheus endpoints. `0` / omit means 43800. Must be `1..65535` when set. Process *i* on a host (`i` = 0, 1, 2, … among that host's workers) listens on `metrics_port + i`. Not written into run-config; `mind-tpcc --metrics-port` overrides it for one invocation. |
 | `retry.max_attempts` | `4` | Retry attempts. |
 | `retry.initial_backoff` | `10ms` | Initial backoff. |
 | `retry.max_backoff` | `500ms` | Max backoff (≥ initial). |
@@ -399,7 +403,7 @@ Orchestrated invocation (written by mind):
 schema  --run-config <path> --instance <name> [--query-timeout=N]
 loader  --run-config <path> --instance <name> [--threads=N] [--query-timeout=N]
 indexes --run-config <path> --instance <name> [--query-timeout=N]
-worker  --run-config <path> --instance <name> --start-at=<RFC3339-UTC> [--threads=N] [--max-inflight=N]
+worker  --run-config <path> --instance <name> --start-at=<RFC3339-UTC> [--threads=N] [--max-inflight=N] [--metrics-port=N]
 check   --run-config <path> --instance <name> --after-import|--after-test [--threads=N] [--query-timeout=N]
 debug   --run-config <path> --instance <name> [--repeats=N] [--query-timeout=N]
 drop    --run-config <path> --instance <name> [--query-timeout=N]
@@ -416,7 +420,8 @@ drop    --run-config <path> --instance <name> [--query-timeout=N]
 | `--duration` | `10` | Measurement minutes (> 0). |
 | `-t` / `--threads` | `0` | Run/import: `0` = auto. Check: parallel DBMS sessions (`<=0` = 1 session). Orchestrated worker/loader: `mind-tpcc --threads` when set, otherwise assignment `threads` from run-config. Orchestrated check: `mind-tpcc --threads` when set, otherwise `runtime.check_concurrency`. |
 | `-m` / `--max-inflight` | `100` | Max in-flight transactions and connection-pool size (> 0). Orchestrated worker: `mind-tpcc --max-inflight` when set, otherwise assignment `max_inflight` from run-config. |
-| `--stats-interval` | `30` | Seconds between worker progress statistics lines (> 0). Orchestrated workers use `runtime.stats_interval_ms` from run-config instead. |
+| `--stats-interval` | `30` | Seconds between worker progress statistics lines (> 0). Orchestrated workers use `runtime.stats_interval_ms` from run-config instead. Live Prometheus samples use this same interval. |
+| `--metrics-port` | `0` | Listen port for `GET /metrics` (Prometheus text). `0` disables it. Orchestrated workers receive the port computed by `mind-tpcc` (`1..65535`). Standalone `run` listens on this port directly. |
 | `--no-delays` | `false` | Disable keying and think time (engineering). |
 | `--think-time-distribution` | `exponential` | `exponential` \| `compatibility` \| `constant`. |
 | `--high-res-histogram` | `false` | High-resolution histograms. |

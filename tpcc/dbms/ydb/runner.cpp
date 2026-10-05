@@ -9,6 +9,7 @@
 #include <domain_util.h>
 #include <log.h>
 #include <phase_controller.h>
+#include <prometheus_export.h>
 #include <run_loop.h>
 #include <task_queue.h>
 #include <version.h>
@@ -91,6 +92,15 @@ TRunOutcome RunSync(const TRunConfig& config, TTerminalStats* aggregatedStats) {
     perThreadStats.reserve(layout.ThreadCount);
     for (size_t i = 0; i < layout.ThreadCount; ++i) {
         perThreadStats.push_back(std::make_shared<TTerminalStats>(histHdr, histMax, recordUs));
+    }
+    if (config.MetricsPort > 0) {
+        for (auto& stats : perThreadStats) {
+            stats->EnableLiveMetrics();
+        }
+    }
+    std::unique_ptr<TPrometheusExporter> prometheus;
+    if (config.MetricsPort > 0) {
+        prometheus = std::make_unique<TPrometheusExporter>(config.MetricsPort);
     }
 
     std::vector<std::unique_ptr<TTerminal>> terminals;
@@ -224,8 +234,11 @@ TRunOutcome RunSync(const TRunConfig& config, TTerminalStats* aggregatedStats) {
                 startTs,
                 warmupEnd,
                 runEnd,
-                taskQueue.get());
+                taskQueue.get(),
+                prometheus.get());
         });
+
+    FlushPrometheusInterval(progressState, perThreadStats, prometheus.get());
 
     auto measureElapsed = std::chrono::duration<double>(
         schedule.MeasurementEnd - schedule.MeasurementStart);
