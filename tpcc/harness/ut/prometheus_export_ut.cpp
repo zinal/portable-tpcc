@@ -8,8 +8,10 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <cerrno>
 #include <cstring>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -139,6 +141,77 @@ TEST(PrometheusExport, HttpMetrics) {
 
     const std::string missing = HttpGet(exporter.Port(), "/nope");
     EXPECT_NE(missing.find("HTTP/1.1 404"), std::string::npos);
+}
+
+int ListenLoopback() {
+    const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    EXPECT_GE(fd, 0);
+    int reuse = 1;
+    EXPECT_EQ(::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)), 0);
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    EXPECT_EQ(::bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)), 0);
+    EXPECT_EQ(::listen(fd, 1), 0);
+    return fd;
+}
+
+int SocketPort(int fd) {
+    sockaddr_in bound{};
+    socklen_t len = sizeof(bound);
+    EXPECT_EQ(::getsockname(fd, reinterpret_cast<sockaddr*>(&bound), &len), 0);
+    return ntohs(bound.sin_port);
+}
+
+TEST(PrometheusExport, BindFailsWhenPortHeldByOutboundConnect) {
+    const int server = ListenLoopback();
+    const int serverPort = SocketPort(server);
+
+    const int client = ::socket(AF_INET, SOCK_STREAM, 0);
+    ASSERT_GE(client, 0);
+    sockaddr_in local{};
+    local.sin_family = AF_INET;
+    local.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    ASSERT_EQ(::bind(client, reinterpret_cast<sockaddr*>(&local), sizeof(local)), 0);
+    const int occupied = SocketPort(client);
+
+    sockaddr_in dest{};
+    dest.sin_family = AF_INET;
+    dest.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    dest.sin_port = htons(static_cast<uint16_t>(serverPort));
+    ASSERT_EQ(::connect(client, reinterpret_cast<sockaddr*>(&dest), sizeof(dest)), 0);
+    const int accepted = ::accept(server, nullptr, nullptr);
+    ASSERT_GE(accepted, 0);
+
+    std::vector<std::shared_ptr<TTerminalStats>> perThread;
+    perThread.push_back(std::make_shared<TTerminalStats>());
+    try {
+        TPrometheusExporter exporter(occupied, perThread);
+        ADD_FAILURE() << "expected bind failure on port " << occupied;
+    } catch (const std::runtime_error& ex) {
+        EXPECT_NE(std::string(ex.what()).find("prometheus bind port"), std::string::npos);
+    }
+
+    ::close(accepted);
+    ::close(client);
+    ::close(server);
+}
+
+TEST(PrometheusExport, ListenReservesPortFromLaterSourceBind) {
+    std::vector<std::shared_ptr<TTerminalStats>> perThread;
+    perThread.push_back(std::make_shared<TTerminalStats>());
+    TPrometheusExporter exporter(0, perThread);
+    ASSERT_GT(exporter.Port(), 0);
+
+    const int client = ::socket(AF_INET, SOCK_STREAM, 0);
+    ASSERT_GE(client, 0);
+    sockaddr_in local{};
+    local.sin_family = AF_INET;
+    local.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    local.sin_port = htons(static_cast<uint16_t>(exporter.Port()));
+    EXPECT_EQ(::bind(client, reinterpret_cast<sockaddr*>(&local), sizeof(local)), -1);
+    EXPECT_EQ(errno, EADDRINUSE);
+    ::close(client);
 }
 
 } // namespace NTpcc

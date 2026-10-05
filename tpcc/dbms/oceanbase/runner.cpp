@@ -69,16 +69,6 @@ TRunOutcome RunSync(const TRunConfig& config, TTerminalStats* aggregatedStats) {
           << layout.TerminalCount << " terminals, " << layout.ThreadCount << " threads, "
           << layout.PoolSize << " connections, " << layout.MaxInflight << " max inflight");
 
-    auto connectionPool = std::make_unique<TObConnectionPool>(
-        config.ConnectionString, layout.PoolSize, layout.IoThreads, config.Path);
-    auto sessionFactory = std::make_unique<TObSessionFactory>(*connectionPool);
-
-    auto taskQueue = CreateTaskQueue(
-        layout.ThreadCount, layout.MaxInflight, layout.TerminalCount, layout.TerminalCount);
-
-    auto stopToken = GetGlobalInterruptSource().get_token();
-    TPhaseController phaseController;
-
     const bool recordUs = config.Histogram.Configured && config.Histogram.Unit == "us";
     const uint64_t histHdr = config.Histogram.Configured
         ? config.Histogram.HdrTill()
@@ -97,10 +87,23 @@ TRunOutcome RunSync(const TRunConfig& config, TTerminalStats* aggregatedStats) {
             stats->EnableLiveMetrics();
         }
     }
+    // Bind before the DBMS pool so a metrics port inside
+    // ip_local_port_range cannot be stolen as a connect() source port
+    // (EADDRINUSE on listen).
     std::unique_ptr<TPrometheusExporter> prometheus;
     if (config.MetricsPort > 0) {
         prometheus = std::make_unique<TPrometheusExporter>(config.MetricsPort, perThreadStats);
     }
+
+    auto connectionPool = std::make_unique<TObConnectionPool>(
+        config.ConnectionString, layout.PoolSize, layout.IoThreads, config.Path);
+    auto sessionFactory = std::make_unique<TObSessionFactory>(*connectionPool);
+
+    auto taskQueue = CreateTaskQueue(
+        layout.ThreadCount, layout.MaxInflight, layout.TerminalCount, layout.TerminalCount);
+
+    auto stopToken = GetGlobalInterruptSource().get_token();
+    TPhaseController phaseController;
 
     std::vector<std::unique_ptr<TTerminal>> terminals;
     terminals.reserve(layout.TerminalCount);

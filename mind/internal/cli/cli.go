@@ -731,7 +731,7 @@ Options:
                            Does not rewrite the profile or run-config. Workers unchanged
   --max-inflight <n>       Override max in-flight transactions and connection-pool size per test worker (> 0)
   --metrics                Enable Prometheus /metrics on test workers
-  --metrics-port <n>       Base listen port for --metrics and prometheus-config (default: 43800)
+  --metrics-port <n>       Base listen port for --metrics and prometheus-config (default: 14380)
   --repeats <n>            Override debug executions per transaction type (default: 10)
   --insecure-ignore-host-key  Skip SSH host-key checking (lab / reimaged hosts)
   --skip <step>            Skip pipeline step

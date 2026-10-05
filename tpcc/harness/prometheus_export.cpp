@@ -240,6 +240,9 @@ TPrometheusExporter::TPrometheusExporter(
         throw std::runtime_error(std::string("prometheus listen socket: ") + std::strerror(errno));
     }
     int reuse = 1;
+    // SO_REUSEADDR covers TIME_WAIT. It does not allow bind() when an
+    // outbound connect() already owns this local port (EADDRINUSE). Callers
+    // must construct the exporter before opening DBMS connection pools.
     ::setsockopt(ListenFd_, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
 
     sockaddr_in addr{};

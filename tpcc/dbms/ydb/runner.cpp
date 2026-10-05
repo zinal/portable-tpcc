@@ -72,15 +72,6 @@ TRunOutcome RunSync(const TRunConfig& config, TTerminalStats* aggregatedStats) {
           << layout.MaxInflight << " max inflight, "
           << "tx-mode=" << YdbTxModeName(config.Isolation));
 
-    TYdbConnection connection(config.Connection);
-    TYdbSessionFactory sessionFactory(connection);
-
-    auto taskQueue = CreateTaskQueue(
-        layout.ThreadCount, layout.MaxInflight, layout.TerminalCount, layout.TerminalCount);
-
-    auto stopToken = GetGlobalInterruptSource().get_token();
-    TPhaseController phaseController;
-
     const bool recordUs = config.Histogram.Configured && config.Histogram.Unit == "us";
     const uint64_t histHdr = config.Histogram.Configured
         ? config.Histogram.HdrTill()
@@ -99,10 +90,21 @@ TRunOutcome RunSync(const TRunConfig& config, TTerminalStats* aggregatedStats) {
             stats->EnableLiveMetrics();
         }
     }
+    // Bind before opening the YDB driver so a metrics port inside
+    // ip_local_port_range cannot be stolen as a connect() source port.
     std::unique_ptr<TPrometheusExporter> prometheus;
     if (config.MetricsPort > 0) {
         prometheus = std::make_unique<TPrometheusExporter>(config.MetricsPort, perThreadStats);
     }
+
+    TYdbConnection connection(config.Connection);
+    TYdbSessionFactory sessionFactory(connection);
+
+    auto taskQueue = CreateTaskQueue(
+        layout.ThreadCount, layout.MaxInflight, layout.TerminalCount, layout.TerminalCount);
+
+    auto stopToken = GetGlobalInterruptSource().get_token();
+    TPhaseController phaseController;
 
     std::vector<std::unique_ptr<TTerminal>> terminals;
     terminals.reserve(layout.TerminalCount);
