@@ -420,9 +420,9 @@ func (o *Orchestrator) Plan() (*config.PlanSnapshot, error) {
 	return config.BuildPlanSnapshotMetrics(ctx.RunConfig, o.Opts.Threads, o.Opts.MaxInflight, o.Opts.QueryTimeout, ports), nil
 }
 
-// PrometheusFragment renders a Prometheus scrape_configs snippet for the
-// profile's worker processes. Ports follow the same base+index rule as
-// mind-tpcc test --metrics.
+// PrometheusFragment renders a Prometheus config snippet for the
+// profile's worker processes (global 15s scrape timings plus scrape_configs).
+// Ports follow the same base+index rule as mind-tpcc test --metrics.
 func (o *Orchestrator) PrometheusFragment() (string, error) {
 	if o.Profile == nil {
 		return "", fmt.Errorf("profile is not loaded")

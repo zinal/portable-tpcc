@@ -281,9 +281,11 @@ throughput in transactions per minute, summed across workers, is
 `sum(rate(tpcc_transactions_total{type="new_order",result="success"}[1m])) * 60`.
 The range inside `rate` is the aggregation window. These series include
 ramp-up, measurement, and drain, and they do not change `result.json`.
-`mind-tpcc prometheus-config` prints a Prometheus `scrape_configs` fragment
-for the profile's workers using the same port rule. The flag does not
-rewrite the profile or run-config.
+`mind-tpcc prometheus-config` prints a Prometheus config snippet for the
+profile's workers using the same port rule. The snippet includes
+`global.scrape_interval` / `scrape_timeout` / `evaluation_interval` of
+**15s** (so `rate(...[1m])` has four scrape samples) and the worker
+`scrape_configs`. The flag does not rewrite the profile or run-config.
 
 Normalized errors: `retryable_abort`, `not_committed`, `ambiguous_commit`
 (no blind retry), `permanent` (count as Fail, do not stop the run),
@@ -532,8 +534,9 @@ and consolidates whatever incomplete worker results were written (§8.1,
 run-state becomes `failed`. The aggregate and summary of the partial
 measurement are kept.
 
-`prometheus-config` prints a Prometheus scrape fragment for the current
-profile's workers. It does not allocate a `run_id` or launch processes.
+`prometheus-config` prints a Prometheus config snippet for the current
+profile's workers (`global` scrape timings of 15s plus `scrape_configs`).
+It does not allocate a `run_id` or launch processes.
 `--metrics-port` selects the same base port `test --metrics` would use.
 
 Standalone `mind-tpcc consolidate` MUST run `collect` first when
