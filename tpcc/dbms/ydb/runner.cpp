@@ -90,9 +90,8 @@ TRunOutcome RunSync(const TRunConfig& config, TTerminalStats* aggregatedStats) {
             stats->EnableLiveMetrics();
         }
     }
-    // Bind before opening the YDB driver. Default 43800 sits in the Linux
-    // ephemeral range (ip_local_port_range 32768–60999); outbound SDK
-    // connections would otherwise steal it as a source port.
+    // Bind before opening the YDB driver so a metrics port inside
+    // ip_local_port_range cannot be stolen as a connect() source port.
     std::unique_ptr<TPrometheusExporter> prometheus;
     if (config.MetricsPort > 0) {
         prometheus = std::make_unique<TPrometheusExporter>(config.MetricsPort, perThreadStats);

@@ -87,9 +87,9 @@ TRunOutcome RunSync(const TRunConfig& config, TTerminalStats* aggregatedStats) {
             stats->EnableLiveMetrics();
         }
     }
-    // Bind before the DBMS pool. Default 43800 sits in the Linux ephemeral
-    // range (ip_local_port_range 32768–60999); pool connect() would otherwise
-    // steal it as a source port and bind() fails with EADDRINUSE.
+    // Bind before the DBMS pool so a metrics port inside
+    // ip_local_port_range cannot be stolen as a connect() source port
+    // (EADDRINUSE on listen).
     std::unique_ptr<TPrometheusExporter> prometheus;
     if (config.MetricsPort > 0) {
         prometheus = std::make_unique<TPrometheusExporter>(config.MetricsPort, perThreadStats);

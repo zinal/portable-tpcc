@@ -250,12 +250,13 @@ standalone `--stats-interval`); omitted uses **30 seconds**.
 `mind-tpcc test` and `run` pass `--metrics-port=<port>` to each worker only
 when `--metrics` is set. The listen port of worker process *i* on a host is
 `base + i`, where *i* is 0, 1, 2, … in worker-assignment order on that
-host and `base` is `runtime.metrics_port` (default **43800**), overridable
+host and `base` is `runtime.metrics_port` (default **14380**), overridable
 with `--metrics-port`. Standalone `tpcc-* run --metrics-port=N` listens on
-`N` directly. Workers bind that port **before** opening DBMS connections:
-the default 43800 lies in the common Linux ephemeral range
-(`ip_local_port_range` 32768–60999), and a connection pool that connects
-first can consume it as a source port (`EADDRINUSE` on listen). Each worker serves Prometheus text exposition on
+`N` directly. The default is below the common Linux ephemeral range
+(`ip_local_port_range` 32768–60999). Workers still bind the listen port
+**before** opening DBMS connections, so an explicit port inside that range
+cannot be consumed as a `connect()` source port (`EADDRINUSE` on listen).
+Each worker serves Prometheus text exposition on
 `GET /metrics` (`text/plain; version=0.0.4`). The body is the process state
 at scrape time. Counters and histogram series increase monotonically until
 the process exits. `runtime.stats_interval` only throttles the console

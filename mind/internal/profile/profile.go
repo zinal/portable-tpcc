@@ -173,7 +173,7 @@ type Runtime struct {
 	// materializes as config.DefaultStatsIntervalMs (30000).
 	StatsInterval string `yaml:"stats_interval"`
 	// MetricsPort is the base TCP port for optional Prometheus scrapes of
-	// worker processes. 0 / omit means DefaultMetricsPort (43800). Worker i
+	// worker processes. 0 / omit means DefaultMetricsPort (14380). Worker i
 	// on a host listens on base+i, with i starting at 0 for that host.
 	// Collection itself is enabled by mind-tpcc --metrics.
 	MetricsPort int         `yaml:"metrics_port"`
@@ -245,7 +245,9 @@ func Parse(data []byte) (*Profile, error) {
 
 // DefaultMetricsPort is the Prometheus listen base when runtime.metrics_port
 // is omitted. Each worker process on a host uses base + its index on that host.
-const DefaultMetricsPort = 43800
+// 14380 is below the common Linux ephemeral range (32768–60999) so pool
+// connect() does not steal it as a source port.
+const DefaultMetricsPort = 14380
 
 // AssignInstanceNames fills empty instance names from host values.
 // Each host gets a 1-based suffix in the order loaders then workers, so

@@ -5,7 +5,16 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"portable-tpcc/mind/internal/profile"
 )
+
+func TestDefaultMetricsPortBelowEphemeralRange(t *testing.T) {
+	t.Parallel()
+	if profile.DefaultMetricsPort < 1024 || profile.DefaultMetricsPort >= 32768 {
+		t.Fatalf("DefaultMetricsPort=%d, want 1024..32767 (below Linux ip_local_port_range)", profile.DefaultMetricsPort)
+	}
+}
 
 func TestAssignMetricsTargetsPerHost(t *testing.T) {
 	t.Parallel()
@@ -19,7 +28,8 @@ func TestAssignMetricsTargetsPerHost(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []int{43800, 43800, 43801, 43801}
+	base := profile.DefaultMetricsPort
+	want := []int{base, base, base + 1, base + 1}
 	if len(got) != len(want) {
 		t.Fatalf("len=%d", len(got))
 	}
@@ -27,7 +37,7 @@ func TestAssignMetricsTargetsPerHost(t *testing.T) {
 		if got[i].Port != port || got[i].Instance != workers[i].Instance {
 			t.Fatalf("target[%d]=%+v, want port %d", i, got[i], port)
 		}
-		if got[i].Index != port-43800 {
+		if got[i].Index != port-base {
 			t.Fatalf("index[%d]=%d", i, got[i].Index)
 		}
 	}
@@ -54,9 +64,9 @@ func TestAssignMetricsTargetsRepeatedHosts(t *testing.T) {
 	}
 	seen := map[string]map[int]string{}
 	for _, tgot := range got {
-		wantPort := 43800
+		wantPort := profile.DefaultMetricsPort
 		if strings.HasSuffix(tgot.Instance, "-4") {
-			wantPort = 43801
+			wantPort++
 		}
 		if tgot.Port != wantPort {
 			t.Fatalf("%s on %s port=%d, want %d", tgot.Instance, tgot.Host, tgot.Port, wantPort)
@@ -113,7 +123,7 @@ func TestPrometheusScrapeFragment(t *testing.T) {
 		{Instance: "w-a", Host: "10.0.0.1"},
 		{Instance: "w-b", Host: "10.0.0.1"},
 		{Instance: "w-c", Host: "10.0.0.2"},
-	}, 43800)
+	}, profile.DefaultMetricsPort)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,9 +132,9 @@ func TestPrometheusScrapeFragment(t *testing.T) {
 		"job_name: portable-tpcc",
 		"metrics_path: /metrics",
 		`sum(rate(tpcc_transactions_total{type="new_order",result="success"}[1m])) * 60`,
-		`"10.0.0.1:43800"`,
-		`"10.0.0.1:43801"`,
-		`"10.0.0.2:43800"`,
+		`"10.0.0.1:14380"`,
+		`"10.0.0.1:14381"`,
+		`"10.0.0.2:14380"`,
 		`profile: "bench"`,
 		`dbms: "pgsql"`,
 		`worker: "w-b"`,

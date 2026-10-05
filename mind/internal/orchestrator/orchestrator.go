@@ -65,7 +65,7 @@ type Options struct {
 	// invocation's test workers. It does not rewrite run-config.json.
 	Metrics bool
 	// MetricsPort, when non-nil, overrides runtime.metrics_port (default
-	// 43800) as the base listen port. Each worker on a host gets base+index.
+	// 14380) as the base listen port. Each worker on a host gets base+index.
 	MetricsPort *int
 	// Force is consolidate --force. It selects and loads an existing run by
 	// profile identity (name, DBMS, worker hosts, authentication) instead of
