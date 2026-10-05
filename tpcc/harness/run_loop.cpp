@@ -6,7 +6,6 @@
 #include <task_queue.h>
 #include <time_util.h>
 #include <context.h>
-#include <prometheus_export.h>
 
 #include <fmt/format.h>
 
@@ -438,8 +437,7 @@ void MaybeUpdateConsoleStats(
     Clock::time_point rampStartSteady,
     Clock::time_point measureStartSteady,
     Clock::time_point measureEndSteady,
-    ITaskQueue* taskQueue,
-    TPrometheusExporter* prometheus)
+    ITaskQueue* taskQueue)
 {
     using SysClock = std::chrono::system_clock;
 
@@ -562,7 +560,6 @@ void MaybeUpdateConsoleStats(
         }
     }
 
-    NotePrometheusInterval(state, now, perThreadStats, prometheus);
     state.LastUpdate = now;
 }
 

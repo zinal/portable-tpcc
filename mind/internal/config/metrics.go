@@ -73,6 +73,8 @@ func PrometheusScrapeFragment(profileName, dbms string, targets []MetricsTarget)
 	var b strings.Builder
 	b.WriteString("# Prometheus scrape fragment for portable-tpcc workers.\n")
 	b.WriteString("# Listen port on a host is runtime.metrics_port + process index (0, 1, 2, ...).\n")
+	b.WriteString("# Counters and histograms are cumulative for the worker process.\n")
+	b.WriteString("# tpmC: sum(rate(tpcc_transactions_total{type=\"new_order\",result=\"success\"}[1m])) * 60\n")
 	b.WriteString("scrape_configs:\n")
 	b.WriteString("  - job_name: portable-tpcc\n")
 	b.WriteString("    metrics_path: /metrics\n")

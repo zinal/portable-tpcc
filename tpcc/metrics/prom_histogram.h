@@ -34,7 +34,7 @@ private:
     uint64_t SumMicros_ = 0;
 };
 
-// One transaction type over a single collection interval.
+// Cumulative counters and histograms for one transaction type.
 struct TPromTxSnapshot {
     uint64_t Success = 0;
     uint64_t Failure = 0;

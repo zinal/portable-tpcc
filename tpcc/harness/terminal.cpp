@@ -506,25 +506,16 @@ TFuture<void> TTerminal::Run() {
     co_return;
 }
 
-void TLiveTx::TakeInto(TPromTxSnapshot& dst) {
+void TLiveTx::CopyInto(TPromTxSnapshot& dst) const {
     dst.Success += Success;
     dst.Failure += Failure;
     dst.Retries += Retries;
     dst.Rollbacks += Rollbacks;
-    Success = 0;
-    Failure = 0;
-    Retries = 0;
-    Rollbacks = 0;
     dst.SuccessLatency.Add(SuccessLatency);
     dst.FailureLatency.Add(FailureLatency);
     dst.AdmissionWait.Add(AdmissionWait);
     dst.SessionPoolWait.Add(SessionPoolWait);
     dst.RetryBackoff.Add(RetryBackoff);
-    SuccessLatency.Reset();
-    FailureLatency.Reset();
-    AdmissionWait.Reset();
-    SessionPoolWait.Reset();
-    RetryBackoff.Reset();
 }
 
 void TTerminalStats::EnableLiveMetrics() {
@@ -575,13 +566,13 @@ void TTerminalStats::RecordLiveRetry(ETransactionType type) {
     ++tx.Retries;
 }
 
-void TTerminalStats::TakeLiveInterval(std::array<TPromTxSnapshot, TRANSACTION_TYPE_COUNT>& dst) {
+void TTerminalStats::CopyLiveMetrics(std::array<TPromTxSnapshot, TRANSACTION_TYPE_COUNT>& dst) const {
     if (!Live_) {
         return;
     }
     for (size_t i = 0; i < TRANSACTION_TYPE_COUNT; ++i) {
         std::lock_guard<TSpinLock> guard(Live_[i].Lock);
-        Live_[i].TakeInto(dst[i]);
+        Live_[i].CopyInto(dst[i]);
     }
 }
 

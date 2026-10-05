@@ -101,7 +101,7 @@ TRunOutcome RunSync(const TRunConfig& config, TTerminalStats* aggregatedStats) {
     }
     std::unique_ptr<TPrometheusExporter> prometheus;
     if (config.MetricsPort > 0) {
-        prometheus = std::make_unique<TPrometheusExporter>(config.MetricsPort);
+        prometheus = std::make_unique<TPrometheusExporter>(config.MetricsPort, perThreadStats);
     }
 
     std::vector<std::unique_ptr<TTerminal>> terminals;
@@ -243,11 +243,8 @@ TRunOutcome RunSync(const TRunConfig& config, TTerminalStats* aggregatedStats) {
                 startTs,
                 warmupEnd,
                 runEnd,
-                taskQueue.get(),
-                prometheus.get());
+                taskQueue.get());
         });
-
-    FlushPrometheusInterval(progressState, perThreadStats, prometheus.get());
 
     SnapshotMeasurement(outcome, stopToken, perThreadStats, aggregatedStats);
 

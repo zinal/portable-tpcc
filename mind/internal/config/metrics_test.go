@@ -65,6 +65,7 @@ func TestPrometheusScrapeFragment(t *testing.T) {
 	for _, want := range []string{
 		"job_name: portable-tpcc",
 		"metrics_path: /metrics",
+		`sum(rate(tpcc_transactions_total{type="new_order",result="success"}[1m])) * 60`,
 		`"10.0.0.1:43800"`,
 		`"10.0.0.1:43801"`,
 		`"10.0.0.2:43800"`,
