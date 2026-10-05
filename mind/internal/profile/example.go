@@ -208,6 +208,7 @@ func ExampleWithName(dbms, name, sshUser string) (*Profile, error) {
 			MaxInflightPerWorker:  DefaultMaxInflight,
 			CheckConcurrency:      0,
 			StatsInterval:         DefaultStatsInterval,
+			MetricsPort:           DefaultMetricsPort,
 			Retry: RetryPolicy{
 				MaxAttempts:    DefaultRetryMaxAttempts,
 				InitialBackoff: DefaultRetryInitialBackoff,
@@ -334,6 +335,7 @@ type exampleRuntime struct {
 	CheckConcurrency      int              `yaml:"check_concurrency"`
 	MaxInflightPerWorker  int              `yaml:"max_inflight_per_worker"`
 	StatsInterval         string           `yaml:"stats_interval"`
+	MetricsPort           int              `yaml:"metrics_port"`
 	Retry                 RetryPolicy      `yaml:"retry"`
 	Histogram             exampleHistogram `yaml:"histogram"`
 }
@@ -365,6 +367,10 @@ func EncodeExample(p *Profile) ([]byte, error) {
 	statsInterval := p.Runtime.StatsInterval
 	if statsInterval == "" {
 		statsInterval = DefaultStatsInterval
+	}
+	metricsPort := p.Runtime.MetricsPort
+	if metricsPort <= 0 {
+		metricsPort = DefaultMetricsPort
 	}
 	doc := exampleDoc{
 		APIVersion: p.APIVersion,
@@ -401,6 +407,7 @@ func EncodeExample(p *Profile) ([]byte, error) {
 			CheckConcurrency:      p.Runtime.CheckConcurrency,
 			MaxInflightPerWorker:  p.Runtime.MaxInflightPerWorker,
 			StatsInterval:         statsInterval,
+			MetricsPort:           metricsPort,
 			Retry:                 p.Runtime.Retry,
 			Histogram: exampleHistogram{
 				Unit:    p.Runtime.Histogram.Unit,

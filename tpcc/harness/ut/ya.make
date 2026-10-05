@@ -12,6 +12,7 @@ SRCS(
     latency_constraints_ut.cpp
     progress_line_ut.cpp
     terminal_start_ut.cpp
+    prometheus_export_ut.cpp
 )
 
 PEERDIR(

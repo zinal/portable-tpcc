@@ -130,6 +130,17 @@ func Profile(p *profile.Profile) *Result {
 			res.Add("runtime.stats_interval must be greater than zero")
 		}
 	}
+	if p.Runtime.MetricsPort != 0 && (p.Runtime.MetricsPort < 1 || p.Runtime.MetricsPort > 65535) {
+		res.Add("runtime.metrics_port must be between 1 and 65535")
+	} else if len(p.Workers) > 0 {
+		listed := make([]config.MetricsWorker, len(p.Workers))
+		for i, w := range p.Workers {
+			listed[i] = config.MetricsWorker{Instance: w.Name, Host: w.Host}
+		}
+		if _, err := config.AssignMetricsTargets(listed, p.Runtime.MetricsPort); err != nil {
+			res.Add(err.Error())
+		}
+	}
 	if p.Runtime.Retry.MaxAttempts < 0 {
 		res.Add("runtime.retry.max_attempts must not be negative")
 	}

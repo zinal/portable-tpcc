@@ -48,6 +48,8 @@ DEFINE_int32(max_inflight, NTpcc::DEFAULT_MAX_INFLIGHT,
     "Max in-flight transactions and connection-pool size");
 DEFINE_int32(stats_interval, NTpcc::kDefaultStatsIntervalSeconds,
     "Seconds between worker progress statistics lines");
+DEFINE_int32(metrics_port, 0,
+    "Prometheus metrics listen port for the run command (0 = disabled)");
 DEFINE_bool(no_delays, false, "Disable keying and think time delays");
 DEFINE_string(think_time_distribution, "exponential",
     "Think time distribution: exponential (TPC-C default) or compatibility/constant");
@@ -102,6 +104,7 @@ void PrintHelp() {
         "                        parallel warehouse-range chunks for check); 0 = auto (default: 0)\n"
         "  -m, --max-inflight    Max in-flight transactions and connection-pool size (default: 100)\n"
         "  --stats-interval      Seconds between progress statistics lines (default: 30)\n"
+        "  --metrics-port        Prometheus /metrics listen port for run (0 = off, default: 0)\n"
         "  --no-delays           Disable keying and think time delays (default: false)\n"
         "  --think-time-distribution  exponential (TPC-C default) or compatibility/constant\n"
         "  --high-res-histogram  Use high resolution histograms (default: false)\n"
@@ -115,7 +118,7 @@ void PrintHelp() {
         "  schema  --run-config <path> --instance <name>\n"
         "  loader  --run-config <path> --instance <name> [--threads=N]\n"
         "  indexes --run-config <path> --instance <name>\n"
-        "  worker  --run-config <path> --instance <name> --start-at=<RFC3339-UTC> [--threads=N] [--max-inflight=N]\n"
+        "  worker  --run-config <path> --instance <name> --start-at=<RFC3339-UTC> [--threads=N] [--max-inflight=N] [--metrics-port=N]\n"
         "  check   --run-config <path> --instance <name> --after-import|--after-test [--threads=N]\n"
         "  debug   --run-config <path> --instance <name> [--repeats=N]\n"
         "  drop    --run-config <path> --instance <name>\n"
@@ -174,6 +177,9 @@ void ValidateRunFlags() {
     if (FLAGS_stats_interval <= 0) {
         throw std::runtime_error("--stats-interval must be greater than zero");
     }
+    if (FLAGS_metrics_port < 0 || FLAGS_metrics_port > 65535) {
+        throw std::runtime_error("--metrics-port must be between 0 and 65535");
+    }
     if (FLAGS_duration <= 0) {
         throw std::runtime_error("--duration must be greater than zero");
     }
@@ -192,13 +198,15 @@ bool ParseOrchestratedArgs(
     bool& afterRun,
     std::optional<int>& threads,
     std::optional<int>& repeats,
-    std::optional<int>& maxInflight)
+    std::optional<int>& maxInflight,
+    std::optional<int>& metricsPort)
 {
     afterImport = false;
     afterRun = false;
     threads.reset();
     repeats.reset();
     maxInflight.reset();
+    metricsPort.reset();
     for (int i = 2; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "--run-config" && i + 1 < argc) {
@@ -224,6 +232,12 @@ bool ParseOrchestratedArgs(
             maxInflight = std::stoi(arg.substr(std::string("--max_inflight=").size()));
         } else if ((arg == "--max-inflight" || arg == "--max_inflight" || arg == "-m") && i + 1 < argc) {
             maxInflight = std::stoi(argv[++i]);
+        } else if (arg.rfind("--metrics-port=", 0) == 0) {
+            metricsPort = std::stoi(arg.substr(std::string("--metrics-port=").size()));
+        } else if (arg.rfind("--metrics_port=", 0) == 0) {
+            metricsPort = std::stoi(arg.substr(std::string("--metrics_port=").size()));
+        } else if ((arg == "--metrics-port" || arg == "--metrics_port") && i + 1 < argc) {
+            metricsPort = std::stoi(argv[++i]);
         } else if (arg.rfind("--repeats=", 0) == 0) {
             repeats = std::stoi(arg.substr(std::string("--repeats=").size()));
         } else if (arg == "--repeats" && i + 1 < argc) {
@@ -246,7 +260,8 @@ int RunOrchestrated(
     bool afterRun,
     const std::optional<int>& threads,
     const std::optional<int>& repeats,
-    const std::optional<int>& maxInflight)
+    const std::optional<int>& maxInflight,
+    const std::optional<int>& metricsPort)
 {
     if (threads.has_value() && *threads < 0) {
         throw std::runtime_error("--threads must not be negative");
@@ -257,9 +272,12 @@ int RunOrchestrated(
     if (maxInflight.has_value() && *maxInflight <= 0) {
         throw std::runtime_error("--max-inflight must be greater than zero");
     }
+    if (metricsPort.has_value() && (*metricsPort <= 0 || *metricsPort > 65535)) {
+        throw std::runtime_error("--metrics-port must be between 1 and 65535");
+    }
     if (command == "worker") {
         LOG_I("Starting orchestrated worker " << instance << "...");
-        return NTpcc::RunWorkerFromRunConfig(runConfig, instance, startAt, threads, maxInflight);
+        return NTpcc::RunWorkerFromRunConfig(runConfig, instance, startAt, threads, maxInflight, metricsPort);
     }
     if (command == "loader") {
         LOG_I("Starting orchestrated loader " << instance << "...");
@@ -445,6 +463,7 @@ void RunBenchmark() {
     config.ThreadCount = FLAGS_threads;
     config.MaxInflight = FLAGS_max_inflight;
     config.StatsInterval = std::chrono::seconds(FLAGS_stats_interval);
+    config.MetricsPort = FLAGS_metrics_port;
     config.NoDelays = FLAGS_no_delays;
     config.HighResHistogram = FLAGS_high_res_histogram;
     config.SimulateTransactionSelect1 = FLAGS_simulate_select1;
@@ -518,8 +537,9 @@ int main(int argc, char* argv[]) {
             std::optional<int> threads;
             std::optional<int> repeats;
             std::optional<int> maxInflight;
+            std::optional<int> metricsPort;
             const bool hasOrchestrated = ParseOrchestratedArgs(
-                argc, argv, runConfig, instance, startAt, afterImport, afterRun, threads, repeats, maxInflight);
+                argc, argv, runConfig, instance, startAt, afterImport, afterRun, threads, repeats, maxInflight, metricsPort);
             // schema/check/loader/worker with --run-config take the orchestrated path.
             // schema/check without run-config fall through to standalone gflags parsing.
             if (hasOrchestrated) {
@@ -534,7 +554,7 @@ int main(int argc, char* argv[]) {
                 NTpcc::InitLogging(TLOG_INFO);
                 try {
                     return RunOrchestrated(
-                        earlyCommand, runConfig, instance, startAt, afterImport, afterRun, threads, repeats, maxInflight);
+                        earlyCommand, runConfig, instance, startAt, afterImport, afterRun, threads, repeats, maxInflight, metricsPort);
                 } catch (const std::exception& ex) {
                     LOG_E("Fatal error: " << ex.what());
                     return 1;
@@ -605,8 +625,9 @@ int main(int argc, char* argv[]) {
             std::optional<int> threads;
             std::optional<int> repeats;
             std::optional<int> maxInflight;
+            std::optional<int> metricsPort;
             if (!ParseOrchestratedArgs(
-                    argc, argv, runConfig, instance, startAt, afterImport, afterRun, threads, repeats, maxInflight)) {
+                    argc, argv, runConfig, instance, startAt, afterImport, afterRun, threads, repeats, maxInflight, metricsPort)) {
                 std::cerr << "Error: worker/loader require --run-config and --instance\n";
                 return 1;
             }
@@ -615,7 +636,7 @@ int main(int argc, char* argv[]) {
                 return 1;
             }
             return RunOrchestrated(
-                command, runConfig, instance, startAt, afterImport, afterRun, threads, repeats, maxInflight);
+                command, runConfig, instance, startAt, afterImport, afterRun, threads, repeats, maxInflight, metricsPort);
         }
     } catch (const std::exception& ex) {
         LOG_E("Fatal error: " << ex.what());

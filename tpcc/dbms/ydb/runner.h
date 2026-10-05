@@ -36,6 +36,8 @@ struct TRunConfig {
     bool NoDelays = false;
     bool HighResHistogram = false;
     std::chrono::milliseconds StatsInterval{kDefaultStatsInterval};
+    // Prometheus text endpoint. 0 disables live metrics.
+    int MetricsPort = 0;
     // snapshot-rw (default) maps to RepeatableRead; serializable-rw to Serializable.
     EIsolationLevel Isolation = EIsolationLevel::RepeatableRead;
 

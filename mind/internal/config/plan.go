@@ -31,7 +31,8 @@ func appendQueryTimeoutFlag(argv []string, queryTimeout *int) []string {
 // threads, when non-nil, is a launch-time override (0 = auto at the binary).
 // maxInflight, when non-nil, replaces the profile max_inflight for this
 // process (admission cap and connection-pool size). It must be greater than zero.
-func WorkerArgv(runConfigPath, instance, startAt string, threads, maxInflight *int) []string {
+// metricsPort > 0 enables the worker Prometheus endpoint on that port.
+func WorkerArgv(runConfigPath, instance, startAt string, threads, maxInflight *int, metricsPort int) []string {
 	args := []string{
 		"worker",
 		"--run-config", runConfigPath,
@@ -41,7 +42,11 @@ func WorkerArgv(runConfigPath, instance, startAt string, threads, maxInflight *i
 		args = append(args, "--start-at="+startAt)
 	}
 	args = appendThreadFlag(args, threads)
-	return appendMaxInflightFlag(args, maxInflight)
+	args = appendMaxInflightFlag(args, maxInflight)
+	if metricsPort > 0 {
+		args = append(args, fmt.Sprintf("--metrics-port=%d", metricsPort))
+	}
+	return args
 }
 
 // LoaderArgv returns argv for launching a loader.
@@ -181,9 +186,16 @@ type PlanSnapshot struct {
 // --query-timeout override on schema, loader, indexes, check, debug, and
 // drop argv. Workers are unchanged. None of these rewrite run-config.
 func BuildPlanSnapshot(rc *RunConfig, threads, maxInflight, queryTimeout *int) *PlanSnapshot {
+	return BuildPlanSnapshotMetrics(rc, threads, maxInflight, queryTimeout, nil)
+}
+
+// BuildPlanSnapshotMetrics is BuildPlanSnapshot with per-worker Prometheus
+// listen ports. A missing or non-positive port leaves that worker without
+// --metrics-port.
+func BuildPlanSnapshotMetrics(rc *RunConfig, threads, maxInflight, queryTimeout *int, metricsPorts map[string]int) *PlanSnapshot {
 	workerArgv := make(map[string][]string)
 	for _, w := range rc.WorkerAssignment {
-		workerArgv[w.Instance] = WorkerArgv("run-config.json", w.Instance, "", threads, maxInflight)
+		workerArgv[w.Instance] = WorkerArgv("run-config.json", w.Instance, "", threads, maxInflight, metricsPorts[w.Instance])
 	}
 	loaderArgv := make(map[string][]string)
 	for _, l := range rc.LoadAssignment {

@@ -171,8 +171,13 @@ type Runtime struct {
 	// StatsInterval is how often workers print a progress statistics line.
 	// Go duration (30s, 5s, …) or a bare integer (milliseconds). Empty / omit
 	// materializes as config.DefaultStatsIntervalMs (30000).
-	StatsInterval string      `yaml:"stats_interval"`
-	Retry         RetryPolicy `yaml:"retry"`
+	StatsInterval string `yaml:"stats_interval"`
+	// MetricsPort is the base TCP port for optional Prometheus scrapes of
+	// worker processes. 0 / omit means DefaultMetricsPort (43800). Worker i
+	// on a host listens on base+i, with i starting at 0 for that host.
+	// Collection itself is enabled by mind-tpcc --metrics.
+	MetricsPort int         `yaml:"metrics_port"`
+	Retry       RetryPolicy `yaml:"retry"`
 	Histogram     Histogram   `yaml:"histogram"`
 }
 
@@ -237,6 +242,10 @@ func Parse(data []byte) (*Profile, error) {
 	AssignInstanceNames(p.Loaders, p.Workers)
 	return &p, nil
 }
+
+// DefaultMetricsPort is the Prometheus listen base when runtime.metrics_port
+// is omitted. Each worker process on a host uses base + its index on that host.
+const DefaultMetricsPort = 43800
 
 // AssignInstanceNames fills empty instance names from host values.
 // Each host gets a 1-based suffix in the order loaders then workers, so

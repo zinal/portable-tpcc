@@ -35,6 +35,8 @@ struct TRunConfig {
     bool NoDelays = false;
     bool HighResHistogram = false;
     std::chrono::milliseconds StatsInterval{kDefaultStatsInterval};
+    // Prometheus text endpoint. 0 disables live metrics.
+    int MetricsPort = 0;
     int SimulateTransactionSelect1 = 0;
     bool Orchestrated = false;
     std::vector<TWarehouseRange> WarehouseRanges;

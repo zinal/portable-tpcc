@@ -22,6 +22,34 @@ func TestRun_helpWithoutProfile(t *testing.T) {
 	}
 }
 
+func TestRun_prometheusConfig(t *testing.T) {
+	dir := t.TempDir()
+	profilePath := writeCLITestProfile(t, dir)
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	code := Run([]string{"prometheus-config", "--profile", profilePath, "--metrics-port", "44000"})
+	_ = w.Close()
+	os.Stdout = old
+	if code != 0 {
+		t.Fatalf("prometheus-config=%d, want 0", code)
+	}
+	out, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(out)
+	if !strings.Contains(text, `"127.0.0.1:44000"`) {
+		t.Fatalf("fragment missing target:\n%s", text)
+	}
+	if !strings.Contains(text, `metrics_process: "0"`) {
+		t.Fatalf("fragment missing process index:\n%s", text)
+	}
+}
+
 func TestRun_missingProfile(t *testing.T) {
 	if code := Run([]string{"validate"}); code != 2 {
 		t.Fatalf("Run([validate])=%d, want 2", code)
@@ -89,6 +117,9 @@ func TestRun_helpMentionsLeaveProcesses(t *testing.T) {
 	}
 	if !strings.Contains(string(out), "--max-inflight <n>") {
 		t.Fatalf("help missing --max-inflight:\n%s", out)
+	}
+	if !strings.Contains(string(out), "--metrics") || !strings.Contains(string(out), "prometheus-config") {
+		t.Fatalf("help missing metrics:\n%s", out)
 	}
 	if !strings.Contains(string(out), "test        Arm workers") {
 		t.Fatalf("help missing test command:\n%s", out)

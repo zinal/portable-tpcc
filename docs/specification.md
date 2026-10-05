@@ -247,6 +247,34 @@ line (phase, live tpmC, counts, inflight). The interval is profile
 `runtime.stats_interval` (run-config `runtime.stats_interval_ms`,
 standalone `--stats-interval`); omitted uses **30 seconds**.
 
+Optional live metrics use that same interval. `mind-tpcc test` and `run`
+pass `--metrics-port=<port>` to each worker only when `--metrics` is set.
+The listen port of worker process *i* on a host is
+`base + i`, where *i* is 0, 1, 2, … in worker-assignment order on that
+host and `base` is `runtime.metrics_port` (default **43800**), overridable
+with `--metrics-port`. Standalone `tpcc-* run --metrics-port=N` listens on
+`N` directly. Each worker serves Prometheus text exposition on
+`GET /metrics` (`text/plain; version=0.0.4`) for the **last completed
+collection interval** (the first stats tick only opens the window):
+
+- `tpcc_transactions{type,result}` — successes and failures of each
+  transaction type. `result="success"` includes test-logic rollbacks;
+- `tpcc_transaction_duration_seconds{type,result}` — response-time
+  histogram of those successes and of failures;
+- `tpcc_transaction_retries{type}` — retries caused by retryable errors;
+- `tpcc_transaction_rollbacks{type}` — test-logic rollbacks (also counted
+  as success, including in tpmC);
+- `tpcc_tpmc` — New-Order successes in the interval, per minute;
+- `tpcc_inflight` — transactions in flight when the interval closed;
+- `tpcc_client_wait_seconds{type,wait}` — histograms of client-side waits
+  `admission`, `session_pool`, and `retry_backoff`;
+- `tpcc_collection_interval_seconds` — length of that interval.
+
+These series are interval gauges/histograms, not process-lifetime counters,
+and they do not change `result.json`. `mind-tpcc prometheus-config` prints
+a Prometheus `scrape_configs` fragment for the profile's workers using the
+same port rule. The flag does not rewrite the profile or run-config.
+
 Normalized errors: `retryable_abort`, `not_committed`, `ambiguous_commit`
 (no blind retry), `permanent` (count as Fail, do not stop the run),
 `integrity` (fail the run), `cancelled`.
@@ -427,6 +455,7 @@ mind-tpcc validate | plan | deploy | undeploy --yes | schema | load | indexes
 mind-tpcc check [--after-import|--after-test]
 mind-tpcc debug [--repeats=N]
 mind-tpcc test | status | stop | collect | consolidate
+mind-tpcc prometheus-config
 mind-tpcc run | drop --yes | cleanup --yes
 ```
 
@@ -442,6 +471,12 @@ to those defaults. Optional flags override individual fields.
 
 `test` arms workers and runs ramp-up / measurement / drain. `start` is a
 compatibility alias for `test`. `--skip start` skips the same `run` step.
+`--metrics` turns on the live Prometheus endpoint described in §7.
+`--metrics-port` overrides the base port for that invocation.
+
+`prometheus-config` prints a Prometheus scrape fragment for the current
+profile's workers. It does not allocate a `run_id` or launch processes.
+`--metrics-port` selects the same base port `test --metrics` would use.
 
 Standalone `mind-tpcc consolidate` MUST run `collect` first when
 `results/<run_id>/collection-manifest.json` is absent, so a post-test
