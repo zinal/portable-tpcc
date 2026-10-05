@@ -1517,7 +1517,7 @@ func TestConsolidateInterruptedRunUsesLastHandlerStop(t *testing.T) {
 	text := consolidate.FormatSummary(agg)
 	for _, line := range []string{
 		"incomplete=true",
-		"*** ПРОГОН НЕВАЛИДНЫЙ, ТАК КАК НЕПОЛНЫЙ",
+		"*** THE RUN IS INVALID BECAUSE IT IS INCOMPLETE",
 		"  Measured Duration: 45.0s (configured: 60s)",
 		"  New-Order Throughput: 100.00 tpmC",
 	} {
@@ -1532,7 +1532,7 @@ func TestConsolidateInterruptedRunUsesLastHandlerStop(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(summary), "ПРОГОН НЕВАЛИДНЫЙ, ТАК КАК НЕПОЛНЫЙ") {
+	if !strings.Contains(string(summary), "THE RUN IS INVALID BECAUSE IT IS INCOMPLETE") {
 		t.Fatalf("summary.txt missing incomplete banner:\n%s", summary)
 	}
 }
@@ -1565,7 +1565,7 @@ func TestConsolidateInterruptedBeforeMeasurementIsZeroLength(t *testing.T) {
 		t.Fatalf("measurement_seconds=%v, want 0", got)
 	}
 	text := consolidate.FormatSummary(agg)
-	if !strings.Contains(text, "*** ПРОГОН НЕВАЛИДНЫЙ, ТАК КАК НЕПОЛНЫЙ") {
+	if !strings.Contains(text, "*** THE RUN IS INVALID BECAUSE IT IS INCOMPLETE") {
 		t.Fatalf("summary missing banner:\n%s", text)
 	}
 	if !strings.Contains(text, "Measured Duration: 0.0s (configured: 60s)") {

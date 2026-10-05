@@ -662,7 +662,7 @@ void PrintFinalResults(
     LOG_I("=== TPC-C Results ===");
     if (incomplete) {
         LOG_W("************************************************************************");
-        LOG_W("*** ПРОГОН НЕВАЛИДНЫЙ, ТАК КАК НЕПОЛНЫЙ");
+        LOG_W("*** THE RUN IS INVALID BECAUSE IT IS INCOMPLETE");
         LOG_W("************************************************************************");
     }
     const char* unit = HistogramUnitLabel(config);

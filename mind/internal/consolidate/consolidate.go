@@ -862,7 +862,7 @@ var summaryTxOrder = []struct {
 
 const (
 	incompleteRunBannerLine = "************************************************************************"
-	incompleteRunBannerHead = "*** ПРОГОН НЕВАЛИДНЫЙ, ТАК КАК НЕПОЛНЫЙ"
+	incompleteRunBannerHead = "*** THE RUN IS INVALID BECAUSE IT IS INCOMPLETE"
 )
 
 func appendIncompleteRunBanner(b *strings.Builder, incomplete bool) {

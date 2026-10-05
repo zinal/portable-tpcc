@@ -449,7 +449,7 @@ print, in capital letters, that the run is invalid because it is incomplete:
 
 ```text
 ************************************************************************
-*** ПРОГОН НЕВАЛИДНЫЙ, ТАК КАК НЕПОЛНЫЙ
+*** THE RUN IS INVALID BECAUSE IT IS INCOMPLETE
 ************************************************************************
 ```
 
