@@ -24,8 +24,8 @@ namespace NTpcc {
 
 //-----------------------------------------------------------------------------
 
-// Per-type accumulator for the optional Prometheus interval export.
-// Not part of measurement result.json.
+// Per-type accumulator for the optional Prometheus export.
+// Cumulative for the process lifetime. Not part of measurement result.json.
 struct TLiveTx {
     uint64_t Success = 0;
     uint64_t Failure = 0;
@@ -38,7 +38,7 @@ struct TLiveTx {
     TPromHistogram RetryBackoff;
     mutable TSpinLock Lock;
 
-    void TakeInto(TPromTxSnapshot& dst);
+    void CopyInto(TPromTxSnapshot& dst) const;
 };
 
 //-----------------------------------------------------------------------------
@@ -186,13 +186,15 @@ public:
         PerTransactionTypeStats[static_cast<size_t>(type)].Retried.fetch_add(1, std::memory_order_relaxed);
     }
 
-    // Optional real-time interval metrics. Disabled until EnableLiveMetrics().
+    // Optional Prometheus counters. Disabled until EnableLiveMetrics().
+    // Values accumulate for the process lifetime and are copied at scrape time.
     void EnableLiveMetrics();
     bool LiveMetricsEnabled() const { return static_cast<bool>(Live_); }
     void RecordLiveSuccess(ETransactionType type, const TLatencySample& sample, bool userAborted);
     void RecordLiveFailure(ETransactionType type, const TLatencySample& sample);
     void RecordLiveRetry(ETransactionType type);
-    void TakeLiveInterval(std::array<TPromTxSnapshot, TRANSACTION_TYPE_COUNT>& dst);
+    // Adds this thread's process-lifetime totals into dst.
+    void CopyLiveMetrics(std::array<TPromTxSnapshot, TRANSACTION_TYPE_COUNT>& dst) const;
 
     void AddProgressOK(ETransactionType type, std::chrono::microseconds fullLatency) {
         auto& stats = PerTransactionTypeStats[static_cast<size_t>(type)];

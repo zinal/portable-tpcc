@@ -247,33 +247,39 @@ line (phase, live tpmC, counts, inflight). The interval is profile
 `runtime.stats_interval` (run-config `runtime.stats_interval_ms`,
 standalone `--stats-interval`); omitted uses **30 seconds**.
 
-Optional live metrics use that same interval. `mind-tpcc test` and `run`
-pass `--metrics-port=<port>` to each worker only when `--metrics` is set.
-The listen port of worker process *i* on a host is
+`mind-tpcc test` and `run` pass `--metrics-port=<port>` to each worker only
+when `--metrics` is set. The listen port of worker process *i* on a host is
 `base + i`, where *i* is 0, 1, 2, … in worker-assignment order on that
 host and `base` is `runtime.metrics_port` (default **43800**), overridable
 with `--metrics-port`. Standalone `tpcc-* run --metrics-port=N` listens on
 `N` directly. Each worker serves Prometheus text exposition on
-`GET /metrics` (`text/plain; version=0.0.4`) for the **last completed
-collection interval** (the first stats tick only opens the window):
+`GET /metrics` (`text/plain; version=0.0.4`). The body is the process state
+at scrape time. Counters and histogram series increase monotonically until
+the process exits. `runtime.stats_interval` only throttles the console
+progress line.
 
-- `tpcc_transactions{type,result}` — successes and failures of each
-  transaction type. `result="success"` includes test-logic rollbacks;
-- `tpcc_transaction_duration_seconds{type,result}` — response-time
-  histogram of those successes and of failures;
-- `tpcc_transaction_retries{type}` — retries caused by retryable errors;
-- `tpcc_transaction_rollbacks{type}` — test-logic rollbacks (also counted
-  as success, including in tpmC);
-- `tpcc_tpmc` — New-Order successes in the interval, per minute;
-- `tpcc_inflight` — transactions in flight when the interval closed;
-- `tpcc_client_wait_seconds{type,wait}` — histograms of client-side waits
-  `admission`, `session_pool`, and `retry_backoff`;
-- `tpcc_collection_interval_seconds` — length of that interval.
+- `tpcc_transactions_total{type,result}` (counter) — successes and failures
+  of each transaction type since the process started. `result="success"`
+  includes test-logic rollbacks;
+- `tpcc_transaction_duration_seconds{type,result}` (histogram) — cumulative
+  response time of those successes and of failures, in seconds;
+- `tpcc_transaction_retries_total{type}` (counter) — retries caused by
+  retryable errors;
+- `tpcc_transaction_rollbacks_total{type}` (counter) — test-logic rollbacks
+  (also counted as success, including in tpmC);
+- `tpcc_inflight` (gauge) — transactions in flight at scrape time;
+- `tpcc_client_wait_seconds{type,wait}` (histogram) — cumulative client-side
+  waits `admission`, `session_pool`, and `retry_backoff`, in seconds.
 
-These series are interval gauges/histograms, not process-lifetime counters,
-and they do not change `result.json`. `mind-tpcc prometheus-config` prints
-a Prometheus `scrape_configs` fragment for the profile's workers using the
-same port rule. The flag does not rewrite the profile or run-config.
+Aggregate counters with `rate` or `increase`, and histograms with
+`histogram_quantile` over `rate` of the `_bucket` series. New-Order
+throughput in transactions per minute, summed across workers, is
+`sum(rate(tpcc_transactions_total{type="new_order",result="success"}[1m])) * 60`.
+The range inside `rate` is the aggregation window. These series include
+ramp-up, measurement, and drain, and they do not change `result.json`.
+`mind-tpcc prometheus-config` prints a Prometheus `scrape_configs` fragment
+for the profile's workers using the same port rule. The flag does not
+rewrite the profile or run-config.
 
 Normalized errors: `retryable_abort`, `not_committed`, `ambiguous_commit`
 (no blind retry), `permanent` (count as Fail, do not stop the run),

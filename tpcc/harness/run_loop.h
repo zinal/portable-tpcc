@@ -18,7 +18,6 @@
 namespace NTpcc {
 
 class ITaskQueue;
-class TPrometheusExporter;
 
 struct TRunOutcome {
     std::chrono::system_clock::time_point RampStart;
@@ -220,10 +219,6 @@ struct TProgressDisplayState {
     // ProgressOK+ProgressUserAborted at the previous printed line, per type.
     // Cleared when live counters reset at measurement start.
     std::array<size_t, TRANSACTION_TYPE_COUNT> LastProgressCompleted{};
-    // Start of the open Prometheus collection window. The first console tick
-    // arms it; later ticks publish the window.
-    bool MetricsBaselineSet = false;
-    Clock::time_point MetricsWindowStart{};
 };
 
 // Per-type fragment of the progress line. Counts are increments since
@@ -250,8 +245,7 @@ void MaybeUpdateConsoleStats(
     Clock::time_point rampStartSteady,
     Clock::time_point measureStartSteady,
     Clock::time_point measureEndSteady,
-    ITaskQueue* taskQueue = nullptr,
-    TPrometheusExporter* prometheus = nullptr);
+    ITaskQueue* taskQueue = nullptr);
 
 void PrintFinalResults(
     const TRunStatsConfig& config,

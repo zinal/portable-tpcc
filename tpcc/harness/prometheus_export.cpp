@@ -1,7 +1,6 @@
 #include "prometheus_export.h"
 
 #include <log.h>
-#include <run_loop.h>
 #include <terminal.h>
 #include <context.h>
 
@@ -44,7 +43,7 @@ void AppendHelp(std::string& out, const char* name, const char* type, const char
     out += '\n';
 }
 
-void AppendGauge(std::string& out, const char* name, const std::string& labels, uint64_t value) {
+void AppendSample(std::string& out, const char* name, const std::string& labels, uint64_t value) {
     out += name;
     if (!labels.empty()) {
         out += '{';
@@ -53,18 +52,6 @@ void AppendGauge(std::string& out, const char* name, const std::string& labels, 
     }
     out += ' ';
     out += std::to_string(value);
-    out += '\n';
-}
-
-void AppendGauge(std::string& out, const char* name, const std::string& labels, double value) {
-    out += name;
-    if (!labels.empty()) {
-        out += '{';
-        out += labels;
-        out += '}';
-    }
-    out += ' ';
-    out += fmt::format("{:.6f}", value);
     out += '\n';
 }
 
@@ -115,38 +102,15 @@ void AppendHistogram(
     out += '\n';
 }
 
-void PublishWindow(
-    TProgressDisplayState& state,
-    std::chrono::steady_clock::time_point now,
-    const std::vector<std::shared_ptr<TTerminalStats>>& perThreadStats,
-    TPrometheusExporter* exporter,
-    bool flush)
+TPromSnapshot CollectSnapshot(
+    const std::vector<std::shared_ptr<TTerminalStats>>& perThreadStats)
 {
-    if (exporter == nullptr) {
-        return;
-    }
-    if (!state.MetricsBaselineSet) {
-        state.MetricsBaselineSet = true;
-        state.MetricsWindowStart = now;
-        if (!flush) {
-            return;
-        }
-    }
-
-    const double elapsed = std::chrono::duration<double>(now - state.MetricsWindowStart).count();
-    state.MetricsWindowStart = now;
-
-    TPromIntervalSnapshot snapshot;
-    snapshot.IntervalSeconds = elapsed > 0.0 ? elapsed : 0.0;
+    TPromSnapshot snapshot;
     snapshot.Inflight = TransactionsInflight.load(std::memory_order_relaxed);
     for (const auto& stats : perThreadStats) {
-        stats->TakeLiveInterval(snapshot.Tx);
+        stats->CopyLiveMetrics(snapshot.Tx);
     }
-    const uint64_t newOrderSuccess = snapshot.Tx[static_cast<size_t>(ETransactionType::NewOrder)].Success;
-    snapshot.Tpmc = snapshot.IntervalSeconds > 0.0
-        ? (static_cast<double>(newOrderSuccess) / snapshot.IntervalSeconds * 60.0)
-        : 0.0;
-    exporter->Publish(RenderPrometheusMetrics(snapshot));
+    return snapshot;
 }
 
 std::string ReadRequest(int fd) {
@@ -192,70 +156,69 @@ void WriteAll(int fd, const std::string& payload) {
 
 } // namespace
 
-std::string RenderPrometheusMetrics(const TPromIntervalSnapshot& snapshot) {
+std::string RenderPrometheusMetrics(const TPromSnapshot& snapshot) {
     std::string out;
     out.reserve(8192);
 
     AppendHelp(
         out,
-        "tpcc_collection_interval_seconds",
-        "gauge",
-        "Length of the collection interval these samples cover, in seconds.");
-    AppendGauge(out, "tpcc_collection_interval_seconds", "", snapshot.IntervalSeconds);
+        "tpcc_transactions_total",
+        "counter",
+        "Transactions completed since the worker process started. result=success includes test-logic rollbacks.");
+    for (size_t i = 0; i < TRANSACTION_TYPE_COUNT; ++i) {
+        const std::string typeLabel = std::string("type=\"") + PrometheusTypeLabel(i) + "\"";
+        const auto& tx = snapshot.Tx[i];
+        AppendSample(out, "tpcc_transactions_total", typeLabel + ",result=\"success\"", tx.Success);
+        AppendSample(out, "tpcc_transactions_total", typeLabel + ",result=\"failure\"", tx.Failure);
+    }
 
     AppendHelp(
         out,
-        "tpcc_tpmc",
-        "gauge",
-        "New-Order transactions per minute over the current collection interval, including test-logic rollbacks.");
-    AppendGauge(out, "tpcc_tpmc", "", snapshot.Tpmc);
+        "tpcc_transaction_retries_total",
+        "counter",
+        "Retries caused by retryable errors since the worker process started.");
+    for (size_t i = 0; i < TRANSACTION_TYPE_COUNT; ++i) {
+        const std::string typeLabel = std::string("type=\"") + PrometheusTypeLabel(i) + "\"";
+        AppendSample(out, "tpcc_transaction_retries_total", typeLabel, snapshot.Tx[i].Retries);
+    }
+
+    AppendHelp(
+        out,
+        "tpcc_transaction_rollbacks_total",
+        "counter",
+        "Rollbacks required by the TPC-C transaction profile since the worker process started. Also counted as success.");
+    for (size_t i = 0; i < TRANSACTION_TYPE_COUNT; ++i) {
+        const std::string typeLabel = std::string("type=\"") + PrometheusTypeLabel(i) + "\"";
+        AppendSample(out, "tpcc_transaction_rollbacks_total", typeLabel, snapshot.Tx[i].Rollbacks);
+    }
 
     AppendHelp(
         out,
         "tpcc_inflight",
         "gauge",
-        "Transactions in flight when the collection interval closed.");
-    AppendGauge(out, "tpcc_inflight", "", snapshot.Inflight);
-
-    AppendHelp(
-        out,
-        "tpcc_transactions",
-        "gauge",
-        "Transactions completed in the current collection interval. result=success includes test-logic rollbacks.");
-    AppendHelp(
-        out,
-        "tpcc_transaction_retries",
-        "gauge",
-        "Retries caused by retryable errors in the current collection interval.");
-    AppendHelp(
-        out,
-        "tpcc_transaction_rollbacks",
-        "gauge",
-        "Rollbacks required by the TPC-C transaction profile in the current collection interval. Also counted as success.");
-    for (size_t i = 0; i < TRANSACTION_TYPE_COUNT; ++i) {
-        const std::string typeLabel = std::string("type=\"") + PrometheusTypeLabel(i) + "\"";
-        const auto& tx = snapshot.Tx[i];
-        AppendGauge(out, "tpcc_transactions", typeLabel + ",result=\"success\"", tx.Success);
-        AppendGauge(out, "tpcc_transactions", typeLabel + ",result=\"failure\"", tx.Failure);
-        AppendGauge(out, "tpcc_transaction_retries", typeLabel, tx.Retries);
-        AppendGauge(out, "tpcc_transaction_rollbacks", typeLabel, tx.Rollbacks);
-    }
+        "Transactions in flight at scrape time.");
+    AppendSample(out, "tpcc_inflight", "", snapshot.Inflight);
 
     AppendHelp(
         out,
         "tpcc_transaction_duration_seconds",
         "histogram",
-        "Client response time of transactions completed in the current collection interval, in seconds.");
-    AppendHelp(
-        out,
-        "tpcc_client_wait_seconds",
-        "histogram",
-        "Client-side wait accumulated by transactions completed in the current collection interval, in seconds.");
+        "Cumulative client response time of transactions completed since the worker process started, in seconds.");
     for (size_t i = 0; i < TRANSACTION_TYPE_COUNT; ++i) {
         const std::string typeLabel = std::string("type=\"") + PrometheusTypeLabel(i) + "\"";
         const auto& tx = snapshot.Tx[i];
         AppendHistogram(out, "tpcc_transaction_duration_seconds", typeLabel + ",result=\"success\"", tx.SuccessLatency);
         AppendHistogram(out, "tpcc_transaction_duration_seconds", typeLabel + ",result=\"failure\"", tx.FailureLatency);
+    }
+
+    AppendHelp(
+        out,
+        "tpcc_client_wait_seconds",
+        "histogram",
+        "Cumulative client-side wait of transactions completed since the worker process started, in seconds.");
+    for (size_t i = 0; i < TRANSACTION_TYPE_COUNT; ++i) {
+        const std::string typeLabel = std::string("type=\"") + PrometheusTypeLabel(i) + "\"";
+        const auto& tx = snapshot.Tx[i];
         AppendHistogram(out, "tpcc_client_wait_seconds", typeLabel + ",wait=\"admission\"", tx.AdmissionWait);
         AppendHistogram(out, "tpcc_client_wait_seconds", typeLabel + ",wait=\"session_pool\"", tx.SessionPoolWait);
         AppendHistogram(out, "tpcc_client_wait_seconds", typeLabel + ",wait=\"retry_backoff\"", tx.RetryBackoff);
@@ -263,7 +226,11 @@ std::string RenderPrometheusMetrics(const TPromIntervalSnapshot& snapshot) {
     return out;
 }
 
-TPrometheusExporter::TPrometheusExporter(int port) {
+TPrometheusExporter::TPrometheusExporter(
+    int port,
+    const std::vector<std::shared_ptr<TTerminalStats>>& perThreadStats)
+    : Stats_(&perThreadStats)
+{
     if (port < 0 || port > 65535) {
         throw std::runtime_error("--metrics-port must be between 0 and 65535");
     }
@@ -301,7 +268,6 @@ TPrometheusExporter::TPrometheusExporter(int port) {
         Port_ = port;
     }
 
-    Body_ = RenderPrometheusMetrics(TPromIntervalSnapshot{});
     Thread_ = std::thread([this] { Serve(); });
     LOG_I("Prometheus metrics listening on 0.0.0.0:" << Port_ << " path=/metrics");
 }
@@ -316,11 +282,6 @@ TPrometheusExporter::~TPrometheusExporter() {
     if (Thread_.joinable()) {
         Thread_.join();
     }
-}
-
-void TPrometheusExporter::Publish(std::string body) {
-    std::lock_guard<std::mutex> guard(Mu_);
-    Body_ = std::move(body);
 }
 
 void TPrometheusExporter::Serve() {
@@ -345,8 +306,7 @@ void TPrometheusExporter::Serve() {
         if (IsMetricsRequest(request)) {
             status = 200;
             statusText = "OK";
-            std::lock_guard<std::mutex> guard(Mu_);
-            body = Body_;
+            body = RenderPrometheusMetrics(CollectSnapshot(*Stats_));
         }
         std::string response = "HTTP/1.1 " + std::to_string(status) + " " + statusText + "\r\n";
         response += "Content-Type: text/plain; version=0.0.4; charset=utf-8\r\n";
@@ -356,23 +316,6 @@ void TPrometheusExporter::Serve() {
         WriteAll(fd, response);
         ::close(fd);
     }
-}
-
-void NotePrometheusInterval(
-    TProgressDisplayState& state,
-    std::chrono::steady_clock::time_point now,
-    const std::vector<std::shared_ptr<TTerminalStats>>& perThreadStats,
-    TPrometheusExporter* exporter)
-{
-    PublishWindow(state, now, perThreadStats, exporter, false);
-}
-
-void FlushPrometheusInterval(
-    TProgressDisplayState& state,
-    const std::vector<std::shared_ptr<TTerminalStats>>& perThreadStats,
-    TPrometheusExporter* exporter)
-{
-    PublishWindow(state, std::chrono::steady_clock::now(), perThreadStats, exporter, true);
 }
 
 } // namespace NTpcc
