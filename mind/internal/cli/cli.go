@@ -710,7 +710,8 @@ Commands:
               does not allocate a run id). --force continues after a profile
               edit when name, DBMS, worker hosts, and authentication still match
   prometheus-config
-              Print a Prometheus scrape fragment for this profile's workers
+              Print a Prometheus config snippet for this profile's workers
+              (global 15s scrape timings plus scrape_configs)
   run         Full pipeline (requires prior explicit deploy)
   drop        Drop TPC-C objects for the profile database path (--yes)
   cleanup     Remove run artifacts on all hosts including control (--yes)

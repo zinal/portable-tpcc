@@ -39,7 +39,7 @@ mind-tpcc configure --profile <path> --dbms <pgsql|ydb|oceanbase> [options]
 | `stop` | Stop workers gracefully. |
 | `collect` | Copy artifacts from runtime hosts. |
 | `consolidate` | Merge worker results into `aggregate.json` and print a brief stats summary, including the commit id of each launched module. Rejects the run when collected `process.json` commits differ, or when some commits are present and some are absent. Commits that are absent on every module do not reject the run. `--force` records a commit mismatch as a warning and still writes `aggregate.json`. Runs `collect` first when `collection-manifest.json` is absent. Does not allocate a run id. An omitted `--run-id` with no active run is left empty and does not write run-state. A run that has not finished `test` is left unchanged. Without `--force`, the profile file must match the run's `profile.sha256`. |
-| `prometheus-config` | Print a Prometheus `scrape_configs` fragment for the profile's worker processes. Does not allocate a run id or launch anything. Targets are `host:port` with `port = base + index` on that host (`index` is 0, 1, 2, … in worker order). |
+| `prometheus-config` | Print a Prometheus config snippet for the profile's worker processes: `global` scrape timings of 15s plus `scrape_configs`. Does not allocate a run id or launch anything. Targets are `host:port` with `port = base + index` on that host (`index` is 0, 1, 2, … in worker order). |
 | `run` | Full pipeline. Requires a prior explicit `deploy`. |
 | `drop` | Drop TPC-C objects for the profile's database path. Requires `--yes`. |
 | `cleanup` | Teardown: stop, remote + local run artifacts (including the control host). Does not drop database objects. Requires `--yes`. |

@@ -129,6 +129,10 @@ func TestPrometheusScrapeFragment(t *testing.T) {
 	}
 	text := PrometheusScrapeFragment("bench", "pgsql", targets)
 	for _, want := range []string{
+		"global:",
+		"scrape_interval: 15s",
+		"scrape_timeout: 15s",
+		"evaluation_interval: 15s",
 		"job_name: portable-tpcc",
 		"metrics_path: /metrics",
 		`sum(rate(tpcc_transactions_total{type="new_order",result="success"}[1m])) * 60`,

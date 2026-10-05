@@ -48,6 +48,11 @@ func TestRun_prometheusConfig(t *testing.T) {
 	if !strings.Contains(text, `metrics_process: "0"`) {
 		t.Fatalf("fragment missing process index:\n%s", text)
 	}
+	if !strings.Contains(text, "scrape_interval: 15s") ||
+		!strings.Contains(text, "scrape_timeout: 15s") ||
+		!strings.Contains(text, "evaluation_interval: 15s") {
+		t.Fatalf("fragment missing global scrape timings:\n%s", text)
+	}
 }
 
 func TestRun_missingProfile(t *testing.T) {
