@@ -882,6 +882,9 @@ func (o *Orchestrator) test(ctx *Context) error {
 		workers = append(workers, proc)
 	}
 	if err := o.superviseWorkers(ctx, workers, token, sessions); err != nil {
+		if errors.Is(err, ErrInterrupted) {
+			o.publishInterruptedResults(ctx)
+		}
 		return err
 	}
 	progress.Printf("stage test: complete")
@@ -891,6 +894,19 @@ func (o *Orchestrator) test(ctx *Context) error {
 // RunTest arms workers with a shared --start-at and supervises phases.
 func (o *Orchestrator) RunTest(ctx *Context) error {
 	return o.test(ctx)
+}
+
+// publishInterruptedResults collects and consolidates worker files written
+// after SIGINT/SIGTERM. The test step still returns ErrInterrupted.
+func (o *Orchestrator) publishInterruptedResults(ctx *Context) {
+	progress.Printf("interrupted: collecting partial measurement results")
+	if err := o.collect(ctx); err != nil {
+		progress.Printf("interrupted: collect failed: %v", err)
+		return
+	}
+	if err := o.consolidate(ctx); err != nil {
+		progress.Printf("interrupted: consolidate failed: %v", err)
+	}
 }
 
 func (o *Orchestrator) collect(ctx *Context) error {

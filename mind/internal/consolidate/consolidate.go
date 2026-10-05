@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"time"
 
 	"portable-tpcc/mind/internal/canonical"
 	"portable-tpcc/mind/internal/collect"
@@ -27,6 +28,8 @@ type Status struct {
 	TPCCSettingsDeviations      []string `json:"tpcc_settings_deviations,omitempty"`
 	LatencyConstraintsOK        bool     `json:"latency_constraints_ok"`
 	LatencyConstraintViolations []string `json:"latency_constraint_violations,omitempty"`
+	// Incomplete is true when any worker result was written after SIGINT/SIGTERM.
+	Incomplete bool `json:"incomplete"`
 }
 
 // ModuleVersion is the short commit id reported by one launched role.
@@ -108,6 +111,8 @@ func (c *Consolidator) ConsolidateWithOptions(runID string, rc *config.RunConfig
 	var incompleteWorkers []string
 	totalWarehouses := 0
 	workerAssignments := map[string]map[string]interface{}{}
+	runIncomplete := false
+	var lastInterruptStop *interruptStop
 
 	for _, e := range entries {
 		if !e.IsDir() {
@@ -142,6 +147,14 @@ func (c *Consolidator) ConsolidateWithOptions(runID string, rc *config.RunConfig
 		if exit != 0 {
 			workersComplete = false
 			incompleteWorkers = append(incompleteWorkers, fmt.Sprintf("%s: exit_status=%d", name, exit))
+		}
+		if workerResultIncomplete(partial) {
+			runIncomplete = true
+			if mark, ok := interruptStopFromResult(partial); ok {
+				if lastInterruptStop == nil || mark.stoppedAt.After(lastInterruptStop.stoppedAt) {
+					lastInterruptStop = &mark
+				}
+			}
 		}
 		workerCounters, err := parseWorkerCounters(partial["counters"], name)
 		if err != nil {
@@ -201,6 +214,16 @@ func (c *Consolidator) ConsolidateWithOptions(runID string, rc *config.RunConfig
 	newOrderUserAborted := counters["new_order_user_aborted"]
 	newOrder := newOrderOk + newOrderUserAborted
 	measurementMin := float64(rc.Phases.MeasurementMs) / 60000.0
+	var actualMeasurementSeconds float64
+	var stoppedAt string
+	if runIncomplete {
+		// Duration ends at the latest signal-handler stop, not the configured window.
+		actualMeasurementSeconds = actualMeasurementSecondsUntilLastStop(lastInterruptStop)
+		measurementMin = actualMeasurementSeconds / 60.0
+		if lastInterruptStop != nil && !lastInterruptStop.stoppedAt.IsZero() {
+			stoppedAt = lastInterruptStop.stoppedAt.UTC().Format(time.RFC3339)
+		}
+	}
 	throughput := 0.0
 	if measurementMin > 0 {
 		throughput = float64(newOrder) / measurementMin
@@ -220,6 +243,13 @@ func (c *Consolidator) ConsolidateWithOptions(runID string, rc *config.RunConfig
 		"counters":                     counters,
 		"response_time_" + unit:        responseTimes,
 	}
+	if runIncomplete {
+		measurement["incomplete"] = true
+		measurement["measurement_seconds"] = actualMeasurementSeconds
+		if stoppedAt != "" {
+			measurement["stopped_at"] = stoppedAt
+		}
+	}
 	latencyViolations := latencyConstraintViolations(measurement)
 
 	agg := &Aggregate{
@@ -237,6 +267,7 @@ func (c *Consolidator) ConsolidateWithOptions(runID string, rc *config.RunConfig
 			TPCCSettingsDeviations:      tpccDevs,
 			LatencyConstraintsOK:        len(latencyViolations) == 0,
 			LatencyConstraintViolations: latencyViolations,
+			Incomplete:                  runIncomplete,
 		},
 		Metrics: map[string]interface{}{
 			"measurement":        measurement,
@@ -262,6 +293,59 @@ func (c *Consolidator) ConsolidateWithOptions(runID string, rc *config.RunConfig
 		return nil, err
 	}
 	return agg, nil
+}
+
+// interruptStop is one worker's signal-handler stop relative to its measurement start.
+type interruptStop struct {
+	stoppedAt time.Time
+	start     time.Time
+}
+
+func workerResultIncomplete(partial map[string]interface{}) bool {
+	incomplete, ok := partial["incomplete"].(bool)
+	return ok && incomplete
+}
+
+func interruptStopFromResult(partial map[string]interface{}) (interruptStop, bool) {
+	stopped, ok := parseRFC3339Time(partial["stopped_at"])
+	if !ok {
+		return interruptStop{}, false
+	}
+	mark := interruptStop{stoppedAt: stopped}
+	if start, ok := phaseTimestamp(partial, "measurement_start"); ok {
+		mark.start = start
+	}
+	return mark, true
+}
+
+// actualMeasurementSecondsUntilLastStop is stopped_at - measurement_start for
+// the worker that observed the signal last. A stop at or before measurement
+// start is a zero-length measurement.
+func actualMeasurementSecondsUntilLastStop(last *interruptStop) float64 {
+	if last == nil || last.start.IsZero() || !last.stoppedAt.After(last.start) {
+		return 0
+	}
+	return last.stoppedAt.Sub(last.start).Seconds()
+}
+
+func parseRFC3339Time(raw interface{}) (time.Time, bool) {
+	s, ok := raw.(string)
+	if !ok || s == "" {
+		return time.Time{}, false
+	}
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return t, true
+}
+
+func phaseTimestamp(partial map[string]interface{}, key string) (time.Time, bool) {
+	phases, ok := partial["phases"].(map[string]interface{})
+	if !ok {
+		return time.Time{}, false
+	}
+	return parseRFC3339Time(phases[key])
 }
 
 func requireExitStatus(raw interface{}, worker string) (int64, error) {
@@ -776,6 +860,23 @@ var summaryTxOrder = []struct {
 	{"stock_level", "StockLevel"},
 }
 
+const (
+	incompleteRunBannerLine = "************************************************************************"
+	incompleteRunBannerHead = "*** THE RUN IS INVALID BECAUSE IT IS INCOMPLETE"
+)
+
+func appendIncompleteRunBanner(b *strings.Builder, incomplete bool) {
+	if !incomplete {
+		return
+	}
+	b.WriteString(incompleteRunBannerLine)
+	b.WriteByte('\n')
+	b.WriteString(incompleteRunBannerHead)
+	b.WriteByte('\n')
+	b.WriteString(incompleteRunBannerLine)
+	b.WriteByte('\n')
+}
+
 // FormatSummary returns a brief human-readable view of aggregate.json.
 // Status flags stay as a short preamble; measurement metrics use the
 // "=== TPC-C Results ===" layout from tpcc-postgres-cpp PrintFinalResults
@@ -785,10 +886,10 @@ func FormatSummary(agg *Aggregate) string {
 	latencyOK := len(violations) == 0
 	var b strings.Builder
 	fmt.Fprintf(&b,
-		"run_id=%s result_class=%s workers_complete=%v assignment_valid=%v clock_skew_ok=%v integrity_ok=%v tpcc_settings_conformant=%v latency_constraints_ok=%v\n",
+		"run_id=%s result_class=%s workers_complete=%v assignment_valid=%v clock_skew_ok=%v integrity_ok=%v tpcc_settings_conformant=%v latency_constraints_ok=%v incomplete=%v\n",
 		agg.RunID, agg.ResultClass, agg.Status.WorkersComplete, agg.Status.AssignmentValid,
 		agg.Status.ClockSkewOK, agg.Status.IntegrityOK, agg.Status.TPCCSettingsConformant,
-		latencyOK,
+		latencyOK, agg.Status.Incomplete,
 	)
 	if !agg.Status.IntegrityOK && len(agg.Status.IntegrityErrors) > 0 {
 		for _, errMsg := range agg.Status.IntegrityErrors {
@@ -805,6 +906,7 @@ func FormatSummary(agg *Aggregate) string {
 			fmt.Fprintf(&b, "latency_constraint_violation=%s\n", v)
 		}
 	}
+	appendIncompleteRunBanner(&b, agg.Status.Incomplete)
 	appendLatencyInvalidBanner(&b, violations)
 	appendTPCCResultsSummary(&b, agg, violations)
 	if agg.ModuleVersionWarning != "" {
@@ -932,6 +1034,10 @@ func appendTPCCResultsSummary(b *strings.Builder, agg *Aggregate, violations []s
 		return
 	}
 	fmt.Fprintf(b, "=== TPC-C Results ===\n")
+	if agg.Status.Incomplete {
+		b.WriteString(incompleteRunBannerHead)
+		b.WriteByte('\n')
+	}
 
 	warehouses := scaleWarehousesFromAggregate(agg)
 	if warehouses > 0 {
@@ -940,7 +1046,12 @@ func appendTPCCResultsSummary(b *strings.Builder, agg *Aggregate, violations []s
 
 	configuredSec := measurementSecondsFromSettings(agg.Settings)
 	measuredSec := configuredSec
-	if v, ok := asFloat64(meas["measurement_seconds"]); ok && v > 0 {
+	if agg.Status.Incomplete {
+		measuredSec = 0
+		if v, ok := asFloat64(meas["measurement_seconds"]); ok {
+			measuredSec = v
+		}
+	} else if v, ok := asFloat64(meas["measurement_seconds"]); ok && v > 0 {
 		measuredSec = v
 	} else if configuredSec <= 0 {
 		if tpmc, ok := asFloat64(meas["throughput_new_order_per_min"]); ok && tpmc > 0 {

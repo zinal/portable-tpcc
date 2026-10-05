@@ -1453,6 +1453,126 @@ func TestConsolidate_forceWarnsOnDifferentModuleVersions(t *testing.T) {
 	}
 }
 
+func TestConsolidateInterruptedRunUsesLastHandlerStop(t *testing.T) {
+	root := t.TempDir()
+	runID := "run-interrupted"
+	rc := &config.RunConfig{
+		RunID: runID,
+		Phases: config.PhasesJSON{
+			MeasurementMs:  60000,
+			MaxClockSkewMs: 100,
+		},
+		Scale: config.ScaleBlock{Warehouses: 20},
+		WorkerAssignment: []config.WorkerAssignmentJSON{
+			{Instance: "worker-a", Host: "host-a", WarehouseRanges: [][]int{{1, 11}}, Threads: 1, MaxInflight: 64},
+			{Instance: "worker-b", Host: "host-b", WarehouseRanges: [][]int{{11, 21}}, Threads: 1, MaxInflight: 64},
+		},
+	}
+	sha := writeRunConfig(t, root, runID, rc)
+	// Configured window is 60s. Handlers stop at 30s and 45s. Throughput must
+	// use the later stop: 75 new-order completions / 0.75 min = 100 tpmC.
+	// The earlier stop would yield 150 tpmC; the configured window would yield 75.
+	writeWorkerArtifacts(t, root, runID, "worker-a", sha, rc, map[string]interface{}{
+		"incomplete": true,
+		"stopped_at": "2026-07-28T12:00:30Z",
+		"phases": map[string]interface{}{
+			"measurement_start": "2026-07-28T12:00:00Z",
+		},
+		"counters":   map[string]interface{}{"new_order_ok": 30},
+		"histograms": map[string]interface{}{"new_order": measurementHistogram(30)},
+		"metrics":    map[string]interface{}{"measurement_seconds": 1.0},
+	})
+	writeWorkerArtifacts(t, root, runID, "worker-b", sha, rc, map[string]interface{}{
+		"incomplete": true,
+		"stopped_at": "2026-07-28T12:00:45Z",
+		"phases": map[string]interface{}{
+			"measurement_start": "2026-07-28T12:00:00Z",
+		},
+		"counters":   map[string]interface{}{"new_order_ok": 45},
+		"histograms": map[string]interface{}{"new_order": measurementHistogram(45)},
+		"metrics":    map[string]interface{}{"measurement_seconds": 1.0},
+	})
+
+	cons := &consolidate.Consolidator{ResultRoot: root}
+	agg, err := cons.Consolidate(runID, rc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !agg.Status.Incomplete {
+		t.Fatalf("status.incomplete=false, want true")
+	}
+	if !agg.Status.WorkersComplete {
+		t.Fatalf("clean interrupt must keep workers_complete, status=%+v", agg.Status)
+	}
+	meas := agg.Metrics["measurement"].(map[string]interface{})
+	if got := meas["measurement_seconds"].(float64); got != 45 {
+		t.Fatalf("measurement_seconds=%v, want 45 (last handler)", got)
+	}
+	if got := meas["stopped_at"].(string); got != "2026-07-28T12:00:45Z" {
+		t.Fatalf("stopped_at=%q, want last handler", got)
+	}
+	if got := meas["throughput_new_order_per_min"].(float64); got != 100 {
+		t.Fatalf("throughput=%v, want 100 tpmC over 45s", got)
+	}
+	text := consolidate.FormatSummary(agg)
+	for _, line := range []string{
+		"incomplete=true",
+		"*** THE RUN IS INVALID BECAUSE IT IS INCOMPLETE",
+		"  Measured Duration: 45.0s (configured: 60s)",
+		"  New-Order Throughput: 100.00 tpmC",
+	} {
+		if !strings.Contains(text, line) {
+			t.Fatalf("summary missing %q:\n%s", line, text)
+		}
+	}
+	if err := consolidate.WriteAggregate(root, runID, agg); err != nil {
+		t.Fatal(err)
+	}
+	summary, err := os.ReadFile(filepath.Join(root, runID, "summary.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(summary), "THE RUN IS INVALID BECAUSE IT IS INCOMPLETE") {
+		t.Fatalf("summary.txt missing incomplete banner:\n%s", summary)
+	}
+}
+
+func TestConsolidateInterruptedBeforeMeasurementIsZeroLength(t *testing.T) {
+	root := t.TempDir()
+	runID := "run-interrupted-early"
+	rc := minimalRunConfig(runID)
+	sha := writeRunConfig(t, root, runID, rc)
+	writeWorkerArtifacts(t, root, runID, "worker-a", sha, rc, map[string]interface{}{
+		"incomplete": true,
+		"stopped_at": "2026-07-28T11:59:00Z",
+		"phases": map[string]interface{}{
+			"measurement_start": "2026-07-28T12:00:00Z",
+		},
+		"counters":   map[string]interface{}{},
+		"histograms": map[string]interface{}{},
+	})
+
+	cons := &consolidate.Consolidator{ResultRoot: root}
+	agg, err := cons.Consolidate(runID, rc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	meas := agg.Metrics["measurement"].(map[string]interface{})
+	if got := meas["throughput_new_order_per_min"].(float64); got != 0 {
+		t.Fatalf("throughput=%v, want 0", got)
+	}
+	if got := meas["measurement_seconds"].(float64); got != 0 {
+		t.Fatalf("measurement_seconds=%v, want 0", got)
+	}
+	text := consolidate.FormatSummary(agg)
+	if !strings.Contains(text, "*** THE RUN IS INVALID BECAUSE IT IS INCOMPLETE") {
+		t.Fatalf("summary missing banner:\n%s", text)
+	}
+	if !strings.Contains(text, "Measured Duration: 0.0s (configured: 60s)") {
+		t.Fatalf("summary duration:\n%s", text)
+	}
+}
+
 func TestConsolidate_rejectsMissingModuleCommit(t *testing.T) {
 	root := t.TempDir()
 	runID := "run-versions-missing"

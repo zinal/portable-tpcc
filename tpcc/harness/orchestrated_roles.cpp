@@ -103,6 +103,34 @@ int RunOrchestratedWorker(
     TTerminalStats aggregated(hp.HdrTill, hp.MaxValue, hp.RecordUs);
     TRunOutcome outcome;
     int exitCode = 0;
+
+    auto writeResult = [&](int code, bool sealStdio) {
+        WriteWorkerResultJson(
+            paths, doc, instance, assign, aggregated, outcome.HighResHistogram,
+            outcome.RampStart, outcome.MeasurementStart, outcome.MeasurementEnd,
+            outcome.DrainDeadline, outcome.MeasurementSeconds, code, nonce,
+            id.AdapterName, id.DefaultBinary, outcome.Interrupted, outcome.StoppedAt);
+        WriteArtifactManifest(paths, instance, nonce, code, sealStdio);
+    };
+
+    // The signal handler only requests stop. SnapshotMeasurement runs this
+    // hook on the main thread, before terminals are joined, so a later
+    // SIGKILL during join still leaves result.json on disk.
+    struct TClearHook {
+        ~TClearHook() {
+            ClearInterruptedResultHook();
+        }
+    } clearHook;
+    SetInterruptedResultHook([&](const TRunOutcome& partial) {
+        outcome = partial;
+        try {
+            writeResult(partial.ExitCode, false);
+            LOG_I("Interrupted results written to " << paths.ResultJson);
+        } catch (const std::exception& ex) {
+            LOG_E("Failed to write interrupted results: " << ex.what());
+        }
+    });
+
     try {
         outcome = hooks.Run(doc, assign, instanceDir, startAt, aggregated);
         exitCode = outcome.ExitCode;
@@ -110,13 +138,9 @@ int RunOrchestratedWorker(
         LOG_E("Worker failed: " << ex.what());
         exitCode = 1;
     }
+    ClearInterruptedResultHook();
 
-    WriteWorkerResultJson(
-        paths, doc, instance, assign, aggregated, outcome.HighResHistogram,
-        outcome.RampStart, outcome.MeasurementStart, outcome.MeasurementEnd,
-        outcome.DrainDeadline, outcome.MeasurementSeconds, exitCode, nonce,
-        id.AdapterName, id.DefaultBinary);
-    WriteArtifactManifest(paths, instance, nonce, exitCode);
+    writeResult(exitCode, true);
     return exitCode;
 }
 

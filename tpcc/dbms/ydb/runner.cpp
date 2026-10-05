@@ -48,6 +48,7 @@ TRunStatsConfig MakeRunStatsConfig(const TRunConfig& config, const TRunLayout& l
 TRunOutcome RunSync(const TRunConfig& config, TTerminalStats* aggregatedStats) {
     AnnounceModuleCommit("run", "");
     TRunOutcome outcome;
+    outcome.HighResHistogram = config.HighResHistogram;
     signal(SIGINT, InterruptHandler);
     signal(SIGTERM, InterruptHandler);
 
@@ -180,7 +181,17 @@ TRunOutcome RunSync(const TRunConfig& config, TTerminalStats* aggregatedStats) {
             return outcome;
         }
         if (waitResult == EStartAtWaitResult::Interrupted) {
+            auto schedule = BuildPhaseSchedule(rampStart, durations);
+            phaseController.SetSchedule(schedule);
             phaseController.SetPhase(ERunPhase::Stop);
+            ApplyPlannedSchedule(outcome, schedule);
+            SnapshotMeasurement(outcome, stopToken, perThreadStats, aggregatedStats);
+            PrintFinalResults(
+                MakeRunStatsConfig(config, layout),
+                perThreadStats,
+                std::chrono::duration<double>(outcome.MeasurementSeconds),
+                taskQueue.get(),
+                outcome.Interrupted);
             GetGlobalInterruptSource().request_stop();
             taskQueue->WakeupAndNeverSleep();
             taskQueue->Join();
@@ -193,12 +204,7 @@ TRunOutcome RunSync(const TRunConfig& config, TTerminalStats* aggregatedStats) {
 
     auto schedule = BuildPhaseSchedule(rampStart, durations);
     phaseController.SetSchedule(schedule);
-    outcome.RampStart = schedule.RampStart;
-    outcome.MeasurementStart = schedule.MeasurementStart;
-    outcome.MeasurementEnd = schedule.MeasurementEnd;
-    outcome.DrainDeadline = schedule.DrainDeadline;
-    outcome.MeasurementSeconds =
-        std::chrono::duration<double>(schedule.MeasurementEnd - schedule.MeasurementStart).count();
+    ApplyPlannedSchedule(outcome, schedule);
 
     if (phaseResult.ForcedWarmup) {
         LOG_I("Forced minimal warmup: " << durations.RampUpMs << "ms");
@@ -240,23 +246,19 @@ TRunOutcome RunSync(const TRunConfig& config, TTerminalStats* aggregatedStats) {
 
     FlushPrometheusInterval(progressState, perThreadStats, prometheus.get());
 
-    auto measureElapsed = std::chrono::duration<double>(
-        schedule.MeasurementEnd - schedule.MeasurementStart);
+    SnapshotMeasurement(outcome, stopToken, perThreadStats, aggregatedStats);
 
     LOG_I("Stopping terminals...");
     GetGlobalInterruptSource().request_stop();
     taskQueue->WakeupAndNeverSleep();
     taskQueue->Join();
 
-    PrintFinalResults(statsConfig, perThreadStats, measureElapsed, taskQueue.get());
-
-    if (aggregatedStats) {
-        aggregatedStats->Clear();
-        for (auto& stats : perThreadStats) {
-            stats->Collect(*aggregatedStats);
-        }
-    }
-    outcome.HighResHistogram = config.HighResHistogram;
+    PrintFinalResults(
+        statsConfig,
+        perThreadStats,
+        std::chrono::duration<double>(outcome.MeasurementSeconds),
+        taskQueue.get(),
+        outcome.Interrupted);
 
     outcome.ExitCode = GetGlobalErrorVariable().load() ? 1 : 0;
     return outcome;

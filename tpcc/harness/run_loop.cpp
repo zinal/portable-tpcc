@@ -17,6 +17,15 @@
 
 namespace NTpcc {
 
+namespace {
+
+std::function<void(const TRunOutcome&)>& InterruptedResultHookSlot() {
+    static std::function<void(const TRunOutcome&)> hook;
+    return hook;
+}
+
+} // anonymous
+
 static const char* TransactionTypeName(ETransactionType type) {
     switch (type) {
         case ETransactionType::NewOrder: return "NewOrder";
@@ -557,11 +566,76 @@ void MaybeUpdateConsoleStats(
     state.LastUpdate = now;
 }
 
+double MeasurementSecondsUntilStop(
+    std::chrono::system_clock::time_point measurementStart,
+    std::chrono::system_clock::time_point stoppedAt)
+{
+    if (measurementStart.time_since_epoch().count() == 0 || stoppedAt <= measurementStart) {
+        return 0;
+    }
+    return std::chrono::duration<double>(stoppedAt - measurementStart).count();
+}
+
+void ApplyPlannedSchedule(TRunOutcome& outcome, const TPhaseSchedule& schedule) {
+    outcome.RampStart = schedule.RampStart;
+    outcome.MeasurementStart = schedule.MeasurementStart;
+    outcome.MeasurementEnd = schedule.MeasurementEnd;
+    outcome.DrainDeadline = schedule.DrainDeadline;
+    outcome.MeasurementSeconds = std::chrono::duration<double>(
+        schedule.MeasurementEnd - schedule.MeasurementStart).count();
+}
+
+void SetInterruptedResultHook(std::function<void(const TRunOutcome&)> hook) {
+    InterruptedResultHookSlot() = std::move(hook);
+}
+
+void ClearInterruptedResultHook() {
+    InterruptedResultHookSlot() = nullptr;
+}
+
+void SnapshotMeasurement(
+    TRunOutcome& outcome,
+    std::stop_token stopToken,
+    const std::vector<std::shared_ptr<TTerminalStats>>& perThreadStats,
+    TTerminalStats* aggregatedStats)
+{
+    if (stopToken.stop_requested() && !GetGlobalErrorVariable().load()) {
+        outcome.Interrupted = true;
+        outcome.StoppedAt = std::chrono::system_clock::now();
+        outcome.MeasurementSeconds = MeasurementSecondsUntilStop(
+            outcome.MeasurementStart, outcome.StoppedAt);
+        outcome.ExitCode = 0;
+        LOG_W("Run interrupted at " << FormatRfc3339Utc(outcome.StoppedAt)
+            << "; actual measurement " << outcome.MeasurementSeconds << "s (incomplete)");
+    }
+    if (aggregatedStats != nullptr) {
+        aggregatedStats->Clear();
+        for (const auto& stats : perThreadStats) {
+            if (stats) {
+                stats->Collect(*aggregatedStats);
+            }
+        }
+    }
+    if (!outcome.Interrupted) {
+        return;
+    }
+    const auto& hook = InterruptedResultHookSlot();
+    if (!hook) {
+        return;
+    }
+    try {
+        hook(outcome);
+    } catch (const std::exception& ex) {
+        LOG_E("Failed to write interrupted results: " << ex.what());
+    }
+}
+
 void PrintFinalResults(
     const TRunStatsConfig& config,
     const std::vector<std::shared_ptr<TTerminalStats>>& perThreadStats,
     std::chrono::duration<double> measureElapsed,
-    ITaskQueue* taskQueue)
+    ITaskQueue* taskQueue,
+    bool incomplete)
 {
     uint64_t aggHdr = 0;
     uint64_t aggMax = 0;
@@ -586,6 +660,11 @@ void PrintFinalResults(
         ? (tpmc / (MAX_TPMC_PER_WAREHOUSE * config.WarehouseCount) * 100.0) : 0.0;
 
     LOG_I("=== TPC-C Results ===");
+    if (incomplete) {
+        LOG_W("************************************************************************");
+        LOG_W("*** THE RUN IS INVALID BECAUSE IT IS INCOMPLETE");
+        LOG_W("************************************************************************");
+    }
     const char* unit = HistogramUnitLabel(config);
     std::vector<TLatencyConstraintViolation> latencyViolations;
     CollectLatencyConstraintViolations(aggregated, unit, latencyViolations);
