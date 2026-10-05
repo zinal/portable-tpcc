@@ -8,7 +8,8 @@ behavior, configuration model) are defined in
 [`docs/adapter-api.md`](docs/adapter-api.md). Per-DBMS settings are in
 [`docs/run-ydb.md`](docs/run-ydb.md),
 [`docs/run-pgsql.md`](docs/run-pgsql.md),
-[`docs/run-oceanbase.md`](docs/run-oceanbase.md), and
+[`docs/run-oceanbase.md`](docs/run-oceanbase.md),
+[`docs/run-dummy.md`](docs/run-dummy.md), and
 [`docs/parameter-reference.md`](docs/parameter-reference.md).
 
 When a task involves orchestration, remote launches, artifacts, integrity

@@ -761,6 +761,79 @@ func TestValidate_oceanbaseOptions(t *testing.T) {
 	})
 }
 
+func TestValidate_dummyOptions(t *testing.T) {
+	path := filepath.Join("..", "..", "testdata", "profile.valid.yaml")
+	base, err := profile.ParseFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dummyBase := func() profile.Profile {
+		p := *base
+		p.Database = profile.Database{
+			DBMS:     "dummy",
+			Endpoint: "localhost",
+			Database: "dummy",
+			Path:     "dummy",
+		}
+		return p
+	}
+
+	t.Run("accepts_delay_range", func(t *testing.T) {
+		p := dummyBase()
+		p.Database.Options = map[string]interface{}{
+			"delay_us_min": 100,
+			"delay_us_max": 500,
+		}
+		res := validate.Profile(&p)
+		if !res.Valid {
+			t.Fatalf("expected valid dummy options, errors: %v", res.Errors)
+		}
+	})
+
+	t.Run("accepts_zero_delay", func(t *testing.T) {
+		p := dummyBase()
+		p.Database.Options = map[string]interface{}{
+			"delay_us_min": 0,
+			"delay_us_max": 0,
+		}
+		res := validate.Profile(&p)
+		if !res.Valid {
+			t.Fatalf("expected zero delay to be valid, errors: %v", res.Errors)
+		}
+	})
+
+	t.Run("rejects_inverted_range", func(t *testing.T) {
+		p := dummyBase()
+		p.Database.Options = map[string]interface{}{
+			"delay_us_min": 50,
+			"delay_us_max": 10,
+		}
+		res := validate.Profile(&p)
+		if res.Valid {
+			t.Fatal("expected inverted dummy delay range to fail")
+		}
+	})
+
+	t.Run("rejects_unknown_option", func(t *testing.T) {
+		p := dummyBase()
+		p.Database.Options = map[string]interface{}{"tx_mode": "snapshot-rw"}
+		res := validate.Profile(&p)
+		if res.Valid {
+			t.Fatal("expected unknown dummy option to fail")
+		}
+	})
+
+	t.Run("rejects_ydb_auth_fields", func(t *testing.T) {
+		p := dummyBase()
+		p.Database.AuthScheme = "anonymous"
+		res := validate.Profile(&p)
+		if res.Valid {
+			t.Fatal("expected dummy profile with auth_scheme to fail")
+		}
+	})
+}
+
 func TestValidate_pgsqlPartitioningOptions(t *testing.T) {
 	path := filepath.Join("..", "..", "testdata", "profile.valid.yaml")
 	base, err := profile.ParseFile(path)

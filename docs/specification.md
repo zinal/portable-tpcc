@@ -15,11 +15,12 @@ multiple DBMSs. The product consists of:
 2. one DBMS adapter and one `tpcc-<dbms>` binary per supported DBMS;
 3. the Go orchestrator `mind-tpcc`.
 
-Shipped binaries: `mind-tpcc`, `tpcc-ydb`, `tpcc-pgsql`, `tpcc-oceanbase`.
+Shipped binaries: `mind-tpcc`, `tpcc-ydb`, `tpcc-pgsql`, `tpcc-oceanbase`,
+`tpcc-dummy`.
 There is no extra DBMS-neutral helper binary.
 
-Initial adapters: YDB, PostgreSQL, OceanBase. Adding a DBMS MUST NOT require
-forking the shared workload logic.
+Initial adapters: YDB, PostgreSQL, OceanBase, and a simulated dummy adapter.
+Adding a DBMS MUST NOT require forking the shared workload logic.
 
 This document does not restate the TPC-C standard. The project implements one
 fixed workload model. Run parameters (transaction mix, think/keying times,
@@ -503,7 +504,7 @@ aggregate carries the settings themselves.
 ## 9. Orchestrator Commands
 
 ```text
-mind-tpcc configure --profile <path> --dbms <pgsql|ydb|oceanbase> [options]
+mind-tpcc configure --profile <path> --dbms <pgsql|ydb|oceanbase|dummy> [options]
 mind-tpcc validate | plan | deploy | undeploy --yes | schema | load | indexes
 mind-tpcc check [--after-import|--after-test]
 mind-tpcc debug [--repeats=N]
@@ -957,8 +958,8 @@ query-binding contract.
 ```text
 tpcc/
 ├── domain/ generator/ transactions/ runtime/ loader/ checks/ metrics/
-├── dbms/{ydb,pgsql,oceanbase}/
-└── app/{ydb,pgsql,oceanbase}/
+├── dbms/{ydb,pgsql,oceanbase,dummy}/
+└── app/{ydb,pgsql,oceanbase,dummy}/
 mind/
 docs/specification.md
 docs/adapter-api.md

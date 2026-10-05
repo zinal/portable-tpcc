@@ -61,6 +61,11 @@ const (
 	DefaultOBPartitions                = 0
 	DefaultOBQueryTimeout              = 600
 	DefaultOBIndexParallel             = 4
+	DefaultDummyEndpoint               = "localhost"
+	DefaultDummyDatabase               = "dummy"
+	DefaultDummyPath                   = "dummy"
+	DefaultDummyDelayUsMin       int64 = 0
+	DefaultDummyDelayUsMax       int64 = 0
 	DefaultTerminalsPerWarehouse       = 10
 	DefaultSSHUserFallback             = "tpcc"
 	DefaultProfileName                 = "tpcc"
@@ -71,6 +76,7 @@ var AllowedDBMS = map[string]bool{
 	"pgsql":     true,
 	"ydb":       true,
 	"oceanbase": true,
+	"dummy":     true,
 }
 
 // DefaultSSHUser returns the current account name, or "tpcc" if unknown.
@@ -129,7 +135,7 @@ func Example(dbms string) (*Profile, error) {
 // ExampleWithName is Example with an explicit metadata.name and ssh.user.
 func ExampleWithName(dbms, name, sshUser string) (*Profile, error) {
 	if !AllowedDBMS[dbms] {
-		return nil, fmt.Errorf("unknown database.dbms %q (want pgsql, ydb, or oceanbase)", dbms)
+		return nil, fmt.Errorf("unknown database.dbms %q (want pgsql, ydb, oceanbase, or dummy)", dbms)
 	}
 	if name == "" {
 		name = DefaultProfileName
@@ -268,6 +274,17 @@ func ExampleWithName(dbms, name, sshUser string) (*Profile, error) {
 				"foreign_keys":   DefaultForeignKeys,
 				"query_timeout":  DefaultOBQueryTimeout,
 				"index_parallel": DefaultOBIndexParallel,
+			},
+		}
+	case "dummy":
+		p.Database = Database{
+			DBMS:     "dummy",
+			Endpoint: DefaultDummyEndpoint,
+			Database: DefaultDummyDatabase,
+			Path:     DefaultDummyPath,
+			Options: map[string]interface{}{
+				"delay_us_min": DefaultDummyDelayUsMin,
+				"delay_us_max": DefaultDummyDelayUsMax,
 			},
 		}
 	}
@@ -455,6 +472,8 @@ func encodeOptions(dbms string, options map[string]interface{}) *yaml.Node {
 		keys = []string{"tx_mode"}
 	case "oceanbase":
 		keys = []string{"partitions", "foreign_keys", "query_timeout", "index_parallel"}
+	case "dummy":
+		keys = []string{"delay_us_min", "delay_us_max"}
 	default:
 		for k := range options {
 			keys = append(keys, k)

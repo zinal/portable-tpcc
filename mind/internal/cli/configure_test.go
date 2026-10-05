@@ -13,7 +13,7 @@ import (
 
 func TestRun_configureWritesValidProfiles(t *testing.T) {
 	dir := t.TempDir()
-	for _, dbms := range []string{"pgsql", "ydb", "oceanbase"} {
+	for _, dbms := range []string{"pgsql", "ydb", "oceanbase", "dummy"} {
 		path := filepath.Join(dir, dbms+".yaml")
 		code := Run([]string{"configure", "--profile", path, "--dbms", dbms, "--ssh-user", "tpcc"})
 		if code != 0 {
@@ -27,14 +27,33 @@ func TestRun_configureWritesValidProfiles(t *testing.T) {
 		if !res.Valid {
 			t.Fatalf("validate %s: %v", dbms, res.Errors)
 		}
-		if p.Database.DBMS != dbms {
-			t.Fatalf("dbms=%q, want %q", p.Database.DBMS, dbms)
+	if p.Database.DBMS != dbms {
+		t.Fatalf("dbms=%q, want %q", p.Database.DBMS, dbms)
+	}
+	if dbms == "dummy" {
+		if p.Database.PasswordEnv != "" {
+			t.Fatalf("dummy password_env=%q, want empty", p.Database.PasswordEnv)
 		}
+		if p.Database.Options["delay_us_min"] == nil || p.Database.Options["delay_us_max"] == nil {
+			t.Fatalf("dummy options=%v, want delay_us_min/max", p.Database.Options)
+		}
+	}
 		if len(p.Loaders) != 1 || p.Loaders[0].Host != "localhost" {
 			t.Fatalf("%s loaders=%+v", dbms, p.Loaders)
 		}
 		if len(p.Workers) != 1 || p.Workers[0].Host != "localhost" {
 			t.Fatalf("%s workers=%+v", dbms, p.Workers)
+		}
+		if dbms == "dummy" {
+			if p.Database.PasswordEnv != "" {
+				t.Fatalf("dummy password_env=%q, want empty", p.Database.PasswordEnv)
+			}
+			if _, ok := p.Database.Options["delay_us_min"]; !ok {
+				t.Fatalf("dummy options missing delay_us_min: %+v", p.Database.Options)
+			}
+			if _, ok := p.Database.Options["delay_us_max"]; !ok {
+				t.Fatalf("dummy options missing delay_us_max: %+v", p.Database.Options)
+			}
 		}
 	}
 }
@@ -242,6 +261,15 @@ func TestRun_configureRejectsUnknownDBMSAndForeignFlags(t *testing.T) {
 	if !strings.Contains(stderr, "only valid for --dbms pgsql") {
 		t.Fatalf("stderr=%q", stderr)
 	}
+	stderr = captureStderr(t, func() {
+		code := Run([]string{"configure", "--profile", "x.yaml", "--dbms", "pgsql", "--delay-us-min", "10"})
+		if code != 2 {
+			t.Fatalf("dummy flag on pgsql exit=%d", code)
+		}
+	})
+	if !strings.Contains(stderr, "only valid for --dbms dummy") {
+		t.Fatalf("stderr=%q", stderr)
+	}
 }
 
 func TestRun_configureHelp(t *testing.T) {
@@ -262,7 +290,7 @@ func TestRun_configureHelp(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(out)
-	for _, want := range []string{"--profile", "--dbms", "--loaders", "--auth-scheme", "--partitions", "--tx-mode"} {
+	for _, want := range []string{"--profile", "--dbms", "--loaders", "--auth-scheme", "--partitions", "--tx-mode", "--delay-us-min"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("configure help missing %q:\n%s", want, text)
 		}

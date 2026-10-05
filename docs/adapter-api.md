@@ -104,9 +104,11 @@ are empty.
 Shared check **catalog**: identifier, expected semantics, result shape.
 Adapters supply the DBMS-specific query or scan that evaluates each check.
 This is integrity / infrastructure checking, not TPC-C edition conformance.
-PostgreSQL, YDB, and OceanBase each evaluate the same catalog
-(`TPgCheckAdapter` / `TYdbCheckAdapter` / `TObCheckAdapter`). Scheduling
-(parallel sessions, `kWarehouseCheckRange`) is a shared requirement
+PostgreSQL, YDB, OceanBase, and dummy each evaluate the same catalog
+(`TPgCheckAdapter` / `TYdbCheckAdapter` / `TObCheckAdapter` /
+`TDummyCheckAdapter`). Dummy marks every applicable id passed without
+querying a database. Scheduling (parallel sessions, `kWarehouseCheckRange`)
+is a shared requirement
 (specification §9.2), not an adapter-private optimization. Live stdout
 progress uses the same recommended helper: `RecordCheckResult` in
 `tpcc/checks`, called once per catalog id after that id's warehouse

@@ -65,6 +65,8 @@ required for the current port.
 | `tpcc/app/ydb` (`tpcc-ydb`) | in progress | normative roles + legacy aliases for YDB |
 | `tpcc/dbms/oceanbase` | done | Connector/C transport, admin/load/session/check adapters, terminal runtime |
 | `tpcc/app/oceanbase` (`tpcc-oceanbase`) | done | normative roles + legacy aliases for OceanBase |
+| `tpcc/dbms/dummy` | done | simulated adapter: no-op schema/load/check, delayed synthetic TPC-C session |
+| `tpcc/app/dummy` (`tpcc-dummy`) | done | normative roles + legacy aliases for dummy |
 | `mind-tpcc` | done (Phase 5) | SSH/local remote drive, `--start-at`, collect/consolidate |
 
 ## Remaining work (tracked)

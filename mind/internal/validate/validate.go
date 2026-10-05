@@ -22,6 +22,7 @@ var allowedDBMS = map[string]bool{
 	"ydb":       true,
 	"pgsql":     true,
 	"oceanbase": true,
+	"dummy":     true,
 }
 
 // Result holds validation outcome.
@@ -77,6 +78,9 @@ func Profile(p *profile.Profile) *Result {
 	}
 	if p.Database.DBMS == "ydb" {
 		validateYdbOptions(p.Database.Options, res)
+	}
+	if p.Database.DBMS == "dummy" {
+		validateDummyOptions(p.Database.Options, res)
 	}
 	if p.Database.Endpoint == "" {
 		res.Add("database.endpoint is required")
@@ -391,6 +395,38 @@ func validateOceanbaseOptions(options map[string]interface{}, res *Result) {
 	}
 }
 
+func validateDummyOptions(options map[string]interface{}, res *Result) {
+	var minVal int
+	var maxVal int
+	hasMin := false
+	hasMax := false
+	for key, value := range options {
+		switch key {
+		case "delay_us_min":
+			n, ok := asInt(value)
+			if !ok || n < 0 {
+				res.Add("database.options.delay_us_min must be a non-negative integer")
+			} else {
+				minVal = n
+				hasMin = true
+			}
+		case "delay_us_max":
+			n, ok := asInt(value)
+			if !ok || n < 0 {
+				res.Add("database.options.delay_us_max must be a non-negative integer")
+			} else {
+				maxVal = n
+				hasMax = true
+			}
+		default:
+			res.Add(fmt.Sprintf("unknown database.options.%s for dbms=dummy", key))
+		}
+	}
+	if hasMin && hasMax && maxVal < minVal {
+		res.Add("database.options.delay_us_max must be greater than or equal to delay_us_min")
+	}
+}
+
 func asForeignKeysOption(value interface{}) bool {
 	switch v := value.(type) {
 	case bool:
@@ -461,6 +497,19 @@ func validateDatabaseAuth(p *profile.Profile, res *Result) {
 			res.Add("database.ca_file is only supported for dbms=ydb")
 		}
 		validatePasswordEnvRequired(db.PasswordEnv, res)
+	case "dummy":
+		if db.AuthScheme != "" {
+			res.Add("database.auth_scheme is only supported for dbms=ydb")
+		}
+		if db.SaKeyFile != "" {
+			res.Add("database.sa_key_file is only supported for dbms=ydb")
+		}
+		if db.CaFile != "" {
+			res.Add("database.ca_file is only supported for dbms=ydb")
+		}
+		if db.PasswordEnv != "" {
+			validatePasswordEnvRequired(db.PasswordEnv, res)
+		}
 	}
 }
 

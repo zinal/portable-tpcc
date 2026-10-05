@@ -92,6 +92,8 @@ type configureOpts struct {
 	QueryTimeout                *int
 	IndexParallel               *int
 	TxMode                      *string
+	DelayUsMin                  *int64
+	DelayUsMax                  *int64
 }
 
 func runConfigure(args []string) int {
@@ -677,6 +679,26 @@ func parseConfigureArgs(args []string) (*configureOpts, error) {
 			}
 			opts.TxMode = &val
 			i = next
+		case arg == "--delay-us-min" || strings.HasPrefix(arg, "--delay-us-min="):
+			n, next, err := requireFlagInt64(args, i, "--delay-us-min")
+			if err != nil {
+				return nil, err
+			}
+			if n < 0 {
+				return nil, fmt.Errorf("error: --delay-us-min must not be negative")
+			}
+			opts.DelayUsMin = &n
+			i = next
+		case arg == "--delay-us-max" || strings.HasPrefix(arg, "--delay-us-max="):
+			n, next, err := requireFlagInt64(args, i, "--delay-us-max")
+			if err != nil {
+				return nil, err
+			}
+			if n < 0 {
+				return nil, fmt.Errorf("error: --delay-us-max must not be negative")
+			}
+			opts.DelayUsMax = &n
+			i = next
 		default:
 			if strings.HasPrefix(arg, "-") {
 				return nil, fmt.Errorf("error: unknown flag %s", arg)
@@ -695,10 +717,10 @@ func parseConfigureArgs(args []string) (*configureOpts, error) {
 		return nil, fmt.Errorf("error: unexpected argument %q", positionals[0])
 	}
 	if opts.DBMS == "" {
-		return nil, fmt.Errorf("error: --dbms is required (pgsql, ydb, or oceanbase)")
+		return nil, fmt.Errorf("error: --dbms is required (pgsql, ydb, oceanbase, or dummy)")
 	}
 	if !profile.AllowedDBMS[opts.DBMS] {
-		return nil, fmt.Errorf("error: unknown --dbms %q (want pgsql, ydb, or oceanbase)", opts.DBMS)
+		return nil, fmt.Errorf("error: unknown --dbms %q (want pgsql, ydb, oceanbase, or dummy)", opts.DBMS)
 	}
 	if err := rejectForeignDBMSFlags(opts); err != nil {
 		return nil, err
@@ -748,6 +770,18 @@ func rejectForeignDBMSFlags(opts *configureOpts) error {
 	}
 	if opts.ForeignKeys != nil && opts.DBMS != "pgsql" && opts.DBMS != "oceanbase" {
 		return fmt.Errorf("error: --foreign-keys is only valid for --dbms pgsql or oceanbase")
+	}
+	dummyOnly := []struct {
+		set  bool
+		name string
+	}{
+		{opts.DelayUsMin != nil, "--delay-us-min"},
+		{opts.DelayUsMax != nil, "--delay-us-max"},
+	}
+	for _, f := range dummyOnly {
+		if f.set && opts.DBMS != "dummy" {
+			return fmt.Errorf("error: %s is only valid for --dbms dummy", f.name)
+		}
 	}
 	return nil
 }
@@ -861,7 +895,8 @@ func buildConfigureProfile(opts *configureOpts) (*profile.Profile, error) {
 func applyDatabaseOptions(p *profile.Profile, opts *configureOpts) error {
 	if p.Database.Options == nil && (opts.Partitioning != nil || opts.PartitionCount != nil ||
 		opts.ForeignKeys != nil || opts.Partitions != nil || opts.QueryTimeout != nil ||
-		opts.IndexParallel != nil || opts.TxMode != nil) {
+		opts.IndexParallel != nil || opts.TxMode != nil ||
+		opts.DelayUsMin != nil || opts.DelayUsMax != nil) {
 		p.Database.Options = map[string]interface{}{}
 	}
 	if opts.Partitioning != nil {
@@ -887,6 +922,12 @@ func applyDatabaseOptions(p *profile.Profile, opts *configureOpts) error {
 	}
 	if opts.TxMode != nil {
 		p.Database.Options["tx_mode"] = *opts.TxMode
+	}
+	if opts.DelayUsMin != nil {
+		p.Database.Options["delay_us_min"] = *opts.DelayUsMin
+	}
+	if opts.DelayUsMax != nil {
+		p.Database.Options["delay_us_max"] = *opts.DelayUsMax
 	}
 	return nil
 }
@@ -1015,12 +1056,12 @@ func printConfigureUsage() {
 mind-tpcc configure — write a complete example profile YAML
 
 Usage:
-  mind-tpcc configure --profile <path> --dbms <pgsql|ydb|oceanbase> [options]
-  mind-tpcc configure <path> --dbms <pgsql|ydb|oceanbase> [options]
+  mind-tpcc configure --profile <path> --dbms <pgsql|ydb|oceanbase|dummy> [options]
+  mind-tpcc configure <path> --dbms <pgsql|ydb|oceanbase|dummy> [options]
 
 Required:
   --profile <path>             Output profile YAML (also accepted as a positional path)
-  --dbms <pgsql|ydb|oceanbase> Database type
+  --dbms <pgsql|ydb|oceanbase|dummy> Database type
 
 Omitted settings use built-in defaults. Host lists default to localhost.
 The file contains every profile field, including DBMS-specific database keys.
@@ -1098,6 +1139,9 @@ PostgreSQL:
 OceanBase:
   --partitions <n>             --foreign-keys <on|off>
   --query-timeout <seconds>    --index-parallel <n>
+
+Dummy:
+  --delay-us-min <n>           --delay-us-max <n>
 `)
 	fmt.Println(usage)
 }
