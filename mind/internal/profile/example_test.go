@@ -10,7 +10,7 @@ import (
 )
 
 func TestExample_validForEachDBMS(t *testing.T) {
-	for _, dbms := range []string{"pgsql", "ydb", "oceanbase"} {
+	for _, dbms := range []string{"pgsql", "ydb", "oceanbase", "dummy"} {
 		p, err := profile.ExampleWithName(dbms, "example-"+dbms, "tpcc")
 		if err != nil {
 			t.Fatalf("%s: %v", dbms, err)
@@ -88,6 +88,34 @@ func TestExample_pgsqlIncludesOptions(t *testing.T) {
 	}
 	if strings.Contains(text, "partition_count:") {
 		t.Fatalf("pgsql default partitioning=none must omit partition_count:\n%s", text)
+	}
+}
+
+func TestExample_dummyIncludesDelayOptions(t *testing.T) {
+	p, err := profile.Example("dummy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := profile.EncodeExample(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, want := range []string{
+		"dbms: dummy",
+		"endpoint: localhost",
+		"delay_us_min: 0",
+		"delay_us_max: 0",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("dummy example missing %q\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "password_env:") {
+		t.Fatalf("dummy example must not include password_env:\n%s", text)
+	}
+	if strings.Contains(text, "auth_scheme:") {
+		t.Fatalf("dummy example must not include YDB auth_scheme:\n%s", text)
 	}
 }
 

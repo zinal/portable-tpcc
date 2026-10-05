@@ -1,7 +1,7 @@
 # portable-tpcc
 
 A horizontally scalable TPC-C implementation with shared workload logic,
-YDB/PostgreSQL/OceanBase adapters, and a dedicated orchestrator.
+YDB/PostgreSQL/OceanBase/dummy adapters, and a dedicated orchestrator.
 
 Results MUST NOT be called official TPC-C results without the required TPC
 verification.
@@ -20,12 +20,13 @@ fields needed to run):
 - [PostgreSQL](docs/run-pgsql.md) (`tpcc-pgsql`)
 - [YDB](docs/run-ydb.md) (`tpcc-ydb`)
 - [OceanBase](docs/run-oceanbase.md) (`tpcc-oceanbase`)
+- [dummy](docs/run-dummy.md) (`tpcc-dummy`)
 
 Complete parameter reference (profile YAML, CLI flags, environment variables):
 [docs/parameter-reference.md](docs/parameter-reference.md).
 High-scale worker process sizing (`threads_per_worker`, `max_inflight_per_worker`):
 [docs/worker-sizing.md](docs/worker-sizing.md).
-`mind-tpcc configure --profile <path> --dbms <pgsql|ydb|oceanbase>` writes a
+`mind-tpcc configure --profile <path> --dbms <pgsql|ydb|oceanbase|dummy>` writes a
 complete starter profile with every field set to the built-in default.
 
 Build everything from the repository root with `./build.sh` (it always passes

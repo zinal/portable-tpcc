@@ -68,6 +68,11 @@ struct TRunConfigDocument {
     // Empty means the adapter default (snapshot-rw / Repeatable Read analogue).
     std::string TxMode;
 
+    // Dummy adapter: inclusive simulated DBMS latency range in microseconds.
+    // Each adapter round-trip samples uniformly from [DelayUsMin, DelayUsMax].
+    int64_t DelayUsMin = 0;
+    int64_t DelayUsMax = 0;
+
     int ScaleWarehouses = 0;
     int64_t Seed = 0;
     bool HasSeed = false;

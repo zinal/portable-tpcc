@@ -688,7 +688,7 @@ mind-tpcc — portable-tpcc orchestrator
 
 Usage:
   mind-tpcc <command> --profile <path> [options]
-  mind-tpcc configure --profile <path> --dbms <pgsql|ydb|oceanbase> [options]
+  mind-tpcc configure --profile <path> --dbms <pgsql|ydb|oceanbase|dummy> [options]
 
 Commands:
   configure   Write a complete example profile YAML (defaults + optional overrides)

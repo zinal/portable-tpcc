@@ -5,6 +5,7 @@ Canonical list of portable-tpcc run parameters. Run guides:
 - [PostgreSQL](run-pgsql.md)
 - [YDB](run-ydb.md)
 - [OceanBase](run-oceanbase.md)
+- [dummy](run-dummy.md)
 
 Profile YAML is `portable-tpcc/v1` (`kind: TpccRunProfile`). Unknown fields are
 rejected. Omitted workload fields use defaults embedded in `mind-tpcc`.
@@ -17,7 +18,7 @@ verification.
 
 ```text
 mind-tpcc <command> --profile <path> [options]
-mind-tpcc configure --profile <path> --dbms <pgsql|ydb|oceanbase> [options]
+mind-tpcc configure --profile <path> --dbms <pgsql|ydb|oceanbase|dummy> [options]
 ```
 
 ### Commands
@@ -166,7 +167,7 @@ values with the defaults below.
 
 | Field | DBMS | Required | Meaning |
 | --- | --- | --- | --- |
-| `dbms` | all | yes | `pgsql` \| `ydb` \| `oceanbase`. |
+| `dbms` | all | yes | `pgsql` \| `ydb` \| `oceanbase` \| `dummy`. |
 | `endpoint` | all | yes | Host or `host:port` (YDB also `grpc://` / `grpcs://`). Must not contain `user=` / `password=`. |
 | `database` | all | yes | DBMS database name/path (`dbname`, YDB path, OceanBase `database=`). |
 | `path` | all | recommended | TPC-C object location (PG schema, YDB table prefix, OceanBase tables database). |
@@ -175,7 +176,7 @@ values with the defaults below.
 | `auth_scheme` | ydb | no | `anonymous` \| `login` \| `sa_key`. Inferred if omitted. |
 | `sa_key_file` | ydb | for `sa_key` | Service-account JSON on the control host. Delivered as `sa-key.json`. |
 | `ca_file` | ydb | no | PEM CA bundle. Delivered as `ca.pem`. |
-| `options` | pgsql, ydb, oceanbase | no | Adapter options. Unknown keys are rejected. |
+| `options` | pgsql, ydb, oceanbase, dummy | no | Adapter options. Unknown keys are rejected. |
 
 Default ports when `endpoint` has no port: PostgreSQL **5432**, OceanBase
 **2881**. YDB standalone default endpoint is `localhost:2136` (no implicit
@@ -229,6 +230,20 @@ Schema creates the tables database if missing.
 Worker OLTP uses per-session `COM_STMT_PREPARE`; observer `-4013` (tenant
 memory limit) is sized in [run-oceanbase.md](run-oceanbase.md) (not a
 connection-string option).
+
+#### Dummy `database.options`
+
+| Key | Values | Default | Meaning |
+| --- | --- | --- | --- |
+| `delay_us_min` | integer ≥ 0 | `0` | Inclusive minimum simulated adapter latency in microseconds. |
+| `delay_us_max` | integer ≥ 0 | `0` | Inclusive maximum. Must be ≥ `delay_us_min`. When only `delay_us_min` is set in run-config, max copies min. |
+
+Dummy does not connect to a server. `database.endpoint` is still required by
+the profile schema (default `localhost`). Schema, load, indexes, drop, and
+checks are no-ops that succeed. Worker/debug roles run the shared TPC-C
+workflows; each session/transaction adapter call except `Begin` waits a uniform random delay
+in `[delay_us_min, delay_us_max]`. Standalone: `--connection` or
+`--delay-us-min` / `--delay-us-max`. See [run-dummy.md](run-dummy.md).
 
 ### `scale`
 
@@ -466,6 +481,14 @@ drop    --run-config <path> --instance <name> [--query-timeout=N]
 | `--partitions` | `0` | `-1` off, `0` derive from `-w`, `N` explicit (max 8192). |
 | `--foreign-keys` | `on` | `on` \| `off`. |
 | `--index-parallel` | `4` | `CREATE INDEX` DOP; `1` = serial. |
+
+### Dummy (`tpcc-dummy`)
+
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `--connection` | empty | `delay_us_min=N delay_us_max=M`. When set, overrides the delay flags. |
+| `--delay-us-min` | `0` | Inclusive minimum simulated adapter delay (microseconds). |
+| `--delay-us-max` | `0` | Inclusive maximum; must be ≥ min. |
 
 ## TPC-C 5.11 launch-parameter checks
 
