@@ -287,6 +287,8 @@ profile's workers using the same port rule. The snippet includes
 `global.scrape_interval` / `scrape_timeout` / `evaluation_interval` of
 **15s** (so `rate(...[1m])` has four scrape samples) and the worker
 `scrape_configs`. The flag does not rewrite the profile or run-config.
+The Grafana dashboard for this exposition is specified in §7.1
+(`docs/grafana/portable-tpcc.json`).
 
 Normalized errors: `retryable_abort`, `not_committed`, `ambiguous_commit`
 (no blind retry), `permanent` (count as Fail, do not stop the run),
@@ -350,6 +352,113 @@ during measurement fails the run; terminals are not reassigned.
 
 Orchestrated remotes (schema, loader, indexes, worker, check, `debug`, and
 `drop`) follow the process contract in §9.1.
+
+### 7.1. Live Grafana dashboard
+
+`docs/grafana/portable-tpcc.json` is the operator dashboard for the
+Prometheus series in this section. It is a live diagnosis view. It
+MUST NOT be used as the measurement record: the series include ramp-up,
+measurement, and drain, and `result.json` / `aggregate.json` stay
+authoritative (§8). The dashboard expects a Prometheus server loaded
+with `mind-tpcc prometheus-config` (job `portable-tpcc`, labels
+`profile`, `dbms`, `worker`, `metrics_process`) and workers started
+with `--metrics`.
+
+The layout follows published dashboard practice: one dashboard per
+question; RED (rate, errors, duration) for symptoms and saturation for
+causes; template variables instead of a copy per worker or cluster; a
+text panel that states how to read the page; a shared crosshair; fixed
+colors per transaction type; thresholds only on values that have a
+stated meaning
+([Grafana dashboard best practices](https://grafana.com/docs/grafana/latest/visualizations/dashboards/build-dashboards/best-practices/)).
+Rate windows follow the Grafana Prometheus guidance: `$__rate_interval`,
+with each query's Min step set to **15s**. Grafana uses that Min step
+as the scrape interval when computing the window, so the window is at
+least four 15s steps (60s) — the same window as the `[1m]` tpmC
+expression above. The Prometheus scrape interval must actually be 15s,
+as printed by `prometheus-config`; a longer scrape makes this window
+too short
+([`$__rate_interval`](https://grafana.com/docs/grafana/latest/datasources/prometheus/template-variables/)).
+Histograms follow the Prometheus guidance: `rate` of the `_bucket`
+series, `le` kept in the inner `sum by`, buckets aggregated across
+workers before `histogram_quantile`, quantiles never averaged. A
+classic-histogram heatmap is omitted; sixteen fixed buckets (0.5ms
+through 60s, then `+Inf`) cannot show a smooth distribution
+([Prometheus histograms](https://prometheus.io/docs/practices/histograms/)).
+
+- **Variables.** Prometheus data source, job, and multi-value
+  `profile`, `dbms`, and `worker`, plus a closed `type` list
+  (`new_order`, `payment`, `order_status`, `delivery`, `stock_level`).
+  `profile`, `dbms`, `worker`, and `type` use anchored matchers
+  (`^(…)$`) so one name cannot select another by prefix. Job is an
+  exact match. There is no repeated row per worker.
+- **Order.** Health strip (New-Order tpmC, workers down, failure ratio,
+  retries per completion, New-Order rollback ratio, inflight), then
+  throughput and mix, then response time, then failures / retries /
+  rollbacks, then client waits, then per-worker balance. Symptoms are
+  above causes.
+- **`$type`.** Filters breakdowns of latency, failures, retries,
+  rollbacks, and client waits. It does not filter the health strip,
+  tpmC, the mix, the within-bound row, inflight, or per-worker
+  New-Order throughput and p90.
+- **tpmC.** `sum(rate(tpcc_transactions_total{type="new_order",result="success"}[$__rate_interval])) * 60`
+  over the selected workers. `result="success"` includes test-logic
+  rollbacks.
+- **Errors and rollbacks.** Failure ratio uses `result="failure"`.
+  Rollbacks are not failures. The New-Order rollback ratio is
+  `tpcc_transaction_rollbacks_total{type="new_order"}` over successful
+  New-Order. About 1% is the unused-item path. The health strip turns
+  yellow above 2% and red above 5% for that ratio, yellow at 0.1%
+  failures and red at 1%, and yellow at 0.01 retries per completion
+  and red at 0.1. A retry count can exceed the completion count.
+- **Mix.** Share of successes by type, always over all five types.
+  Payment / Order-Status / Delivery / Stock-Level are colored against
+  the Clause 5.2.3 minima (43% / 4% / 4% / 4%). New-Order has no
+  minimum. This is the live mix, not the launch-parameter check in §10.
+- **Response time.** Success histograms only (`result="success"`).
+  p50, p90, and p99 are `histogram_quantile` over `sum by (le, type)`.
+  The mean is `rate` of `_sum` divided by `rate` of `_count`. The
+  fraction of successes with response time **≤ 5s** (New-Order,
+  Payment, Order-Status, Delivery) or **≤ 20s** (Stock-Level) is the
+  rate of the exact `le="5"` or `le="20"` bucket over `_count`. The
+  panel turns yellow at 90% and green at 95%. That fraction is a live
+  indicator of Clause 5.2.5.3 / 5.2.5.7 (p90 **< 5s** / **< 20s**). It
+  is not that check: the bucket edge is ≤, the clause is strict <, the
+  window includes non-measurement phases, and other percentiles are
+  interpolated inside coarse buckets. `consolidate` and
+  `latency_constraints_ok` remain the engineering result (§8.2).
+  Failure p90 is a separate panel.
+- **Client waits.** For `admission`, `session_pool`, and
+  `retry_backoff`, each panel draws per-type p90 and mean. Every
+  completed transaction contributes a sample, including a zero wait.
+  Admission wait grows when terminals queue on `max_inflight`.
+  Session-pool wait grows when the connection or session pool is
+  exhausted (`PoolSize = min(terminals, max_inflight)`). Retry-backoff
+  wait grows when retryable errors are frequent. Response time that
+  rises while those three stay small points at time inside the
+  transaction. The dashboard does not show DBMS server metrics, and it
+  does not know `max_inflight` or the scheduler thread count.
+  `tpcc_inflight` is drawn as a gauge, not a rate. Inflight stuck near
+  the scheduler thread count while `max_inflight` is larger is the
+  scheduler-blocking symptom described above; the operator compares
+  the gauge with those two settings.
+- **Workers.** Per-worker New-Order tpmC, that rate divided by the
+  median across the selected workers, per-worker New-Order success p90
+  (guide line at 5s), and Prometheus `up`. Guide lines at 0.9 and 1.0
+  on the median ratio are a skew hint, not a conformance limit.
+  `up == 0` is how a target that is still in the scrape config and
+  failing shows up before consolidate. Loss of a worker during
+  measurement fails the run.
+- **Time.** Default range is the last 3 hours, refresh **15s**,
+  timezone UTC. The tooltip is shared across panels. The dashboard
+  defines no alert rules. A Prometheus alert cannot see the measurement
+  window inside these cumulative series; the pass/fail indicator is
+  `consolidate`.
+
+Import the JSON into Grafana 10 or newer and select the Prometheus
+data source. Set that data source's scrape interval to **15s** as
+well, so panels edited later without a Min step stay consistent. The
+shipped queries already pin Min step to 15s.
 
 ## 8. Results
 
@@ -965,6 +1074,7 @@ docs/specification.md
 docs/adapter-api.md
 docs/async-adapter-transactions.md
 docs/worker-sizing.md
+docs/grafana/portable-tpcc.json
 docs/examples/
 ```
 
