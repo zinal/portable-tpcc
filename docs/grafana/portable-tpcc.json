@@ -1310,7 +1310,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum(rate(tpcc_transaction_duration_seconds_bucket{job=\"$job\",profile=~\"^(${profile:regex})$\",dbms=~\"^(${dbms:regex})$\",worker=~\"^(${worker:regex})$\",type=\"new_order\",result=\"success\",le=~\"^(5(\\.0+)?)$\"}[$__rate_interval])) / sum(rate(tpcc_transaction_duration_seconds_count{job=\"$job\",profile=~\"^(${profile:regex})$\",dbms=~\"^(${dbms:regex})$\",worker=~\"^(${worker:regex})$\",type=\"new_order\",result=\"success\"}[$__rate_interval]))",
+          "expr": "sum(rate(tpcc_transaction_duration_seconds_bucket{job=\"$job\",profile=~\"^(${profile:regex})$\",dbms=~\"^(${dbms:regex})$\",worker=~\"^(${worker:regex})$\",type=\"new_order\",result=\"success\",le=~\"^(5([.]0+)?)$\"}[$__rate_interval])) / sum(rate(tpcc_transaction_duration_seconds_count{job=\"$job\",profile=~\"^(${profile:regex})$\",dbms=~\"^(${dbms:regex})$\",worker=~\"^(${worker:regex})$\",type=\"new_order\",result=\"success\"}[$__rate_interval]))",
           "legendFormat": "new_order ≤5s",
           "interval": "15s",
           "editorMode": "code",
@@ -1324,7 +1324,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum(rate(tpcc_transaction_duration_seconds_bucket{job=\"$job\",profile=~\"^(${profile:regex})$\",dbms=~\"^(${dbms:regex})$\",worker=~\"^(${worker:regex})$\",type=\"payment\",result=\"success\",le=~\"^(5(\\.0+)?)$\"}[$__rate_interval])) / sum(rate(tpcc_transaction_duration_seconds_count{job=\"$job\",profile=~\"^(${profile:regex})$\",dbms=~\"^(${dbms:regex})$\",worker=~\"^(${worker:regex})$\",type=\"payment\",result=\"success\"}[$__rate_interval]))",
+          "expr": "sum(rate(tpcc_transaction_duration_seconds_bucket{job=\"$job\",profile=~\"^(${profile:regex})$\",dbms=~\"^(${dbms:regex})$\",worker=~\"^(${worker:regex})$\",type=\"payment\",result=\"success\",le=~\"^(5([.]0+)?)$\"}[$__rate_interval])) / sum(rate(tpcc_transaction_duration_seconds_count{job=\"$job\",profile=~\"^(${profile:regex})$\",dbms=~\"^(${dbms:regex})$\",worker=~\"^(${worker:regex})$\",type=\"payment\",result=\"success\"}[$__rate_interval]))",
           "legendFormat": "payment ≤5s",
           "interval": "15s",
           "editorMode": "code",
@@ -1338,7 +1338,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum(rate(tpcc_transaction_duration_seconds_bucket{job=\"$job\",profile=~\"^(${profile:regex})$\",dbms=~\"^(${dbms:regex})$\",worker=~\"^(${worker:regex})$\",type=\"order_status\",result=\"success\",le=~\"^(5(\\.0+)?)$\"}[$__rate_interval])) / sum(rate(tpcc_transaction_duration_seconds_count{job=\"$job\",profile=~\"^(${profile:regex})$\",dbms=~\"^(${dbms:regex})$\",worker=~\"^(${worker:regex})$\",type=\"order_status\",result=\"success\"}[$__rate_interval]))",
+          "expr": "sum(rate(tpcc_transaction_duration_seconds_bucket{job=\"$job\",profile=~\"^(${profile:regex})$\",dbms=~\"^(${dbms:regex})$\",worker=~\"^(${worker:regex})$\",type=\"order_status\",result=\"success\",le=~\"^(5([.]0+)?)$\"}[$__rate_interval])) / sum(rate(tpcc_transaction_duration_seconds_count{job=\"$job\",profile=~\"^(${profile:regex})$\",dbms=~\"^(${dbms:regex})$\",worker=~\"^(${worker:regex})$\",type=\"order_status\",result=\"success\"}[$__rate_interval]))",
           "legendFormat": "order_status ≤5s",
           "interval": "15s",
           "editorMode": "code",
@@ -1352,7 +1352,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum(rate(tpcc_transaction_duration_seconds_bucket{job=\"$job\",profile=~\"^(${profile:regex})$\",dbms=~\"^(${dbms:regex})$\",worker=~\"^(${worker:regex})$\",type=\"delivery\",result=\"success\",le=~\"^(5(\\.0+)?)$\"}[$__rate_interval])) / sum(rate(tpcc_transaction_duration_seconds_count{job=\"$job\",profile=~\"^(${profile:regex})$\",dbms=~\"^(${dbms:regex})$\",worker=~\"^(${worker:regex})$\",type=\"delivery\",result=\"success\"}[$__rate_interval]))",
+          "expr": "sum(rate(tpcc_transaction_duration_seconds_bucket{job=\"$job\",profile=~\"^(${profile:regex})$\",dbms=~\"^(${dbms:regex})$\",worker=~\"^(${worker:regex})$\",type=\"delivery\",result=\"success\",le=~\"^(5([.]0+)?)$\"}[$__rate_interval])) / sum(rate(tpcc_transaction_duration_seconds_count{job=\"$job\",profile=~\"^(${profile:regex})$\",dbms=~\"^(${dbms:regex})$\",worker=~\"^(${worker:regex})$\",type=\"delivery\",result=\"success\"}[$__rate_interval]))",
           "legendFormat": "delivery ≤5s",
           "interval": "15s",
           "editorMode": "code",
@@ -1366,7 +1366,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum(rate(tpcc_transaction_duration_seconds_bucket{job=\"$job\",profile=~\"^(${profile:regex})$\",dbms=~\"^(${dbms:regex})$\",worker=~\"^(${worker:regex})$\",type=\"stock_level\",result=\"success\",le=~\"^(20(\\.0+)?)$\"}[$__rate_interval])) / sum(rate(tpcc_transaction_duration_seconds_count{job=\"$job\",profile=~\"^(${profile:regex})$\",dbms=~\"^(${dbms:regex})$\",worker=~\"^(${worker:regex})$\",type=\"stock_level\",result=\"success\"}[$__rate_interval]))",
+          "expr": "sum(rate(tpcc_transaction_duration_seconds_bucket{job=\"$job\",profile=~\"^(${profile:regex})$\",dbms=~\"^(${dbms:regex})$\",worker=~\"^(${worker:regex})$\",type=\"stock_level\",result=\"success\",le=~\"^(20([.]0+)?)$\"}[$__rate_interval])) / sum(rate(tpcc_transaction_duration_seconds_count{job=\"$job\",profile=~\"^(${profile:regex})$\",dbms=~\"^(${dbms:regex})$\",worker=~\"^(${worker:regex})$\",type=\"stock_level\",result=\"success\"}[$__rate_interval]))",
           "legendFormat": "stock_level ≤20s",
           "interval": "15s",
           "editorMode": "code",
