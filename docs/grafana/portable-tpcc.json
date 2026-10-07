@@ -1301,8 +1301,8 @@
     },
     {
       "type": "stat",
-      "title": "Successes within the response-time bound",
-      "description": "Share of successes with response time ≤ 5s for New-Order, Payment, Order-Status, and Delivery, or ≤ 20s for Stock-Level. The worker emits le=\"5\" and le=\"20\"; Prometheus 3 stores those integer bounds as le=\"5.0\" and le=\"20.0\". The selector accepts both. histogram_quantile still draws the charts below, because it parses le as a number. Yellow from 90%, green from 95%. Clause 5.2.5.7 is a strict less-than on the measurement-window p90 from the linear_exp histogram. This panel includes ramp-up and drain and is not latency_constraints_ok.",
+      "title": "New-Order ≤ 5s",
+      "description": "Share of New-Order successes with response time ≤ 5s. Yellow from 90%, green from 95%. Prometheus 3 stores the worker's integer bucket label with a decimal (5 → 5.0, 20 → 20.0); the selector accepts both forms. This includes ramp-up and drain and is not latency_constraints_ok. Clause 5.2.5.7 is a strict less-than on the measurement-window p90.",
       "targets": [
         {
           "refId": "A",
@@ -1317,9 +1317,71 @@
           "range": true,
           "instant": false,
           "exemplar": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.9
+              },
+              {
+                "color": "green",
+                "value": 0.95
+              }
+            ]
+          },
+          "noValue": "n/a",
+          "decimals": 1,
+          "min": 0,
+          "max": 1
         },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      },
+      "id": 18,
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 32
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Payment ≤ 5s",
+      "description": "Share of Payment successes with response time ≤ 5s. Yellow from 90%, green from 95%. Prometheus 3 stores the worker's integer bucket label with a decimal (5 → 5.0, 20 → 20.0); the selector accepts both forms. This includes ramp-up and drain and is not latency_constraints_ok. Clause 5.2.5.7 is a strict less-than on the measurement-window p90.",
+      "targets": [
         {
-          "refId": "B",
+          "refId": "A",
           "datasource": {
             "type": "prometheus",
             "uid": "${datasource}"
@@ -1331,9 +1393,71 @@
           "range": true,
           "instant": false,
           "exemplar": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.9
+              },
+              {
+                "color": "green",
+                "value": 0.95
+              }
+            ]
+          },
+          "noValue": "n/a",
+          "decimals": 1,
+          "min": 0,
+          "max": 1
         },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      },
+      "id": 38,
+      "gridPos": {
+        "h": 4,
+        "w": 5,
+        "x": 4,
+        "y": 32
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Order-Status ≤ 5s",
+      "description": "Share of Order-Status successes with response time ≤ 5s. Yellow from 90%, green from 95%. Prometheus 3 stores the worker's integer bucket label with a decimal (5 → 5.0, 20 → 20.0); the selector accepts both forms. This includes ramp-up and drain and is not latency_constraints_ok. Clause 5.2.5.7 is a strict less-than on the measurement-window p90.",
+      "targets": [
         {
-          "refId": "C",
+          "refId": "A",
           "datasource": {
             "type": "prometheus",
             "uid": "${datasource}"
@@ -1345,9 +1469,71 @@
           "range": true,
           "instant": false,
           "exemplar": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.9
+              },
+              {
+                "color": "green",
+                "value": 0.95
+              }
+            ]
+          },
+          "noValue": "n/a",
+          "decimals": 1,
+          "min": 0,
+          "max": 1
         },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      },
+      "id": 39,
+      "gridPos": {
+        "h": 4,
+        "w": 5,
+        "x": 9,
+        "y": 32
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Delivery ≤ 5s",
+      "description": "Share of Delivery successes with response time ≤ 5s. Yellow from 90%, green from 95%. Prometheus 3 stores the worker's integer bucket label with a decimal (5 → 5.0, 20 → 20.0); the selector accepts both forms. This includes ramp-up and drain and is not latency_constraints_ok. Clause 5.2.5.7 is a strict less-than on the measurement-window p90.",
+      "targets": [
         {
-          "refId": "D",
+          "refId": "A",
           "datasource": {
             "type": "prometheus",
             "uid": "${datasource}"
@@ -1359,9 +1545,71 @@
           "range": true,
           "instant": false,
           "exemplar": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.9
+              },
+              {
+                "color": "green",
+                "value": 0.95
+              }
+            ]
+          },
+          "noValue": "n/a",
+          "decimals": 1,
+          "min": 0,
+          "max": 1
         },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      },
+      "id": 40,
+      "gridPos": {
+        "h": 4,
+        "w": 5,
+        "x": 14,
+        "y": 32
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Stock-Level ≤ 20s",
+      "description": "Share of Stock-Level successes with response time ≤ 20s. Yellow from 90%, green from 95%. Prometheus 3 stores the worker's integer bucket label with a decimal (5 → 5.0, 20 → 20.0); the selector accepts both forms. This includes ramp-up and drain and is not latency_constraints_ok. Clause 5.2.5.7 is a strict less-than on the measurement-window p90.",
+      "targets": [
         {
-          "refId": "E",
+          "refId": "A",
           "datasource": {
             "type": "prometheus",
             "uid": "${datasource}"
@@ -1413,17 +1661,17 @@
           "fields": "",
           "values": false
         },
-        "orientation": "horizontal",
-        "textMode": "value_and_name",
+        "orientation": "auto",
+        "textMode": "auto",
         "colorMode": "background",
         "graphMode": "none",
         "justifyMode": "auto"
       },
-      "id": 18,
+      "id": 41,
       "gridPos": {
         "h": 4,
-        "w": 24,
-        "x": 0,
+        "w": 5,
+        "x": 19,
         "y": 32
       },
       "datasource": {
@@ -3846,7 +4094,7 @@
     {
       "type": "timeseries",
       "title": "New-Order success p90 by worker",
-      "description": "p90 success response time of New-Order on each worker. The line at 5s is the Clause 5.2.5.7 bound for this type. The bucket is coarse, so also use Successes within the response-time bound.",
+      "description": "p90 success response time of New-Order on each worker. The line at 5s is the Clause 5.2.5.7 bound for this type. The bucket is coarse, so also use the New-Order ≤ 5s stat.",
       "targets": [
         {
           "refId": "A",
