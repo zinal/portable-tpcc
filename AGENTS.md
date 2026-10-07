@@ -133,6 +133,7 @@ the spec as the requirement (see the introduction).
 | Adapter async `ITpccTransaction` (no scheduler `.Get()` / `GetValueSync`) | [adapter-api.md](docs/adapter-api.md) §4.3, [specification.md](docs/specification.md) §4.2 / §7 |
 | OceanBase `query_timeout` / physical options | [specification.md](docs/specification.md) §11, [run-oceanbase.md](docs/run-oceanbase.md) |
 | Profile and CLI parameters | [parameter-reference.md](docs/parameter-reference.md) |
+| Live Grafana dashboard for worker Prometheus metrics | [specification.md](docs/specification.md) §7.1 |
 
 Check role **implementation** (not the protocol source of truth):
 `tpcc/checks/`, `tpcc/dbms/{pgsql,ydb,oceanbase}/check.cpp`,

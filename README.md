@@ -46,6 +46,7 @@ For settings closer to TPC-C 5.11, see the defaults embedded in `mind-tpcc` and
 ## Architecture
 
 - [specification](docs/specification.md);
+- [live Grafana dashboard](docs/grafana/portable-tpcc.json) (specification §7.1);
 - [shared libraries and adapter API](docs/adapter-api.md);
 - [async `ITpccTransaction` migration](docs/async-adapter-transactions.md);
 - [profile example (YDB)](docs/examples/profile.ydb.v1.yaml);
