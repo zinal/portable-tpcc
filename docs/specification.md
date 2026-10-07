@@ -423,11 +423,12 @@ through 60s, then `+Inf`) cannot show a smooth distribution
   rate of that bucket over `_count`. The worker emits `le="5"` and
   `le="20"`. Prometheus 3 rewrites integer `le` values to OpenMetrics
   form on scrape (`5` → `5.0`, `20` → `20.0`), and a matcher is an
-  exact string compare, so the panel matches `^(5(\.0+)?)$` and
-  `^(20(\.0+)?)$`. The pattern is anchored so `le="2.5"` is not the
-  5s bucket. `histogram_quantile` parses `le` as a number and is
-  unaffected, which is why the percentile charts still draw when an
-  exact `le="5"` selector is empty. `+Inf` is not rewritten. The
+  exact string compare, so the panel matches `^(5([.]0+)?)$` and
+  `^(20([.]0+)?)$`. The dot is a character class, because a PromQL
+  double-quoted string rejects the escape `\.`. The anchors keep
+  `le="2.5"` off the 5s bucket. `histogram_quantile` parses `le` as a
+  number and is unaffected, which is why the percentile charts still
+  draw when an exact `le="5"` selector is empty. `+Inf` is not rewritten. The
   panel turns yellow at 90% and green at 95%. That fraction is a live
   indicator of Clause 5.2.5.3 / 5.2.5.7 (p90 **< 5s** / **< 20s**). It
   is not that check: the bucket edge is ≤, the clause is strict <, the
